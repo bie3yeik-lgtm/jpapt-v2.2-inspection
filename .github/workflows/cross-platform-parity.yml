@@ -3,11 +3,15 @@ name: Cross Platform ONNX Parity
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "HF target id"
+        required: true
+        default: parakeet-tdt_ctc-0.6b-ja
+        type: string
       candidate_id:
         description: "HF Bucket candidates/<candidate_id>"
         required: true
         type: string
-
       evaluation:
         description: "Evaluation suite"
         required: false
@@ -22,18 +26,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: cross-platform-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
+  group: cross-platform-${{ inputs.target }}-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  HF_BUCKET: ${{ vars.HF_BUCKET }}
-  HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
+  HF_BUCKET: ""
+  HF_MODEL_REPO: ""
 
 jobs:
   evaluate:
     name: ${{ matrix.result_name }}
-
     strategy:
       fail-fast: false
       matrix:
@@ -43,19 +47,16 @@ jobs:
             environment: linux
             result_name: linux-cpu
             benchmark_name: linux-cpu
-
           - os: windows-latest
             provider: cpu
             environment: windows
             result_name: windows-cpu
             benchmark_name: windows-cpu
-
           - os: macos-15
             provider: cpu
             environment: macos
             result_name: macos-cpu
             benchmark_name: macos-cpu
-
           - os: macos-15
             provider: coreml
             environment: macos
@@ -69,37 +70,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate GitHub configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${HF_TOKEN:-}" ]]; then
-            echo "::error::HF_TOKEN secret is not configured."
-            exit 1
-          fi
-
-          if [[ -z "${HF_BUCKET:-}" ]]; then
-            echo "::error::HF_BUCKET repository variable is not configured."
-            exit 1
-          fi
-
-          if [[ -z "${HF_MODEL_REPO:-}" ]]; then
-            echo "::error::HF_MODEL_REPO repository variable is not configured."
-            exit 1
-          fi
-
       - name: Show runner information
         shell: bash
         run: |
           set -euo pipefail
-
           echo "Runner OS:   ${{ runner.os }}"
           echo "Runner arch: ${{ runner.arch }}"
           echo "Matrix OS:   ${{ matrix.os }}"
           echo "Provider:    ${{ matrix.provider }}"
           echo "Environment: ${{ matrix.environment }}"
-
           uname -a || true
 
       - name: Setup Python
@@ -111,19 +90,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           python -m pip install --upgrade pip
           python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
-
           python -c "import parakeet_onnx"
           hf --version
+
+      - name: Resolve HF target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/resolve-hf-target.py \
+            --target "${{ inputs.target }}" \
+            --targets-json "${HF_TARGETS_JSON:-}" \
+            --github-env "${GITHUB_ENV}"
+
+      - name: Validate GitHub configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is not configured."; exit 1; }
+          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved for ${{ inputs.target }}."; exit 1; }
+          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved for ${{ inputs.target }}."; exit 1; }
+          echo "HF target: ${HF_TARGET_ID}"
+          echo "HF Bucket: ${HF_BUCKET}"
+          echo "HF Model Repo: ${HF_MODEL_REPO}"
 
       - name: Prepare directories
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p \
             .cache/huggingface \
             .cache/models \
@@ -132,18 +128,14 @@ jobs:
             .ci/candidate \
             .ci/reference \
             "results/${{ matrix.result_name }}"
-
           echo "HF_HOME=$(pwd)/.cache/huggingface" >> "${GITHUB_ENV}"
 
       - name: Fetch revision locks
         shell: bash
         run: |
           set -euo pipefail
-
           bash scripts/hf/hf-fetch-revisions.sh
-
-          python scripts/ci/validate-revisions.py \
-            --root .ci/hf/config/revisions
+          python scripts/ci/validate-revisions.py --root .ci/hf/config/revisions
 
       - name: Cache model and evaluation assets
         uses: actions/cache@v4
@@ -155,7 +147,7 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-eval-${{ matrix.os }}-${{ runner.arch }}-${{
+            py-eval-${{ inputs.target }}-${{ matrix.os }}-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
@@ -166,21 +158,18 @@ jobs:
               )
             }}
           restore-keys: |
-            py-eval-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-eval-${{ inputs.target }}-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
         run: |
           set -euo pipefail
-
-          bash scripts/hf/hf-fetch-candidate.sh \
-            "${{ inputs.candidate_id }}"
+          bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
       - name: Fetch reference assets
         shell: bash
         run: |
           set -euo pipefail
-
           bash scripts/hf/hf-fetch-reference.sh || true
 
       - name: Locate ONNX model
@@ -188,14 +177,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           MODEL="$(find .ci/candidate -type f -name '*.onnx' -print -quit)"
-
           if [[ -z "${MODEL}" ]]; then
             echo "::error::No ONNX model was found under .ci/candidate."
             exit 1
           fi
-
           echo "path=${MODEL}" >> "${GITHUB_OUTPUT}"
           echo "ONNX model: ${MODEL}"
 
@@ -203,14 +189,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           python scripts/dev/verify-python-first.py
 
       - name: Evaluate candidate with Python
         shell: bash
         run: |
           set -euo pipefail
-
           python -m parakeet_onnx.cli.evaluate \
             --provider "${{ matrix.provider }}" \
             --environment "${{ matrix.environment }}" \
@@ -226,10 +210,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ -f "results/${{ matrix.result_name }}/run-context.json" ]]; then
-            python scripts/ci/validate-result.py \
-              "results/${{ matrix.result_name }}"
+            python scripts/ci/validate-result.py "results/${{ matrix.result_name }}"
           fi
 
       - name: Upload run to HF Bucket
@@ -237,10 +219,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ -f "results/${{ matrix.result_name }}/run-context.json" ]]; then
-            bash scripts/hf/hf-push-run.sh \
-              "results/${{ matrix.result_name }}"
+            bash scripts/hf/hf-push-run.sh "results/${{ matrix.result_name }}"
           fi
 
       - name: Publish benchmark
@@ -248,7 +228,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           bash scripts/hf/hf-push-benchmark.sh \
             "results/${{ matrix.result_name }}/metrics.json" \
             "${{ matrix.benchmark_name }}"
@@ -257,7 +236,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: parity-${{ matrix.result_name }}-${{ inputs.candidate_id }}
+          name: parity-${{ inputs.target }}-${{ matrix.result_name }}-${{ inputs.candidate_id }}
           path: |
             results/${{ matrix.result_name }}/run-context.json
             results/${{ matrix.result_name }}/metrics.json
