@@ -9,6 +9,7 @@ repo_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
 
 [reference]
 canonical_framework = "nemo"
+revision_contract = "legacy"
 
 [decoders]
 supported = ["ctc", "tdt"]
