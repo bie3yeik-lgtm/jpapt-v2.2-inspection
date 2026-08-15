@@ -1,0 +1,211 @@
+# Canonical configuration for kotoba-tech/kotoba-whisper-v1.0.
+#
+# The upstream Transformers checkpoint is the canonical reference.
+# ONNX development artifacts are stored in:
+#   model repo: gawohok7/tf-v1-onnx-dev
+#   bucket:     gawohok7/tf-v1-onnx-dev-bucket
+#
+# Exact upstream/dataset revisions remain pinned in the selected HF Bucket.
+
+schema_version = 1
+
+[model]
+id = "kotoba-whisper-v1.0"
+display_name = "Kotoba Whisper v1.0"
+family = "whisper"
+task = "automatic-speech-recognition"
+language = "ja"
+framework = "transformers"
+architecture = "whisper_seq2seq"
+role = "transformers_reference"
+
+[upstream]
+provider = "huggingface"
+repo_type = "model"
+repo_id = "kotoba-tech/kotoba-whisper-v1.0"
+revision_source = "hf_bucket"
+revision_config = "config/revisions/reference.json"
+allow_floating_revision = false
+
+[reference]
+runtime = "transformers"
+loader = "AutoModelForSpeechSeq2Seq.from_pretrained"
+processor_loader = "AutoProcessor.from_pretrained"
+model_id = "kotoba-tech/kotoba-whisper-v1.0"
+required_before_onnx_validation = true
+
+[audio]
+sample_rate_hz = 16000
+channels = 1
+require_mono = true
+input_format = "waveform"
+waveform_dtype = "float32"
+waveform_min = -1.0
+waveform_max = 1.0
+allow_resample = true
+
+[frontend]
+implementation = "transformers_whisper_processor"
+configuration_source = "upstream_processor"
+allow_local_parameter_override = false
+output_dtype = "float32"
+
+[encoder]
+type = "whisper_encoder"
+tensor_contract_source = "candidate_metadata"
+
+[decoders]
+supported = ["whisper_autoregressive"]
+default = "whisper_autoregressive"
+deployment_priority = ["whisper_autoregressive"]
+
+[decoder.whisper_autoregressive]
+enabled = true
+primary_onnx_target = true
+runtime_control = "transformers_generate"
+requires_generation_loop = true
+requires_kv_cache = true
+requires_decoder_input_ids = true
+cache_position_support = "candidate_specific"
+
+[decoder.whisper_autoregressive.generation]
+configuration_source = "upstream_generation_config"
+language = "ja"
+task = "transcribe"
+special_tokens_source = "upstream_model"
+timestamp_tokens = true
+
+[tokenizer]
+type = "whisper"
+configuration_source = "upstream_processor"
+revision_locked = true
+apply_runtime_normalization = false
+
+[text]
+language = "ja"
+punctuation_supported = true
+translation_supported = false
+
+[onnx]
+enabled = true
+role = "deployment_candidate"
+canonical_reference_format = "transformers"
+artifact_strategy = "portable_baseline"
+os_specific_artifacts = false
+allow_backend_optimized_variants = true
+initial_decoder = "whisper_autoregressive"
+
+[onnx.validation]
+require_reference_parity = true
+required_checkpoints = [
+    "frontend",
+    "encoder",
+    "decoder_logits",
+    "tokens",
+    "transcript",
+]
+tolerance_source = "evaluation-schema"
+
+[onnx.artifacts]
+# Whisper export commonly requires encoder and autoregressive decoder graphs.
+# Literal filenames and cache tensor names stay in candidate metadata.
+required_roles = [
+    "encoder",
+    "decoder",
+]
+optional_roles = [
+    "decoder_with_past",
+]
+
+[execution]
+supported_providers = [
+    "cpu",
+    "cuda",
+    "directml",
+    "coreml",
+]
+reference_provider = "cpu"
+provider_configuration_root = "config/providers"
+
+[execution.platforms]
+linux = ["cpu", "cuda"]
+windows = ["cpu", "cuda", "directml"]
+macos = ["cpu", "coreml"]
+
+[evaluation]
+smoke_config = "config/evaluation/smoke.toml"
+parity_config = "config/evaluation/parity.toml"
+full_config = "config/evaluation/full.toml"
+manifest_root = "evaluation/manifests"
+reference_revision = "config/revisions/reference.json"
+evaluation_schema_revision = "config/revisions/evaluation-schema.json"
+datasets_lock_revision = "config/revisions/datasets-lock.json"
+
+[evaluation.reference]
+implementation = "transformers"
+
+[evaluation.metrics]
+quality = ["cer", "wer"]
+performance = [
+    "rtf",
+    "load_ms",
+    "session_creation_ms",
+    "frontend_ms",
+    "encoder_ms",
+    "decoder_ms",
+    "postprocess_ms",
+    "total_inference_ms",
+]
+resources = ["peak_ram_mb"]
+
+[storage]
+store_model_in_git = false
+store_audio_in_git = false
+store_large_tensors_in_git = false
+candidate_storage = "hf_bucket"
+release_storage = "hf_model_repo"
+run_storage = "hf_bucket"
+benchmark_storage = "hf_bucket"
+
+[storage.hf_target]
+bucket = "gawohok7/tf-v1-onnx-dev-bucket"
+model_repo = "gawohok7/tf-v1-onnx-dev"
+
+[storage.hf_bucket]
+candidate_prefix = "candidates"
+reference_prefix = "reference"
+run_prefix = "runs"
+benchmark_prefix = "benchmarks"
+temporary_prefix = "tmp"
+
+[compatibility]
+mlx = false
+native_coreml_conversion = false
+coreml_execution_provider = true
+directml_execution_provider = true
+cuda_execution_provider = true
+
+[rust]
+# The existing Rust evaluator is CTC-first and cannot yet drive Whisper's
+# autoregressive decoder/cache contract. Keep reference/export/evaluation
+# orchestration in Python until the generic seq2seq runtime controller exists.
+planned = true
+require_python_parity = true
+runtime_complexity = "autoregressive_with_cache"
+expected_components = [
+    "audio",
+    "frontend",
+    "onnx_runtime",
+    "generation_controller",
+    "kv_cache",
+    "tokenizer",
+    "metrics",
+]
+
+[metadata]
+description = """
+Transformers/Whisper target used to generalize the repository beyond NeMo.
+The canonical source is kotoba-tech/kotoba-whisper-v1.0; ONNX candidates and
+runs are isolated in gawohok7/tf-v1-onnx-dev and its development bucket while
+reusing the repository's existing evaluation datasets and manifests.
+"""
