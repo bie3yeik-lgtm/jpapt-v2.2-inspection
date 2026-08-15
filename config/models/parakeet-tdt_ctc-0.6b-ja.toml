@@ -1,0 +1,390 @@
+# config/models/parakeet-tdt_ctc-0.6b-ja.toml
+#
+# Canonical project configuration for:
+#   nvidia/parakeet-tdt_ctc-0.6b-ja
+#
+# This file defines stable model semantics used by this repository.
+#
+# It does NOT pin the exact upstream revision.
+# Exact revisions/hashes belong to:
+#
+#   HF Bucket:
+#   config/revisions/reference.json
+#
+# This separation allows:
+#
+#   model config
+#       = what the model is
+#
+#   revision lock
+#       = exactly which immutable upstream snapshot is being evaluated
+#
+# The canonical development/reference implementation is NVIDIA NeMo.
+# ONNX artifacts are derived deployment candidates.
+
+schema_version = 1
+
+[model]
+id = "parakeet-tdt_ctc-0.6b-ja"
+
+display_name = "Parakeet TDT-CTC 0.6B Japanese"
+
+family = "parakeet"
+task = "automatic-speech-recognition"
+
+language = "ja"
+
+framework = "nemo"
+
+architecture = "hybrid_fastconformer_tdt_ctc"
+
+# Approximate model scale only.
+# Do not use this field for tensor-shape calculations.
+parameter_scale = "0.6b"
+
+[upstream]
+provider = "huggingface"
+
+repo_type = "model"
+
+repo_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
+
+# Revision is intentionally resolved externally from reference.json.
+revision_source = "hf_bucket"
+
+revision_config = "config/revisions/reference.json"
+
+# Do not silently follow main during reproducible evaluation.
+allow_floating_revision = false
+
+[reference]
+# NeMo is the authoritative reference runtime before ONNX export.
+runtime = "nemo"
+
+loader = "ASRModel.from_pretrained"
+
+model_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
+
+# Reference execution should be generated before accepting an ONNX
+# candidate as valid.
+required_before_onnx_validation = true
+
+[audio]
+# Canonical ASR input.
+#
+# Runtime code should verify this against the loaded upstream model config
+# rather than assuming this TOML alone is authoritative.
+sample_rate_hz = 16000
+
+channels = 1
+
+# Multi-channel input must be normalized to the project's mono policy
+# before feature extraction.
+require_mono = true
+
+input_format = "waveform"
+
+waveform_dtype = "float32"
+
+# Expected normalized floating-point audio range.
+waveform_min = -1.0
+waveform_max = 1.0
+
+allow_resample = true
+
+[frontend]
+# Feature extraction is model-specific and must reproduce the NeMo
+# preprocessor configuration exactly.
+#
+# Values such as FFT size, hop length, Mel bins, normalization constants,
+# padding, etc. must be resolved from the pinned upstream model/config.
+implementation = "nemo_compatible"
+
+configuration_source = "upstream_model"
+
+# The repository must not invent or independently tune frontend parameters
+# during parity validation.
+allow_local_parameter_override = false
+
+output_dtype = "float32"
+
+[encoder]
+type = "fastconformer"
+
+variant = "hybrid"
+
+# Encoder tensor names/shapes are determined at ONNX export time.
+#
+# Do not hard-code exported tensor names here because ONNX exporter
+# revisions may legitimately change them.
+tensor_contract_source = "candidate_metadata"
+
+[decoders]
+supported = [
+    "ctc",
+    "tdt",
+]
+
+default = "ctc"
+
+# CTC is deliberately the first deployment target because its runtime
+# path is substantially simpler than TDT.
+deployment_priority = [
+    "ctc",
+    "tdt",
+]
+
+[decoder.ctc]
+enabled = true
+
+# CTC is the initial ONNX/Rust production target.
+primary_onnx_target = true
+
+# Decoder implementation is owned by this repository/runtime rather than
+# an autoregressive Transformer generation loop.
+runtime_control = "ctc"
+
+# Standard high-level CTC flow:
+#
+# logits
+#   -> argmax/token selection
+#   -> blank removal
+#   -> repeated-token collapse
+#   -> tokenizer decode
+#
+collapse_repeated_tokens = true
+remove_blank_tokens = true
+
+# Actual blank token index must be resolved from exported/model metadata.
+blank_token_id_source = "model_metadata"
+
+[decoder.tdt]
+enabled = true
+
+# TDT is supported by the upstream hybrid model but is a later deployment
+# phase in this project.
+primary_onnx_target = false
+
+runtime_control = "tdt"
+
+# TDT requires explicit token-and-duration decoding logic.
+predict_token = true
+predict_duration = true
+
+# Exact duration vocabulary/range must be obtained from pinned model
+# metadata, not duplicated manually here.
+duration_config_source = "upstream_model"
+
+[tokenizer]
+type = "sentencepiece"
+
+configuration_source = "upstream_model"
+
+# Tokenizer assets must remain aligned with the exact model revision.
+revision_locked = true
+
+# Do not normalize text by silently modifying tokenizer output here.
+apply_runtime_normalization = false
+
+[text]
+language = "ja"
+
+# The model produces Japanese transcription and includes punctuation
+# capability according to the upstream model card.
+punctuation_supported = true
+
+translation_supported = false
+
+[onnx]
+enabled = true
+
+# ONNX is a deployment derivative, never the canonical training/reference
+# representation.
+role = "deployment_candidate"
+
+canonical_reference_format = "nemo"
+
+# Start from one portable ONNX artifact rather than OS-specific graphs.
+artifact_strategy = "portable_baseline"
+
+# Current project policy explicitly avoids making separate ONNX files merely
+# because the target operating system differs.
+os_specific_artifacts = false
+
+# Backend-specific optimized variants may be added only when benchmark data
+# justifies them.
+allow_backend_optimized_variants = true
+
+# Initial export target.
+initial_decoder = "ctc"
+
+[onnx.validation]
+# Candidate must first agree with NeMo/CPU reference before being used on
+# platform-specific EPs.
+require_reference_parity = true
+
+required_checkpoints = [
+    "frontend",
+    "encoder",
+    "logits",
+    "tokens",
+    "transcript",
+]
+
+# Numeric thresholds are defined by the locked evaluation schema rather
+# than duplicated here.
+tolerance_source = "evaluation-schema"
+
+[onnx.artifacts]
+# These are logical roles rather than mandatory literal filenames.
+#
+# Candidate metadata maps these roles to actual ONNX files.
+required_ctc_roles = [
+    "encoder",
+    "ctc_head",
+]
+
+optional_tdt_roles = [
+    "encoder",
+    "predictor",
+    "joint",
+]
+
+[execution]
+supported_providers = [
+    "cpu",
+    "cuda",
+    "directml",
+    "coreml",
+]
+
+# CPU remains the portable semantic reference.
+reference_provider = "cpu"
+
+# Provider-specific options live under config/providers/.
+provider_configuration_root = "config/providers"
+
+[execution.platforms]
+linux = [
+    "cpu",
+    "cuda",
+]
+
+windows = [
+    "cpu",
+    "cuda",
+    "directml",
+]
+
+macos = [
+    "cpu",
+    "coreml",
+]
+
+[evaluation]
+# Common suite definitions.
+smoke_config = "config/evaluation/smoke.toml"
+parity_config = "config/evaluation/parity.toml"
+full_config = "config/evaluation/full.toml"
+
+# Manifest names are resolved by the evaluation configuration.
+manifest_root = "evaluation/manifests"
+
+# External revision state.
+reference_revision = "config/revisions/reference.json"
+evaluation_schema_revision = "config/revisions/evaluation-schema.json"
+datasets_lock_revision = "config/revisions/datasets-lock.json"
+
+[evaluation.reference]
+# The project compares deployment artifacts against a pinned NeMo reference.
+implementation = "nemo"
+
+# CTC and TDT must remain separate benchmark identities.
+separate_decoder_results = true
+
+[evaluation.metrics]
+quality = [
+    "cer",
+    "wer",
+]
+
+performance = [
+    "rtf",
+    "load_ms",
+    "session_creation_ms",
+    "frontend_ms",
+    "encoder_ms",
+    "decoder_ms",
+    "postprocess_ms",
+    "total_inference_ms",
+]
+
+resources = [
+    "peak_ram_mb",
+]
+
+[storage]
+# GitHub source repository contains configuration/code only.
+store_model_in_git = false
+
+store_audio_in_git = false
+
+store_large_tensors_in_git = false
+
+# Candidate models and durable evaluation artifacts live in HF.
+candidate_storage = "hf_bucket"
+
+release_storage = "hf_model_repo"
+
+run_storage = "hf_bucket"
+
+benchmark_storage = "hf_bucket"
+
+[storage.hf_bucket]
+candidate_prefix = "candidates"
+reference_prefix = "reference"
+run_prefix = "runs"
+benchmark_prefix = "benchmarks"
+temporary_prefix = "tmp"
+
+[compatibility]
+# Project scope decisions.
+mlx = false
+
+native_coreml_conversion = false
+
+coreml_execution_provider = true
+
+directml_execution_provider = true
+cuda_execution_provider = true
+
+[rust]
+# Rust is expected to become the production/runtime implementation.
+planned = true
+
+# CTC comes first.
+initial_decoder = "ctc"
+
+# Rust must consume the same ONNX candidate and tokenizer/model metadata
+# used by the Python evaluator.
+require_python_parity = true
+
+expected_components = [
+    "audio",
+    "frontend",
+    "onnx_runtime",
+    "ctc_decoder",
+    "tdt_decoder",
+    "tokenizer",
+    "metrics",
+]
+
+[metadata]
+# Human-readable project notes only.
+#
+# Dynamic upstream metadata such as commit SHA must not be inserted here.
+description = """
+Primary Japanese ASR model for the project.
+NVIDIA NeMo Hybrid FastConformer TDT-CTC model.
+CTC is the first ONNX/Rust deployment target; TDT follows after CTC parity.
+"""

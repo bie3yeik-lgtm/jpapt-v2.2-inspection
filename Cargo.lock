@@ -1,0 +1,8 @@
+# This file is intentionally a bootstrap placeholder.
+#
+# Generate the authoritative lockfile after all crate Cargo.toml files exist:
+#
+#   cargo generate-lockfile
+#
+# Do not treat this placeholder as a resolved dependency lock.
+version = 4

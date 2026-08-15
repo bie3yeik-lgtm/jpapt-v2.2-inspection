@@ -1,0 +1,153 @@
+# config/environments/linux.toml
+#
+# Linux / WSL2 environment configuration.
+#
+# Responsibilities:
+# - Define host/runtime characteristics that differ by operating system.
+# - Define conservative defaults for caches, temporary files, and concurrency.
+#
+# Non-responsibilities:
+# - Model revisions
+# - Dataset revisions
+# - Evaluation thresholds
+# - Execution Provider configuration
+#
+# Those belong under config/models/, config/evaluation/,
+# config/providers/, or HF Bucket config/revisions/.
+
+schema_version = 1
+
+[environment]
+id = "linux"
+os = "linux"
+architecture = "auto"
+description = "Linux / WSL2 / GitHub Actions Linux environment"
+
+# Paths are repository-relative unless explicitly documented otherwise.
+# Runtime environment variables may override these defaults.
+[path]
+cache_root = ".cache"
+model_cache = ".cache/models"
+evaluation_cache = ".cache/evaluation"
+huggingface_cache = ".cache/huggingface"
+temporary_root = "tmp"
+results_root = "results"
+
+# GitHub Actions and local scripts may create this directory for
+# downloaded HF metadata and transient run state.
+ci_root = ".ci"
+
+[cache]
+enabled = true
+
+# Cache contents must never be treated as authoritative data.
+# HF Model Repo / Bucket and revision locks remain the source of truth.
+verify_on_restore = true
+
+# Verify downloaded large artifacts against expected SHA-256 values
+# when those hashes are available from metadata.
+verify_artifact_sha256 = true
+
+# Reuse downloaded ONNX candidates.
+models = true
+
+# Reuse selected/downloaded evaluation audio.
+evaluation_data = true
+
+# Reuse Hugging Face Hub/Bucket downloads.
+huggingface = true
+
+# Do not cache generated benchmark results as authoritative state.
+# Results are uploaded to HF Bucket runs/ and benchmarks/.
+generated_results = false
+
+[temporary]
+cleanup_on_success = true
+cleanup_on_failure = false
+
+# Do not delete shared caches during ordinary evaluation runs.
+preserve_cache = true
+
+[runtime]
+# "auto" means the evaluator chooses an appropriate value based on
+# available logical CPUs and the selected Execution Provider.
+worker_threads = "auto"
+
+# Evaluation entries may be decoded/preprocessed concurrently.
+parallel_samples = "auto"
+
+# Start conservatively. Model/provider-specific batching belongs in
+# config/evaluation/*.toml, not here.
+default_batch_size = 1
+
+# Avoid unbounded queues when full datasets are evaluated.
+max_prefetch_samples = 4
+
+[runtime.cpu]
+# 0 means "let ONNX Runtime choose".
+intra_op_threads = 0
+inter_op_threads = 0
+
+# Sequential is the safest cross-platform reference mode.
+execution_mode = "sequential"
+
+# Memory arena is normally beneficial for repeated ONNX inference.
+enable_cpu_mem_arena = true
+enable_mem_pattern = true
+
+[audio]
+# Canonical ASR input is expected to be normalized/resampled by the
+# evaluator according to model configuration.
+decoder_backend = "auto"
+
+# Avoid loading the entire evaluation corpus into RAM.
+stream_dataset = true
+
+# Decode a bounded number of samples ahead of inference.
+prefetch = true
+
+[benchmark]
+enabled = true
+
+# Always retain separate cold/warm measurements where supported.
+measure_cold_start = true
+measure_warm_runs = true
+
+# End-to-end timing includes decode/preprocess/inference/postprocess.
+measure_end_to_end = true
+
+# Component timings are requested where the evaluator can expose them.
+measure_components = true
+
+measure_peak_ram = true
+
+# GPU metrics are provider-specific and therefore optional here.
+measure_gpu_memory = "auto"
+
+[logging]
+level = "info"
+format = "json"
+
+# Per-sample records are valuable for regression diagnosis but can be
+# large, so the evaluator writes them locally and the workflow decides
+# what gets uploaded.
+per_sample_results = true
+
+[validation]
+# The environment itself must never silently change evaluation semantics.
+strict_revision_lock = true
+strict_schema_validation = true
+
+# CPUExecutionProvider is the portable reference EP.
+require_cpu_reference = true
+
+[github_actions]
+supported = true
+runner = "ubuntu-latest"
+
+# Standard public-repository GitHub-hosted runner.
+self_hosted = false
+
+# This configuration may be used for both small parity and full CPU
+# evaluation workflows.
+allow_full_evaluation = true

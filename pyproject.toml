@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "parakeet-onnx"
+version = "0.1.0"
+description = "Reference, export, evaluation, and deployment tooling for Parakeet ONNX ASR artifacts."
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "jsonschema>=4.0",
+    "numpy>=2.0",
+    "soundfile>=0.13",
+    "scipy>=1.14",
+]
+
+[project.optional-dependencies]
+datasets = [
+    "datasets>=3.0",
+]
+onnx = [
+    "onnx>=1.17",
+    "onnxruntime>=1.20",
+]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=6",
+    "ruff>=0.12",
+    "mypy>=1.15",
+]
+tools = [
+    "onnx>=1.17",
+]
+
+[project.scripts]
+parakeet-onnx-export = "parakeet_onnx.cli.export:main"
+parakeet-onnx-evaluate = "parakeet_onnx.cli.evaluate:main"
+parakeet-onnx-compare = "parakeet_onnx.cli.compare:main"
+parakeet-onnx-benchmark = "parakeet_onnx.cli.benchmark:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/src/parakeet_onnx"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["python/src", "python/tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["parakeet_onnx"]
+
+[tool.coverage.run]
+source = ["parakeet_onnx"]
+branch = true

@@ -1,0 +1,278 @@
+# config/models/kotoba-whisper-v2.0.toml
+#
+# Compatibility / migration configuration for:
+#   kotoba-tech/kotoba-whisper-v2.0
+#
+# This model is NOT the primary future runtime target of this repository.
+#
+# Responsibilities:
+# - Preserve comparison with the existing Whisper-based ONNX pipeline.
+# - Measure migration impact when moving to Parakeet.
+# - Provide historical benchmark compatibility where required.
+#
+# Exact upstream revisions remain externalized through HF Bucket revision
+# lock metadata.
+
+schema_version = 1
+
+[model]
+id = "kotoba-whisper-v2.0"
+
+display_name = "Kotoba Whisper v2.0"
+
+family = "whisper"
+
+task = "automatic-speech-recognition"
+
+language = "ja"
+
+framework = "transformers"
+
+architecture = "whisper_seq2seq"
+
+role = "compatibility_reference"
+
+[upstream]
+provider = "huggingface"
+
+repo_type = "model"
+
+repo_id = "kotoba-tech/kotoba-whisper-v2.0"
+
+revision_source = "hf_bucket"
+
+revision_config = "config/revisions/reference.json"
+
+allow_floating_revision = false
+
+[reference]
+runtime = "transformers"
+
+model_id = "kotoba-tech/kotoba-whisper-v2.0"
+
+required_before_onnx_validation = true
+
+[audio]
+sample_rate_hz = 16000
+
+channels = 1
+require_mono = true
+
+input_format = "waveform"
+waveform_dtype = "float32"
+
+waveform_min = -1.0
+waveform_max = 1.0
+
+allow_resample = true
+
+[frontend]
+# Whisper frontend parameters are taken from the pinned processor/model
+# configuration.
+implementation = "whisper_compatible"
+
+configuration_source = "upstream_processor"
+
+allow_local_parameter_override = false
+
+output_dtype = "float32"
+
+[encoder]
+type = "whisper_encoder"
+
+tensor_contract_source = "candidate_metadata"
+
+[decoder]
+type = "whisper_autoregressive"
+
+autoregressive = true
+
+# Whisper uses an autoregressive decoder and therefore has runtime state
+# fundamentally different from Parakeet CTC.
+requires_generation_loop = true
+
+requires_kv_cache = true
+
+requires_decoder_input_ids = true
+
+# Depending on the exported graph/controller implementation.
+cache_position_support = "candidate_specific"
+
+[decoder.generation]
+configuration_source = "upstream_generation_config"
+
+# These settings are deliberately resolved from the pinned upstream model
+# rather than copied into this TOML.
+forced_decoder_ids_source = "upstream_model"
+special_tokens_source = "upstream_model"
+
+# Timestamp-token handling remains Whisper-specific.
+timestamp_tokens = true
+
+[tokenizer]
+type = "whisper"
+
+configuration_source = "upstream_processor"
+
+revision_locked = true
+
+apply_runtime_normalization = false
+
+[text]
+language = "ja"
+
+punctuation_supported = true
+
+[onnx]
+enabled = true
+
+role = "compatibility_candidate"
+
+canonical_reference_format = "transformers"
+
+artifact_strategy = "portable_baseline"
+
+os_specific_artifacts = false
+
+allow_backend_optimized_variants = true
+
+[onnx.validation]
+require_reference_parity = true
+
+required_checkpoints = [
+    "frontend",
+    "encoder",
+    "decoder_logits",
+    "tokens",
+    "transcript",
+]
+
+tolerance_source = "evaluation-schema"
+
+[onnx.decoder]
+# Whisper ONNX may use multiple exported decoder graphs depending on the
+# export implementation.
+#
+# Concrete filenames and input/output contracts belong to candidate
+# metadata instead of this stable model definition.
+requires_decoder_graph = true
+
+requires_generation_controller = true
+
+requires_cache_management = true
+
+[execution]
+supported_providers = [
+    "cpu",
+    "cuda",
+    "directml",
+    "coreml",
+]
+
+reference_provider = "cpu"
+
+provider_configuration_root = "config/providers"
+
+[execution.platforms]
+linux = [
+    "cpu",
+    "cuda",
+]
+
+windows = [
+    "cpu",
+    "cuda",
+    "directml",
+]
+
+macos = [
+    "cpu",
+    "coreml",
+]
+
+[evaluation]
+smoke_config = "config/evaluation/smoke.toml"
+parity_config = "config/evaluation/parity.toml"
+full_config = "config/evaluation/full.toml"
+
+manifest_root = "evaluation/manifests"
+
+reference_revision = "config/revisions/reference.json"
+evaluation_schema_revision = "config/revisions/evaluation-schema.json"
+datasets_lock_revision = "config/revisions/datasets-lock.json"
+
+[evaluation.reference]
+implementation = "transformers"
+
+[evaluation.metrics]
+quality = [
+    "cer",
+    "wer",
+]
+
+performance = [
+    "rtf",
+    "load_ms",
+    "session_creation_ms",
+    "frontend_ms",
+    "encoder_ms",
+    "decoder_ms",
+    "postprocess_ms",
+    "total_inference_ms",
+]
+
+resources = [
+    "peak_ram_mb",
+]
+
+[storage]
+store_model_in_git = false
+store_audio_in_git = false
+store_large_tensors_in_git = false
+
+candidate_storage = "hf_bucket"
+release_storage = "hf_model_repo"
+run_storage = "hf_bucket"
+benchmark_storage = "hf_bucket"
+
+[storage.hf_bucket]
+candidate_prefix = "candidates"
+reference_prefix = "reference"
+run_prefix = "runs"
+benchmark_prefix = "benchmarks"
+temporary_prefix = "tmp"
+
+[compatibility]
+mlx = false
+native_coreml_conversion = false
+
+coreml_execution_provider = true
+directml_execution_provider = true
+cuda_execution_provider = true
+
+[rust]
+# Rust support is primarily retained for cross-runtime comparison and
+# migration testing. Parakeet is the preferred long-term Rust target.
+planned = true
+
+require_python_parity = true
+
+# Whisper requires substantially more runtime machinery than CTC.
+runtime_complexity = "autoregressive_with_cache"
+
+expected_components = [
+    "audio",
+    "frontend",
+    "onnx_runtime",
+    "generation_controller",
+    "kv_cache",
+    "tokenizer",
+    "metrics",
+]
+
+[metadata]
+description = """
+Compatibility model representing the existing Kotoba-Whisper v2.0
+Whisper-based pipeline. Used to quantify migration effects when replacing
+the previous Whisper ONNX runtime with Parakeet.
+"""

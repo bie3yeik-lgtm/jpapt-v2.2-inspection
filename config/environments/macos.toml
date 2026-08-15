@@ -1,0 +1,165 @@
+# config/environments/macos.toml
+#
+# Apple Silicon macOS environment configuration.
+#
+# Responsibilities:
+# - CPUExecutionProvider parity
+# - CoreMLExecutionProvider parity
+# - CoreML EP regression testing on GitHub-hosted macOS
+# - Local Apple Silicon performance evaluation where appropriate
+#
+# Explicitly out of scope:
+# - MLX
+# - Native Core ML model conversion
+# - .mlpackage generation
+#
+# ONNX remains the deployment artifact.
+
+schema_version = 1
+
+[environment]
+id = "macos"
+os = "macos"
+architecture = "arm64"
+description = "Apple Silicon macOS / GitHub Actions macOS environment"
+
+[path]
+cache_root = ".cache"
+model_cache = ".cache/models"
+evaluation_cache = ".cache/evaluation"
+huggingface_cache = ".cache/huggingface"
+temporary_root = "tmp"
+results_root = "results"
+ci_root = ".ci"
+
+[cache]
+enabled = true
+verify_on_restore = true
+verify_artifact_sha256 = true
+
+models = true
+evaluation_data = true
+huggingface = true
+generated_results = false
+
+# macOS is expected to operate under tighter storage constraints than
+# the main Linux/Windows development environments.
+prefer_compact_cache = true
+
+[temporary]
+cleanup_on_success = true
+
+# Keep failed-run material for diagnosis, but it may be removed explicitly
+# after investigation.
+cleanup_on_failure = false
+
+preserve_cache = true
+
+[runtime]
+# Keep defaults conservative for small-memory Apple Silicon machines.
+worker_threads = "auto"
+
+# Do not aggressively parallelize multiple large ASR inference sessions.
+parallel_samples = 1
+
+default_batch_size = 1
+
+# Limit decoded/preprocessed samples waiting in memory.
+max_prefetch_samples = 2
+
+[runtime.cpu]
+intra_op_threads = 0
+inter_op_threads = 0
+execution_mode = "sequential"
+
+enable_cpu_mem_arena = true
+enable_mem_pattern = true
+
+[audio]
+decoder_backend = "auto"
+
+# Streaming avoids retaining the complete evaluation corpus in memory.
+stream_dataset = true
+
+prefetch = true
+
+[benchmark]
+enabled = true
+
+measure_cold_start = true
+measure_warm_runs = true
+measure_end_to_end = true
+measure_components = true
+
+measure_peak_ram = true
+
+# CoreML uses Apple's unified-memory architecture; a generic discrete
+# VRAM metric is not considered authoritative here.
+measure_gpu_memory = false
+
+[logging]
+level = "info"
+format = "json"
+per_sample_results = true
+
+[validation]
+strict_revision_lock = true
+strict_schema_validation = true
+
+# CPU EP is run first and acts as the same-machine reference for CoreML EP.
+require_cpu_reference = true
+
+cross_platform_parity = true
+
+[github_actions]
+supported = true
+runner = "macos-15"
+self_hosted = false
+
+# GitHub-hosted macOS is intended for the small parity suite.
+allow_full_evaluation = false
+
+# Performance measured on GitHub-hosted macOS must not be interpreted as
+# the production benchmark for the user's physical Apple Silicon device.
+authoritative_performance_benchmark = false
+
+[coreml_ep]
+# CoreML means ONNX Runtime CoreMLExecutionProvider only.
+enabled = true
+
+# Do not request or generate a native .mlpackage.
+native_coreml_conversion = false
+
+# MLX is intentionally excluded from this project.
+mlx_enabled = false
+
+# Evaluation should compare the CoreML EP output against the CPU EP result
+# produced from the exact same ONNX candidate on the same runner.
+compare_against_cpu = true
+
+# Provider fallback information should be collected where ORT exposes it,
+# because "CoreML EP registered" does not guarantee useful offload.
+record_provider_assignment = true
+
+# Failure of CoreML EP must be reported rather than silently converted
+# into a successful CPU-only benchmark.
+require_provider_registration = true
+
+[local_apple_silicon]
+# These values describe policy, not a hard-coded machine identity.
+enabled = true
+
+# Local Apple hardware is the authoritative environment for actual
+# CoreML EP performance figures.
+authoritative_performance_benchmark = true
+
+# Low-memory policy: do not process many utterances concurrently.
+max_parallel_samples = 1
+
+# Avoid copying full evaluation datasets into persistent local storage
+# when they can be streamed/resolved from the locked source.
+prefer_streamed_evaluation_data = true
+
+# Large intermediate encoder/logit tensors should only be retained for
+# explicitly selected golden samples.
+retain_full_intermediates = false

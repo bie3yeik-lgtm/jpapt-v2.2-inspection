@@ -1,0 +1,10 @@
+[package]
+name = "asr-eval"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+asr-runtime = { path = "../asr-runtime" }
+asr-audio = { path = "../asr-audio" }
+asr-metrics = { path = "../asr-metrics" }

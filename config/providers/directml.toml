@@ -1,0 +1,116 @@
+# config/providers/directml.toml
+#
+# ONNX Runtime DirectML Execution Provider configuration.
+#
+# DirectML is Windows-only and targets DirectX 12-capable hardware.
+#
+# Project policy:
+# - Native Windows may use DirectML for compatibility evaluation.
+# - Standard GitHub-hosted Windows runners are NOT considered an
+#   authoritative DirectML GPU performance environment.
+# - CPUExecutionProvider remains the Windows parity reference.
+
+schema_version = 1
+
+[provider]
+id = "directml"
+ort_name = "DmlExecutionProvider"
+description = "Windows DirectML ONNX Runtime execution provider"
+
+enabled = true
+reference_provider = false
+
+supported_os = [
+    "windows",
+]
+
+[priority]
+standalone = false
+
+priority = 20
+cpu_fallback_priority = 100
+
+[device]
+# Adapter/device selection is runtime-specific.
+# 0 represents the first/default DirectML device when exposed.
+device_id = 0
+
+[session]
+# DirectML has historically had stricter session/execution constraints
+# than CPU/CUDA, so use conservative defaults.
+graph_optimization_level = "all"
+
+execution_mode = "sequential"
+
+# DirectML evaluation should avoid assumptions based on fixed shapes.
+enable_mem_pattern = false
+
+# CPU fallback may still use the CPU memory arena.
+enable_cpu_mem_arena = true
+
+use_per_session_threads = true
+
+[precision]
+allow_fp32_model = true
+allow_fp16_model = true
+allow_int8_model = true
+
+# Do not automatically convert model precision.
+automatic_precision_conversion = false
+
+[validation]
+compare_against_provider = "cpu"
+
+require_transcript_parity = true
+require_token_parity = true
+use_schema_tolerances = true
+
+# Allow functional fallback by default.
+allow_cpu_fallback = true
+
+# Strict mode may be used on a real Windows GPU environment if future
+# evaluation needs to prove that DirectML executes required nodes.
+strict_provider_mode = false
+
+[profiling]
+enabled = true
+
+record_model_load_time = true
+record_session_creation_time = true
+record_inference_time = true
+record_end_to_end_time = true
+
+record_peak_ram = true
+
+# Device-memory reporting varies by DirectML/Windows integration and is
+# therefore best-effort rather than a mandatory schema field.
+record_device_memory = "best_effort"
+
+record_provider_assignment = true
+
+[benchmark]
+warmup_runs = 2
+measured_runs = 3
+record_rtf = true
+
+# GitHub-hosted Windows must not publish authoritative GPU performance.
+github_hosted_authoritative = false
+
+# Native Windows hardware may opt in to real DirectML benchmarking.
+native_windows_authoritative = true
+
+[compatibility]
+requires_windows = true
+requires_directx12 = true
+
+# DirectML continues to be supported but new Windows deployment
+# development is increasingly centered on Windows ML.
+maintenance_mode_awareness = true
+
+[reporting]
+provider_label = "directml"
+benchmark_namespace = "directml"
+
+record_fallback = true
+record_adapter_name = true
+record_windows_version = true

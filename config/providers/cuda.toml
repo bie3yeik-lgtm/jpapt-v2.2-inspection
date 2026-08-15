@@ -1,0 +1,152 @@
+# config/providers/cuda.toml
+#
+# ONNX Runtime CUDA Execution Provider configuration.
+#
+# Primary responsibilities:
+# - NVIDIA GPU inference
+# - Linux / Windows CUDA parity
+# - Performance benchmarking
+#
+# CUDAExecutionProvider may fall back to CPUExecutionProvider for nodes
+# that cannot be executed on CUDA unless strict evaluation disables
+# fallback.
+
+schema_version = 1
+
+[provider]
+id = "cuda"
+ort_name = "CUDAExecutionProvider"
+description = "NVIDIA CUDA ONNX Runtime execution provider"
+
+enabled = true
+reference_provider = false
+
+supported_os = [
+    "linux",
+    "windows",
+]
+
+[priority]
+standalone = false
+
+# Normal execution order:
+#
+# CUDAExecutionProvider
+# CPUExecutionProvider
+#
+# This mirrors ONNX Runtime's provider-priority model.
+fallback_provider = false
+
+priority = 10
+cpu_fallback_priority = 100
+
+[device]
+# Default to the first visible CUDA device.
+device_id = 0
+
+# Do not encode CUDA_VISIBLE_DEVICES policy here.
+# Host/job configuration owns physical device exposure.
+respect_visible_devices = true
+
+[session]
+graph_optimization_level = "all"
+
+execution_mode = "sequential"
+
+enable_cpu_mem_arena = true
+enable_mem_pattern = true
+use_per_session_threads = true
+
+[cuda]
+# ONNX Runtime CUDA EP provider options.
+#
+# "default" means the runtime does not explicitly override the ORT default.
+arena_extend_strategy = "default"
+
+# cuDNN convolution algorithm search.
+#
+# Common ORT values include:
+#   exhaustive
+#   heuristic
+#   default
+#
+# Use exhaustive for reproducible benchmark candidates if startup cost
+# is acceptable; keep the project default conservative.
+cudnn_conv_algo_search = "default"
+
+# Maximum CUDA allocator memory.
+# 0 means no project-imposed limit.
+gpu_mem_limit_bytes = 0
+
+# Copy operations run on the provider's default stream unless the runtime
+# explicitly configures custom streams.
+do_copy_in_default_stream = true
+
+# Do not opt into custom CUDA stream ownership by default.
+use_user_compute_stream = false
+
+# Convolution padding behaviour remains at ORT default unless needed.
+cudnn_conv_use_max_workspace = "default"
+
+# TF32 can produce small numerical differences on supported NVIDIA GPUs.
+# Keep this explicit in metadata even if runtime support varies by ORT build.
+allow_tf32 = true
+
+[precision]
+# This configuration describes the EP, not an artifact conversion policy.
+# The ONNX candidate determines FP32/FP16/INT8 precision.
+allow_fp32_model = true
+allow_fp16_model = true
+allow_int8_model = true
+
+[transfer]
+# Keep host/device copies visible in timing so optimization opportunities
+# are not hidden from benchmark reports.
+include_host_to_device_in_end_to_end = true
+include_device_to_host_in_end_to_end = true
+
+[validation]
+compare_against_provider = "cpu"
+
+require_transcript_parity = true
+require_token_parity = true
+use_schema_tolerances = true
+
+# Normal functional evaluation allows CPU fallback.
+allow_cpu_fallback = true
+
+# A separate strict run may override this to false to prove CUDA coverage.
+strict_provider_mode = false
+
+[profiling]
+enabled = true
+
+record_model_load_time = true
+record_session_creation_time = true
+record_inference_time = true
+record_end_to_end_time = true
+
+record_peak_ram = true
+record_device_memory = true
+
+# Record EP node assignment when exposed by the runtime/logging layer.
+record_provider_assignment = true
+
+[benchmark]
+warmup_runs = 2
+measured_runs = 3
+
+synchronize_before_timing = true
+synchronize_after_timing = true
+
+# RTF remains the primary ASR throughput measure.
+record_rtf = true
+
+[reporting]
+provider_label = "cuda"
+benchmark_namespace = "cuda"
+
+record_fallback = true
+record_cuda_versions = true
+record_gpu_name = true
+record_driver_version = true

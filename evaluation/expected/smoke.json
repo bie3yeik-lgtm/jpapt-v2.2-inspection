@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "suite": "smoke",
+  "status": "uninitialized",
+  "description": "Git-tracked expected semantic outputs for the deterministic smoke evaluation suite.",
+  "manifest": "evaluation/manifests/smoke.jsonl",
+  "lifecycle": {
+    "transition": {
+      "from": null,
+      "to": "uninitialized"
+    },
+    "initialized_from": null
+  },
+  "reference": {
+    "model_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "runtime": "nemo",
+    "decoder": "ctc",
+    "model_revision": null,
+    "tokenizer_revision": null,
+    "datasets_lock_sha256": null,
+    "manifest_sha256": null,
+    "normalization_revision": null
+  },
+  "selection": {
+    "expected_sample_count": 12,
+    "resolved_sample_count": 0,
+    "selection_strategy": "stable_hash",
+    "materialized": false
+  },
+  "comparison": {
+    "compare_sample_identity": true,
+    "compare_text": true,
+    "compare_normalized_text": true,
+    "compare_tokens": true,
+    "require_exact_sample_set": true,
+    "numeric_threshold_source": "evaluation-schema"
+  },
+  "samples": [],
+  "generation": {
+    "generated": false,
+    "generated_at": null,
+    "generator_runtime": null,
+    "generator_version": null,
+    "git_commit": null,
+    "reference_run_id": null
+  }
+}

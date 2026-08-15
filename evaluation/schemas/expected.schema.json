@@ -1,0 +1,605 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/expected.schema.json",
+  "title": "Parakeet ONNX Expected Smoke Evaluation Results",
+  "description": "Git-tracked expected semantic outputs for the deterministic smoke suite. The schema enforces lifecycle invariants for bootstrap initialization and the uninitialized-to-ready transition.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite",
+    "status",
+    "description",
+    "manifest",
+    "lifecycle",
+    "reference",
+    "selection",
+    "comparison",
+    "samples",
+    "generation"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "suite": {
+      "type": "string",
+      "const": "smoke"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "uninitialized",
+        "ready"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest": {
+      "type": "string",
+      "const": "evaluation/manifests/smoke.jsonl"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/lifecycle"
+    },
+    "reference": {
+      "$ref": "#/$defs/reference"
+    },
+    "selection": {
+      "$ref": "#/$defs/selection"
+    },
+    "comparison": {
+      "$ref": "#/$defs/comparison"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sample"
+      }
+    },
+    "generation": {
+      "$ref": "#/$defs/generation"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/uninitializedState"
+    },
+    {
+      "$ref": "#/$defs/readyState"
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "gitRevision": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{7,64}$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transition",
+        "initialized_from"
+      ],
+      "properties": {
+        "transition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                null,
+                "uninitialized"
+              ]
+            },
+            "to": {
+              "type": "string",
+              "enum": [
+                "uninitialized",
+                "ready"
+              ]
+            }
+          }
+        },
+        "initialized_from": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "expected_file_sha256",
+            "git_commit"
+          ],
+          "properties": {
+            "expected_file_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "git_commit": {
+              "$ref": "#/$defs/gitRevision"
+            }
+          }
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_id",
+        "runtime",
+        "decoder",
+        "model_revision",
+        "tokenizer_revision",
+        "datasets_lock_sha256",
+        "manifest_sha256",
+        "normalization_revision"
+      ],
+      "properties": {
+        "model_id": {
+          "type": "string",
+          "const": "nvidia/parakeet-tdt_ctc-0.6b-ja"
+        },
+        "runtime": {
+          "type": "string",
+          "const": "nemo"
+        },
+        "decoder": {
+          "type": "string",
+          "const": "ctc"
+        },
+        "model_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenizer_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datasets_lock_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "manifest_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "normalization_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_sample_count",
+        "resolved_sample_count",
+        "selection_strategy",
+        "materialized"
+      ],
+      "properties": {
+        "expected_sample_count": {
+          "type": "integer",
+          "const": 12
+        },
+        "resolved_sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "selection_strategy": {
+          "type": "string",
+          "const": "stable_hash"
+        },
+        "materialized": {
+          "type": "boolean"
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compare_sample_identity",
+        "compare_text",
+        "compare_normalized_text",
+        "compare_tokens",
+        "require_exact_sample_set",
+        "numeric_threshold_source"
+      ],
+      "properties": {
+        "compare_sample_identity": {
+          "type": "boolean",
+          "const": true
+        },
+        "compare_text": {
+          "type": "boolean",
+          "const": true
+        },
+        "compare_normalized_text": {
+          "type": "boolean",
+          "const": true
+        },
+        "compare_tokens": {
+          "type": "boolean",
+          "const": true
+        },
+        "require_exact_sample_set": {
+          "type": "boolean",
+          "const": true
+        },
+        "numeric_threshold_source": {
+          "type": "string",
+          "const": "evaluation-schema"
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "manifest_entry_id",
+        "dataset_id",
+        "dataset_revision",
+        "source_identity",
+        "selection_hash",
+        "reference_text",
+        "expected"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "manifest_entry_id": {
+          "type": "string",
+          "enum": [
+            "smoke-jsut",
+            "smoke-common-voice"
+          ]
+        },
+        "dataset_id": {
+          "type": "string",
+          "enum": [
+            "jsut-basic5000",
+            "common-voice-8-ja"
+          ]
+        },
+        "dataset_revision": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source_identity": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "selection_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reference_text": {
+          "type": "string"
+        },
+        "expected": {
+          "$ref": "#/$defs/expectedOutput"
+        }
+      }
+    },
+    "expectedOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "normalized_text",
+        "tokens"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "normalized_text": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generated",
+        "generated_at",
+        "generator_runtime",
+        "generator_version",
+        "git_commit",
+        "reference_run_id"
+      ],
+      "properties": {
+        "generated": {
+          "type": "boolean"
+        },
+        "generated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "generator_runtime": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generator_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Fa-f0-9]{7,64}$"
+        },
+        "reference_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "uninitializedState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "uninitialized"
+        },
+        "lifecycle": {
+          "type": "object",
+          "properties": {
+            "transition": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "const": null
+                },
+                "to": {
+                  "const": "uninitialized"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            },
+            "initialized_from": {
+              "const": null
+            }
+          },
+          "required": [
+            "transition",
+            "initialized_from"
+          ]
+        },
+        "reference": {
+          "type": "object",
+          "properties": {
+            "model_revision": {
+              "const": null
+            },
+            "tokenizer_revision": {
+              "const": null
+            },
+            "datasets_lock_sha256": {
+              "const": null
+            },
+            "manifest_sha256": {
+              "const": null
+            },
+            "normalization_revision": {
+              "const": null
+            }
+          }
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "expected_sample_count": {
+              "const": 12
+            },
+            "resolved_sample_count": {
+              "const": 0
+            },
+            "materialized": {
+              "const": false
+            }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "generation": {
+          "type": "object",
+          "properties": {
+            "generated": {
+              "const": false
+            },
+            "generated_at": {
+              "const": null
+            },
+            "generator_runtime": {
+              "const": null
+            },
+            "generator_version": {
+              "const": null
+            },
+            "git_commit": {
+              "const": null
+            },
+            "reference_run_id": {
+              "const": null
+            }
+          }
+        }
+      },
+      "required": [
+        "status",
+        "lifecycle",
+        "reference",
+        "selection",
+        "samples",
+        "generation"
+      ]
+    },
+    "readyState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "ready"
+        },
+        "lifecycle": {
+          "type": "object",
+          "properties": {
+            "transition": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "const": "uninitialized"
+                },
+                "to": {
+                  "const": "ready"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            },
+            "initialized_from": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "transition",
+            "initialized_from"
+          ]
+        },
+        "reference": {
+          "type": "object",
+          "properties": {
+            "model_revision": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "tokenizer_revision": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "datasets_lock_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "manifest_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "normalization_revision": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          }
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "expected_sample_count": {
+              "const": 12
+            },
+            "resolved_sample_count": {
+              "const": 12
+            },
+            "materialized": {
+              "const": true
+            }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 12,
+          "maxItems": 12
+        },
+        "generation": {
+          "type": "object",
+          "properties": {
+            "generated": {
+              "const": true
+            },
+            "generated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "generator_runtime": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generator_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "git_commit": {
+              "$ref": "#/$defs/gitRevision"
+            },
+            "reference_run_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "required": [
+        "status",
+        "lifecycle",
+        "reference",
+        "selection",
+        "samples",
+        "generation"
+      ]
+    }
+  }
+}

@@ -1,0 +1,52 @@
+min_version = "2025.0.0"
+
+[tools]
+python = "3.14"
+uv = "latest"
+rust = "1.97.1"
+node = "26"
+pnpm = "11.20.0"
+go = "1.26"
+
+[env]
+PARAKEET_ONNX_REPO_ROOT = "{{config_root}}"
+HF_HOME = "{{config_root}}/.cache/huggingface"
+UV_CACHE_DIR = "{{config_root}}/.cache/uv"
+PNPM_STORE_DIR = "{{config_root}}/.cache/pnpm"
+
+[tasks.setup]
+description = "Set up the local development environment"
+run = """
+if [ "${MISE_OS}" = "windows" ]; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/dev/setup.ps1
+else
+  bash scripts/dev/setup.sh
+fi
+"""
+
+[tasks.doctor]
+description = "Validate the local development environment"
+run = "uv run python scripts/dev/doctor.py"
+
+[tasks.hf-revisions]
+description = "Fetch pinned Hugging Face revision documents"
+run = "bash scripts/hf/hf-fetch-revisions.sh"
+
+[tasks.test]
+description = "Run Python tests"
+run = "uv run pytest"
+
+[tasks.lint]
+description = "Run Python lint checks"
+run = "uv run ruff check python scripts"
+
+[tasks.format]
+description = "Format Python and Rust sources"
+run = """
+uv run ruff format python scripts
+cargo fmt --all
+"""
+
+[tasks.rust-check]
+description = "Check the Rust workspace"
+run = "cargo check --workspace"

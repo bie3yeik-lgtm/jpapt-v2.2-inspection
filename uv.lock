@@ -1,0 +1,10 @@
+# This file is intentionally a bootstrap placeholder.
+#
+# Generate the authoritative lockfile from pyproject.toml with:
+#
+#   uv lock
+#
+# Do not treat this placeholder as a resolved dependency lock.
+version = 1
+revision = 1
+requires-python = ">=3.12, <3.15"

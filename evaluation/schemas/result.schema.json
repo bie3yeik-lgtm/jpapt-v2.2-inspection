@@ -1,0 +1,481 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/result.schema.json",
+  "title": "Parakeet ONNX Evaluation Sample Result",
+  "description": "Result contract for one audio sample evaluated by one runtime and Execution Provider.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "sample",
+    "execution",
+    "output",
+    "quality",
+    "timing",
+    "memory",
+    "parity",
+    "provider",
+    "status",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sample": {
+      "$ref": "#/$defs/sampleIdentity"
+    },
+    "execution": {
+      "$ref": "#/$defs/executionIdentity"
+    },
+    "output": {
+      "$ref": "#/$defs/asrOutput"
+    },
+    "quality": {
+      "$ref": "#/$defs/qualityMetrics"
+    },
+    "timing": {
+      "$ref": "#/$defs/timingMetrics"
+    },
+    "memory": {
+      "$ref": "#/$defs/memoryMetrics"
+    },
+    "parity": {
+      "$ref": "#/$defs/parityResult"
+    },
+    "provider": {
+      "$ref": "#/$defs/providerResult"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "skipped"
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/errorRecord"
+      }
+    }
+  },
+  "$defs": {
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0
+    },
+    "nullableNonNegativeNumber": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "nullableBoolean": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sampleIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dataset_id",
+        "dataset_repo_id",
+        "dataset_revision",
+        "subset",
+        "split",
+        "index",
+        "audio_sha256",
+        "audio_duration_sec",
+        "sample_rate_hz",
+        "reference_text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_repo_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subset": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "split": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "audio_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "audio_duration_sec": {
+          "$ref": "#/$defs/nonNegativeNumber"
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reference_text": {
+          "type": "string"
+        }
+      }
+    },
+    "executionIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "backend",
+        "provider_id",
+        "decoder",
+        "batch_size"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "python",
+            "rust"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "onnxruntime",
+            "nemo",
+            "transformers"
+          ]
+        },
+        "provider_id": {
+          "type": "string",
+          "enum": [
+            "cpu",
+            "cuda",
+            "directml",
+            "coreml"
+          ]
+        },
+        "decoder": {
+          "type": "string",
+          "enum": [
+            "ctc",
+            "tdt",
+            "whisper"
+          ]
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "asrOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "normalized_text",
+        "tokens",
+        "token_count"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "normalized_text": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "token_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "qualityMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cer",
+        "wer"
+      ],
+      "properties": {
+        "cer": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "wer": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "timingMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "load_ms",
+        "session_creation_ms",
+        "audio_decode_ms",
+        "resample_ms",
+        "frontend_ms",
+        "encoder_ms",
+        "decoder_ms",
+        "postprocess_ms",
+        "inference_ms",
+        "total_ms",
+        "rtf"
+      ],
+      "properties": {
+        "load_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "session_creation_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "audio_decode_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "resample_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "frontend_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "encoder_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "decoder_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "postprocess_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "inference_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "total_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "rtf": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "memoryMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "peak_ram_mb",
+        "peak_device_memory_mb"
+      ],
+      "properties": {
+        "peak_ram_mb": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "peak_device_memory_mb": {
+          "$ref": "#/$defs/nullableNonNegativeNumber",
+          "description": "Best-effort accelerator memory metric. Null for unified-memory or unsupported telemetry."
+        }
+      }
+    },
+    "parityResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference_run_id",
+        "text_match",
+        "token_match",
+        "numeric"
+      ],
+      "properties": {
+        "reference_run_id": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "text_match": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "token_match": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "numeric": {
+          "$ref": "#/$defs/numericParity"
+        }
+      }
+    },
+    "numericParity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frontend",
+        "encoder",
+        "logits"
+      ],
+      "properties": {
+        "frontend": {
+          "$ref": "#/$defs/tensorComparison"
+        },
+        "encoder": {
+          "$ref": "#/$defs/tensorComparison"
+        },
+        "logits": {
+          "$ref": "#/$defs/tensorComparison"
+        }
+      }
+    },
+    "tensorComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compared",
+        "passed",
+        "max_abs_error",
+        "mean_abs_error",
+        "relative_l2"
+      ],
+      "properties": {
+        "compared": {
+          "type": "boolean"
+        },
+        "passed": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "max_abs_error": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "mean_abs_error": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "relative_l2": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "providerResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "registered",
+        "used",
+        "fallback_detected",
+        "fallback_only",
+        "assigned_nodes",
+        "fallback_nodes"
+      ],
+      "properties": {
+        "requested": {
+          "type": "string",
+          "minLength": 1
+        },
+        "registered": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "used": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "fallback_detected": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "fallback_only": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "assigned_nodes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fallback_nodes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "errorRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "stage",
+        "message",
+        "fatal"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "configuration",
+            "dataset",
+            "audio_decode",
+            "resample",
+            "frontend",
+            "session_creation",
+            "provider_registration",
+            "inference",
+            "encoder",
+            "decoder",
+            "postprocess",
+            "metrics",
+            "parity",
+            "output"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fatal": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

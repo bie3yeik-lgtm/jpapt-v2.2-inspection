@@ -1,0 +1,520 @@
+name: Cross Platform ONNX Parity
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "HF Bucket candidates/<candidate_id>"
+        required: true
+        type: string
+
+      manifest:
+        description: "Parity evaluation manifest"
+        required: false
+        default: "parity.jsonl"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-platform-${{ inputs.candidate_id }}
+  cancel-in-progress: true
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_BUCKET: ${{ vars.HF_BUCKET }}
+  HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  evaluate:
+    name: ${{ matrix.result_name }}
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        include:
+          - os: ubuntu-latest
+            provider: cpu
+            result_name: linux-cpu
+            benchmark_name: linux-cpu
+
+          - os: windows-latest
+            provider: cpu
+            result_name: windows-cpu
+            benchmark_name: windows-cpu
+
+          - os: macos-15
+            provider: cpu
+            result_name: macos-cpu
+            benchmark_name: macos-cpu
+
+          - os: macos-15
+            provider: coreml
+            result_name: macos-coreml
+            benchmark_name: coreml
+
+    runs-on: ${{ matrix.os }}
+
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate GitHub configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo "::error::HF_TOKEN secret is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${HF_BUCKET:-}" ]]; then
+            echo "::error::HF_BUCKET repository variable is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${HF_MODEL_REPO:-}" ]]; then
+            echo "::error::HF_MODEL_REPO repository variable is not configured."
+            exit 1
+          fi
+
+      - name: Show runner information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Runner OS:   ${{ runner.os }}"
+          echo "Runner arch: ${{ runner.arch }}"
+          echo "Matrix OS:   ${{ matrix.os }}"
+          echo "Provider:    ${{ matrix.provider }}"
+
+          uname -a || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hugging Face CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade huggingface_hub
+
+          hf --version
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      #
+      # Common directory layout.
+      #
+      # Git Bash is available on GitHub-hosted Windows runners,
+      # so these common preparation operations can be shared.
+      #
+
+      - name: Prepare directories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            .cache/huggingface \
+            .cache/models \
+            .cache/evaluation \
+            .ci/hf/config/revisions \
+            .ci/candidate \
+            .ci/reference \
+            .ci/run \
+            "results/${{ matrix.result_name }}"
+
+          HF_HOME_PATH="$(pwd)/.cache/huggingface"
+
+          echo "HF_HOME=${HF_HOME_PATH}" >> "${GITHUB_ENV}"
+
+      #
+      # Download mutable HF lock files before cache restore.
+      #
+      # Their content hashes become part of the cache key, so a lock
+      # update automatically invalidates cached models/evaluation data.
+      #
+
+      - name: Download revision locks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/reference.json" \
+            ".ci/hf/config/revisions/reference.json"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/evaluation-schema.json" \
+            ".ci/hf/config/revisions/evaluation-schema.json"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/datasets-lock.json" \
+            ".ci/hf/config/revisions/datasets-lock.json"
+
+          python -m json.tool \
+            ".ci/hf/config/revisions/reference.json" \
+            >/dev/null
+
+          python -m json.tool \
+            ".ci/hf/config/revisions/evaluation-schema.json" \
+            >/dev/null
+
+          python -m json.tool \
+            ".ci/hf/config/revisions/datasets-lock.json" \
+            >/dev/null
+
+      #
+      # Rust build cache.
+      #
+
+      - name: Cache Rust release build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: >-
+            rust-release-${{ matrix.os }}-${{ runner.arch }}-${{
+              hashFiles(
+                'Cargo.lock',
+                'Cargo.toml',
+                'crates/**/Cargo.toml'
+              )
+            }}
+          restore-keys: |
+            rust-release-${{ matrix.os }}-${{ runner.arch }}-
+
+      #
+      # Model/evaluation cache.
+      #
+      # Provider is deliberately omitted from this key because CPU and
+      # CoreML on the same OS should reuse the same ONNX and WAV assets.
+      #
+
+      - name: Cache model and evaluation assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/huggingface
+            .cache/models
+            .cache/evaluation
+            .ci/candidate
+            .ci/reference
+          key: >-
+            evaluation-${{ matrix.os }}-${{ runner.arch }}-${{
+              inputs.candidate_id
+            }}-${{
+              hashFiles(
+                '.ci/hf/config/revisions/reference.json',
+                '.ci/hf/config/revisions/evaluation-schema.json',
+                '.ci/hf/config/revisions/datasets-lock.json'
+              )
+            }}
+          restore-keys: |
+            evaluation-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
+
+      #
+      # Candidate ONNX.
+      #
+
+      - name: Download candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          hf buckets sync \
+            "${BUCKET}/candidates/${{ inputs.candidate_id }}" \
+            ".ci/candidate"
+
+      - name: Locate ONNX model
+        id: model
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MODEL="$(find .ci/candidate \
+            -type f \
+            -name '*.onnx' \
+            -print \
+            -quit)"
+
+          if [[ -z "${MODEL}" ]]; then
+            echo "::error::No ONNX model was found under .ci/candidate."
+            exit 1
+          fi
+
+          echo "path=${MODEL}" >> "${GITHUB_OUTPUT}"
+          echo "ONNX model: ${MODEL}"
+
+          python - "${MODEL}" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+
+          digest = hashlib.sha256()
+
+          with path.open("rb") as f:
+              for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                  digest.update(chunk)
+
+          print("SHA256:", digest.hexdigest())
+          PY
+
+      #
+      # Reference assets/manifests.
+      #
+
+      - name: Download reference assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          hf buckets sync \
+            "${BUCKET}/reference" \
+            ".ci/reference"
+
+      - name: Locate manifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MANIFEST="$(find .ci/reference \
+            -type f \
+            -name "${{ inputs.manifest }}" \
+            -print \
+            -quit)"
+
+          if [[ -z "${MANIFEST}" ]]; then
+            echo "::error::Manifest not found: ${{ inputs.manifest }}"
+            exit 1
+          fi
+
+          echo "path=${MANIFEST}" >> "${GITHUB_OUTPUT}"
+          echo "Manifest: ${MANIFEST}"
+
+      #
+      # Rust Release evaluator.
+      #
+
+      - name: Build Rust evaluator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo build \
+            --release \
+            --locked \
+            --package asr-eval
+
+      #
+      # Linux/macOS execution.
+      #
+
+      - name: Evaluate ONNX - Linux/macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EVALUATOR="target/release/asr-eval"
+
+          if [[ ! -x "${EVALUATOR}" ]]; then
+            echo "::error::Rust evaluator does not exist: ${EVALUATOR}"
+            exit 1
+          fi
+
+          "${EVALUATOR}" evaluate \
+            --provider "${{ matrix.provider }}" \
+            --model "${{ steps.model.outputs.path }}" \
+            --manifest "${{ steps.manifest.outputs.path }}" \
+            --schema ".ci/hf/config/revisions/evaluation-schema.json" \
+            --datasets-lock ".ci/hf/config/revisions/datasets-lock.json" \
+            --reference ".ci/hf/config/revisions/reference.json" \
+            --output "results/${{ matrix.result_name }}"
+
+      #
+      # Windows execution.
+      #
+
+      - name: Evaluate ONNX - Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $evaluator = ".\target\release\asr-eval.exe"
+
+          if (-not (Test-Path $evaluator)) {
+              throw "Rust evaluator does not exist: $evaluator"
+          }
+
+          & $evaluator evaluate `
+            --provider "${{ matrix.provider }}" `
+            --model "${{ steps.model.outputs.path }}" `
+            --manifest "${{ steps.manifest.outputs.path }}" `
+            --schema ".ci/hf/config/revisions/evaluation-schema.json" `
+            --datasets-lock ".ci/hf/config/revisions/datasets-lock.json" `
+            --reference ".ci/hf/config/revisions/reference.json" `
+            --output "results/${{ matrix.result_name }}"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Evaluation failed with exit code $LASTEXITCODE."
+          }
+
+      #
+      # Verify output contract.
+      #
+
+      - name: Validate metrics output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          METRICS="results/${{ matrix.result_name }}/metrics.json"
+
+          if [[ ! -f "${METRICS}" ]]; then
+            echo "::error::metrics.json was not generated."
+            exit 1
+          fi
+
+          python -m json.tool \
+            "${METRICS}" \
+            >/dev/null
+
+      #
+      # Produce a unique run context for this matrix member.
+      #
+
+      - name: Create run context
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          PLATFORM_RUN_ID="${RUN_ID}-${{ matrix.result_name }}"
+
+          RUN_DIR=".ci/run/${PLATFORM_RUN_ID}"
+
+          mkdir -p "${RUN_DIR}"
+
+          python - <<PY
+          import json
+          import os
+          from pathlib import Path
+
+          context = {
+              "run_id": "${PLATFORM_RUN_ID}",
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "git_repository": os.environ["GITHUB_REPOSITORY"],
+              "git_sha": os.environ["GITHUB_SHA"],
+              "git_ref": os.environ["GITHUB_REF"],
+              "candidate_id": "${{ inputs.candidate_id }}",
+              "runner_os": "${{ runner.os }}",
+              "runner_arch": "${{ runner.arch }}",
+              "runner_image": "${{ matrix.os }}",
+              "provider": "${{ matrix.provider }}",
+              "result_name": "${{ matrix.result_name }}"
+          }
+
+          path = Path("${RUN_DIR}") / "run-context.json"
+          path.write_text(
+              json.dumps(
+                  context,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              encoding="utf-8"
+          )
+          PY
+
+          if [[ -d "results/${{ matrix.result_name }}" ]]; then
+            cp -R \
+              "results/${{ matrix.result_name }}" \
+              "${RUN_DIR}/results"
+          fi
+
+      #
+      # Persist the detailed run separately for every matrix member.
+      # This avoids concurrent jobs writing to the same bucket prefix.
+      #
+
+      - name: Upload run to HF Bucket
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          PLATFORM_RUN_ID="${RUN_ID}-${{ matrix.result_name }}"
+
+          RUN_DIR=".ci/run/${PLATFORM_RUN_ID}"
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          if [[ -d "${RUN_DIR}" ]]; then
+            hf buckets sync \
+              "${RUN_DIR}" \
+              "${BUCKET}/runs/${PLATFORM_RUN_ID}"
+          fi
+
+      #
+      # Small comparable benchmark result.
+      #
+
+      - name: Publish benchmark
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          METRICS="results/${{ matrix.result_name }}/metrics.json"
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          hf buckets cp \
+            "${METRICS}" \
+            "${BUCKET}/benchmarks/${{ inputs.candidate_id }}/${{ matrix.benchmark_name }}/${RUN_ID}.json"
+
+      #
+      # Keep GitHub artifacts intentionally small.
+      #
+
+      - name: Upload lightweight GitHub artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-${{ matrix.result_name }}-${{ inputs.candidate_id }}
+          path: |
+            results/${{ matrix.result_name }}/**/*.json
+            .ci/run/**/run-context.json
+          retention-days: 7
+          if-no-files-found: warn

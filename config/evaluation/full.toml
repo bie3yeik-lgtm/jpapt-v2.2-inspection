@@ -1,0 +1,251 @@
+# config/evaluation/full.toml
+#
+# Full evaluation configuration.
+#
+# Purpose:
+# - Produce statistically meaningful CER/WER results.
+# - Produce release/milestone RTF and resource metrics.
+# - Validate a candidate against the complete locked evaluation corpus.
+#
+# This suite is intentionally expensive and should not run on every commit.
+
+schema_version = 1
+
+[evaluation]
+id = "full"
+description = "Full locked ASR quality and performance evaluation"
+
+enabled = true
+
+manifest = "evaluation/manifests/full.jsonl"
+
+# Current expected full evaluation set.
+expected_sample_count = 768
+require_exact_sample_count = true
+
+# Continue through individual ASR mismatches so aggregate metrics can still
+# be produced. Fatal runtime/model-loading errors remain fatal.
+fail_fast = false
+
+[scope]
+end_to_end = true
+
+run_frontend = true
+run_encoder = true
+run_decoder = true
+run_postprocess = true
+
+# Full tensor parity across 768 items would produce excessive storage/I/O.
+compare_intermediate_tensors = false
+
+[inputs]
+use_locked_datasets = true
+verify_audio_hash = true
+
+preserve_manifest_order = true
+shuffle = false
+
+require_deterministic_selection = true
+
+# Full evaluation must not silently skip unavailable dataset entries.
+allow_missing_samples = false
+
+[audio]
+require_supported_sample_rate = true
+allow_resample = true
+reject_empty_audio = true
+
+# Permit long-form evaluation material.
+max_duration_sec = 3600.0
+
+# Stream rather than materialize the complete corpus in memory.
+stream = true
+
+[execution]
+# Baseline is batch=1 so values remain directly comparable across EPs and
+# across runtimes.
+batch_size = 1
+
+# Runtime/environment may explicitly override this for a dedicated
+# throughput benchmark, but canonical full quality evaluation is sequential.
+parallel_samples = 1
+
+warmup_runs = 1
+measured_runs = 1
+
+collect_component_timings = true
+
+[validation]
+require_session_creation = true
+
+# Individual ASR output disagreements contribute to metrics rather than
+# aborting the run.
+require_all_samples_successful = true
+
+require_valid_output = true
+
+# Full evaluation is quality-oriented, so exact token parity against another
+# provider is not intrinsically required for the aggregate job.
+require_transcript_parity = false
+require_token_parity = false
+
+use_schema_tolerances = true
+
+require_requested_provider = true
+
+[quality]
+calculate_cer = true
+calculate_wer = true
+
+# CER/WER are mandatory outputs for full evaluation.
+require_cer = true
+require_wer = true
+
+# Release/milestone runs enforce the locked acceptance criteria.
+enforce_cer_threshold = true
+enforce_wer_threshold = true
+
+threshold_source = "evaluation-schema"
+
+# Preserve both corpus-level and per-sample metrics.
+aggregate_cer = true
+aggregate_wer = true
+per_sample_cer = true
+per_sample_wer = true
+
+# Keep normalization explicitly tied to the locked evaluation schema.
+normalization_source = "evaluation-schema"
+
+[performance]
+benchmark = true
+
+record_rtf = true
+record_total_time = true
+
+record_load_time = true
+record_session_creation_time = true
+
+record_frontend_time = true
+record_encoder_time = true
+record_decoder_time = true
+record_postprocess_time = true
+
+# Full evaluation should include corpus totals.
+record_total_audio_duration = true
+record_total_processing_duration = true
+
+warmup_runs = 1
+measured_runs = 1
+
+# RTF is recorded but normal GitHub-hosted CPU runs do not fail solely on
+# absolute speed because runner hardware can vary.
+enforce_rtf_threshold = false
+
+[memory]
+record_peak_ram = true
+record_device_memory = "best_effort"
+
+require_peak_ram_metric = true
+require_device_memory_metric = false
+
+[fallback]
+allow = true
+record = true
+detect_fallback_only = true
+
+# A full accelerator benchmark that entirely falls back to CPU cannot be
+# treated as a valid accelerator benchmark.
+fail_if_fallback_only = true
+
+[output]
+write_run_context = true
+write_metrics = true
+
+# Per-sample output is required so aggregate regressions can be diagnosed.
+write_per_sample_results = true
+
+write_tokens = true
+write_transcripts = true
+
+# Avoid hundreds of gigabytes of tensor data.
+write_intermediate_tensors = false
+
+format = "json"
+
+[output.retention]
+# GitHub Actions artifacts stay lightweight.
+github_artifact_include_metrics = true
+github_artifact_include_run_context = true
+github_artifact_include_per_sample_results = false
+
+# HF Bucket is the persistent store for complete run results.
+hf_bucket_include_metrics = true
+hf_bucket_include_run_context = true
+hf_bucket_include_per_sample_results = true
+
+[comparison]
+# Full runs compare aggregate quality against the locked reference rather
+# than requiring every backend to produce bit/token-identical output.
+compare_against_locked_reference = true
+
+compare_text = false
+compare_tokens = false
+
+compare_cer = true
+compare_wer = true
+compare_rtf = true
+
+[benchmark_identity]
+# A benchmark is only comparable when these identities are recorded.
+record_model_revision = true
+record_candidate_sha256 = true
+
+record_reference_revision = true
+record_evaluation_schema_revision = true
+record_datasets_lock_revision = true
+
+record_git_sha = true
+
+record_os = true
+record_architecture = true
+record_provider = true
+record_ort_version = true
+
+record_cpu = true
+record_gpu = true
+record_memory = true
+
+[runtime_parity]
+# Full evaluation currently follows the primary implementation.
+primary_runtime = "python"
+
+# Once Rust reaches parity, release runs may switch this to rust without
+# changing the evaluation contract.
+allowed_runtimes = [
+    "python",
+    "rust",
+]
+
+# Never combine results from different runtime implementations into one
+# benchmark identity without recording that distinction.
+record_runtime_implementation = true
+
+[ci]
+# Not intended for every PR.
+routine = false
+
+# Current GitHub Actions full workflow uses Ubuntu CPU.
+allow_github_hosted = true
+
+supported_environments = [
+    "linux",
+]
+
+workflow = "cpu-full-eval"
+
+# Full evaluation should normally be manually dispatched or invoked as part
+# of a release/milestone gate.
+recommended_triggers = [
+    "workflow_dispatch",
+    "release_candidate",
+]

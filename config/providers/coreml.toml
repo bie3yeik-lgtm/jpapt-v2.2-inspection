@@ -1,0 +1,151 @@
+# config/providers/coreml.toml
+#
+# ONNX Runtime CoreML Execution Provider configuration.
+#
+# Project scope:
+# - Use ONNX Runtime CoreMLExecutionProvider on macOS.
+# - Keep ONNX as the deployment artifact.
+#
+# Explicitly out of scope:
+# - MLX
+# - Native Core ML conversion
+# - .mlmodel / .mlpackage generation
+
+schema_version = 1
+
+[provider]
+id = "coreml"
+ort_name = "CoreMLExecutionProvider"
+description = "Apple CoreML backend through ONNX Runtime"
+
+enabled = true
+reference_provider = false
+
+supported_os = [
+    "macos",
+]
+
+[priority]
+standalone = false
+
+priority = 20
+cpu_fallback_priority = 100
+
+[session]
+graph_optimization_level = "all"
+
+execution_mode = "sequential"
+
+enable_cpu_mem_arena = true
+
+# Dynamic ASR inputs make cross-sample memory patterns less predictable.
+# Keep disabled for the portable CoreML parity configuration.
+enable_mem_pattern = false
+
+use_per_session_threads = true
+
+[coreml]
+# ONNX Runtime CoreML EP options.
+#
+# false:
+# Permit dynamic input shapes.
+#
+# This is required for the project's general-purpose variable-duration
+# ASR ONNX candidates. ORT documentation notes that dynamic input shapes
+# may reduce CoreML performance.
+require_static_input_shapes = false
+
+# Allow CoreML EP to take supported nodes within ONNX subgraphs.
+enable_on_subgraphs = false
+
+# Prefer modern CoreML ML Program representation where the installed ORT
+# exposes the option. Runtime adapter should ignore unsupported options
+# only when explicitly allowed by compatibility policy.
+model_format = "mlprogram"
+
+# Compute-unit preference is expressed semantically here and translated
+# by the runtime adapter to the available ORT CoreML option/API.
+#
+# Values supported by project configuration:
+#   all
+#   cpu_and_gpu
+#   cpu_and_ne
+#   cpu_only
+compute_units = "all"
+
+# Cache compiled CoreML artifacts when the runtime/ORT build supports it.
+# Path ownership is delegated to the environment configuration.
+enable_model_cache = true
+
+# Do not require a native static-shape-only model variant.
+require_coreml_specific_onnx = false
+
+[precision]
+allow_fp32_model = true
+allow_fp16_model = true
+allow_int8_model = true
+
+automatic_precision_conversion = false
+
+[validation]
+# CoreML is always compared against CPU EP using the exact same ONNX
+# candidate and manifest on the same macOS runner.
+compare_against_provider = "cpu"
+
+require_transcript_parity = true
+require_token_parity = true
+
+use_schema_tolerances = true
+
+# Functional runs may permit ORT CPU fallback.
+allow_cpu_fallback = true
+
+# Strict CoreML coverage is a diagnostic mode, not the normal CI default.
+strict_provider_mode = false
+
+# A registered CoreML EP that performs no useful work must not silently
+# count as a successful accelerator benchmark.
+require_provider_registration = true
+record_provider_assignment = true
+
+[profiling]
+enabled = true
+
+record_model_load_time = true
+record_session_creation_time = true
+record_inference_time = true
+record_end_to_end_time = true
+record_peak_ram = true
+
+# Apple Silicon uses unified memory, so discrete VRAM is not considered
+# a canonical metric.
+record_device_memory = false
+
+[benchmark]
+warmup_runs = 2
+measured_runs = 3
+record_rtf = true
+
+# GitHub-hosted Apple hardware is appropriate for regression/parity,
+# not for authoritative performance of the user's local M2.
+github_hosted_authoritative = false
+
+# Physical Apple Silicon may be used for release performance benchmarks.
+local_apple_silicon_authoritative = true
+
+[compatibility]
+requires_macos = true
+
+# Native Core ML artifact conversion is explicitly outside project scope.
+native_coreml_conversion = false
+
+# MLX is explicitly outside project scope.
+mlx_enabled = false
+
+[reporting]
+provider_label = "coreml"
+benchmark_namespace = "coreml"
+
+record_fallback = true
+record_macos_version = true
+record_machine_architecture = true

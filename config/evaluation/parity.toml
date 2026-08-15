@@ -1,0 +1,228 @@
+# config/evaluation/parity.toml
+#
+# Cross-runtime / cross-provider parity configuration.
+#
+# Purpose:
+# - Validate CPU vs CUDA/CoreML/DirectML output consistency.
+# - Validate Python vs Rust evaluator consistency.
+# - Detect numerical drift before full evaluation.
+#
+# This is the primary routine regression suite.
+
+schema_version = 1
+
+[evaluation]
+id = "parity"
+description = "Deterministic cross-provider and cross-runtime parity evaluation"
+
+enabled = true
+
+manifest = "evaluation/manifests/parity.jsonl"
+
+# Recommended regular-development subset.
+expected_sample_count = 48
+require_exact_sample_count = true
+
+# Continue through the subset to reveal the complete failure pattern.
+fail_fast = false
+
+[scope]
+end_to_end = true
+
+run_frontend = true
+run_encoder = true
+run_decoder = true
+run_postprocess = true
+
+# Parity runs may compare selected intermediate tensors when the evaluator
+# supports them.
+compare_intermediate_tensors = true
+
+[inputs]
+use_locked_datasets = true
+verify_audio_hash = true
+
+preserve_manifest_order = true
+shuffle = false
+
+# Every parity run must resolve exactly the same logical sample set.
+require_deterministic_selection = true
+
+[audio]
+require_supported_sample_rate = true
+allow_resample = true
+reject_empty_audio = true
+
+# Include long-form samples, but bound accidental pathological inputs.
+max_duration_sec = 600.0
+
+[execution]
+batch_size = 1
+
+# Keep the baseline deterministic. Performance-oriented parallel execution
+# belongs to the full suite or a dedicated benchmark.
+parallel_samples = 1
+
+# Timing data is useful, but parity is correctness-first.
+warmup_runs = 1
+measured_runs = 1
+
+collect_component_timings = true
+
+[validation]
+require_session_creation = true
+require_all_samples_successful = true
+require_valid_output = true
+
+# Main semantic parity gates.
+require_transcript_parity = true
+require_token_parity = true
+
+# Numerical comparisons use thresholds supplied by the shared schema.
+use_schema_tolerances = true
+
+# The exact requested EP must at least register successfully.
+require_requested_provider = true
+
+# Accelerator provider assignment/fallback information should be present
+# where the runtime supports introspection.
+require_provider_assignment_record = false
+
+[intermediate]
+# These names are semantic checkpoints; actual tensor names may differ by
+# model and are resolved through model configuration.
+compare_frontend_output = true
+compare_encoder_output = true
+
+# CTC candidates should expose logits.
+compare_ctc_logits = true
+
+# TDT-specific checkpoints become active only for a TDT model/configuration.
+compare_tdt_predictor = true
+compare_tdt_joint = true
+compare_tdt_duration = true
+
+# Comparisons that are not applicable to the selected decoder are skipped.
+skip_not_applicable = true
+
+[intermediate.metrics]
+max_abs_error = true
+mean_abs_error = true
+relative_l2 = true
+
+# Schema thresholds remain authoritative rather than duplicating numbers
+# across multiple TOML files.
+threshold_source = "evaluation-schema"
+
+[quality]
+calculate_cer = true
+calculate_wer = true
+
+# Against the locked reference, parity subset quality should not regress.
+enforce_cer_threshold = true
+enforce_wer_threshold = true
+
+# Actual numeric limits are resolved from evaluation-schema.json.
+threshold_source = "evaluation-schema"
+
+[performance]
+# Collect performance numbers but do not treat shared GitHub-hosted runner
+# values as canonical hardware benchmarks.
+benchmark = true
+
+record_rtf = true
+record_total_time = true
+record_load_time = true
+record_session_creation_time = true
+record_frontend_time = true
+record_encoder_time = true
+record_decoder_time = true
+record_postprocess_time = true
+
+warmup_runs = 1
+measured_runs = 1
+
+# Normal parity jobs should fail on correctness, not CI-host variability.
+enforce_rtf_threshold = false
+
+[memory]
+record_peak_ram = true
+record_device_memory = "best_effort"
+require_device_memory_metric = false
+
+[fallback]
+# Provider fallback is allowed for ordinary parity because unsupported nodes
+# must be observable rather than turning every compatibility run into an
+# immediate hard failure.
+allow = true
+
+# But fallback must be reported explicitly.
+record = true
+
+# Full CPU-only fallback must not be interpreted as accelerator proof.
+detect_fallback_only = true
+
+# Result schema may classify such a run as e.g. PROVIDER_FALLBACK_ONLY.
+fail_if_fallback_only = false
+
+[output]
+write_run_context = true
+write_metrics = true
+write_per_sample_results = true
+
+write_tokens = true
+write_transcripts = true
+
+# Store only explicitly selected tensor checkpoints; never dump all model
+# tensors by default.
+write_intermediate_tensors = true
+
+# Limit intermediate persistence to mismatch/failure cases unless the
+# runtime is explicitly instructed otherwise.
+intermediate_write_policy = "mismatch"
+
+format = "json"
+
+[comparison]
+preferred_reference_provider = "cpu"
+
+compare_text = true
+compare_tokens = true
+compare_metrics = true
+compare_intermediate_tensors = true
+
+# Same-host CPU comparison is useful for CoreML and DirectML diagnostics.
+prefer_same_host_reference = true
+
+# Locked external/reference outputs still remain the canonical quality
+# reference.
+compare_against_locked_reference = true
+
+[runtime_parity]
+# Python is the current implementation.
+python_enabled = true
+
+# Rust is initially optional but this switch can become mandatory once
+# the Rust evaluator is production-ready.
+rust_enabled = false
+
+# When Rust is enabled, both implementations consume the same candidate,
+# manifest, configuration, and revision locks.
+require_same_inputs = true
+require_same_provider = true
+
+require_text_match = true
+require_token_match = true
+
+[ci]
+routine = true
+allow_github_hosted = true
+
+supported_environments = [
+    "linux",
+    "windows",
+    "macos",
+]
+
+# Intended for cross-platform-parity.yml.
+workflow = "cross-platform-parity"

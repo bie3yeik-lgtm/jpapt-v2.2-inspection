@@ -1,0 +1,123 @@
+# config/providers/cpu.toml
+#
+# ONNX Runtime CPU Execution Provider configuration.
+#
+# Primary responsibilities:
+# - Portable reference execution on Linux / Windows / macOS
+# - Numerical and transcript parity baseline
+# - Fallback execution when an accelerator EP cannot execute a node
+#
+# Non-responsibilities:
+# - OS-specific threading/resource policy
+# - Evaluation dataset size
+# - Model revision
+#
+# Those belong under config/environments/, config/evaluation/,
+# and HF Bucket config/revisions/.
+
+schema_version = 1
+
+[provider]
+id = "cpu"
+ort_name = "CPUExecutionProvider"
+description = "Portable ONNX Runtime CPU reference provider"
+
+enabled = true
+
+# CPU is the canonical portable reference EP.
+reference_provider = true
+
+# This provider is supported on all project target operating systems.
+supported_os = [
+    "linux",
+    "windows",
+    "macos",
+]
+
+[priority]
+# CPU runs alone when explicitly evaluated.
+standalone = true
+
+# When used as a fallback after an accelerator, it is expected to appear
+# last in the provider priority list.
+fallback_provider = true
+
+fallback_priority = 100
+
+[session]
+# Graph optimization remains enabled for normal evaluation.
+#
+# Exact optimization level mapping is handled by the runtime adapter.
+graph_optimization_level = "all"
+
+# Sequential mode provides a predictable parity reference.
+# Environment-specific configuration may override this when benchmarking.
+execution_mode = "sequential"
+
+# CPU memory arena is normally beneficial for repeated inference.
+enable_cpu_mem_arena = true
+
+# Memory-pattern optimization is useful when shapes permit it.
+enable_mem_pattern = true
+
+# Keep per-session thread pools enabled unless an environment-specific
+# runtime policy overrides them.
+use_per_session_threads = true
+
+[threads]
+# 0 means "let ONNX Runtime choose".
+#
+# OS-specific defaults may be supplied by config/environments/*.toml.
+intra_op_num_threads = 0
+inter_op_num_threads = 0
+
+# Thread spinning can improve latency but consumes CPU while waiting.
+# Keep this delegated to the runtime unless explicitly benchmarked.
+allow_spinning = "auto"
+
+[arena]
+enabled = true
+
+# Use ONNX Runtime defaults unless a benchmark proves that a custom arena
+# policy is required.
+arena_extend_strategy = "default"
+
+[precision]
+# Baseline CPU reference uses the precision encoded in the ONNX artifact.
+force_fp32 = false
+
+allow_fp16_model = true
+allow_int8_model = true
+
+[validation]
+# CPU EP is the primary provider used to establish backend-independent
+# expected outputs.
+compare_against_reference = true
+
+# Token/text equality is more important than bit-identical floating point
+# output.
+require_transcript_parity = true
+
+require_token_parity = true
+
+# Numerical tolerances are resolved from evaluation-schema.json.
+use_schema_tolerances = true
+
+[profiling]
+enabled = true
+
+record_model_load_time = true
+record_session_creation_time = true
+record_inference_time = true
+record_end_to_end_time = true
+record_peak_ram = true
+
+# CPU has no discrete accelerator memory metric.
+record_device_memory = false
+
+[reporting]
+provider_label = "cpu"
+benchmark_namespace = "cpu"
+
+record_provider_assignment = true
+record_fallback = false

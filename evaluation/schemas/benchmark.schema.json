@@ -1,0 +1,632 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/benchmark.schema.json",
+  "title": "Parakeet ONNX Evaluation Benchmark",
+  "description": "Aggregated quality, performance, resource, parity, and provider-coverage metrics for one evaluation run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate",
+    "evaluation",
+    "runtime",
+    "samples",
+    "quality",
+    "performance",
+    "memory",
+    "parity",
+    "provider",
+    "acceptance",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate": {
+      "$ref": "#/$defs/candidateIdentity"
+    },
+    "evaluation": {
+      "$ref": "#/$defs/evaluationIdentity"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtimeIdentity"
+    },
+    "samples": {
+      "$ref": "#/$defs/sampleSummary"
+    },
+    "quality": {
+      "$ref": "#/$defs/qualitySummary"
+    },
+    "performance": {
+      "$ref": "#/$defs/performanceSummary"
+    },
+    "memory": {
+      "$ref": "#/$defs/memorySummary"
+    },
+    "parity": {
+      "$ref": "#/$defs/paritySummary"
+    },
+    "provider": {
+      "$ref": "#/$defs/providerSummary"
+    },
+    "acceptance": {
+      "$ref": "#/$defs/acceptanceSummary"
+    },
+    "errors": {
+      "$ref": "#/$defs/errorSummary"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "nullableNumber": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "nullableNonNegativeNumber": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "nullableBoolean": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "candidateIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "model_id",
+        "artifact_sha256",
+        "artifact_size_bytes",
+        "decoder"
+      ],
+      "properties": {
+        "candidate_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "artifact_size_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decoder": {
+          "type": "string",
+          "enum": [
+            "ctc",
+            "tdt",
+            "whisper"
+          ]
+        }
+      }
+    },
+    "evaluationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite",
+        "manifest",
+        "expected_sample_count",
+        "reference_revision_sha256",
+        "evaluation_schema_sha256",
+        "datasets_lock_sha256",
+        "revision_bundle_sha256"
+      ],
+      "properties": {
+        "suite": {
+          "type": "string",
+          "enum": [
+            "smoke",
+            "parity",
+            "full"
+          ]
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_sample_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reference_revision_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evaluation_schema_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "datasets_lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "revision_bundle_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "runtimeIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "backend",
+        "backend_version",
+        "environment_id",
+        "provider_id",
+        "provider_ort_name",
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "enum": [
+            "python",
+            "rust"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "onnxruntime",
+            "nemo",
+            "transformers"
+          ]
+        },
+        "backend_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environment_id": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "windows",
+            "macos"
+          ]
+        },
+        "provider_id": {
+          "type": "string",
+          "enum": [
+            "cpu",
+            "cuda",
+            "directml",
+            "coreml"
+          ]
+        },
+        "provider_ort_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "sampleSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected",
+        "attempted",
+        "successful",
+        "failed",
+        "skipped",
+        "total_audio_duration_sec"
+      ],
+      "properties": {
+        "expected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "successful": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_audio_duration_sec": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "qualitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cer",
+        "wer"
+      ],
+      "properties": {
+        "cer": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "wer": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "performanceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "load_ms",
+        "session_creation_ms",
+        "total_processing_ms",
+        "rtf",
+        "per_sample",
+        "components"
+      ],
+      "properties": {
+        "load_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "session_creation_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "total_processing_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "rtf": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "per_sample": {
+          "$ref": "#/$defs/distribution"
+        },
+        "components": {
+          "$ref": "#/$defs/componentTimingSummary"
+        }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mean_ms",
+        "median_ms",
+        "p50_ms",
+        "p95_ms",
+        "p99_ms",
+        "min_ms",
+        "max_ms"
+      ],
+      "properties": {
+        "mean_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "median_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "p50_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "p95_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "p99_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "min_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "max_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "componentTimingSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audio_decode_ms",
+        "resample_ms",
+        "frontend_ms",
+        "encoder_ms",
+        "decoder_ms",
+        "postprocess_ms",
+        "inference_ms"
+      ],
+      "properties": {
+        "audio_decode_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "resample_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "frontend_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "encoder_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "decoder_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "postprocess_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "inference_ms": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "memorySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "peak_ram_mb",
+        "peak_device_memory_mb"
+      ],
+      "properties": {
+        "peak_ram_mb": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "peak_device_memory_mb": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "paritySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference_run_id",
+        "text_matches",
+        "text_mismatches",
+        "token_matches",
+        "token_mismatches",
+        "text_match_rate",
+        "token_match_rate",
+        "numeric"
+      ],
+      "properties": {
+        "reference_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_matches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text_mismatches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "token_matches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "token_mismatches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text_match_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "token_match_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "numeric": {
+          "$ref": "#/$defs/numericSummary"
+        }
+      }
+    },
+    "numericSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frontend",
+        "encoder",
+        "logits"
+      ],
+      "properties": {
+        "frontend": {
+          "$ref": "#/$defs/tensorSummary"
+        },
+        "encoder": {
+          "$ref": "#/$defs/tensorSummary"
+        },
+        "logits": {
+          "$ref": "#/$defs/tensorSummary"
+        }
+      }
+    },
+    "tensorSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compared_samples",
+        "failed_samples",
+        "max_abs_error",
+        "max_mean_abs_error",
+        "max_relative_l2"
+      ],
+      "properties": {
+        "compared_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_abs_error": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "max_mean_abs_error": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        },
+        "max_relative_l2": {
+          "$ref": "#/$defs/nullableNonNegativeNumber"
+        }
+      }
+    },
+    "providerSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "registered",
+        "execution_proven",
+        "fallback_detected",
+        "fallback_only",
+        "assigned_nodes",
+        "fallback_nodes"
+      ],
+      "properties": {
+        "requested": {
+          "type": "string",
+          "minLength": 1
+        },
+        "registered": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "execution_proven": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "fallback_detected": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "fallback_only": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "assigned_nodes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fallback_nodes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "acceptanceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "quality_passed",
+        "parity_passed",
+        "provider_passed",
+        "performance_passed",
+        "failed_checks",
+        "warnings"
+      ],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "quality_passed": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "parity_passed": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "provider_passed": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "performance_passed": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "failed_checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "errorSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "fatal",
+        "by_code"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fatal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_code": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

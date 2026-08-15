@@ -1,0 +1,154 @@
+name: Validate HF Layout
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - "config/**"
+      - "evaluation/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-hf-layout-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_BUCKET: ${{ vars.HF_BUCKET }}
+  HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+
+jobs:
+  validate:
+    name: Validate HF configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate GitHub configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo "::error::HF_TOKEN secret is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${HF_BUCKET:-}" ]]; then
+            echo "::error::HF_BUCKET repository variable is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${HF_MODEL_REPO:-}" ]]; then
+            echo "::error::HF_MODEL_REPO repository variable is not configured."
+            exit 1
+          fi
+
+          echo "HF_BUCKET=${HF_BUCKET}"
+          echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hugging Face CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade huggingface_hub
+
+          hf --version
+
+      - name: Prepare workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p .ci/hf/config/revisions
+
+      - name: Download revision metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/reference.json" \
+            ".ci/hf/config/revisions/reference.json"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/evaluation-schema.json" \
+            ".ci/hf/config/revisions/evaluation-schema.json"
+
+          hf buckets cp \
+            "${BUCKET}/config/revisions/datasets-lock.json" \
+            ".ci/hf/config/revisions/datasets-lock.json"
+
+      - name: Validate JSON syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jq empty ".ci/hf/config/revisions/reference.json"
+          jq empty ".ci/hf/config/revisions/evaluation-schema.json"
+          jq empty ".ci/hf/config/revisions/datasets-lock.json"
+
+      - name: Calculate revision identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat \
+            ".ci/hf/config/revisions/reference.json" \
+            ".ci/hf/config/revisions/evaluation-schema.json" \
+            ".ci/hf/config/revisions/datasets-lock.json" \
+            | sha256sum
+
+      - name: Validate required bucket directories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET="hf://buckets/${HF_BUCKET}"
+
+          for dir in \
+            benchmarks \
+            runs \
+            candidates \
+            reference \
+            scripts \
+            tmp
+          do
+            echo "Checking ${BUCKET}/${dir}/"
+
+            hf buckets list \
+              "${BUCKET}/${dir}" \
+              >/dev/null
+          done
+
+      - name: Print revision metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== reference.json ==="
+          jq . ".ci/hf/config/revisions/reference.json"
+
+          echo "=== evaluation-schema.json ==="
+          jq . ".ci/hf/config/revisions/evaluation-schema.json"
+
+          echo "=== datasets-lock.json ==="
+          jq . ".ci/hf/config/revisions/datasets-lock.json"

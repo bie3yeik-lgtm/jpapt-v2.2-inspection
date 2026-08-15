@@ -1,0 +1,113 @@
+# config/environments/windows.toml
+#
+# Windows environment configuration.
+#
+# Primary CI responsibility:
+# - Validate that the same ONNX candidate runs correctly on native Windows.
+# - Compare Windows CPUExecutionProvider results with canonical references.
+#
+# DirectML may be supported by the application/runtime in the future,
+# but the standard GitHub-hosted Windows runner must not be treated as
+# an authoritative DirectML GPU benchmark environment.
+
+schema_version = 1
+
+[environment]
+id = "windows"
+os = "windows"
+architecture = "auto"
+description = "Native Windows / GitHub Actions Windows environment"
+
+[path]
+cache_root = ".cache"
+model_cache = ".cache/models"
+evaluation_cache = ".cache/evaluation"
+huggingface_cache = ".cache/huggingface"
+temporary_root = "tmp"
+results_root = "results"
+ci_root = ".ci"
+
+[cache]
+enabled = true
+verify_on_restore = true
+verify_artifact_sha256 = true
+
+models = true
+evaluation_data = true
+huggingface = true
+generated_results = false
+
+[temporary]
+cleanup_on_success = true
+cleanup_on_failure = false
+preserve_cache = true
+
+[runtime]
+worker_threads = "auto"
+parallel_samples = "auto"
+
+default_batch_size = 1
+max_prefetch_samples = 4
+
+[runtime.cpu]
+intra_op_threads = 0
+inter_op_threads = 0
+execution_mode = "sequential"
+
+enable_cpu_mem_arena = true
+enable_mem_pattern = true
+
+[audio]
+decoder_backend = "auto"
+stream_dataset = true
+prefetch = true
+
+[benchmark]
+enabled = true
+
+measure_cold_start = true
+measure_warm_runs = true
+measure_end_to_end = true
+measure_components = true
+measure_peak_ram = true
+
+# A standard GitHub-hosted Windows runner is not used as a canonical
+# GPU benchmark machine.
+measure_gpu_memory = false
+
+[logging]
+level = "info"
+format = "json"
+per_sample_results = true
+
+[validation]
+strict_revision_lock = true
+strict_schema_validation = true
+require_cpu_reference = true
+
+# Cross-platform transcript/token parity is the primary responsibility.
+cross_platform_parity = true
+
+[github_actions]
+supported = true
+runner = "windows-latest"
+self_hosted = false
+
+# Keep the GitHub-hosted Windows job focused on parity/smoke evaluation.
+allow_full_evaluation = false
+
+# DirectML performance must not be inferred from this standard runner.
+authoritative_gpu_benchmark = false
+
+[windows]
+# Use UTF-8 for generated files and subprocess communication.
+force_utf8 = true
+
+# Avoid relying on Windows backslash paths in persisted metadata.
+# Persisted run metadata should use normalized forward-slash paths or
+# artifact-relative logical paths.
+normalize_persisted_paths = true
+
+# Long-path support still depends on the host configuration, so the
+# repository should avoid unnecessarily deep generated paths.
+prefer_short_cache_paths = true

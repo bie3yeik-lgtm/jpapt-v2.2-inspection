@@ -1,0 +1,175 @@
+# config/evaluation/smoke.toml
+#
+# Fast smoke test configuration.
+#
+# Purpose:
+# - Detect broken model/session initialization quickly.
+# - Detect obvious shape/tokenizer/decoder regressions.
+# - Verify that a candidate ONNX can execute end-to-end.
+#
+# This suite is NOT intended to establish statistical ASR quality.
+
+schema_version = 1
+
+[evaluation]
+id = "smoke"
+description = "Fast end-to-end execution and compatibility smoke test"
+
+enabled = true
+
+# The manifest is tracked in Git.
+manifest = "evaluation/manifests/smoke.jsonl"
+
+# Small fixed subset.
+expected_sample_count = 12
+
+# Failing or missing samples are not silently ignored.
+require_exact_sample_count = true
+
+# Stop early when a fundamental runtime error occurs.
+fail_fast = true
+
+[scope]
+# Full audio -> frontend -> ONNX -> decoder -> text.
+end_to_end = true
+
+run_frontend = true
+run_encoder = true
+run_decoder = true
+run_postprocess = true
+
+# Numerical tensor-level comparisons are not the main responsibility
+# of the smoke suite.
+compare_intermediate_tensors = false
+
+[inputs]
+# Audio is resolved using datasets-lock.json and the manifest.
+use_locked_datasets = true
+
+# Verify source material when the lock provides a digest.
+verify_audio_hash = true
+
+# Samples must retain manifest ordering for deterministic reports.
+preserve_manifest_order = true
+
+# Do not shuffle CI smoke runs.
+shuffle = false
+
+[audio]
+# Model configuration remains authoritative for the actual sample rate.
+require_supported_sample_rate = true
+
+# Evaluation runtime may resample when explicitly permitted by model config.
+allow_resample = true
+
+# Reject malformed/empty audio immediately.
+reject_empty_audio = true
+
+# Protect CI from accidental extremely long samples in a smoke manifest.
+max_duration_sec = 60.0
+
+[execution]
+batch_size = 1
+
+# Conservative concurrency so failures remain easy to diagnose.
+parallel_samples = 1
+
+# Do not repeat every sample merely for performance statistics.
+warmup_runs = 0
+measured_runs = 1
+
+# Smoke tests care primarily about successful execution.
+collect_component_timings = true
+
+[validation]
+# Session creation itself is mandatory.
+require_session_creation = true
+
+# Every manifest item must successfully produce an inference result.
+require_all_samples_successful = true
+
+# Output must contain at least one valid decoded result unless the
+# reference explicitly allows an empty transcript.
+require_valid_output = true
+
+# CPU/accelerator smoke tests should still agree semantically.
+require_transcript_parity = true
+
+# Token equality is useful but may be relaxed later if an EP demonstrates
+# harmless tie-breaking differences.
+require_token_parity = true
+
+# Numeric tolerances are defined centrally in evaluation-schema.json.
+use_schema_tolerances = true
+
+# A provider registration failure is always considered a smoke failure
+# when that provider was explicitly requested.
+require_requested_provider = true
+
+[quality]
+# Smoke is not a quality benchmark, therefore global CER/WER thresholds
+# are deliberately not used as release gates.
+calculate_cer = true
+calculate_wer = true
+
+enforce_cer_threshold = false
+enforce_wer_threshold = false
+
+[performance]
+# Timings are collected for regression diagnosis only.
+benchmark = false
+
+record_rtf = true
+record_total_time = true
+record_load_time = true
+record_session_creation_time = true
+
+# Do not fail a smoke test because a shared CI runner is slow.
+enforce_rtf_threshold = false
+
+[memory]
+record_peak_ram = true
+record_device_memory = "best_effort"
+
+# Smoke must not fail solely because device-memory telemetry is unavailable.
+require_device_memory_metric = false
+
+[output]
+write_run_context = true
+write_metrics = true
+write_per_sample_results = true
+
+write_tokens = true
+write_transcripts = true
+
+# Intermediate tensors are intentionally omitted from ordinary smoke runs.
+write_intermediate_tensors = false
+
+# Suggested local structure:
+#
+# results/<provider>/
+#   metrics.json
+#   samples.jsonl
+#   run-context.json
+format = "json"
+
+[comparison]
+# When comparing an accelerator EP, CPU on the same machine is preferred.
+preferred_reference_provider = "cpu"
+
+compare_text = true
+compare_tokens = true
+compare_metrics = false
+
+[ci]
+# Suitable for pull-request / routine Actions execution.
+routine = true
+
+allow_github_hosted = true
+
+# All supported OSes may run this suite.
+supported_environments = [
+    "linux",
+    "windows",
+    "macos",
+]
