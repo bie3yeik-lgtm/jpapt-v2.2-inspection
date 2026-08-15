@@ -1,0 +1,120 @@
+name: Rust Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: cpu
+            binary: asr-eval
+            archive: tar
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: cpu,directml
+            binary: asr-eval.exe
+            archive: zip
+          - name: macos-aarch64
+            os: macos-15
+            target: aarch64-apple-darwin
+            features: cpu,coreml
+            binary: asr-eval
+            archive: tar
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo and ort
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/ort.pyke.io
+            target
+          key: release-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'rust/crates/**/Cargo.toml') }}
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release -p asr-eval --no-default-features --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+      - name: Package Unix binary
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/asr-eval"
+          tar -C dist -czf "asr-eval-${{ matrix.name }}.tar.gz" asr-eval
+      - name: Package Windows binary
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/asr-eval.exe"
+          Compress-Archive -Path "dist/asr-eval.exe" -DestinationPath "asr-eval-${{ matrix.name }}.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asr-eval-${{ matrix.name }}
+          path: asr-eval-${{ matrix.name }}.*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum asr-eval-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            TARGET="${GITHUB_SHA}"
+          else
+            TAG="${{ inputs.tag }}"
+            TARGET="${GITHUB_SHA}"
+          fi
+          [[ "$TAG" == v* ]] || { echo "tag must start with v"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading rebuilt assets."
+          else
+            gh release create "$TAG" --target "${{ steps.tag.outputs.target }}" --generate-notes --title "$TAG"
+          fi
+          find dist -maxdepth 1 -type f -print0 | xargs -0 gh release upload "$TAG" --clobber
