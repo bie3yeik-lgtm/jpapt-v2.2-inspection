@@ -49,13 +49,21 @@ jobs:
             ~/.cargo/git
             ~/.cache/ort.pyke.io
             target
-          key: rust-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'rust/crates/**/Cargo.toml') }}
+          key: rust-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust/crates/**/Cargo.toml') }}
       - name: Cargo check
         shell: bash
         run: cargo check --workspace --no-default-features --features "${{ matrix.features }}"
       - name: Unit tests
         shell: bash
         run: cargo test --workspace --no-default-features --features "${{ matrix.features }}"
+      - name: Export resolved Cargo.lock
+        if: matrix.name == 'linux-cpu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-cargo-lock
+          path: Cargo.lock
+          retention-days: 1
+          if-no-files-found: error
 
   formatting:
     name: rustfmt advisory
