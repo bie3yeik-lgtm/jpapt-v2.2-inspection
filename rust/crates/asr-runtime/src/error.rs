@@ -10,6 +10,8 @@ pub enum RuntimeError {
     ModelMissing(PathBuf),
     #[error("provider {0} is not compiled into this binary")]
     ProviderNotCompiled(String),
+    #[error("failed to configure execution provider: {0}")]
+    ProviderConfiguration(String),
     #[error("unsupported runtime contract: {0}")]
     UnsupportedContract(String),
     #[error("ONNX Runtime error: {0}")]
