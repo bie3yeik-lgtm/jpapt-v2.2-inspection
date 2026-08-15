@@ -1,0 +1,23 @@
+schema_version = 1
+
+[target]
+id = "parakeet-tdt_ctc-0.6b-ja"
+model_id = "parakeet-tdt_ctc-0.6b-ja"
+
+[upstream]
+repo_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
+
+[reference]
+canonical_framework = "nemo"
+revision_contract = "legacy"
+
+[decoders]
+supported = ["ctc", "tdt"]
+default = "ctc"
+
+[storage]
+bucket = "gawohok7/jpapt-v2.2-dev-bucket"
+model_repo = "gawohok7/jpapt-v2.2-dev"
+
+[evaluation]
+datasets_policy = "shared-default"
