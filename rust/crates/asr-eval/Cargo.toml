@@ -1,10 +1,28 @@
 [package]
 name = "asr-eval"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 publish = false
 
+[features]
+default = ["cpu"]
+cpu = ["asr-runtime/cpu"]
+cuda = ["asr-runtime/cuda"]
+directml = ["asr-runtime/directml"]
+coreml = ["asr-runtime/coreml"]
+
 [dependencies]
-asr-runtime = { path = "../asr-runtime" }
+asr-runtime = { path = "../asr-runtime", default-features = false }
 asr-audio = { path = "../asr-audio" }
 asr-metrics = { path = "../asr-metrics" }
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+uuid.workspace = true
