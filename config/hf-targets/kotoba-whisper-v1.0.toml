@@ -1,0 +1,23 @@
+schema_version = 1
+
+[target]
+id = "kotoba-whisper-v1.0"
+model_id = "kotoba-whisper-v1.0"
+
+[upstream]
+repo_id = "kotoba-tech/kotoba-whisper-v1.0"
+
+[reference]
+canonical_framework = "transformers"
+
+[decoders]
+supported = ["whisper_autoregressive"]
+default = "whisper_autoregressive"
+
+[storage]
+bucket = "gawohok7/tf-v1-onnx-dev-bucket"
+model_repo = "gawohok7/tf-v1-onnx-dev"
+
+[evaluation]
+# Reuse the repository's existing JSUT/CommonVoice/ReazonSpeech locks/manifests.
+datasets_policy = "shared-default"
