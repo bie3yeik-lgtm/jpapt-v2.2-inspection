@@ -2,6 +2,16 @@ name: Validate HF Layout
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "HF target profile to validate"
+        required: true
+        default: repository-vars
+        type: choice
+        options:
+          - repository-vars
+          - parakeet-tdt_ctc-0.6b-ja
+          - kotoba-whisper-v1.0
 
   pull_request:
     paths:
@@ -29,13 +39,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-hf-layout-${{ github.ref }}
+  group: validate-hf-layout-${{ github.ref }}-${{ inputs.target || 'repository-vars' }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_BUCKET: ${{ vars.HF_BUCKET }}
   HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+  EXPECTED_MODEL_ID: ""
+  EXPECTED_FRAMEWORK: ""
+  EXPECTED_DECODER: ""
+  HF_TARGET_ID: "repository-vars"
 
 jobs:
   validate:
@@ -68,15 +82,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           python scripts/dev/verify-python-first.py
 
       - name: Validate local repository configuration
         shell: bash
         run: |
           set -euo pipefail
-
           python scripts/dev/doctor.py
+          python scripts/ci/validate-hf-targets.py
+
+      - name: Resolve selected HF target
+        if: github.event_name == 'workflow_dispatch' && inputs.target != 'repository-vars'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/resolve-hf-target.py \
+            --target "${{ inputs.target }}" \
+            --github-env "${GITHUB_ENV}"
 
       - name: Validate GitHub HF configuration
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
@@ -84,18 +106,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "HF_TARGET_ID=${HF_TARGET_ID}"
           echo "HF_BUCKET=${HF_BUCKET}"
-
-          if [[ -n "${HF_MODEL_REPO:-}" ]]; then
-            echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
-          fi
+          echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
+          echo "EXPECTED_MODEL_ID=${EXPECTED_MODEL_ID:-<not-pinned-by-workflow>}"
+          echo "EXPECTED_FRAMEWORK=${EXPECTED_FRAMEWORK:-<not-pinned-by-workflow>}"
+          echo "EXPECTED_DECODER=${EXPECTED_DECODER:-<not-pinned-by-workflow>}"
 
       - name: Prepare revision directory
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p .ci/hf/config/revisions
 
       - name: Fetch HF revision locks
@@ -103,7 +125,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           bash scripts/hf/hf-fetch-revisions.sh
 
       - name: Validate fetched revisions
@@ -112,8 +133,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          python scripts/ci/validate-revisions.py \
-            --root .ci/hf/config/revisions
+          args=(--root .ci/hf/config/revisions)
+
+          if [[ -n "${EXPECTED_MODEL_ID:-}" ]]; then
+            args+=(--expected-model-id "${EXPECTED_MODEL_ID}")
+          fi
+
+          if [[ -n "${EXPECTED_FRAMEWORK:-}" ]]; then
+            args+=(--expected-framework "${EXPECTED_FRAMEWORK}")
+          fi
+
+          if [[ -n "${EXPECTED_DECODER:-}" ]]; then
+            args+=(--expected-decoder "${EXPECTED_DECODER}")
+          fi
+
+          python scripts/ci/validate-revisions.py "${args[@]}"
 
       - name: Validate required HF Bucket directories
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
