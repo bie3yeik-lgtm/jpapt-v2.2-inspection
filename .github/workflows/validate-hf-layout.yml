@@ -50,6 +50,7 @@ env:
   EXPECTED_MODEL_ID: ""
   EXPECTED_FRAMEWORK: ""
   EXPECTED_DECODER: ""
+  ALLOW_LEGACY_REVISION_METADATA: "false"
   HF_TARGET_ID: "repository-vars"
 
 jobs:
@@ -113,6 +114,7 @@ jobs:
           [[ -z "${EXPECTED_MODEL_ID:-}" ]] || args+=(--expected-model-id "${EXPECTED_MODEL_ID}")
           [[ -z "${EXPECTED_FRAMEWORK:-}" ]] || args+=(--expected-framework "${EXPECTED_FRAMEWORK}")
           [[ -z "${EXPECTED_DECODER:-}" ]] || args+=(--expected-decoder "${EXPECTED_DECODER}")
+          [[ "${ALLOW_LEGACY_REVISION_METADATA:-false}" != "true" ]] || args+=(--allow-legacy-metadata)
           python scripts/ci/validate-revisions.py "${args[@]}"
       - name: Validate required HF Bucket directories
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
@@ -142,6 +144,7 @@ jobs:
       EXPECTED_MODEL_ID: ""
       EXPECTED_FRAMEWORK: ""
       EXPECTED_DECODER: ""
+      ALLOW_LEGACY_REVISION_METADATA: "false"
       HF_TARGET_ID: ""
       TARGET_INITIALIZED: "false"
     steps:
@@ -180,11 +183,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/ci/validate-revisions.py \
-            --root .ci/hf/config/revisions \
-            --expected-model-id "${EXPECTED_MODEL_ID}" \
-            --expected-framework "${EXPECTED_FRAMEWORK}" \
+          args=(
+            --root .ci/hf/config/revisions
+            --expected-model-id "${EXPECTED_MODEL_ID}"
+            --expected-framework "${EXPECTED_FRAMEWORK}"
             --expected-decoder "${EXPECTED_DECODER}"
+          )
+          [[ "${ALLOW_LEGACY_REVISION_METADATA:-false}" != "true" ]] || args+=(--allow-legacy-metadata)
+          python scripts/ci/validate-revisions.py "${args[@]}"
       - name: Validate target Bucket directories
         if: env.HF_TOKEN != '' && env.TARGET_INITIALIZED == 'true'
         shell: bash
