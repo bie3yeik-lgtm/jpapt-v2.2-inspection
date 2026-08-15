@@ -8,3 +8,4 @@ publish = false
 [dependencies]
 thiserror.workspace = true
 hound.workspace = true
+symphonia.workspace = true
