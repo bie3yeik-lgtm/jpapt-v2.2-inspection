@@ -20,18 +20,21 @@ on:
       - "evaluation/**"
       - "python/src/parakeet_onnx/hf/**"
       - "python/src/parakeet_onnx/config/**"
+      - "python/src/parakeet_onnx/reference/**"
+      - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
 
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - ".github/workflows/**"
       - "config/**"
       - "evaluation/**"
       - "python/src/parakeet_onnx/hf/**"
       - "python/src/parakeet_onnx/config/**"
+      - "python/src/parakeet_onnx/reference/**"
+      - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
 
@@ -53,16 +56,13 @@ env:
 
 jobs:
   validate:
-    name: Validate HF configuration
+    name: Validate repository HF configuration
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -70,26 +70,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           python -m pip install --upgrade pip
           python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
-
           python -c "import parakeet_onnx"
           hf --version
 
-      - name: Verify Python-first package
+      - name: Validate local contracts
         shell: bash
         run: |
           set -euo pipefail
           python scripts/dev/verify-python-first.py
-
-      - name: Validate local repository configuration
-        shell: bash
-        run: |
-          set -euo pipefail
           python scripts/dev/doctor.py
           python scripts/ci/validate-hf-targets.py
+          python -m pytest -q \
+            python/tests/unit/test_revisions_multiframework.py \
+            python/tests/unit/test_revision_decoder_shapes.py
 
       - name: Resolve selected HF target
         if: github.event_name == 'workflow_dispatch' && inputs.target != 'repository-vars'
@@ -105,26 +101,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           echo "HF_TARGET_ID=${HF_TARGET_ID}"
           echo "HF_BUCKET=${HF_BUCKET}"
           echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
-          echo "EXPECTED_MODEL_ID=${EXPECTED_MODEL_ID:-<not-pinned-by-workflow>}"
-          echo "EXPECTED_FRAMEWORK=${EXPECTED_FRAMEWORK:-<not-pinned-by-workflow>}"
-          echo "EXPECTED_DECODER=${EXPECTED_DECODER:-<not-pinned-by-workflow>}"
-
-      - name: Prepare revision directory
-        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .ci/hf/config/revisions
 
       - name: Fetch HF revision locks
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p .ci/hf/config/revisions
           bash scripts/hf/hf-fetch-revisions.sh
 
       - name: Validate fetched revisions
@@ -132,21 +118,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           args=(--root .ci/hf/config/revisions)
-
-          if [[ -n "${EXPECTED_MODEL_ID:-}" ]]; then
-            args+=(--expected-model-id "${EXPECTED_MODEL_ID}")
-          fi
-
-          if [[ -n "${EXPECTED_FRAMEWORK:-}" ]]; then
-            args+=(--expected-framework "${EXPECTED_FRAMEWORK}")
-          fi
-
-          if [[ -n "${EXPECTED_DECODER:-}" ]]; then
-            args+=(--expected-decoder "${EXPECTED_DECODER}")
-          fi
-
+          [[ -z "${EXPECTED_MODEL_ID:-}" ]] || args+=(--expected-model-id "${EXPECTED_MODEL_ID}")
+          [[ -z "${EXPECTED_FRAMEWORK:-}" ]] || args+=(--expected-framework "${EXPECTED_FRAMEWORK}")
+          [[ -z "${EXPECTED_DECODER:-}" ]] || args+=(--expected-decoder "${EXPECTED_DECODER}")
           python scripts/ci/validate-revisions.py "${args[@]}"
 
       - name: Validate required HF Bucket directories
@@ -154,19 +129,80 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           BUCKET="hf://buckets/${HF_BUCKET}"
-
-          for dir in \
-            benchmarks \
-            runs \
-            candidates \
-            reference \
-            scripts \
-            tmp
-          do
+          for dir in benchmarks runs candidates reference scripts tmp; do
             echo "Checking ${BUCKET}/${dir}/"
-            hf buckets list \
-              "${BUCKET}/${dir}" \
-              >/dev/null
+            hf buckets list "${BUCKET}/${dir}" >/dev/null
+          done
+
+  validate-targets:
+    name: Validate target ${{ matrix.target }}
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - parakeet-tdt_ctc-0.6b-ja
+          - kotoba-whisper-v1.0
+
+    env:
+      HF_BUCKET: ""
+      HF_MODEL_REPO: ""
+      EXPECTED_MODEL_ID: ""
+      EXPECTED_FRAMEWORK: ""
+      EXPECTED_DECODER: ""
+      HF_TARGET_ID: ""
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install target validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install --upgrade huggingface_hub
+
+      - name: Resolve target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/resolve-hf-target.py \
+            --target "${{ matrix.target }}" \
+            --github-env "${GITHUB_ENV}"
+
+      - name: Fetch target revision locks
+        if: env.HF_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/hf/config/revisions
+          bash scripts/hf/hf-fetch-revisions.sh
+
+      - name: Validate target revision identity
+        if: env.HF_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions \
+            --expected-model-id "${EXPECTED_MODEL_ID}" \
+            --expected-framework "${EXPECTED_FRAMEWORK}" \
+            --expected-decoder "${EXPECTED_DECODER}"
+
+      - name: Validate target Bucket directories
+        if: env.HF_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUCKET="hf://buckets/${HF_BUCKET}"
+          for dir in benchmarks runs candidates reference scripts tmp; do
+            echo "Checking ${BUCKET}/${dir}/"
+            hf buckets list "${BUCKET}/${dir}" >/dev/null
           done
