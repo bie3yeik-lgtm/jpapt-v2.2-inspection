@@ -8,12 +8,6 @@ on:
         required: true
         type: string
 
-      manifest:
-        description: "Full evaluation manifest"
-        required: false
-        default: "full.jsonl"
-        type: string
-
 permissions:
   contents: read
 
@@ -26,31 +20,33 @@ env:
   HF_BUCKET: ${{ vars.HF_BUCKET }}
   HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
 
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: "1"
-
 jobs:
   evaluate:
     name: Linux CPU Full Evaluation
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate configuration
+      - name: Validate GitHub configuration
         shell: bash
         run: |
           set -euo pipefail
 
           if [[ -z "${HF_TOKEN:-}" ]]; then
-            echo "::error::HF_TOKEN is not configured."
+            echo "::error::HF_TOKEN secret is not configured."
             exit 1
           fi
 
           if [[ -z "${HF_BUCKET:-}" ]]; then
-            echo "::error::HF_BUCKET is not configured."
+            echo "::error::HF_BUCKET repository variable is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${HF_MODEL_REPO:-}" ]]; then
+            echo "::error::HF_MODEL_REPO repository variable is not configured."
             exit 1
           fi
 
@@ -59,18 +55,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Hugging Face CLI
+      - name: Install Python project
         shell: bash
         run: |
           set -euo pipefail
 
           python -m pip install --upgrade pip
+          python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
 
+          python -c "import parakeet_onnx"
           hf --version
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Prepare directories
         shell: bash
@@ -80,63 +75,23 @@ jobs:
           mkdir -p \
             .cache/huggingface \
             .cache/models \
-            .cache/evaluation \
+            .cache/evaluation/audio \
             .ci/hf/config/revisions \
             .ci/candidate \
             .ci/reference \
-            .ci/run \
-            results/cpu
+            results/linux-cpu-full
 
-          echo "HF_HOME=${PWD}/.cache/huggingface" >> "${GITHUB_ENV}"
+          echo "HF_HOME=$(pwd)/.cache/huggingface" >> "${GITHUB_ENV}"
 
-      - name: Download revision locks
+      - name: Fetch revision locks
         shell: bash
         run: |
           set -euo pipefail
 
-          BUCKET="hf://buckets/${HF_BUCKET}"
+          bash scripts/hf/hf-fetch-revisions.sh
 
-          hf buckets cp \
-            "${BUCKET}/config/revisions/reference.json" \
-            ".ci/hf/config/revisions/reference.json"
-
-          hf buckets cp \
-            "${BUCKET}/config/revisions/evaluation-schema.json" \
-            ".ci/hf/config/revisions/evaluation-schema.json"
-
-          hf buckets cp \
-            "${BUCKET}/config/revisions/datasets-lock.json" \
-            ".ci/hf/config/revisions/datasets-lock.json"
-
-          python -m json.tool \
-            ".ci/hf/config/revisions/reference.json" \
-            >/dev/null
-
-          python -m json.tool \
-            ".ci/hf/config/revisions/evaluation-schema.json" \
-            >/dev/null
-
-          python -m json.tool \
-            ".ci/hf/config/revisions/datasets-lock.json" \
-            >/dev/null
-
-      - name: Cache Rust release build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: >-
-            rust-release-full-${{ runner.os }}-${{ runner.arch }}-${{
-              hashFiles(
-                'Cargo.lock',
-                'Cargo.toml',
-                'crates/**/Cargo.toml'
-              )
-            }}
-          restore-keys: |
-            rust-release-full-${{ runner.os }}-${{ runner.arch }}-
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions
 
       - name: Cache model and evaluation assets
         uses: actions/cache@v4
@@ -148,28 +103,33 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            full-eval-${{ runner.os }}-${{ runner.arch }}-${{
+            py-full-ubuntu-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
                 '.ci/hf/config/revisions/reference.json',
                 '.ci/hf/config/revisions/evaluation-schema.json',
-                '.ci/hf/config/revisions/datasets-lock.json'
+                '.ci/hf/config/revisions/datasets-lock.json',
+                'pyproject.toml'
               )
             }}
           restore-keys: |
-            full-eval-${{ runner.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-full-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
-      - name: Download candidate
+      - name: Fetch candidate
         shell: bash
         run: |
           set -euo pipefail
 
-          BUCKET="hf://buckets/${HF_BUCKET}"
+          bash scripts/hf/hf-fetch-candidate.sh \
+            "${{ inputs.candidate_id }}"
 
-          hf buckets sync \
-            "${BUCKET}/candidates/${{ inputs.candidate_id }}" \
-            ".ci/candidate"
+      - name: Fetch reference assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash scripts/hf/hf-fetch-reference.sh || true
 
       - name: Locate ONNX model
         id: model
@@ -177,147 +137,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODEL="$(find .ci/candidate \
-            -type f \
-            -name '*.onnx' \
-            -print \
-            -quit)"
+          MODEL="$(find .ci/candidate -type f -name '*.onnx' -print -quit)"
 
           if [[ -z "${MODEL}" ]]; then
-            echo "::error::No ONNX model found."
+            echo "::error::No ONNX model was found under .ci/candidate."
             exit 1
           fi
 
           echo "path=${MODEL}" >> "${GITHUB_OUTPUT}"
+          echo "ONNX model: ${MODEL}"
 
-          python - "${MODEL}" <<'PY'
-          import hashlib
-          import pathlib
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-
-          digest = hashlib.sha256()
-
-          with path.open("rb") as f:
-              for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                  digest.update(chunk)
-
-          print("SHA256:", digest.hexdigest())
-          PY
-
-      - name: Download reference assets
+      - name: Verify Python-first package
         shell: bash
         run: |
           set -euo pipefail
 
-          BUCKET="hf://buckets/${HF_BUCKET}"
+          python scripts/dev/verify-python-first.py
 
-          hf buckets sync \
-            "${BUCKET}/reference" \
-            ".ci/reference"
-
-      - name: Locate manifest
-        id: manifest
+      - name: Evaluate full suite with Python
         shell: bash
         run: |
           set -euo pipefail
 
-          MANIFEST="$(find .ci/reference \
-            -type f \
-            -name "${{ inputs.manifest }}" \
-            -print \
-            -quit)"
-
-          if [[ -z "${MANIFEST}" ]]; then
-            echo "::error::Manifest not found: ${{ inputs.manifest }}"
-            exit 1
-          fi
-
-          echo "path=${MANIFEST}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build Rust evaluator
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cargo build \
-            --release \
-            --locked \
-            --package asr-eval
-
-          test -x target/release/asr-eval
-
-      - name: Run full CPU evaluation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          target/release/asr-eval evaluate \
+          python -m parakeet_onnx.cli.evaluate \
             --provider cpu \
+            --environment linux \
+            --evaluation full \
             --model "${{ steps.model.outputs.path }}" \
-            --manifest "${{ steps.manifest.outputs.path }}" \
-            --schema ".ci/hf/config/revisions/evaluation-schema.json" \
-            --datasets-lock ".ci/hf/config/revisions/datasets-lock.json" \
-            --reference ".ci/hf/config/revisions/reference.json" \
-            --output "results/cpu"
+            --candidate-dir ".ci/candidate" \
+            --candidate-id "${{ inputs.candidate_id }}" \
+            --revisions ".ci/hf/config/revisions" \
+            --output "results/linux-cpu-full"
 
-      - name: Validate metrics
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test -f "results/cpu/metrics.json"
-
-          python -m json.tool \
-            "results/cpu/metrics.json" \
-            >/dev/null
-
-      - name: Create run context
+      - name: Validate result contract
         if: always()
         shell: bash
         run: |
           set -euo pipefail
 
-          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-linux-cpu-full"
-
-          RUN_DIR=".ci/run/${RUN_ID}"
-
-          mkdir -p "${RUN_DIR}"
-
-          python - <<PY
-          import json
-          import os
-          from pathlib import Path
-
-          context = {
-              "run_id": "${RUN_ID}",
-              "github_run_id": os.environ["GITHUB_RUN_ID"],
-              "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "git_repository": os.environ["GITHUB_REPOSITORY"],
-              "git_sha": os.environ["GITHUB_SHA"],
-              "git_ref": os.environ["GITHUB_REF"],
-              "candidate_id": "${{ inputs.candidate_id }}",
-              "runner_os": "${{ runner.os }}",
-              "runner_arch": "${{ runner.arch }}",
-              "provider": "cpu",
-              "suite": "full"
-          }
-
-          Path("${RUN_DIR}/run-context.json").write_text(
-              json.dumps(
-                  context,
-                  ensure_ascii=False,
-                  indent=2
-              ),
-              encoding="utf-8"
-          )
-          PY
-
-          if [[ -d results/cpu ]]; then
-            cp -R \
-              results/cpu \
-              "${RUN_DIR}/results"
+          if [[ -f results/linux-cpu-full/run-context.json ]]; then
+            python scripts/ci/validate-result.py \
+              results/linux-cpu-full
           fi
 
       - name: Upload run to HF Bucket
@@ -326,29 +186,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-linux-cpu-full"
-
-          BUCKET="hf://buckets/${HF_BUCKET}"
-
-          if [[ -d ".ci/run/${RUN_ID}" ]]; then
-            hf buckets sync \
-              ".ci/run/${RUN_ID}" \
-              "${BUCKET}/runs/${RUN_ID}"
+          if [[ -f results/linux-cpu-full/run-context.json ]]; then
+            bash scripts/hf/hf-push-run.sh \
+              results/linux-cpu-full
           fi
 
-      - name: Publish CPU benchmark
+      - name: Publish full benchmark
         if: success()
         shell: bash
         run: |
           set -euo pipefail
 
-          RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          BUCKET="hf://buckets/${HF_BUCKET}"
-
-          hf buckets cp \
-            "results/cpu/metrics.json" \
-            "${BUCKET}/benchmarks/${{ inputs.candidate_id }}/linux-cpu-full/${RUN_ID}.json"
+          bash scripts/hf/hf-push-benchmark.sh \
+            results/linux-cpu-full/metrics.json \
+            linux-cpu-full
 
       - name: Upload lightweight GitHub artifact
         if: always()
@@ -356,7 +207,8 @@ jobs:
         with:
           name: cpu-full-${{ inputs.candidate_id }}
           path: |
-            results/cpu/**/*.json
-            .ci/run/**/run-context.json
+            results/linux-cpu-full/run-context.json
+            results/linux-cpu-full/metrics.json
+            results/linux-cpu-full/samples.jsonl
           retention-days: 7
           if-no-files-found: warn

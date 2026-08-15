@@ -3,6 +3,16 @@ name: Validate HF Layout
 on:
   workflow_dispatch:
 
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "config/**"
+      - "evaluation/**"
+      - "python/src/parakeet_onnx/hf/**"
+      - "python/src/parakeet_onnx/config/**"
+      - "scripts/hf/**"
+      - "scripts/ci/**"
+
   push:
     branches:
       - main
@@ -10,6 +20,10 @@ on:
       - ".github/workflows/**"
       - "config/**"
       - "evaluation/**"
+      - "python/src/parakeet_onnx/hf/**"
+      - "python/src/parakeet_onnx/config/**"
+      - "scripts/hf/**"
+      - "scripts/ci/**"
 
 permissions:
   contents: read
@@ -27,97 +41,82 @@ jobs:
   validate:
     name: Validate HF configuration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Validate GitHub configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${HF_TOKEN:-}" ]]; then
-            echo "::error::HF_TOKEN secret is not configured."
-            exit 1
-          fi
-
-          if [[ -z "${HF_BUCKET:-}" ]]; then
-            echo "::error::HF_BUCKET repository variable is not configured."
-            exit 1
-          fi
-
-          if [[ -z "${HF_MODEL_REPO:-}" ]]; then
-            echo "::error::HF_MODEL_REPO repository variable is not configured."
-            exit 1
-          fi
-
-          echo "HF_BUCKET=${HF_BUCKET}"
-          echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install Hugging Face CLI
+      - name: Install Python project
         shell: bash
         run: |
           set -euo pipefail
 
           python -m pip install --upgrade pip
+          python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
 
+          python -c "import parakeet_onnx"
           hf --version
 
-      - name: Prepare workspace
+      - name: Verify Python-first package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python scripts/dev/verify-python-first.py
+
+      - name: Validate local repository configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python scripts/dev/doctor.py
+
+      - name: Validate GitHub HF configuration
+        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "HF_BUCKET=${HF_BUCKET}"
+
+          if [[ -n "${HF_MODEL_REPO:-}" ]]; then
+            echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
+          fi
+
+      - name: Prepare revision directory
+        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p .ci/hf/config/revisions
 
-      - name: Download revision metadata
+      - name: Fetch HF revision locks
+        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
 
-          BUCKET="hf://buckets/${HF_BUCKET}"
+          bash scripts/hf/hf-fetch-revisions.sh
 
-          hf buckets cp \
-            "${BUCKET}/config/revisions/reference.json" \
-            ".ci/hf/config/revisions/reference.json"
-
-          hf buckets cp \
-            "${BUCKET}/config/revisions/evaluation-schema.json" \
-            ".ci/hf/config/revisions/evaluation-schema.json"
-
-          hf buckets cp \
-            "${BUCKET}/config/revisions/datasets-lock.json" \
-            ".ci/hf/config/revisions/datasets-lock.json"
-
-      - name: Validate JSON syntax
+      - name: Validate fetched revisions
+        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
 
-          jq empty ".ci/hf/config/revisions/reference.json"
-          jq empty ".ci/hf/config/revisions/evaluation-schema.json"
-          jq empty ".ci/hf/config/revisions/datasets-lock.json"
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions
 
-      - name: Calculate revision identity
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cat \
-            ".ci/hf/config/revisions/reference.json" \
-            ".ci/hf/config/revisions/evaluation-schema.json" \
-            ".ci/hf/config/revisions/datasets-lock.json" \
-            | sha256sum
-
-      - name: Validate required bucket directories
+      - name: Validate required HF Bucket directories
+        if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -133,22 +132,7 @@ jobs:
             tmp
           do
             echo "Checking ${BUCKET}/${dir}/"
-
             hf buckets list \
               "${BUCKET}/${dir}" \
               >/dev/null
           done
-
-      - name: Print revision metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== reference.json ==="
-          jq . ".ci/hf/config/revisions/reference.json"
-
-          echo "=== evaluation-schema.json ==="
-          jq . ".ci/hf/config/revisions/evaluation-schema.json"
-
-          echo "=== datasets-lock.json ==="
-          jq . ".ci/hf/config/revisions/datasets-lock.json"
