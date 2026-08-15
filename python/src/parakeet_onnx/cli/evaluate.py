@@ -25,6 +25,29 @@ from parakeet_onnx.runtime import (
 )
 
 
+def _resolve_under_root(root: Path, value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return (root / path).resolve()
+
+
+def _find_vocabulary(candidate_dir: Path) -> Path | None:
+    names = (
+        "vocabulary.json",
+        "vocab.json",
+        "tokens.json",
+        "tokenizer/vocabulary.json",
+        "tokenizer/vocab.json",
+        "tokenizer/tokens.json",
+    )
+    for name in names:
+        path = candidate_dir / name
+        if path.is_file():
+            return path
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parakeet-onnx-evaluate",
@@ -34,7 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--candidate-id", default=None)
-    parser.add_argument("--vocabulary", type=Path, required=True)
+    parser.add_argument(
+        "--vocabulary",
+        type=Path,
+        default=None,
+        help=(
+            "JSON vocabulary mapping. If omitted, the evaluator searches "
+            "candidate-dir for vocabulary.json / vocab.json / tokens.json."
+        ),
+    )
     parser.add_argument("--evaluation", default="smoke")
     parser.add_argument("--environment", default=None)
     parser.add_argument(
@@ -61,20 +92,24 @@ def main() -> int:
     )
     revisions = load_revision_bundle(args.revisions)
 
-    materializer_root = Path(
-        str(
-            config.environment.get(
-                "path.materialized_audio_cache",
-                ".cache/evaluation/audio",
-            )
-        )
+    materializer_value = config.environment.get(
+        "path.materialized_audio_cache",
+        ".cache/evaluation/audio",
     )
+    materializer_root = _resolve_under_root(
+        config.repository_root,
+        str(materializer_value),
+    )
+
+    cache_value = config.environment.get(
+        "path.huggingface_cache",
+        ".cache/huggingface",
+    )
+    hf_cache = _resolve_under_root(config.repository_root, str(cache_value))
+
     materializer = DatasetMaterializer(materializer_root)
     backend = HuggingFaceDatasetBackend(
-        cache_dir=config.environment.get(
-            "path.huggingface_cache",
-            ".cache/huggingface",
-        ),
+        cache_dir=hf_cache,
         streaming=False,
     )
     resolver = DatasetResolver(
@@ -85,11 +120,12 @@ def main() -> int:
     )
 
     manifest = resolver.resolve(
-        config.repository_root / config.evaluation.manifest,
+        config.manifest_path,
         expected_sample_count=config.evaluation.expected_sample_count,
     )
 
-    contract = ModelContract.load(args.candidate_dir)
+    candidate_dir = args.candidate_dir.expanduser().resolve()
+    contract = ModelContract.load(candidate_dir)
     if contract.input_kind == "features":
         raise SystemExit(
             "This CLI cannot construct the canonical NeMo frontend without "
@@ -97,18 +133,30 @@ def main() -> int:
             "or inject a FeatureExtractor programmatically."
         )
 
+    model_path = args.model.expanduser().resolve()
     session = create_session(
         OrtSessionConfig(
-            model_path=args.model,
+            model_path=model_path,
             provider_id=args.provider,
         )
     )
-    tokenizer = VocabularyTokenizer.from_json(args.vocabulary)
+
+    vocabulary = (
+        args.vocabulary.expanduser().resolve()
+        if args.vocabulary is not None
+        else _find_vocabulary(candidate_dir)
+    )
+    if vocabulary is None:
+        raise SystemExit(
+            "No vocabulary JSON was provided or found in candidate-dir."
+        )
+
+    tokenizer = VocabularyTokenizer.from_json(vocabulary)
 
     context = build_run_context(
         config=config,
         revisions=revisions,
-        candidate_path=args.model,
+        candidate_path=model_path,
         candidate_id=args.candidate_id,
         artifact_role="primary",
     )
@@ -119,6 +167,7 @@ def main() -> int:
         tokenizer=tokenizer,
         provider_id=args.provider,
     )
+
     benchmark = run_evaluation(
         evaluator,
         EvaluationRunInputs(
@@ -133,6 +182,7 @@ def main() -> int:
     print(f"acceptance.passed: {benchmark.acceptance.passed}")
     print(f"CER: {benchmark.quality.cer}")
     print(f"WER: {benchmark.quality.wer}")
+
     return 0 if benchmark.acceptance.passed else 1
 
 
