@@ -1,51 +1,16 @@
-"""
-Evaluation result models, JSON Schema validation, and output writers.
+"""Evaluation contracts and Python-first orchestration."""
 
-This package defines the language-neutral evaluation output contract used by:
-
-- Python evaluation runtime
-- future Rust evaluation runtime
-- GitHub Actions
-- Hugging Face Bucket runs/
-- Hugging Face Bucket benchmarks/
-
-Primary output files:
-
-    run-context.json
-    samples.jsonl
-    metrics.json
-"""
-
-from .models import (
-    AcceptanceSummary,
-    AsrOutput,
-    BenchmarkResult,
-    CandidateIdentity,
-    ComponentTimingSummary,
-    ErrorRecord,
-    ErrorSummary,
-    EvaluationIdentity,
-    ExecutionIdentity,
-    MemoryMetrics,
-    MemorySummary,
-    NumericParity,
-    NumericSummary,
-    ParityResult,
-    ParitySummary,
-    PerformanceSummary,
-    ProviderResult,
-    ProviderSummary,
-    QualityMetrics,
-    QualitySummary,
-    RuntimeIdentity,
-    SampleIdentity,
-    SampleResult,
-    SampleSummary,
-    TensorComparison,
-    TensorSummary,
-    TimingDistribution,
-    TimingMetrics,
+from .aggregate import AggregateResult, aggregate_sample_results
+from .metrics import (
+    CorpusErrorAccumulator,
+    character_error_rate,
+    edit_distance,
+    normalize_text,
+    word_error_rate,
 )
+from .models import *
+from .pipeline import PythonCtcEvaluator
+from .runner import EvaluationRunInputs, run_evaluation
 from .schema import (
     EvaluationSchemaError,
     EvaluationSchemaRegistry,
@@ -53,47 +18,25 @@ from .schema import (
     validate_run_context,
     validate_sample_result,
 )
-from .writer import (
-    BenchmarkWriter,
-    SampleResultWriter,
-    write_benchmark,
-)
+from .writer import BenchmarkWriter, SampleResultWriter, write_benchmark
 
 __all__ = [
-    "AcceptanceSummary",
-    "AsrOutput",
-    "BenchmarkResult",
+    "AggregateResult",
     "BenchmarkWriter",
-    "CandidateIdentity",
-    "ComponentTimingSummary",
-    "ErrorRecord",
-    "ErrorSummary",
-    "EvaluationIdentity",
+    "CorpusErrorAccumulator",
+    "EvaluationRunInputs",
     "EvaluationSchemaError",
     "EvaluationSchemaRegistry",
-    "ExecutionIdentity",
-    "MemoryMetrics",
-    "MemorySummary",
-    "NumericParity",
-    "NumericSummary",
-    "ParityResult",
-    "ParitySummary",
-    "PerformanceSummary",
-    "ProviderResult",
-    "ProviderSummary",
-    "QualityMetrics",
-    "QualitySummary",
-    "RuntimeIdentity",
-    "SampleIdentity",
-    "SampleResult",
+    "PythonCtcEvaluator",
     "SampleResultWriter",
-    "SampleSummary",
-    "TensorComparison",
-    "TensorSummary",
-    "TimingDistribution",
-    "TimingMetrics",
+    "aggregate_sample_results",
+    "character_error_rate",
+    "edit_distance",
+    "normalize_text",
+    "run_evaluation",
     "validate_benchmark",
     "validate_run_context",
     "validate_sample_result",
+    "word_error_rate",
     "write_benchmark",
 ]
