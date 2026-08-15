@@ -256,8 +256,8 @@ target/
 __pycache__/
 
 # Large ML artifacts
-*.onnx
-*.nemo
+#*.onnx
+#*.nemo
 *.npy
 *.npz
 

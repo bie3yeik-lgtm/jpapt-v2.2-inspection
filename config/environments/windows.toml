@@ -26,6 +26,7 @@ huggingface_cache = ".cache/huggingface"
 temporary_root = "tmp"
 results_root = "results"
 ci_root = ".ci"
+materialized_audio_cache = ".cache/evaluation/audio"
 
 [cache]
 enabled = true

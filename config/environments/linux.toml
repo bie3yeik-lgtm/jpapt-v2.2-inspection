@@ -32,6 +32,7 @@ evaluation_cache = ".cache/evaluation"
 huggingface_cache = ".cache/huggingface"
 temporary_root = "tmp"
 results_root = "results"
+materialized_audio_cache = ".cache/evaluation/audio"
 
 # GitHub Actions and local scripts may create this directory for
 # downloaded HF metadata and transient run state.

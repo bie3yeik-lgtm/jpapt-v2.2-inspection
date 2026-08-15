@@ -1,0 +1,466 @@
+# config/evaluation/coreml-parity.toml
+#
+# CoreML Execution Provider 専用の parity evaluation configuration.
+#
+# Purpose:
+# - macOS / ONNX Runtime CoreMLExecutionProvider の互換性確認
+# - CPUExecutionProvider と CoreMLExecutionProvider の出力差分確認
+# - duration band ごとの dynamic-shape / graph compile 問題の検出
+# - CoreML 固有の provider fallback / session / compile エラーの分類
+#
+# Non-purpose:
+# - CoreML の性能値を GitHub-hosted macOS runner 上で正式 benchmark とすること
+# - native Core ML (.mlpackage) を評価すること
+# - MLX を評価すること
+# - full 768-sample quality evaluation を置き換えること
+#
+# CoreML here means:
+#
+#   ONNX Runtime
+#       +
+#   CoreMLExecutionProvider
+#
+# only.
+
+schema_version = 1
+
+
+# ---------------------------------------------------------------------------
+# Evaluation identity
+# ---------------------------------------------------------------------------
+
+[evaluation]
+
+id = "coreml-parity"
+
+description = """
+CoreMLExecutionProvider compatibility and numerical parity evaluation for
+Parakeet ONNX candidates on macOS.
+"""
+
+manifest = "evaluation/manifests/coreml-parity.jsonl"
+
+expected_sample_count = 40
+
+# This suite is intended for parity/correctness checks rather than
+# release-level corpus quality evaluation.
+purpose = "provider_parity"
+
+# The CTC deployment path is the initial implementation target.
+decoder = "ctc"
+
+# CoreML parity must not silently change sample count.
+require_exact_sample_count = true
+
+# Failure of one sample should normally not suppress diagnostics from the
+# remaining duration buckets.
+fail_fast = false
+
+
+# ---------------------------------------------------------------------------
+# Reference
+# ---------------------------------------------------------------------------
+
+[reference]
+
+# CoreML output is compared against the canonical reference chain.
+#
+# The exact reference revision itself is not stored in this TOML.
+# It comes from:
+#
+#   .ci/hf/config/revisions/reference.json
+#
+# downloaded from HF Bucket.
+runtime = "nemo"
+
+decoder = "ctc"
+
+# CPU ORT may additionally be used as the portable ONNX comparison baseline.
+compare_cpu_onnx = true
+
+# NeMo remains the canonical semantic/numerical source of truth.
+compare_nemo_reference = true
+
+
+# ---------------------------------------------------------------------------
+# Dataset selection
+# ---------------------------------------------------------------------------
+
+[dataset]
+
+manifest = "evaluation/manifests/coreml-parity.jsonl"
+
+expected_sample_count = 40
+
+selection_strategy = "stable_hash"
+
+# Dataset repository/revision values must come from datasets-lock.json.
+strict_revision_lock = true
+
+# A requested duration bucket must not silently return fewer samples.
+require_full_selection = true
+
+# ResolvedDatasetSample.audio_path must already point to materialized
+# ordinary local audio assets.
+require_materialized_audio = true
+
+
+# ---------------------------------------------------------------------------
+# Audio
+# ---------------------------------------------------------------------------
+
+[audio]
+
+sample_rate_hz = 16000
+
+channels = 1
+
+dtype = "float32"
+
+# Canonical boundary:
+#
+#   materialized audio
+#       -> decode
+#       -> downmix
+#       -> resample
+#       -> float32 mono 16 kHz
+#
+require_canonical_audio = true
+
+require_finite = true
+
+require_c_contiguous = true
+
+# Generic audio preprocessing is identical to the CPU parity path.
+# CoreML-specific preprocessing must not be introduced here.
+provider_specific_preprocessing = false
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+
+[execution]
+
+provider = "coreml"
+
+ort_provider = "CoreMLExecutionProvider"
+
+platform = "macos"
+
+# Each sample is evaluated independently at first.
+batch_size = 1
+
+# Dynamic audio length is intentionally exercised by the dedicated manifest.
+dynamic_shapes = true
+
+# CoreML evaluation is intended to expose provider compatibility issues rather
+# than hiding them through aggressive parallel execution.
+parallel_samples = 1
+
+# Warm-up before timing/steady-state comparisons.
+warmup_runs = 1
+
+# CoreML graph/model compilation may occur during the first execution.
+separate_cold_start = true
+
+# Provider availability is mandatory for this suite.
+require_requested_provider = true
+
+# CPU fallback can be permitted by ORT for diagnostic purposes, but it must
+# never be silently treated as a successful CoreML execution.
+allow_cpu_fallback = true
+
+# If fallback occurs, record it and fail provider-purity acceptance.
+record_cpu_fallback = true
+
+fail_on_unexpected_cpu_fallback = true
+
+
+# ---------------------------------------------------------------------------
+# CoreML-specific diagnostics
+# ---------------------------------------------------------------------------
+
+[coreml]
+
+enabled = true
+
+# This project uses ORT CoreML EP only.
+runtime = "onnxruntime"
+
+native_coreml_model = false
+
+mlx = false
+
+# Do not assume that session creation implies successful CoreML graph
+# assignment/compilation.
+inspect_provider_assignment = true
+
+# Dynamic shapes are intentionally retained for the portable ONNX baseline.
+require_static_shape = false
+
+# Keep the original portable ONNX candidate rather than creating a separate
+# CoreML-specific ONNX artifact by default.
+require_provider_specific_model = false
+
+# Report graph partitioning/fallback information where the installed ORT
+# version exposes it.
+record_graph_partitioning = true
+
+# Classify CoreML failures instead of collapsing them into a generic runtime
+# exception.
+classify_failures = true
+
+failure_categories = [
+    "COREML_PROVIDER_UNAVAILABLE",
+    "COREML_SESSION_REGISTRATION_FAILED",
+    "COREML_GRAPH_SHAPE_INCOMPATIBLE",
+    "COREML_GRAPH_COMPILATION_FAILED",
+    "COREML_RUNTIME_EXECUTION_FAILED",
+    "COREML_UNEXPECTED_CPU_FALLBACK",
+    "COREML_NUMERICAL_PARITY_FAILED",
+]
+
+
+# ---------------------------------------------------------------------------
+# Numerical parity
+# ---------------------------------------------------------------------------
+
+[parity]
+
+enabled = true
+
+# CoreML parity is not judged solely by the final transcription.
+compare_intermediate_tensors = true
+
+compare_frontend = true
+
+compare_encoder = true
+
+compare_logits = true
+
+compare_tokens = true
+
+compare_text = true
+
+# Numerical acceptance values are intentionally not duplicated here.
+#
+# Their authoritative values come from:
+#
+#   HF Bucket/config/revisions/evaluation-schema.json
+#
+threshold_source = "evaluation-schema"
+
+# Semantic token/text parity remains important even if small floating-point
+# differences are accepted.
+require_token_parity = true
+
+require_text_parity = true
+
+# When numeric tensors differ within accepted tolerance but tokens/text remain
+# identical, retain the measurements rather than discarding them.
+record_numeric_differences = true
+
+
+# ---------------------------------------------------------------------------
+# Quality metrics
+# ---------------------------------------------------------------------------
+
+[quality]
+
+enabled = true
+
+# These metrics compare model output with dataset ground truth.
+cer = true
+wer = true
+
+# The purpose of this suite is provider parity, so a difference in aggregate
+# quality between CPU/CoreML is primarily interpreted as a parity regression.
+compare_with_reference_provider = true
+
+# Text normalization rules are revision-controlled elsewhere and must not be
+# silently changed by this TOML.
+normalization_source = "evaluation-schema"
+
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+[timing]
+
+enabled = true
+
+# GitHub-hosted macOS timing is useful diagnostically, but is not the
+# authoritative benchmark for a specific local Apple Silicon machine.
+authoritative_performance = false
+
+measure_total = true
+
+measure_audio_decode = true
+
+measure_resample = true
+
+measure_frontend = true
+
+measure_inference = true
+
+measure_decoder = true
+
+measure_postprocess = true
+
+measure_rtf = true
+
+# CoreML compilation/cold-start behavior is especially useful to preserve.
+measure_cold_start = true
+
+measure_warm_runs = true
+
+# Keep ORT-only and E2E measurements separate.
+separate_inference_and_end_to_end = true
+
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+[memory]
+
+enabled = true
+
+measure_peak_ram = true
+
+# Device-memory introspection is not guaranteed to be available through ORT
+# CoreML EP, therefore failure to collect it is not an evaluation failure.
+measure_device_memory = "optional"
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+[output]
+
+# Standard language-neutral evaluation contract.
+write_run_context = true
+
+write_samples = true
+
+write_metrics = true
+
+# Expected layout:
+#
+#   results/<name>/
+#   ├── run-context.json
+#   ├── samples.jsonl
+#   └── metrics.json
+#
+format = "evaluation-v1"
+
+# Keep individual sample diagnostics because CoreML failures often depend on
+# input duration/shape.
+per_sample_results = true
+
+# Preserve classified provider failures in sample output.
+record_errors = true
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+[validation]
+
+strict_schema_validation = true
+
+strict_revision_lock = true
+
+require_candidate_sha256 = true
+
+require_manifest_sha256 = true
+
+require_datasets_lock_sha256 = true
+
+require_reference_revision = true
+
+# A nominally successful ORT call is insufficient if it executed entirely on
+# CPU when CoreML was requested.
+require_provider_integrity = true
+
+
+# ---------------------------------------------------------------------------
+# Acceptance
+# ---------------------------------------------------------------------------
+
+[acceptance]
+
+enabled = true
+
+# This suite is a parity/compatibility gate, not the final release-quality gate.
+release_gate = false
+
+# `full` remains the normal release promotion gate.
+promotion_eligible = false
+
+# Basic structural conditions that this TOML can enforce.
+require_expected_sample_count = true
+
+require_no_unclassified_errors = true
+
+require_no_unexpected_fallback = true
+
+# Numeric thresholds themselves are revision-controlled externally.
+threshold_source = "evaluation-schema"
+
+# CoreML parity should not weaken the portable CPU acceptance criteria.
+allow_provider_specific_threshold_override = false
+
+
+# ---------------------------------------------------------------------------
+# GitHub Actions
+# ---------------------------------------------------------------------------
+
+[github_actions]
+
+enabled = true
+
+runner = "macos-15"
+
+# Standard GitHub-hosted runner only.
+self_hosted = false
+
+# The hosted runner is useful for reproducible compatibility/parity CI.
+purpose = "correctness"
+
+# Do not treat its RTF as the canonical M2/local deployment number.
+authoritative_performance = false
+
+timeout_minutes = 90
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+[reporting]
+
+summary = true
+
+include_provider_status = true
+
+include_fallback_status = true
+
+include_failure_classification = true
+
+include_numeric_parity = true
+
+include_text_parity = true
+
+include_quality = true
+
+include_timing = true
+
+include_memory = true
+
+# Duration bands are useful for identifying CoreML shape/compiler boundaries.
+group_by_manifest_entry = true
