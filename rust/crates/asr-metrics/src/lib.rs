@@ -5,3 +5,10 @@ pub mod memory;
 pub mod parity;
 pub mod timing;
 pub mod wer;
+
+pub use cer::{character_error_rate, normalize_text};
+pub use edit_distance::edit_distance;
+pub use memory::current_process_memory_mb;
+pub use parity::{TensorComparison, compare_f32};
+pub use timing::{TimingDistribution, distribution};
+pub use wer::word_error_rate;
