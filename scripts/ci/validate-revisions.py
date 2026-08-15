@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 import sys
 
-from parakeet_onnx.hf.revisions import (
-    RevisionError,
-    load_revision_bundle,
-)
+from parakeet_onnx.hf.revisions import RevisionError, load_revision_bundle
 
 
 DEFAULT_ROOT = Path(".ci/hf/config/revisions")
@@ -22,23 +19,19 @@ def build_parser() -> argparse.ArgumentParser:
             "including framework/decoder compatibility."
         )
     )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=DEFAULT_ROOT,
-        help=(
-            "Directory containing reference.json, evaluation-schema.json, "
-            "and datasets-lock.json."
-        ),
-    )
+    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--expected-model-id")
     parser.add_argument("--expected-framework")
     parser.add_argument("--expected-decoder")
     parser.add_argument(
-        "--json",
+        "--allow-legacy-metadata",
         action="store_true",
-        help="Emit the normalized revision bundle as JSON.",
+        help=(
+            "Allow framework/decoder identity to be absent from older "
+            "revision documents. Present values must still match."
+        ),
     )
+    parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -47,12 +40,40 @@ def _expect(
     actual: str | None,
     expected: str | None,
     label: str,
+    allow_missing: bool = False,
 ) -> None:
     if expected is None:
+        return
+    if actual is None and allow_missing:
+        print(
+            f"WARN: {label} is absent from legacy revision metadata; "
+            f"target expects {expected!r}.",
+            file=sys.stderr,
+        )
         return
     if actual != expected:
         raise RevisionError(
             f"{label} mismatch: expected={expected!r}, actual={actual!r}"
+        )
+
+
+def _expect_decoder(
+    *,
+    supported: tuple[str, ...],
+    expected: str,
+    label: str,
+    allow_missing: bool,
+) -> None:
+    if not supported and allow_missing:
+        print(
+            f"WARN: {label} is absent from legacy revision metadata; "
+            f"target expects {expected!r}.",
+            file=sys.stderr,
+        )
+        return
+    if expected not in supported:
+        raise RevisionError(
+            f"{label} mismatch: expected {expected!r} in {list(supported)!r}"
         )
 
 
@@ -62,7 +83,6 @@ def main() -> int:
 
     try:
         bundle = load_revision_bundle(root)
-
         _expect(
             actual=bundle.reference.model_id,
             expected=args.expected_model_id,
@@ -72,28 +92,25 @@ def main() -> int:
             actual=bundle.reference.canonical_framework,
             expected=args.expected_framework,
             label="canonical_framework",
+            allow_missing=args.allow_legacy_metadata,
         )
 
         if args.expected_decoder is not None:
-            if args.expected_decoder not in bundle.reference.decoders.supported:
-                raise RevisionError(
-                    "reference.json decoder mismatch: "
-                    f"expected {args.expected_decoder!r} in "
-                    f"{list(bundle.reference.decoders.supported)!r}"
-                )
-            schema_decoders = bundle.evaluation_schema.decoders.supported
-            if schema_decoders and args.expected_decoder not in schema_decoders:
-                raise RevisionError(
-                    "evaluation-schema.json decoder mismatch: "
-                    f"expected {args.expected_decoder!r} in "
-                    f"{list(schema_decoders)!r}"
-                )
+            _expect_decoder(
+                supported=bundle.reference.decoders.supported,
+                expected=args.expected_decoder,
+                label="reference.json decoder",
+                allow_missing=args.allow_legacy_metadata,
+            )
+            _expect_decoder(
+                supported=bundle.evaluation_schema.decoders.supported,
+                expected=args.expected_decoder,
+                label="evaluation-schema.json decoder",
+                allow_missing=args.allow_legacy_metadata,
+            )
 
     except (RevisionError, FileNotFoundError, OSError, ValueError) as exc:
-        print(
-            f"ERROR: revision validation failed: {exc}",
-            file=sys.stderr,
-        )
+        print(f"ERROR: revision validation failed: {exc}", file=sys.stderr)
         return 1
 
     if args.json:
@@ -110,9 +127,8 @@ def main() -> int:
         print(f"root: {root}")
         print(f"bundle_sha256: {bundle.sha256}")
         print(
-            "model: "
-            f"{bundle.reference.model_id}"
-            f"@{bundle.reference.model_revision}"
+            f"model: {bundle.reference.model_id}@"
+            f"{bundle.reference.model_revision}"
         )
         print(
             "canonical_framework: "
@@ -124,15 +140,14 @@ def main() -> int:
         )
         print(
             "evaluation_schema: "
-            f"{bundle.evaluation_schema.schema_id}"
-            f"@{bundle.evaluation_schema.schema_revision}"
+            f"{bundle.evaluation_schema.schema_id}@"
+            f"{bundle.evaluation_schema.schema_revision}"
         )
         print(
             "evaluation_decoders: "
             f"{','.join(bundle.evaluation_schema.decoders.supported) or '<unspecified>'}"
         )
         print(f"datasets: {len(bundle.datasets.datasets)}")
-
     return 0
 
 
