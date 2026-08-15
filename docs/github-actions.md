@@ -62,8 +62,8 @@ Settings
 
 | 名前 | 例 | 用途 |
 |---|---|---|
-| `HF_BUCKET` | `gawohok7/jpapt-v2.2-dev-bucket` | candidate、revision lock、evaluation data の配置先 |
-| `HF_MODEL_REPO` | `gawohok7/jpapt-v2.2-dev` | validated/released model repository |
+| `HF_BUCKET` | `<username>/<bucketname>` | candidate、revision lock、evaluation data の配置先 |
+| `HF_MODEL_REPO` | `<username>/<repositoryname>` | validated/released model repository |
 
 workflow 内では次のように参照されます。
 
