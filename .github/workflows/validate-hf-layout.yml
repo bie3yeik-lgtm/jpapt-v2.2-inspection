@@ -12,7 +12,6 @@ on:
           - repository-vars
           - parakeet-tdt_ctc-0.6b-ja
           - kotoba-whisper-v1.0
-
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -24,7 +23,6 @@ on:
       - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
-
   push:
     branches: [main]
     paths:
@@ -59,13 +57,11 @@ jobs:
     name: Validate repository HF configuration
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-
       - name: Install Python project
         shell: bash
         run: |
@@ -75,7 +71,6 @@ jobs:
           python -m pip install --upgrade huggingface_hub
           python -c "import parakeet_onnx"
           hf --version
-
       - name: Validate local contracts
         shell: bash
         run: |
@@ -86,7 +81,6 @@ jobs:
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py
-
       - name: Resolve selected HF target
         if: github.event_name == 'workflow_dispatch' && inputs.target != 'repository-vars'
         shell: bash
@@ -95,7 +89,6 @@ jobs:
           python scripts/ci/resolve-hf-target.py \
             --target "${{ inputs.target }}" \
             --github-env "${GITHUB_ENV}"
-
       - name: Validate GitHub HF configuration
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
@@ -104,7 +97,6 @@ jobs:
           echo "HF_TARGET_ID=${HF_TARGET_ID}"
           echo "HF_BUCKET=${HF_BUCKET}"
           echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
-
       - name: Fetch HF revision locks
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
@@ -112,7 +104,6 @@ jobs:
           set -euo pipefail
           mkdir -p .ci/hf/config/revisions
           bash scripts/hf/hf-fetch-revisions.sh
-
       - name: Validate fetched revisions
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
@@ -123,7 +114,6 @@ jobs:
           [[ -z "${EXPECTED_FRAMEWORK:-}" ]] || args+=(--expected-framework "${EXPECTED_FRAMEWORK}")
           [[ -z "${EXPECTED_DECODER:-}" ]] || args+=(--expected-decoder "${EXPECTED_DECODER}")
           python scripts/ci/validate-revisions.py "${args[@]}"
-
       - name: Validate required HF Bucket directories
         if: env.HF_TOKEN != '' && env.HF_BUCKET != ''
         shell: bash
@@ -146,7 +136,6 @@ jobs:
         target:
           - parakeet-tdt_ctc-0.6b-ja
           - kotoba-whisper-v1.0
-
     env:
       HF_BUCKET: ""
       HF_MODEL_REPO: ""
@@ -154,13 +143,12 @@ jobs:
       EXPECTED_FRAMEWORK: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
-
+      TARGET_INITIALIZED: "false"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-
       - name: Install target validation tools
         shell: bash
         run: |
@@ -168,7 +156,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip install --upgrade huggingface_hub
-
       - name: Resolve target
         shell: bash
         run: |
@@ -176,17 +163,20 @@ jobs:
           python scripts/ci/resolve-hf-target.py \
             --target "${{ matrix.target }}" \
             --github-env "${GITHUB_ENV}"
-
-      - name: Fetch target revision locks
+      - name: Probe target revision locks
         if: env.HF_TOKEN != ''
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/hf/config/revisions
-          bash scripts/hf/hf-fetch-revisions.sh
-
+          if bash scripts/hf/hf-fetch-revisions.sh; then
+            echo "TARGET_INITIALIZED=true" >> "${GITHUB_ENV}"
+          else
+            echo "TARGET_INITIALIZED=false" >> "${GITHUB_ENV}"
+            echo "::warning::HF target '${{ matrix.target }}' is configured but its revision-lock bundle is not initialized yet. Manual Validate HF Layout remains strict for this target."
+          fi
       - name: Validate target revision identity
-        if: env.HF_TOKEN != ''
+        if: env.HF_TOKEN != '' && env.TARGET_INITIALIZED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -195,9 +185,8 @@ jobs:
             --expected-model-id "${EXPECTED_MODEL_ID}" \
             --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
-
       - name: Validate target Bucket directories
-        if: env.HF_TOKEN != ''
+        if: env.HF_TOKEN != '' && env.TARGET_INITIALIZED == 'true'
         shell: bash
         run: |
           set -euo pipefail
