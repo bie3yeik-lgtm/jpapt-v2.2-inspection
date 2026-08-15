@@ -1,0 +1,122 @@
+name: Rust Cross Platform Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "HF Bucket candidates/<candidate_id>"
+        required: true
+        type: string
+      evaluation:
+        description: "Evaluation suite"
+        required: false
+        default: smoke
+        type: choice
+        options: [smoke, parity, coreml-parity, full]
+
+permissions:
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_BUCKET: ${{ vars.HF_BUCKET }}
+  HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+
+jobs:
+  evaluate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-cpu
+            os: ubuntu-latest
+            environment: linux
+            provider: cpu
+            features: cpu
+          - name: windows-cpu
+            os: windows-latest
+            environment: windows
+            provider: cpu
+            features: cpu
+          - name: macos-cpu
+            os: macos-15
+            environment: macos
+            provider: cpu
+            features: cpu
+          - name: macos-coreml
+            os: macos-15
+            environment: macos
+            provider: coreml
+            features: cpu,coreml
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python preparation layer
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[datasets,onnx,dev]"
+          python -m pip install --upgrade huggingface_hub
+      - name: Prepare directories and revision locks
+        shell: bash
+        run: |
+          mkdir -p .ci/hf/config/revisions .ci/candidate .cache/evaluation/audio results/${{ matrix.name }}
+          echo "HF_HOME=$(pwd)/.cache/huggingface" >> "$GITHUB_ENV"
+          bash scripts/hf/hf-fetch-revisions.sh
+          bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
+      - name: Materialize locked dataset selection
+        shell: bash
+        run: |
+          python scripts/ci/prepare-rust-manifest.py \
+            --provider "${{ matrix.provider }}" \
+            --evaluation "${{ inputs.evaluation }}" \
+            --environment "${{ matrix.environment }}" \
+            --revisions .ci/hf/config/revisions \
+            --output .ci/resolved-manifest.json
+      - name: Locate candidate assets
+        id: assets
+        shell: bash
+        run: |
+          MODEL="$(find .ci/candidate -type f -name '*.onnx' -print -quit)"
+          VOCAB="$(find .ci/candidate -type f \( -name 'vocabulary.json' -o -name 'vocab.json' -o -name 'tokens.json' \) -print -quit)"
+          test -n "$MODEL" || { echo "No ONNX model found"; exit 1; }
+          test -n "$VOCAB" || { echo "No vocabulary JSON found"; exit 1; }
+          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
+          echo "vocab=$VOCAB" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Rust evaluator
+        shell: bash
+        run: cargo build --release -p asr-eval --no-default-features --features "${{ matrix.features }}"
+      - name: Evaluate with Rust
+        shell: bash
+        run: |
+          BIN="target/release/asr-eval"
+          [[ "${{ runner.os }}" == "Windows" ]] && BIN="target/release/asr-eval.exe"
+          "$BIN" evaluate \
+            --provider "${{ matrix.provider }}" \
+            --model "${{ steps.assets.outputs.model }}" \
+            --candidate-dir .ci/candidate \
+            --candidate-id "${{ inputs.candidate_id }}" \
+            --vocabulary "${{ steps.assets.outputs.vocab }}" \
+            --resolved-manifest .ci/resolved-manifest.json \
+            --evaluation "${{ inputs.evaluation }}" \
+            --revisions .ci/hf/config/revisions \
+            --output "results/${{ matrix.name }}"
+      - name: Validate shared JSON contracts
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "results/${{ matrix.name }}/metrics.json" ]]; then
+            python scripts/ci/validate-result.py "results/${{ matrix.name }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-eval-${{ matrix.name }}-${{ inputs.candidate_id }}
+          path: results/${{ matrix.name }}
+          retention-days: 7
+          if-no-files-found: warn

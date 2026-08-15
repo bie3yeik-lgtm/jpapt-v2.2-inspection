@@ -1,0 +1,68 @@
+name: Rust CI
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/**"
+      - ".github/workflows/rust-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/**"
+      - ".github/workflows/rust-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-cpu
+            os: ubuntu-latest
+            features: cpu
+          - name: windows-directml
+            os: windows-latest
+            features: cpu,directml
+          - name: macos-coreml
+            os: macos-15
+            features: cpu,coreml
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Cache cargo and ort
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/ort.pyke.io
+            target
+          key: rust-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'rust/crates/**/Cargo.toml') }}
+      - name: Cargo check
+        shell: bash
+        run: cargo check --workspace --no-default-features --features "${{ matrix.features }}"
+      - name: Unit tests
+        shell: bash
+        run: cargo test --workspace --no-default-features --features "${{ matrix.features }}"
+
+  lint:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
