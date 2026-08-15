@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "parakeet-onnx"
 version = "0.1.0"
-description = "Reference, export, evaluation, and deployment tooling for Parakeet ONNX ASR artifacts."
+description = "Reference, export, evaluation, and deployment tooling for multi-framework ASR ONNX artifacts."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = { text = "Apache-2.0" }
@@ -23,6 +23,11 @@ datasets = [
 onnx = [
     "onnx>=1.17",
     "onnxruntime>=1.20",
+]
+transformers = [
+    "torch>=2.4",
+    "transformers>=4.39",
+    "accelerate>=1.0",
 ]
 dev = [
     "pytest>=8",
