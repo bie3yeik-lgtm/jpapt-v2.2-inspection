@@ -13,21 +13,20 @@ with `nvidia/parakeet-tdt_ctc-0.6b-ja`.
 4. Keep Hugging Face Bucket development artifacts separate from final Model
    Repo releases.
 5. Keep model, provider, environment, and evaluation configuration separated.
-6. Treat NVIDIA NeMo as the canonical reference runtime.
-7. Treat ONNX as a deployment artifact, not the canonical source model.
-8. Implement the CTC deployment path before TDT.
-9. Keep generic audio processing separate from model-specific frontend logic.
-10. Preserve the canonical waveform contract:
+6. Treat ONNX as a deployment artifact, not the canonical source model.
+7. Implement the CTC deployment path before TDT.
+8. Keep generic audio processing separate from model-specific frontend logic.
+9. Preserve the canonical waveform contract:
     - float32
     - mono
     - 16000 Hz
     - finite
     - C-contiguous
-11. `ResolvedDatasetSample.audio_path` must refer to a materialized local file.
-12. Candidate output must never overwrite expected/reference data.
-13. Promotion requires accepted evaluation and verified artifact SHA-256.
-14. Python is the initial implementation language.
-15. Rust should adopt stable contracts rather than reimplementing unresolved
+10. `ResolvedDatasetSample.audio_path` must refer to a materialized local file.
+11. Candidate output must never overwrite expected/reference data.
+12. Promotion requires accepted evaluation and verified artifact SHA-256.
+13. Python is the initial implementation language.
+14. Rust should adopt stable contracts rather than reimplementing unresolved
     Python/Hugging Face behavior prematurely.
 
 ## Repository responsibilities
