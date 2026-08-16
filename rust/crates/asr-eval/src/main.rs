@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use asr_eval::evaluator::{EvaluateOptions, evaluate};
+use asr_eval::run_context::RunContextV2;
 use asr_eval::{Cli, Command};
 use asr_runtime::ProviderKind;
 use clap::Parser;
@@ -13,10 +14,11 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Evaluate(args) => {
             let provider = ProviderKind::from_str(&args.provider)?;
+            let run_context = RunContextV2::load(&args.run_context)?;
             let result = evaluate(EvaluateOptions {
                 provider,
                 candidate_contract: args.candidate_contract,
-                run_context: args.run_context,
+                run_context,
                 resolved_manifest: args.resolved_manifest,
                 output: args.output,
             })?;
