@@ -118,16 +118,28 @@ fn validate_reference(doc: &NemoReferenceDocument) -> Result<()> {
     if doc.source.repo_id != REPO_ID {
         return Err(invalid("unexpected NeMo source repo"));
     }
-    require_lower_hex("source.revision_resolved", &doc.source.revision_resolved, 40, 64)?;
+    require_lower_hex(
+        "source.revision_resolved",
+        &doc.source.revision_resolved,
+        40,
+        64,
+    )?;
     if doc.source.model_file != MODEL_FILE {
         return Err(invalid("unexpected NeMo model file"));
     }
-    require_lower_hex("source.model_file_sha256", &doc.source.model_file_sha256, 64, 64)?;
+    require_lower_hex(
+        "source.model_file_sha256",
+        &doc.source.model_file_sha256,
+        64,
+        64,
+    )?;
     if doc.source.library != "nemo"
         || doc.source.language != "ja"
         || doc.source.license != "cc-by-4.0"
     {
-        return Err(invalid("NeMo source metadata does not match Model Card contract"));
+        return Err(invalid(
+            "NeMo source metadata does not match Model Card contract",
+        ));
     }
     if doc.decoder != "ctc" {
         return Err(invalid(
@@ -146,7 +158,10 @@ fn validate_reference(doc: &NemoReferenceDocument) -> Result<()> {
         require_nonempty("sample.id", &sample.id)?;
         require_lower_hex("sample.audio_sha256", &sample.audio_sha256, 64, 64)?;
         if !ids.insert(sample.id.as_str()) {
-            return Err(invalid(format!("duplicate NeMo reference sample id: {}", sample.id)));
+            return Err(invalid(format!(
+                "duplicate NeMo reference sample id: {}",
+                sample.id
+            )));
         }
         let normalized = normalize_text(&sample.text);
         if normalized != sample.normalized_text {
@@ -167,7 +182,11 @@ fn load_jsonl(path: &PathBuf) -> Result<Vec<Value>> {
             continue;
         }
         let value: Value = serde_json::from_str(line).map_err(|error| {
-            invalid(format!("invalid JSONL at {}:{}: {error}", path.display(), index + 1))
+            invalid(format!(
+                "invalid JSONL at {}:{}: {error}",
+                path.display(),
+                index + 1
+            ))
         })?;
         values.push(value);
     }
@@ -255,10 +274,16 @@ pub fn measure_nemo_onnx_quality(options: NemoOnnxQualityOptions) -> Result<Valu
             "candidate sample.reference_text",
         )?;
         if onnx_audio_sha != nemo.audio_sha256 {
-            return Err(invalid(format!("audio SHA mismatch for sample {}", nemo.id)));
+            return Err(invalid(format!(
+                "audio SHA mismatch for sample {}",
+                nemo.id
+            )));
         }
         if onnx_reference_text != nemo.reference_text {
-            return Err(invalid(format!("ground-truth text mismatch for sample {}", nemo.id)));
+            return Err(invalid(format!(
+                "ground-truth text mismatch for sample {}",
+                nemo.id
+            )));
         }
 
         let onnx_text = required_str(onnx, &["output", "text"], "candidate output.text")?;
@@ -324,6 +349,13 @@ pub fn measure_nemo_onnx_quality(options: NemoOnnxQualityOptions) -> Result<Valu
     let cer_passed = cer_regression <= options.max_cer_regression;
     let wer_passed = wer_regression <= options.max_wer_regression;
     let passed = cer_passed && wer_passed;
+    let mut failed_checks = Vec::new();
+    if !cer_passed {
+        failed_checks.push("cer_regression");
+    }
+    if !wer_passed {
+        failed_checks.push("wer_regression");
+    }
 
     let result = serde_json::json!({
         "schema_version": 1,
@@ -354,10 +386,7 @@ pub fn measure_nemo_onnx_quality(options: NemoOnnxQualityOptions) -> Result<Valu
             "passed": passed,
             "cer_passed": cer_passed,
             "wer_passed": wer_passed,
-            "failed_checks": [
-                if cer_passed { "" } else { "cer_regression" },
-                if wer_passed { "" } else { "wer_regression" }
-            ].into_iter().filter(|value| !value.is_empty()).collect::<Vec<_>>()
+            "failed_checks": failed_checks
         }
     });
 
