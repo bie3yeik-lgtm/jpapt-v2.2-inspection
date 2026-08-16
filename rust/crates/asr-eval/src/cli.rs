@@ -13,6 +13,7 @@ pub struct Cli {
 pub enum Command {
     Evaluate(EvaluateArgs),
     BucketInit(BucketInitArgs),
+    NemoOnnxValidate(NemoOnnxValidateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -53,4 +54,14 @@ pub struct BucketInitArgs {
     pub confirmation: String,
     #[arg(long, default_value_t = false)]
     pub apply: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct NemoOnnxValidateArgs {
+    #[arg(long)]
+    pub report: PathBuf,
+    #[arg(long)]
+    pub bundle_root: PathBuf,
+    #[arg(long, default_value = "ctc")]
+    pub require: String,
 }
