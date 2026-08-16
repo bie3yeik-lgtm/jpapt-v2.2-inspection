@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm "${{ steps.image.outputs.reference }}" python - <<'PY'
+          docker run --rm -i "${{ steps.image.outputs.reference }}" python - <<'PY'
           import json
           import datasets
           import huggingface_hub
