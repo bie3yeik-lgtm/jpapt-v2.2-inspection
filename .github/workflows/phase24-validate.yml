@@ -27,7 +27,7 @@ jobs:
           components: rustfmt,clippy
       - name: Install HF CLI
         run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
-      - name: Validate simplified HF policy
+      - name: Validate simplified configuration and HF policy
         shell: bash
         run: |
           set -euo pipefail
@@ -35,12 +35,25 @@ jobs:
           cargo fmt --all
           cargo clippy --locked -p asr-hf --all-targets -- -D warnings
           cargo test --locked -p asr-hf
+          cargo test --locked -p asr-contracts
           cargo run --quiet --locked -p asr-hf -- validate-targets
           cargo run --quiet --locked -p asr-hf -- resolve-target --target parakeet-tdt_ctc-0.6b-ja | grep -q '^HF_BUCKET=gawohok7/jpapt-v2.2-dev-bucket$'
+          cargo run --quiet --locked -p asr-hf -- resolve-target --target parakeet-tdt_ctc-0.6b-ja | grep -q '^EXPECTED_UPSTREAM_REPO_ID=nvidia/parakeet-tdt_ctc-0.6b-ja$'
           cargo run --quiet --locked -p asr-hf -- resolve-target --bucket gawohok7/jpapt-v2.2-dev-bucket | grep -q '^HF_TARGET_ID=parakeet-tdt_ctc-0.6b-ja$'
           [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix candidates)" == candidate ]]
           [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix experiments)" == experiment ]]
           [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix config)" == config ]]
+
+          python - <<'PY'
+          import pathlib, tomllib
+          for path in pathlib.Path('config/models').glob('*.toml'):
+              data=tomllib.loads(path.read_text())
+              assert data['schema_version'] == 1
+              assert data['model']['id'] == path.stem
+              assert data['upstream']['repo_id']
+              assert data['execution']['supported_providers']
+              assert data['execution']['platforms']
+          PY
 
           for script in \
             scripts/hf/hf-allocate-id.sh \
@@ -54,6 +67,15 @@ jobs:
           if git grep -nE 'hf-allocation-catalog|candidate-prefix-key|allocation-fingerprint|--targets-json|HF_TARGETS_JSON|prefix_key' -- \
               ':!.github/workflows/phase24-audit.yml' ':!.github/workflows/phase24-validate.yml'; then
             echo 'obsolete HF routing/allocation references remain' >&2
+            exit 1
+          fi
+
+          if git grep -nE 'provider_configuration_root|candidate_prefix|reference_prefix|run_prefix|benchmark_prefix|temporary_prefix|smoke_config|parity_config|full_config|storage\.hf_target|expected_components|tolerance_source' -- config/models; then
+            echo 'duplicated model policy remains' >&2
+            exit 1
+          fi
+          if git grep -nE '^model_id = ' -- config/models; then
+            echo 'duplicated reference.model_id remains' >&2
             exit 1
           fi
 
@@ -130,10 +152,10 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Cargo.lock rust/crates/asr-hf
+          git add Cargo.lock rust/crates/asr-hf rust/crates/asr-contracts
           if git diff --cached --quiet; then
             echo 'already normalized'
           else
-            git commit -m 'Normalize simplified HF policy and lockfile'
+            git commit -m 'Normalize reviewed configuration policy'
             git push origin HEAD:agent/review-minimal-json-bucket-phase24
           fi
