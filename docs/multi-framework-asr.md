@@ -1,16 +1,15 @@
 # Multi-framework ASR targets
 
 This repository supports multiple canonical ASR frameworks while sharing the
-evaluation dataset, manifest, provider, result-schema, and Hugging Face storage
-lifecycle.
+evaluation dataset, provider, result-schema, and Hugging Face Bucket lifecycle.
+
+For the complete reusable Bucket operating model, see
+`docs/hf-bucket-operations.md`.
 
 ## Target/storage mapping
 
-Static model semantics remain in `config/hf-targets/*.toml`, while GitHub
-Actions storage selection is controlled by the repository variable
-`HF_TARGETS_JSON`.
-
-Recommended value:
+Static model semantics live in `config/hf-targets/*.toml`. GitHub Actions
+storage routing is controlled by Repository Variable `HF_TARGETS_JSON`.
 
 ```json
 {
@@ -25,20 +24,12 @@ Recommended value:
 }
 ```
 
-`HF_BUCKET` values must be unique. `scripts/ci/resolve-hf-target.py` resolves in
-both directions:
+`HF_BUCKET` values must be unique. `resolve-hf-target.py` resolves target IDs to
+storage and can reverse-resolve a Bucket to its target.
 
-```text
-target id -> HF_BUCKET / HF_MODEL_REPO
-HF_BUCKET -> target id -> framework / decoder / storage
-```
+## Manual Bucket selection
 
-The Bucket-to-target direction requires `HF_TARGETS_JSON`; it intentionally does
-not guess from static TOML storage.
-
-## GitHub Actions Bucket selection
-
-The following manual workflows expose `hf_bucket`:
+These workflows accept `hf_bucket`:
 
 ```text
 Validate HF Layout
@@ -47,17 +38,9 @@ Cross Platform ONNX Parity
 Rust Cross Platform Evaluation
 ```
 
-Enter one of the `HF_BUCKET` values present in `vars.HF_TARGETS_JSON`, for
-example:
-
-```text
-gawohok7/jpapt-v2.2-dev-bucket
-gawohok7/tf-v1-onnx-dev-bucket
-```
-
-GitHub Actions cannot generate `workflow_dispatch` choice options dynamically
-from a repository variable. Therefore `hf_bucket` is a string input, but the
-workflow validates it against `HF_TARGETS_JSON` before HF access.
+The input is a string because GitHub Actions cannot dynamically construct
+`workflow_dispatch` choice options from a Repository Variable. The value is
+validated against `HF_TARGETS_JSON` before remote access.
 
 The resolver exports:
 
@@ -72,28 +55,38 @@ EXPECTED_FRAMEWORK
 EXPECTED_DECODER
 ```
 
-There is no revision-policy or legacy-mode flag. All targets use the same
-revision contract.
+There is no legacy revision mode.
 
-## Revision documents
+## Versioned revision documents
 
-Every initialized target Bucket contains:
+Every initialized target Bucket uses:
 
 ```text
-config/revisions/
-├── reference.json
-├── evaluation-schema.json
-└── datasets-lock.json
+config/
+├── current.json
+└── versions/
+    └── config-NNNNNN/
+        ├── reference.json
+        ├── evaluation-schema.json
+        └── datasets-lock.json
 ```
 
-`hf-fetch-revisions.sh` downloads all three files and always runs the project
-`RevisionBundle` loader with the active Python environment. Invalid revision
-metadata therefore fails immediately after download rather than being deferred
-to evaluation.
+`config/current.json` identifies the active immutable configuration set.
+`hf-fetch-revisions.sh` follows that pointer, stages the three documents under
+`.ci/hf/config/revisions/`, writes `.ci/hf/config/resolved.json`, and runs the
+strict `RevisionBundle` loader.
 
-## `reference.json`: canonical revision contract
+Historical reproduction can override the pointer with:
 
-All targets must separate three independent repository identities:
+```bash
+HF_CONFIG_VERSION=config-000123
+```
+
+The selected version is stored in `run-context.json.revisions.config_version`.
+
+## `reference.json`
+
+All targets separate the source/provenance identities:
 
 ```json
 {
@@ -112,7 +105,7 @@ All targets must separate three independent repository identities:
   },
   "reference": {
     "id": "transformers-reference-v1",
-    "revision": "<REFERENCE_IMPLEMENTATION_OR_ARTIFACT_REVISION>",
+    "revision": "<REFERENCE_IMPLEMENTATION_REVISION>",
     "canonical_framework": "transformers"
   },
   "decoders": {
@@ -122,32 +115,23 @@ All targets must separate three independent repository identities:
 }
 ```
 
-The identities mean:
+Meanings:
 
 | Field | Meaning |
 |---|---|
-| `development_artifact` | HF Model Repo containing generated ONNX/deployment artifacts and the exact artifact revision under validation. |
+| `development_artifact` | Exact HF Model Repo snapshot containing the development/promoted deployment artifact. |
 | `upstream` | Canonical source checkpoint used to generate/reference the artifact. |
-| `tokenizer` | Exact tokenizer/processor source and revision used for preprocessing/decoding. |
+| `tokenizer` | Exact tokenizer/processor source and revision. |
+| `reference` | Canonical framework implementation used to produce expected results. |
 
-These revisions are deliberately independent. An upstream model and tokenizer
-may currently share a commit, but the contract does not assume they always do.
+The Bucket ID itself is not duplicated into `reference.json`.
 
-The following old forms are invalid and must be migrated before validation:
-
-```text
-model.repo_id / model.revision
-model_id / model_revision
-tokenizer_revision at model/root level
-decoder
-decorders
-missing upstream/tokenizer identities
-missing reference.id/reference.revision/reference.canonical_framework
-```
+Legacy `model`, root/model `tokenizer_revision`, singular `decoder`, and
+`decorders` forms are rejected.
 
 ## `evaluation-schema.json`
 
-The schema identity and decoder declaration are also canonicalized:
+Canonical form:
 
 ```json
 {
@@ -163,28 +147,12 @@ The schema identity and decoder declaration are also canonicalized:
 }
 ```
 
-Old top-level `schema_id` / `schema_revision`, singular `decoder`, and misspelled
-`decorders` are not accepted.
-
-Decoder entries may still be strings or structured objects when extra metadata
-is useful:
-
-```json
-{
-  "decoders": {
-    "supported": [
-      "ctc",
-      {"id": "tdt", "thresholds": {}},
-      {"id": "whisper_autoregressive", "thresholds": {}}
-    ],
-    "default": "ctc"
-  }
-}
-```
+Decoder entries may be strings or structured objects; the loader normalizes
+them to decoder IDs before compatibility validation.
 
 ## Revision validation
 
-Target identity validation is explicit:
+After staging the selected config version:
 
 ```bash
 python scripts/ci/validate-revisions.py \
@@ -196,58 +164,77 @@ python scripts/ci/validate-revisions.py \
   --expected-decoder whisper_autoregressive
 ```
 
-The loader first validates the document shape and decoder compatibility. The CLI
-then verifies that the selected target matches the three repository identities,
-framework, and decoder.
+The loader validates shape and decoder compatibility; the CLI verifies target
+identity.
 
 ## Validate HF Layout flow
 
-Automatic PR/push validation intentionally does not read the remote Bucket. It
-validates only source-controlled target profiles, schemas, scripts, and unit-test
-fixtures using synthetic revision identities.
+PR/push validation intentionally stays repository-local:
 
 ```text
 pull_request / push
-  -> local-contracts
-  -> validate source-controlled config/schema/scripts
-  -> run strict revision tests against synthetic fixtures
-  -> list config/hf-targets/*.toml
+  -> source-controlled target/schema/script validation
+  -> synthetic strict revision fixtures
+  -> sequence allocator unit tests
 ```
 
-Actual HF Bucket validation is explicit and manual:
+Manual validation checks the real selected Bucket:
 
 ```text
 workflow_dispatch
-  -> local-contracts
-  -> validate-selected
-  -> resolve selected HF_BUCKET
-  -> fetch remote revision files
+  -> resolve HF_BUCKET
+  -> fetch config/current.json
+  -> resolve config/versions/config-NNNNNN
   -> strict RevisionBundle validation
   -> target identity validation
-  -> Bucket directory validation
+  -> required Bucket layout validation
 ```
 
-This separation is deliberate: source-code CI remains deterministic while a
-Bucket that has not yet been migrated to the canonical `reference.json` contract
-does not create unrelated PR failures. After Bucket metadata is migrated, run
-`Validate HF Layout` manually to validate the real values.
+Required lifecycle collections include `experiments/`, `candidates/`, `runs/`,
+`benchmarks/`, `reference/`, `scripts/`, and `tmp/`.
+
+## Candidate and experiment identities
+
+New candidate and experiment IDs are machine allocated as:
+
+```text
+<prefix>-NNNNNN
+```
+
+The numeric suffix is one sequence per collection, independent of prefix.
+
+Candidate export may remain locally `unallocated`; `hf-push-candidate.sh`
+assigns the durable Bucket candidate ID and updates `metadata.json` on publish.
+
+Evaluation workflow inputs still select an existing `candidate_id` explicitly
+for reproducibility.
+
+Experiment prefixes currently include:
+
+```text
+cpu-full-eval
+cross-platform-parity
+rust-eval
+```
+
+A cross-platform matrix shares one experiment ID while every concrete runtime
+execution gets its own run ID.
 
 ## Evaluation behavior by target
 
-The evaluation workflows resolve the selected Bucket and pass the resulting
-`HF_TARGET_ID` into the model configuration path. This prevents a selected
-storage target from silently falling back to another model config.
+The selected Bucket resolves `HF_TARGET_ID`, which is passed into the target
+model configuration path. This prevents storage selection from silently using a
+different model configuration.
 
-The current Python and Rust ONNX evaluators are CTC-first/CTC-only. A target such
-as Kotoba Whisper can be selected and revision-validated, but evaluation stops
-with an explicit decoder compatibility error before attempting incompatible
-inference until the Whisper autoregressive runtime is implemented.
+The current Python and Rust ONNX evaluators remain CTC-only. Transformers
+Whisper targets can be selected and revision-validated, but evaluation stops at
+an explicit decoder compatibility error until Whisper autoregressive runtime
+support is implemented.
 
 ## Dataset policy
 
-Current targets use `datasets_policy = "shared-default"`. Existing JSUT, Common
-Voice, and ReazonSpeech locks/manifests remain the evaluation corpus contract;
-switching target storage does not silently change the evaluation dataset.
+Current targets use the shared evaluation dataset policy. Switching storage
+targets does not silently switch the evaluation corpus.
 
 ## Current target summary
 
