@@ -12,6 +12,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Evaluate(EvaluateArgs),
+    BucketInit(BucketInitArgs),
 }
 
 #[derive(Debug, Args)]
@@ -26,4 +27,30 @@ pub struct EvaluateArgs {
     pub resolved_manifest: PathBuf,
     #[arg(long)]
     pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct BucketInitArgs {
+    #[arg(long)]
+    pub bucket_id: String,
+    #[arg(long)]
+    pub model_repo: String,
+    #[arg(long)]
+    pub model_revision: String,
+    #[arg(long)]
+    pub expected_task: String,
+    #[arg(long)]
+    pub expected_library: String,
+    #[arg(long)]
+    pub expected_language: String,
+    #[arg(long)]
+    pub expected_license: String,
+    #[arg(long)]
+    pub expected_architecture: String,
+    #[arg(long)]
+    pub profile_set: String,
+    #[arg(long)]
+    pub confirmation: String,
+    #[arg(long, default_value_t = false)]
+    pub apply: bool,
 }
