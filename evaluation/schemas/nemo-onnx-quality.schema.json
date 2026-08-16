@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jpapt:nemo-onnx-quality:v1",
+  "title": "NeMo versus ONNX ASR Quality Comparison",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "comparison", "source", "quality", "thresholds", "acceptance"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_run_id", "candidate_run_id", "decoder", "normalization", "sample_count"],
+      "properties": {
+        "reference_run_id": {"type": "string", "minLength": 1},
+        "candidate_run_id": {"type": "string", "minLength": 1},
+        "decoder": {"const": "ctc"},
+        "normalization": {"const": "asr_metrics_v1"},
+        "sample_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision_resolved", "model_file", "model_file_sha256"],
+      "properties": {
+        "repo_id": {"const": "nvidia/parakeet-tdt_ctc-0.6b-ja"},
+        "revision_resolved": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+        "model_file": {"const": "parakeet-tdt_ctc-0.6b-ja.nemo"},
+        "model_file_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nemo", "onnx", "regression", "normalized_text_match_rate"],
+      "properties": {
+        "nemo": {"$ref": "#/$defs/quality"},
+        "onnx": {"$ref": "#/$defs/quality"},
+        "regression": {"$ref": "#/$defs/quality"},
+        "normalized_text_match_rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_cer_regression", "max_wer_regression"],
+      "properties": {
+        "max_cer_regression": {"type": "number", "minimum": 0},
+        "max_wer_regression": {"type": "number", "minimum": 0}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "cer_passed", "wer_passed", "failed_checks"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "cer_passed": {"type": "boolean"},
+        "wer_passed": {"type": "boolean"},
+        "failed_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["cer_regression", "wer_regression"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cer", "wer"],
+      "properties": {
+        "cer": {"type": "number"},
+        "wer": {"type": "number"}
+      }
+    }
+  }
+}

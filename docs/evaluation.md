@@ -1,73 +1,152 @@
 # Evaluation
 
-## 入力
+## Authority
 
-評価のhuman-authored dataset selectionは `evaluation/manifests/*.jsonl` です。
+release/runtime acceptanceの正本はRust `asr-eval`である。Python evaluatorはdiagnostic/orchestration用途として残るが、NeMo↔ONNX品質acceptanceのauthorityではない。
+
+## 通常ONNX評価
+
+```bash
+asr-eval evaluate \
+  --provider cpu \
+  --candidate-contract <generated-candidate.json> \
+  --run-context <run-context.json> \
+  --resolved-manifest <resolved-manifest.json> \
+  --output <run-dir>
+```
+
+出力:
+
+```text
+<run-dir>/
+├── run-context.json
+├── samples.jsonl
+└── metrics.json
+```
+
+resolved manifestの`audio_path`は通常file I/Oで読めるmaterialized local assetでなければならない。
+
+## NeMo reference ↔ ONNX quality
+
+```bash
+asr-eval nemo-onnx-quality \
+  --provider cpu \
+  --candidate-contract <candidate-contract.json> \
+  --run-context <run-context.json> \
+  --resolved-manifest <resolved-manifest.json> \
+  --nemo-reference <nemo-reference-quality.json> \
+  --nemo-validation-report <nemo-onnx-validation.json> \
+  --nemo-validation-bundle-root <bundle-root> \
+  --output <quality-dir> \
+  --max-cer-regression <explicit-value> \
+  --max-wer-regression <explicit-value>
+```
+
+thresholdは明示入力必須である。default値を「一般的だから」という理由で決めない。
+
+## 品質計算
+
+Rustは各sampleについてNeMoとONNX双方へ同じ関数を適用する。
+
+```text
+CER = edit_distance(normalized reference chars, normalized hypothesis chars)
+      / normalized reference char count
+
+WER = word-level edit distance / reference word count
+```
+
+normalizationは`asr_metrics_v1`。
+
+```text
+Unicode NFKC
+→ whitespace collapse
+```
+
+NeMo producerに保存された`normalized_text`もRust側で再生成して検証する。
+
+## Aggregate semantics
+
+現状の通常benchmarkはsuccessful sampleごとのCER/WER平均を持つ。NeMo quality comparisonも同じsample setでNeMo/ONNXそれぞれのCER/WER平均を計算し、差分を取る。
+
+```text
+cer_regression = onnx_cer - nemo_cer
+wer_regression = onnx_wer - nemo_wer
+```
+
+負値はONNX側がreference NeMoより良いことを意味する。acceptanceは「回帰が最大許容値以下」で判定するため、改善は通常PASSする。
+
+## per-sample evidence
+
+`quality-samples.jsonl`は各sampleの比較証拠を保持する。
 
 ```json
-{"dataset_id":"jsut-basic5000","count":6,"seed":"smoke-jsut-v1","min_duration_sec":1.0,"max_duration_sec":15.0}
+{
+  "schema_version": 1,
+  "sample_id": "sample-0001",
+  "audio_sha256": "...",
+  "reference_text": "正解文",
+  "nemo": {
+    "text": "NeMo文字起こし",
+    "normalized_text": "...",
+    "cer": 0.01,
+    "wer": 0.02
+  },
+  "onnx": {
+    "text": "ONNX文字起こし",
+    "normalized_text": "...",
+    "cer": 0.01,
+    "wer": 0.02
+  },
+  "delta": {
+    "cer": 0.0,
+    "wer": 0.0
+  },
+  "normalized_text_match": true
+}
 ```
 
-必須は `dataset_id`, `count`, `seed`。duration filterは任意です。
+## comparison output
 
-`ManifestLoader` は内部でstable-hash selection、entry ID、filter objectへ展開します。durationは `min_duration_sec <= duration < max_duration_sec` です。
-
-## Evaluation profiles
-
-policyは `config/evaluation/*.toml` が正本です。
-
-- `smoke`
-- `parity`
-- `coreml-parity`
-- `full`
-
-## 実行前gate
-
-評価前に次を解決します。
+`quality-comparison.json`はaggregateとacceptanceを持つ。
 
 ```text
-target
-profile_set + runtime variant
-candidate artifacts
-resolved runtime contract
-evaluator capability
-provider/environment/evaluation config
-revision bundle
+comparison.reference_run_id
+comparison.candidate_run_id
+comparison.decoder
+comparison.normalization
+comparison.sample_count
+
+quality.nemo.cer/wer
+quality.onnx.cer/wer
+quality.regression.cer/wer
+quality.normalized_text_match_rate
+
+thresholds.max_cer_regression
+thresholds.max_wer_regression
+
+acceptance.passed
+acceptance.cer_passed
+acceptance.wer_passed
+acceptance.failed_checks
 ```
 
-evaluatorがdecoder/artifact contract/provider/featuresを公開していなければ実行しません。
+## 失敗時の扱い
 
-## Run context
+ONNX通常評価でsample failureが発生した場合、品質比較へ進まない。「失敗sampleを除いて残りだけ比較」する挙動は採用しない。
 
-`run-context.json` はschema v2のみです。実行時の事実をimmutable snapshotとして保存します。
+NeMo referenceとONNX resultのsample countが異なる場合もfailする。
 
-主な要素:
+## Dataset scoreとconversion regression
 
-```text
-artifact identity
-Git identity
-host identity
-runtime/provider identity
-config identity + resolved config
-revision bundle
-candidate/runtime provenance metadata
-```
+2種類を分けて読む。
 
-revision bundleは `runtime.json` を必須とし、runtime snapshotへcatalog ID/SHAとprofile setを固定します。decoder semanticsをreference/evaluation revisionへ複製しません。
+- absolute quality: NeMo CER/WER、ONNX CER/WER
+- conversion regression: ONNX - NeMo
 
-## 出力
+ONNXがNeMoと同じ品質でも、NeMo自体のabsolute qualityが製品要件を満たすとは限らない。逆にabsolute CERが高いdatasetでも、conversion regressionが0なら変換忠実度は高い可能性がある。
 
-run単位では少なくとも次を扱います。
+release判断では両方を別gateとして扱う。
 
-```text
-run-context.json
-samples.jsonl
-metrics.json
-promotion.json   # promotion時
-```
+## TDT
 
-benchmarkはcandidate/environment-provider/runの履歴としてBucketへ保存します。
-
-## Parity
-
-parityは「ONNX graphがloadできる」だけではなく、reference outputとの数値/ASR品質差、provider executionの成立、fallbackの有無を評価します。CoreML等provider固有の失敗はdecoder/schemaの失敗と混同しません。
+現在`nemo-onnx-quality`はCTCのみ。TDT referenceを渡して「未測定だが0回帰」と扱うことはしない。Rust TDT runtime/controllerとdecoder semanticsが実装された後に同じquality contractへ拡張する。

@@ -48,8 +48,7 @@ tools = [
 [project.scripts]
 parakeet-onnx-export = "parakeet_onnx.cli.export:main"
 parakeet-onnx-evaluate = "parakeet_onnx.cli.evaluate:main"
-parakeet-onnx-compare = "parakeet_onnx.cli.compare:main"
-parakeet-onnx-benchmark = "parakeet_onnx.cli.benchmark:main"
+parakeet-nemo-reference = "parakeet_onnx.cli.nemo_reference:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/src/parakeet_onnx"]

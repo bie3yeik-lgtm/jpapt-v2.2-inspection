@@ -1,4 +1,8 @@
-"""Evaluation contracts and Python-first orchestration."""
+"""Evaluation structures.
+
+Python keeps diagnostic/orchestration helpers, but release acceptance and
+NeMo-reference vs ONNX ASR quality authority live in the Rust `asr-eval` CLI.
+"""
 
 from .aggregate import AggregateResult, aggregate_sample_results
 from .factory import EvaluatorBuildRequest, create_python_evaluator
@@ -16,6 +20,9 @@ from .schema import (
     EvaluationSchemaError,
     EvaluationSchemaRegistry,
     validate_benchmark,
+    validate_nemo_onnx_quality,
+    validate_nemo_onnx_validation,
+    validate_nemo_reference_quality,
     validate_run_context,
     validate_sample_result,
 )
@@ -39,6 +46,9 @@ __all__ = [
     "normalize_text",
     "run_evaluation",
     "validate_benchmark",
+    "validate_nemo_onnx_quality",
+    "validate_nemo_onnx_validation",
+    "validate_nemo_reference_quality",
     "validate_run_context",
     "validate_sample_result",
     "word_error_rate",

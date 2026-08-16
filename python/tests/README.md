@@ -1,70 +1,33 @@
-# Python Tests
+# Python tests
 
-The canonical test root is:
+Python tests verify producer-side contracts and source-framework-independent behavior.
 
-```text
-python/tests/
-```
+## Unit scope
 
-Structure:
+- config/catalog/revision resolution
+- dataset manifest/materialization contracts
+- audio decode/resample/frontend helpers
+- candidate metadata generation
+- NeMo reference typed contract
+- NeMo reference normalization (`asr_metrics_v1` mirror)
+- NeMo sample-set identity digest
+- evaluation JSON Schema registry
 
-```text
-python/tests/
-├── conftest.py
-├── unit/
-├── integration/
-└── fixtures/
-```
+NeMo itself is intentionally not imported by normal unit tests. Real `.nemo` restore, decoding, export, and transcription belong to HF Jobs/NeMo-container E2E.
 
-## Unit tests
+## Quality authority
 
-Validate isolated contracts such as:
-
-- repository path discovery
-- manifest parsing
-- stable-hash selection
-- dataset dataclasses
-- materialization
-- audio decode
-- canonical resampling
-- feature adapters
-- disposable dataset cache
-- evaluation schema imports
-
-## Integration tests
-
-Validate important boundaries:
+Python unit tests do not establish NeMo↔ONNX ASR quality acceptance. The authoritative quality path is the release Rust CLI:
 
 ```text
-DatasetRecord
-    ↓
-DatasetMaterializer
-    ↓
-local audio file
-    ↓
-decode
-    ↓
-CanonicalAudio
+asr-eval nemo-onnx-quality
 ```
 
-Network-dependent Hugging Face dataset tests are intentionally not part of the
-default suite.
+Python generates transcript/provenance evidence; Rust recomputes CER/WER for both sides with the same implementation.
 
-## Run
-
-```bash
-mise exec -- uv run pytest
-```
-
-or:
+## Commands
 
 ```bash
 uv run pytest python/tests
+uv run ruff check python/src python/tests scripts
 ```
-
-## Philosophy
-
-Tests must not silently download models or datasets.
-
-Heavy NeMo and ONNX parity tests should be opt-in or CI-specific integration
-tests once the corresponding implementation is stable.

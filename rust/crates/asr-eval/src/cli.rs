@@ -14,6 +14,7 @@ pub enum Command {
     Evaluate(EvaluateArgs),
     BucketInit(BucketInitArgs),
     NemoOnnxValidate(NemoOnnxValidateArgs),
+    NemoOnnxQuality(NemoOnnxQualityArgs),
 }
 
 #[derive(Debug, Args)]
@@ -64,4 +65,28 @@ pub struct NemoOnnxValidateArgs {
     pub bundle_root: PathBuf,
     #[arg(long, default_value = "ctc")]
     pub require: String,
+}
+
+#[derive(Debug, Args)]
+pub struct NemoOnnxQualityArgs {
+    #[arg(long)]
+    pub provider: String,
+    #[arg(long)]
+    pub candidate_contract: PathBuf,
+    #[arg(long)]
+    pub run_context: PathBuf,
+    #[arg(long)]
+    pub resolved_manifest: PathBuf,
+    #[arg(long)]
+    pub nemo_reference: PathBuf,
+    #[arg(long)]
+    pub nemo_validation_report: PathBuf,
+    #[arg(long)]
+    pub nemo_validation_bundle_root: PathBuf,
+    #[arg(long)]
+    pub output: PathBuf,
+    #[arg(long)]
+    pub max_cer_regression: f64,
+    #[arg(long)]
+    pub max_wer_regression: f64,
 }
