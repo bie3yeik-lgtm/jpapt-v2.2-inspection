@@ -1,0 +1,45 @@
+name: Phase13 Validate
+
+on:
+  push:
+    branches: [agent/rust-promotion-gate-phase13]
+    paths:
+      - .github/workflows/phase13-validate.yml
+      - rust/crates/asr-contracts/**
+      - scripts/hf/hf-promote-candidate.sh
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-promotion-gate-phase13
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Validate Phase 13
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          bash -n scripts/hf/hf-promote-candidate.sh
+          count="$(grep -c "<<'PY'" scripts/hf/hf-promote-candidate.sh || true)"
+          test "$count" -eq 1
+          grep -q 'CandidateArtifacts' scripts/hf/hf-promote-candidate.sh
+          grep -q 'validate_candidate_runtime_contract' scripts/hf/hf-promote-candidate.sh
+      - name: Commit normalized production files and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/phase13-validate.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/asr-contracts scripts/hf/hf-promote-candidate.sh .github/workflows/phase13-validate.yml
+          git commit -m "Normalize Rust promotion gate"
+          git push origin HEAD:agent/rust-promotion-gate-phase13
