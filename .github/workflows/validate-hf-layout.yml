@@ -36,27 +36,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || vars.HF_DEFAULT_BUCKET || 'gawohok7/jpapt-v2.2-dev-bucket' }}
+  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || 'automatic' }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
-  HF_BUCKET: ""
-  HF_MODEL_REPO: ""
-  EXPECTED_DEVELOPMENT_REPO_ID: ""
-  EXPECTED_UPSTREAM_REPO_ID: ""
-  EXPECTED_TOKENIZER_REPO_ID: ""
-  EXPECTED_FRAMEWORK: ""
-  EXPECTED_DECODER: ""
-  ALLOW_LEGACY_REVISION_METADATA: "false"
-  HF_TARGET_ID: ""
 
 jobs:
-  validate:
-    name: Validate selected HF configuration
+  local-contracts:
+    name: Validate local HF contracts
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -69,9 +62,7 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install -e ".[datasets,onnx,dev]"
-          python -m pip install --upgrade huggingface_hub
           python -c "import parakeet_onnx"
-          hf --version
 
       - name: Validate local contracts
         shell: bash
@@ -85,10 +76,56 @@ jobs:
             python/tests/unit/test_revision_decoder_shapes.py \
             python/tests/unit/test_hf_target_bucket_resolution.py
 
+      - name: Build configured target matrix
+        id: targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          targets = sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
+          if not targets:
+              raise SystemExit("No config/hf-targets/*.toml files were found.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as file:
+              file.write("targets=" + json.dumps(targets, separators=(",", ":")) + "\n")
+          print("targets:", ", ".join(targets))
+          PY
+
+  validate-selected:
+    name: Validate selected HF configuration
+    if: github.event_name == 'workflow_dispatch'
+    needs: local-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_BUCKET: ""
+      HF_MODEL_REPO: ""
+      EXPECTED_DEVELOPMENT_REPO_ID: ""
+      EXPECTED_UPSTREAM_REPO_ID: ""
+      EXPECTED_TOKENIZER_REPO_ID: ""
+      EXPECTED_FRAMEWORK: ""
+      EXPECTED_DECODER: ""
+      HF_TARGET_ID: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install target validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install --upgrade huggingface_hub
+          hf --version
+
       - name: Resolve selected HF Bucket
         shell: bash
-        env:
-          SELECTED_BUCKET: ${{ inputs.hf_bucket || vars.HF_DEFAULT_BUCKET || 'gawohok7/jpapt-v2.2-dev-bucket' }}
         run: |
           set -euo pipefail
           [[ -n "${HF_TARGETS_JSON:-}" ]] || {
@@ -96,7 +133,7 @@ jobs:
             exit 1
           }
           python scripts/ci/resolve-hf-target.py \
-            --bucket "${SELECTED_BUCKET}" \
+            --bucket "${{ inputs.hf_bucket }}" \
             --targets-json "${HF_TARGETS_JSON}" \
             --github-env "${GITHUB_ENV}"
 
@@ -111,29 +148,19 @@ jobs:
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
 
-      - name: Fetch HF revision locks
+      - name: Fetch and validate revision locks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/hf/config/revisions
           bash scripts/hf/hf-fetch-revisions.sh
-
-      - name: Validate fetched revisions
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(
-            --root .ci/hf/config/revisions
-            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
-            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
-            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
-            --expected-framework "${EXPECTED_FRAMEWORK}"
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions \
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
+            --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
-          )
-          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-legacy-metadata)
-          fi
-          python scripts/ci/validate-revisions.py "${args[@]}"
 
       - name: Validate required HF Bucket directories
         shell: bash
@@ -148,14 +175,13 @@ jobs:
   validate-targets:
     name: Validate target ${{ matrix.target }}
     if: github.event_name != 'workflow_dispatch'
+    needs: local-contracts
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - parakeet-tdt_ctc-0.6b-ja
-          - kotoba-whisper-v1.0
+        target: ${{ fromJSON(needs.local-contracts.outputs.targets) }}
     env:
       HF_BUCKET: ""
       HF_MODEL_REPO: ""
@@ -164,9 +190,8 @@ jobs:
       EXPECTED_TOKENIZER_REPO_ID: ""
       EXPECTED_FRAMEWORK: ""
       EXPECTED_DECODER: ""
-      ALLOW_LEGACY_REVISION_METADATA: "false"
       HF_TARGET_ID: ""
-      TARGET_INITIALIZED: "false"
+      TARGET_READY: "false"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -185,46 +210,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
+            echo "::warning::HF_TARGETS_JSON is not configured; remote target checks are skipped."
+            exit 0
+          }
           python scripts/ci/resolve-hf-target.py \
             --target "${{ matrix.target }}" \
-            --targets-json "${HF_TARGETS_JSON:-}" \
+            --targets-json "${HF_TARGETS_JSON}" \
             --github-env "${GITHUB_ENV}"
+          echo "TARGET_READY=true" >> "${GITHUB_ENV}"
 
-      - name: Probe target revision locks
-        if: env.HF_TOKEN != ''
+      - name: Check target revision bundle
+        if: env.HF_TOKEN != '' && env.TARGET_READY == 'true'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/hf/config/revisions
-          if bash scripts/hf/hf-fetch-revisions.sh; then
-            echo "TARGET_INITIALIZED=true" >> "${GITHUB_ENV}"
-          else
-            echo "TARGET_INITIALIZED=false" >> "${GITHUB_ENV}"
-            echo "::warning::HF target '${{ matrix.target }}' is configured but its revision-lock bundle is not initialized yet."
+          if ! bash scripts/hf/hf-fetch-revisions.sh; then
+            echo "::warning::HF target '${{ matrix.target }}' does not yet expose a valid strict revision bundle."
+            exit 0
           fi
-
-      - name: Check target revision identity
-        if: env.HF_TOKEN != '' && env.TARGET_INITIALIZED == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(
-            --root .ci/hf/config/revisions
-            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
-            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
-            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
-            --expected-framework "${EXPECTED_FRAMEWORK}"
-            --expected-decoder "${EXPECTED_DECODER}"
-          )
-          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-legacy-metadata)
-          fi
-          if ! python scripts/ci/validate-revisions.py "${args[@]}"; then
+          if ! python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions \
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
+            --expected-framework "${EXPECTED_FRAMEWORK}" \
+            --expected-decoder "${EXPECTED_DECODER}"; then
             echo "::warning::Remote revision metadata for '${{ matrix.target }}' does not match the repository target contract. Run Validate HF Layout manually for strict enforcement."
           fi
 
       - name: Validate target Bucket directories
-        if: env.HF_TOKEN != '' && env.TARGET_INITIALIZED == 'true'
+        if: env.HF_TOKEN != '' && env.TARGET_READY == 'true'
         shell: bash
         run: |
           set -euo pipefail
