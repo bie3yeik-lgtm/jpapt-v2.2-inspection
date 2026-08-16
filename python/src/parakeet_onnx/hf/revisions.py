@@ -40,6 +40,20 @@ def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _reject_keys(
+    source: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    document: str,
+) -> None:
+    present = [key for key in keys if key in source]
+    if present:
+        raise RevisionError(
+            f"{document}: unsupported legacy fields are present: {present!r}. "
+            "Rewrite the document using the canonical revision contract."
+        )
+
+
 def _require_mapping(
     source: Mapping[str, Any],
     key: str,
@@ -143,6 +157,7 @@ def _parse_decoders(
     *,
     document: str,
 ) -> DecoderRevisionSet:
+    _reject_keys(raw, ("decoder", "decorders"), document=document)
     value = _require_mapping(raw, "decoders", document=document)
     supported = _decoder_list(value, "supported", document=document)
     default = _decoder_id(
@@ -190,6 +205,19 @@ class ReferenceRevision:
     @classmethod
     def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
         raw = document.raw
+        _reject_keys(
+            raw,
+            (
+                "model",
+                "model_id",
+                "model_revision",
+                "tokenizer_revision",
+                "reference_id",
+                "reference_revision",
+                "canonical_framework",
+            ),
+            document=document.name,
+        )
         development_repo_id, development_revision = _require_identity(
             raw,
             "development_artifact",
@@ -247,6 +275,11 @@ class EvaluationSchemaRevision:
         document: RevisionDocument,
     ) -> "EvaluationSchemaRevision":
         raw = document.raw
+        _reject_keys(
+            raw,
+            ("schema_id", "schema_revision"),
+            document=document.name,
+        )
         schema = _require_mapping(raw, "schema", document=document.name)
         return cls(
             document=document,
