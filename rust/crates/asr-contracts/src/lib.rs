@@ -180,9 +180,7 @@ fn validate_run_context_semantics(value: &Value) -> Result<()> {
     let dataset_entries = value
         .pointer("/revisions/datasets/entries")
         .and_then(Value::as_array)
-        .ok_or_else(|| {
-            ContractError::validation("revisions.datasets.entries must be an array")
-        })?;
+        .ok_or_else(|| ContractError::validation("revisions.datasets.entries must be an array"))?;
     let mut dataset_ids = BTreeSet::new();
     for (index, entry) in dataset_entries.iter().enumerate() {
         let id = required_string_at(
