@@ -1,28 +1,39 @@
 # Hugging Face Buckets
 
-## 1. 実際に使うdevelopment Bucket
+## 1. Role of Buckets
 
-source-controlled target定義では、少なくとも次の2系統を使います。
+Hugging Face Bucketはdevelopment/evaluation storageです。accepted release historyはHF Model Repoへpromotionし、Rust binary distributionはGitHub Releasesを使います。
+
+Bucketに置くもの:
+
+```text
+config versions/current pointer
+candidate artifacts
+experiment namespace reservation
+full run evidence
+benchmark index
+operational/reference/tmp directories
+```
+
+## 2. Current targets
 
 ```text
 gawohok7/jpapt-v2.2-dev-bucket
-└── target: parakeet-tdt_ctc-0.6b-ja
-    upstream: nvidia/parakeet-tdt_ctc-0.6b-ja
-    profile_set: parakeet-tdt-ctc-v1
-    model_repo: gawohok7/jpapt-v2.2-dev
+  target: parakeet-tdt_ctc-0.6b-ja
+  upstream: nvidia/parakeet-tdt_ctc-0.6b-ja
+  profile_set: parakeet-tdt-ctc-v1
+  model_repo: gawohok7/jpapt-v2.2-dev
 
 gawohok7/tf-v1-onnx-dev-bucket
-└── target: kotoba-whisper-v1.0
-    upstream: kotoba-tech/kotoba-whisper-v1.0
-    profile_set: whisper-autoregressive-v1
-    model_repo: gawohok7/tf-v1-onnx-dev
+  target: kotoba-whisper-v1.0
+  upstream: kotoba-tech/kotoba-whisper-v1.0
+  profile_set: whisper-autoregressive-v1
+  model_repo: gawohok7/tf-v1-onnx-dev
 ```
 
-両Bucketは同じlogical layoutを使います。
+routing sourceは `config/hf-targets/*.toml` と `config/models/*.toml` / `config/asr-catalog.json` です。
 
-## 2. 標準Bucket tree
-
-実装されているscript群から見た標準treeは次です。
+## 3. Canonical logical tree
 
 ```text
 hf://buckets/<namespace>/<bucket>/
@@ -30,226 +41,285 @@ hf://buckets/<namespace>/<bucket>/
 ├── config/
 │   ├── current.json
 │   └── versions/
-│       ├── config-000001/
-│       │   ├── README.md
-│       │   ├── reference.json
-│       │   ├── evaluation-schema.json
-│       │   ├── datasets-lock.json
-│       │   └── runtime.json
-│       └── config-000002/
+│       └── config-NNNNNN/
 │           ├── README.md
 │           ├── reference.json
 │           ├── evaluation-schema.json
 │           ├── datasets-lock.json
 │           └── runtime.json
 ├── candidates/
-│   ├── candidate-000003/
-│   │   ├── README.md
-│   │   ├── metadata.json
-│   │   ├── ctc/
-│   │   │   └── model.onnx
-│   │   ├── tdt/
-│   │   │   ├── encoder.onnx
-│   │   │   ├── predictor.onnx
-│   │   │   └── joint.onnx
-│   │   └── tokenizer/
-│   │       └── vocabulary.json
-│   └── candidate-000004/
+│   └── candidate-NNNNNN/
 │       ├── README.md
 │       ├── metadata.json
-│       ├── encoder.onnx
-│       ├── decoder.onnx
-│       ├── decoder_with_past.onnx
-│       └── tokenizer/
-│           ├── tokenizer_config.json
-│           ├── preprocessor_config.json
-│           └── ...
+│       ├── <variant artifacts...>
+│       └── tokenizer/...
 ├── experiments/
-│   ├── experiment-000005/
-│   │   └── README.md
-│   ├── experiment-000006/
-│   │   └── README.md
-│   └── experiment-000007/
+│   └── experiment-NNNNNN/
 │       └── README.md
 ├── runs/
-│   └── 20260816T120000Z-parakeet-tdt-ctc-0.6b-ja-linux-cpu-full-12345678-abcd1234/
+│   └── <run-id>/
 │       ├── run-context.json
-│       ├── metrics.json
 │       ├── samples.jsonl
+│       ├── metrics.json
 │       ├── run.parquet
 │       └── promotion.json        # promotion後のみ
-└── benchmarks/
-    └── candidate-000003/
-        ├── cpu/
-        │   └── <run-id>.json
-        ├── cuda/
-        │   └── <run-id>.json
-        ├── directml/
-        │   └── <run-id>.json
-        └── coreml/
-            └── <run-id>.json
+├── benchmarks/
+│   └── candidate-NNNNNN/
+│       └── <benchmark-name>/
+│           └── <run-id>.json
+├── reference/
+├── scripts/
+└── tmp/
 ```
 
-注意: `README.md` は中央AllocatorがID予約時に先に作ることがあります。candidate publishはその後、同じcandidate prefixへartifactを追加します。
+`validate-hf-layout.yml` のmanual selected-target validationは、現在 `benchmarks`, `runs`, `candidates`, `experiments`, `reference`, `scripts`, `tmp` の各directoryが存在することを確認します。
 
-## 3. Parakeet Bucketの具体例
+## 4. Allocation policy
+
+allocation catalog JSONはありません。
 
 ```text
-hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/
-├── README.md
-├── config/
-│   ├── current.json
-│   └── versions/
-│       └── config-000123/
-│           ├── README.md
-│           ├── reference.json
-│           ├── evaluation-schema.json
-│           ├── datasets-lock.json
-│           └── runtime.json
-├── candidates/
-│   └── candidate-000124/
-│       ├── README.md
-│       ├── metadata.json
-│       ├── ctc/model.onnx
-│       ├── tdt/encoder.onnx
-│       ├── tdt/predictor.onnx
-│       ├── tdt/joint.onnx
-│       └── tokenizer/vocabulary.json
-├── experiments/
-│   └── experiment-000125/README.md
-├── runs/
-│   └── <run-id>/
-│       ├── run-context.json
-│       ├── metrics.json
-│       ├── samples.jsonl
-│       ├── run.parquet
-│       └── promotion.json
-└── benchmarks/
-    └── candidate-000124/
-        └── cpu/<run-id>.json
+collection     canonical prefix
+candidates  -> candidate
+experiments -> experiment
+config      -> config
 ```
 
-## 4. Whisper Bucketの具体例
+Rust `asr-hf` がcollectionからprefixを決定します。
+
+sequenceはcanonical/historical layout双方に存在する6桁suffixの最大値 + 1です。migration前のIDを再利用しません。
+
+## 5. Central allocator
+
+`hf-central-allocator.yml` が中央採番serviceです。
+
+input:
 
 ```text
-hf://buckets/gawohok7/tf-v1-onnx-dev-bucket/
-├── README.md
-├── config/
-│   ├── current.json
-│   └── versions/
-│       └── config-000041/
-│           ├── README.md
-│           ├── reference.json
-│           ├── evaluation-schema.json
-│           ├── datasets-lock.json
-│           └── runtime.json
-├── candidates/
-│   └── candidate-000042/
-│       ├── README.md
-│       ├── metadata.json
-│       ├── encoder.onnx
-│       ├── decoder.onnx
-│       ├── decoder_with_past.onnx
-│       └── tokenizer/...
-├── runs/
-│   └── <run-id>/
-│       ├── run-context.json
-│       ├── metrics.json
-│       ├── samples.jsonl
-│       └── run.parquet
-└── benchmarks/
-    └── candidate-000042/
-        └── directml/<run-id>.json
+request_id
+hf_bucket
+collection = candidates | experiments | config
+metadata_json
 ```
 
-## 5. `config/`
+同一Bucketについて:
+
+```text
+concurrency group = hf-central-sequence-<bucket>
+cancel-in-progress = false
+```
+
+として直列化します。
+
+allocation時にprefix rootへ `README.md` が先に作られる場合があります。これはnamespace reservationです。
+
+## 6. Config storage
 
 ### `config/current.json`
 
-現在のactive config versionを指すmutable pointerです。
+active config versionを指すmutable pointerです。
 
 ### `config/versions/config-NNNNNN/`
 
-各versionはimmutable snapshotとして扱います。内容は4文書です。
+immutable-by-policy snapshotです。
 
 ```text
-reference.json
-evaluation-schema.json
-datasets-lock.json
-runtime.json
+reference.json           human-authored
+ evaluation-schema.json   human-authored
+ datasets-lock.json       human-authored
+ runtime.json             generated
 ```
 
-中央Allocatorが先に `README.md` を作成し、`hf-push-config-version.sh` が4文書をpublishします。
+`runtime.json` はASR catalog fingerprint/profile setからRust publish toolingが生成します。
 
-## 6. `candidates/`
+## 7. Candidate canonical layout
 
-candidate IDは中央Allocatorがcanonical/historical layout双方の最大6桁suffixを見て `candidate-NNNNNN` を自動採番します。prefix設定JSONは不要です。candidate IDを省略したreadではcanonical `candidates/candidate-NNNNNN` の最新値を優先し、canonicalが存在しない既存Bucketに限って `<variant>/candidate-NNNNNN` をread-only fallbackとして解決します。
-
-canonical IDはprofile setに依存せず次の1形式です。profile/variantはcandidate metadataとASR catalogから解決します。
+新規publish:
 
 ```text
-candidate-NNNNNN
+candidates/candidate-NNNNNN/
 ```
 
-旧Bucketの `ctc/candidate-NNNNNN` / `tdt/candidate-NNNNNN` はread-only fallbackとしてのみ扱い、新規publishでは生成しません。
+candidate IDはprofile set/variant/workflow/providerをprefixへ含めません。
 
-publish時は `hf buckets sync --plan` の結果を確認し、fresh upload以外のoperationが必要なら拒否します。candidate IDを再利用して既存artifactを上書きする運用はしません。
+artifact semanticsは `metadata.json` + `config/asr-catalog.json` + actual artifact inspectionで決まります。
 
-## 7. `experiments/`
+## 8. Historical candidate layout
 
-experiment IDも中央Allocator管理で、workflow種別に依存しない `experiment-NNNNNN` を採番します。workflow種別やevaluation identityは生成metadata側で保持し、ID prefixへ埋め込みません。
-
-現状、AllocatorのREADMEがnamespace reservationの最小artifactです。workflowが追加artifactを置く場合も同じexperiment ID配下を使います。
-
-## 8. `runs/`
-
-runは最低限次の4ファイルを持ちます。
+既存Bucketにはhistorical layoutがあり得ます。
 
 ```text
-run-context.json
-metrics.json
-samples.jsonl
-run.parquet
+candidates/ctc/candidate-NNNNNN/
+candidates/tdt/candidate-NNNNNN/
 ```
 
-`run.parquet` は ExperimentCapsuleV1 のdurable analytical representationです。現在は同一flat schema上に `manifest` / `sample` / `metric` / `artifact` / `diagnostic` recordを保持します。
+これはread-only fallbackです。
 
-- `manifest`: run-contextとbenchmark provenance
-- `sample`: per-sample ASR結果
-- `metric`: cross-run集計向けnumeric metric
-- `artifact`: 小さなembedded artifactまたはHF Bucket等のexternal immutable artifact参照
-- `diagnostic`: provider fallback、parity、frontend/runtime等の小さな構造化診断
+ID省略readのpolicy:
 
-大きなONNX model、external data、audio corpus、大規模traceはParquet payloadへ複製せず、`artifact` recordからimmutable URI・SHA-256・sizeを参照します。
+```text
+canonical candidateが存在する
+  -> latest canonicalを選ぶ
 
-`hf-push-run.sh` はJSON/JSONL schemaに加えて `run.parquet` のExperimentCapsuleV1整合性、run ID、sample数を検証してから `runs/<run-id>/` へdirectory syncします。run upload wrapperでは `--delete` を使用しません。
+canonical candidateが存在しない
+  -> runtime variantを使ってhistorical candidateを解決
+```
 
-promotion成功後は同じrunへ `promotion.json` を追加します。
+exact candidate ID指定でも同じresolverを使います。
 
-## 9. `benchmarks/`
+## 9. HF CLI listing normalization
 
-軽量なmetrics indexです。
+`hf buckets list <...>/candidates -R -q` の出力は実行条件によりcollection root付き/無しの双方があり得ます。
+
+Rust resolverは次を同じrelative pathとして扱います。
+
+```text
+ctc/candidate-000001/metadata.json
+candidates/ctc/candidate-000001/metadata.json
+```
+
+shell側でCLI出力形式を仮定してpathを切り刻まず、Rust resolverへ渡します。
+
+## 10. Candidate publish safety
+
+`hf-push-candidate.sh` はpublish前に:
+
+- source candidate pathをcanonicalize
+- sourceに `.candidate-id` が無いことを確認
+- runtime contractをinspection/validate
+- central allocatorからfresh ID取得
+- `hf buckets sync --plan` 生成
+- Rustでplanをparse
+- `upload` 以外のactionを拒否
+
+してからapplyします。
+
+既存candidateを上書き/削除するsync planは受け入れません。
+
+## 11. Candidate fetch
+
+```bash
+bash scripts/hf/hf-fetch-candidate.sh candidate-000124
+```
+
+local fetch先はfresh stagingを経由してmaterializeし、`.candidate-id` を作成します。
+
+source candidateとfetched candidateを同じidentity表現にしない理由は、candidate IDがBucket allocationによって初めて確定するためです。
+
+## 12. Experiments
+
+```text
+experiments/experiment-NNNNNN/
+```
+
+現在は中央AllocatorがREADME reservationを作る最小namespaceです。
+
+1つのexperiment IDからcross-platform matrixの複数runが生成される場合があります。experiment IDとrun IDは別です。
+
+## 13. Runs
+
+runはexecution evidenceです。
+
+```text
+runs/<run-id>/
+├── run-context.json
+├── samples.jsonl
+├── metrics.json
+├── run.parquet
+└── promotion.json   # optional
+```
+
+`run.parquet` はExperimentCapsuleV1です。
+
+record types:
+
+```text
+manifest
+sample
+metric
+artifact
+diagnostic
+```
+
+large model/audioはParquet payloadへ複製せずexternal immutable referenceを使います。
+
+## 14. Run upload
+
+```bash
+bash scripts/hf/hf-push-run.sh results/<run>
+```
+
+upload前に:
+
+- JSON/JSONL schema
+- run identity
+- sample count
+- ExperimentCapsuleV1
+
+を検証します。
+
+run uploadはremote cleanup目的の`--delete`を使用しません。
+
+## 15. Benchmarks
 
 ```text
 benchmarks/<candidate-id>/<benchmark-name>/<run-id>.json
 ```
 
-格納される内容はrunの `metrics.json` と同じbenchmark documentです。run本体を探索せずcandidate/provider単位で比較したい場合に使います。
+full runを探索せずcandidate/provider/suite別metricsを比較するためのindexです。
 
-## 10. BucketとModel Repoの責務
+例:
 
-Bucket:
+```text
+linux-cpu-full
+linux-cpu
+windows-cpu
+macos-cpu
+macos-coreml
+directml
+coreml
+parity
+```
 
-- development artifact
-- mutable current pointer
-- immutable-by-policy config/candidate IDs
-- raw run history + ExperimentCapsuleV1
-- benchmark index
+benchmark nameはsafe path componentである必要があります。
 
-Model Repo:
+## 16. Promotion
 
-- accepted release artifact
-- versioned repository history
-- downstream consumer向け成果物
+promotionはBucket candidateを再fetchし、actual runtime contract/bundle SHAを検証してからModel Repoへuploadします。
 
-promotionではBucket candidateを再fetchしてbundle SHAを再検証した後、Model Repoへuploadします。
+Bucket側のrunには `promotion.json` を追加します。
+
+Bucket candidateそのものをrelease historyの代替にしません。
+
+## 17. Mutable vs immutable-by-policy
+
+### Mutable
+
+```text
+config/current.json
+README.md managed allocator status
+```
+
+### Immutable-by-policy
+
+```text
+config/versions/config-NNNNNN/
+candidates/candidate-NNNNNN/
+runs/<run-id>/
+benchmarks/.../<run-id>.json
+```
+
+## 18. 実際の確認
+
+selected targetのBucket構造はGitHub Actions `Validate HF Layout` をmanual dispatchすることで検証できます。
+
+input:
+
+```text
+hf_target
+runtime_variant (optional)
+```
+
+workflowはtargetをsource-controlled configから解決し、current config、4 revision documents、required directories、candidate resolverを実Bucket上で確認します。
+
+詳細は [github-actions.md](./github-actions.md) と [workflows.md](./workflows.md) を参照してください。

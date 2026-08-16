@@ -2,20 +2,22 @@
 
 ## 1. 評価単位
 
-1 evaluation runは、次のidentityの組み合わせです。
+1 evaluation runは次のidentityの組み合わせです。
 
 ```text
-model
+model / HF target
 candidate
-runtime variant
+runtime variant / runtime profile / decoder
 provider
 environment
 evaluation suite
-revision bundle
-manifest
+config version / revision bundle
+dataset manifest
+experiment ID
+optimization/provider strictness
 ```
 
-run開始時に `run-context.json` へfreezeし、終了後に `samples.jsonl` と `metrics.json` を生成します。
+run開始時に `run-context.json` へfreezeし、終了時にper-sample/aggregate/capsuleを生成します。
 
 ## 2. Evaluator capability
 
@@ -24,95 +26,166 @@ run開始時に `run-context.json` へfreezeし、終了後に `samples.jsonl` �
 | Python ONNX | CTC / TDT / Whisper autoregressive | CPU / CUDA / DirectML / CoreML |
 | Rust ONNX | CTC | CPU / CUDA / DirectML / CoreML |
 
-Rust側でTDT/Whisperを選んだ場合はcapability validationでfailさせます。文書やCLI defaultで擬似対応しません。
+Rust側でTDT/Whisperを選ぶとcapability validationでfailします。provider feature対応とdecoder対応は独立です。
 
-## 3. Manifest
+## 3. Evaluation suites
 
-manifestはdataset全件のコピーではなく、deterministic selection requestです。
+source-controlled suiteは `config/evaluation/*.toml` にあります。workflow inputで現行使用される代表値:
+
+```text
+smoke
+parity
+coreml-parity
+full
+```
+
+suiteごとのsample selection、acceptance threshold、parity/performance条件はworkflowへ直接埋め込まずconfigから解決します。
+
+## 4. Dataset / manifest boundary
+
+manifestはdataset全体のcopyではなくdeterministic selection requestです。
 
 ```json
 {"dataset_id":"jsut-basic5000","count":12,"seed":"smoke-jsut-v1"}
 ```
 
-`DatasetResolver` が `datasets-lock.json` のrepo/revisionと組み合わせ、実sampleをmaterializeします。
+`datasets-lock.json` がrepo/revision/hash/manifest identityをpinし、Python `datasets` boundaryが実audioをmaterializeします。
 
-標準dataset例:
+Rust pathでは `scripts/ci/prepare-rust-manifest.py` がresolved manifestを生成し、その後Rust runtimeは通常のfile I/Oでmaterialized audioを読みます。
+
+標準dataset:
 
 ```text
-id: jsut-basic5000
-repo: japanese-asr/ja_asr.jsut_basic5000
+japanese-asr/ja_asr.jsut_basic5000
 ```
 
-## 4. Candidate load
+## 5. Candidate selection
 
-評価前に必ず `CandidateArtifacts.load()` を通します。
+workflow inputの `candidate_id` はoptionalです。
 
-検証対象:
+明示された場合:
 
-- metadata schema
-- profile-set / variant existence
-- artifact role
+```text
+candidate-NNNNNN formatを検証
+```
+
+空の場合:
+
+1. targetからBucket/runtime variantを解決
+2. Bucket candidate listing取得
+3. Rust `resolve-candidate-location`
+4. canonical latest candidateを優先
+5. canonicalが無いhistorical Bucketだけvariant配下へfallback
+
+new candidate writeは常にcanonical pathです。
+
+## 6. Candidate load / generated contract
+
+評価前にactual artifactをinspectionします。
+
+検証/生成対象:
+
+- metadata profile set/variant
+- artifact role/path
 - tokenizer kind/path
 - artifact existence
 - artifact size/hash
+- bundle hash
 - ONNX graph I/O
-- decoder-specific config
-- non-ambiguous runtime contract
+- decoder-specific runtime config
+- catalog/profile/decoder identity
+- feature flags
 
-Python evaluatorとRust evaluatorでcandidate identityを別々に組み立てません。
+Python-native ONNX toolingの結果をgenerated candidate contractへ書き出し、Rust evaluator/policyも同じcontractを消費します。
 
-## 5. Run context
+## 7. Run context
 
 `run-context.json` schema v2はrunのimmutable identityです。
 
-run-context生成後にcandidate ID、revision bundle、provider、configを差し替えてはいけません。別条件で評価する場合は新しいrunを作ります。
+Rust evaluation pathでは:
 
-Rust run-contextもPythonのstrict builderを使って生成できますが、runtime identityは `implementation=rust` として記録します。
+```bash
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  build-run-context ...
+```
 
-## 6. Sample result
+で構築します。
 
-各sampleは `samples.jsonl` に1行ずつ書きます。
+run-context生成後にcandidate、revision、provider、suiteを差し替えてはいけません。条件が違えば新しいrunです。
+
+## 8. Per-sample result
+
+各sampleは `samples.jsonl` に1行ずつ保存します。
 
 主な内容:
 
 - dataset/sample identity
-- audio hash / duration
-- runtime/provider/decoder
-- transcript / tokens
+- audio SHA/duration
+- provider/runtime/decoder
+- transcript/tokens
 - CER/WER
-- component timing
+- timing
 - memory
 - parity
 - provider evidence
-- error records
+- structured errors
 
-失敗sampleも行を残し、aggregate時に `failed` として数えます。
+失敗sampleもrecordを残し、aggregateでfailed countへ反映します。
 
-## 7. Aggregate metrics
+## 9. Aggregate metrics
 
-`metrics.json` は次を集約します。
+`metrics.json` は代表的に以下を集約します。
 
-- sample counts
-- total audio duration
+- attempted/succeeded/failed sample count
+- audio duration
 - CER/WER
 - load/session/processing timing
 - RTF
-- per-sample latency distribution
+- latency distribution
 - component timing
 - RAM/device memory
 - parity summary
 - provider summary
-- acceptance summary
+- acceptance
 - error summary
 
-candidate identityの `artifact_sha256` はselected variantのbundle SHA-256です。単一ONNX fileのhashと混同しません。
+candidateのbundle identityと単一ONNX file hashを混同しません。
 
-## 8. Provider evidence
+## 10. ExperimentCapsuleV1 / `run.parquet`
 
-accelerator runでは、次を区別します。
+現行runはJSON/JSONLに加えて `run.parquet` を持ちます。
+
+```text
+results/<run>/
+├── run-context.json
+├── samples.jsonl
+├── metrics.json
+└── run.parquet
+```
+
+Parquetはcross-run analysis向けdurable representationです。
+
+record kind:
+
+```text
+manifest
+sample
+metric
+artifact
+diagnostic
+```
+
+大きなmodel/audio/traceをpayloadへ複製せず、artifact recordからimmutable URI、SHA-256、sizeを参照します。
+
+Rust `asr-capsule` がcanonical write/validationを担い、`capsule-interop.yml` でRust生成fileをPython readerでも読みます。
+
+## 11. Provider evidence
+
+accelerator評価では次を分離します。
 
 ```text
 registered
+session_created
 execution_proven
 fallback_detected
 fallback_only
@@ -122,11 +195,11 @@ fallback_nodes
 
 providerを登録できたことだけでaccelerator使用済みとは判定しません。
 
-strict provider modeでCPU fallbackを禁止したrunでは、successful inferenceはexecution proofを強めます。ただしnode assignmentを直接観測していない場合、`assigned_nodes` は `null` のままです。
+strict provider modeではnon-CPU providerのCPU fallbackを禁止し、execution proofを強めます。それでもnode assignmentを直接観測していない場合は `assigned_nodes: null` です。
 
-## 9. Acceptance
+## 12. Acceptance
 
-現行benchmark schemaは以下を持ちます。
+benchmark schemaの代表field:
 
 ```text
 acceptance.passed
@@ -138,23 +211,35 @@ acceptance.failed_checks
 acceptance.warnings
 ```
 
-観測していないcheckをfalseにしません。非適用/未評価は `null` を使います。
+非適用/未観測をfalseに偽装せず `null` を使います。
 
-## 10. Run publish
+## 13. Run ID / experiment ID
 
-完全なrun directory:
+experiment ID:
 
 ```text
-results/<run>/
-├── run-context.json
-├── samples.jsonl
-└── metrics.json
+experiment-NNNNNN
 ```
 
-publish:
+中央Allocatorが評価開始前に採番します。
+
+run IDはexecution identityから生成されるrun固有IDであり、experiment IDとは別です。1 experiment namespaceから複数platform runが生まれるworkflowがあります。
+
+## 14. Result validation
+
+Rust validator:
 
 ```bash
-scripts/hf/hf-push-run.sh results/<run>
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  validate-run results/<run>
+```
+
+run-context / samples / metrics / capsule間のidentityと件数をcross-checkします。
+
+## 15. Run publish
+
+```bash
+bash scripts/hf/hf-push-run.sh results/<run>
 ```
 
 remote:
@@ -163,42 +248,109 @@ remote:
 hf://buckets/${HF_BUCKET}/runs/<run-id>/
 ```
 
-## 11. Benchmark index
+upload wrapperはremote objectを削除する `--delete` 前提にしません。
 
-比較用に `metrics.json` だけをindexできます。
+`cpu-full-eval.yml` と `cross-platform-parity.yml` はrunをHF Bucketへuploadします。現行 `rust-eval.yml` はGitHub artifact uploadまでで、HF run publishは実施しません。
+
+## 16. Benchmark index
 
 ```bash
-scripts/hf/hf-push-benchmark.sh \
+bash scripts/hf/hf-push-benchmark.sh \
   results/<run>/metrics.json \
-  cpu
+  <benchmark-name>
 ```
 
 remote:
 
 ```text
-benchmarks/<candidate-id>/cpu/<run-id>.json
+benchmarks/<candidate-id>/<benchmark-name>/<run-id>.json
 ```
 
-benchmark名は用途に応じて `cpu`, `cuda`, `directml`, `coreml`, `parity` 等を使えますが、path componentとして安全な名前に限定します。
+benchmarkは比較用lightweight indexであり、full run/capsuleの代替ではありません。
 
-## 12. Promotion
+## 17. GitHub Actionsによる評価
+
+### CPU Full Evaluation
+
+- Python evaluator
+- Linux CPU
+- `full`
+- timeout 360分
+- HF run upload
+- benchmark publish
+- GitHub lightweight artifact 7日
+
+### Cross Platform ONNX Parity
+
+Python evaluator matrix:
+
+```text
+Linux CPU
+Windows CPU
+macOS CPU
+macOS CoreML
+```
+
+suite:
+
+```text
+smoke | parity | coreml-parity
+```
+
+各runをHFへpublishし、成功時benchmarkを作ります。
+
+### Rust Cross Platform Evaluation
+
+Rust CTC matrix:
+
+```text
+Linux CPU
+Windows CPU
+Windows DirectML
+macOS CPU
+macOS CoreML
+```
+
+input:
+
+```text
+smoke | parity | coreml-parity | full
+strict_provider
+optimization_level
+```
+
+詳細は [github-actions.md](./github-actions.md)。
+
+## 18. Promotion
 
 標準promotion条件:
 
-- run-context valid
-- metrics valid
-- run ID一致
-- candidate ID一致
-- candidate bundle SHA一致
-- `acceptance.passed == true`
-- `evaluation_id == "full"`
-
-実行:
+```text
+run-context valid
+metrics valid
+run ID一致
+candidate ID一致
+candidate bundle SHA一致
+acceptance.passed == true
+evaluation_id == full
+```
 
 ```bash
-scripts/hf/hf-promote-candidate.sh \
+bash scripts/hf/hf-promote-candidate.sh \
   candidate-000124 \
   results/<run>
 ```
 
-promotion scriptはBucket candidateを再downloadしてbundle hashを再計算します。その後Model Repoへuploadし、`promotion.json` をrunへ追加します。
+promotion時はBucket candidateを再fetchしてactual artifactからbundle/runtime contractを再検証します。その後Model Repoへuploadし、`promotion.json` をrunへ記録します。
+
+## 19. どの評価を使うか
+
+| 目的 | 推奨 |
+|---|---|
+| 軽いcontract/runtime smoke | Rust/Python `smoke` |
+| OS間のPython ONNX比較 | Cross Platform ONNX Parity |
+| CoreML numerical parity | `coreml-parity` |
+| release gate用の標準品質評価 | CPU Full Evaluation |
+| Rust CTC provider別runtime | Rust Cross Platform Evaluation |
+| accelerator fallbackなしproof | Provider Strict Probes |
+| production candidateに依存しないreference E2E | Public Model E2E |

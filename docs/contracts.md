@@ -2,44 +2,81 @@
 
 ## 1. Contract分類
 
-このprojectではJSONを3種類に分けます。
+現行repositoryでは入力・設定・execution artifactを次の3種類に分けます。
 
-| 分類 | 例 | 人が編集するか |
+| 分類 | 例 | 人が直接編集するか |
 |---|---|---|
-| human-authored | candidate `metadata.json`, revision 3文書 | はい。ただし最小限 |
-| source-controlled | `config/asr-catalog.json`, `config/hf-targets/*.toml` | repository変更としてのみ |
-| generated | `runtime.json`, `current.json`, `resolved.json`, generated candidate contract, `run-context.json`, `metrics.json`, `promotion.json` | いいえ |
+| human-authored | candidate `metadata.json`, revision source 3文書 | はい。ただし最小限 |
+| source-controlled | ASR catalog, model/provider/environment/evaluation/evaluator/HF target config | PRとしてのみ |
+| generated | `runtime.json`, allocation response, `resolved.json`, generated candidate contract, `run-context.json`, `metrics.json`, `run.parquet`, `promotion.json` | いいえ |
 
-生成値をhuman-authored JSONへコピーして正本を二重化しないことが最重要です。
+最大の原則は **generated/derived valueをhuman-authored fileへコピーして正本を二重化しないこと**です。
 
 ## 2. Strictness
 
-execution-critical JSONでは以下を基本方針とします。
+execution-critical contractでは以下を基本とします。
 
-- unknown fieldを拒否する
-- execution identityに `null` を許さない
-- empty stringをidentityとして扱わない
-- SHA-256は64 hexで検証する
-- candidate artifactは存在・size・SHAを再検証する
-- candidate-relative pathがroot外へescapeすることを拒否する
-- profile set / variant / decoder / artifact contractはcatalogと一致させる
-- run-contextのcandidate ID / catalog / profile set / artifact identityをcross-checkする
-- config versionは `config-NNNNNN` のみ
+- unknown fieldを拒否する。
+- execution identityに `null` / empty stringを許さない。
+- SHA-256は64 hexとして検証する。
+- artifact pathがcandidate root外へescapeすることを拒否する。
+- artifact存在、size、SHAをactual fileから再検証する。
+- profile set / variant / decoder / artifact rolesをASR catalogとcross-checkする。
+- config versionは `config-NNNNNN`。
+- candidate IDは `candidate-NNNNNN`。
+- experiment IDは `experiment-NNNNNN`。
+- run-contextのcandidate/revision/config/catalog/provider identityをcross-checkする。
 
-「値が無い場合に適当なdefaultを入れる」ことと、「仕様で定義されたdefault variantをcatalogから選ぶ」ことは別です。前者は推測であり禁止、後者はsource of truthからの決定です。
+仕様上のcatalog defaultを選ぶことと、値がないから推測でdefaultを作ることは別です。前者だけを許可します。
 
-## 3. Candidate metadata
+## 3. Minimal HF target contract
 
-human-authored `metadata.json` は以下だけを表現します。
+`config/hf-targets/<target-id>.toml` はrouting最小入力です。
+
+```toml
+schema_version = 3
+
+[runtime]
+profile_set = "parakeet-tdt-ctc-v1"
+
+[storage]
+bucket = "gawohok7/jpapt-v2.2-dev-bucket"
+model_repo = "gawohok7/jpapt-v2.2-dev"
+```
+
+ここへ以下を重複入力しません。
+
+```text
+target ID
+upstream repo
+framework
+runtime variant
+runtime profile
+decoder
+allocation prefix
+candidate ID
+```
+
+導出元:
+
+```text
+target ID                <- filename
+upstream/framework/model <- config/models/<target-id>.toml
+profile/decoder/default  <- config/asr-catalog.json
+allocation prefix        <- collection
+candidate                <- explicit input or Bucket state
+```
+
+## 4. Candidate metadata
+
+human-authored `metadata.json` はprofile setとartifact/tokenizer pathだけを表現します。
 
 ```json
 {
   "profile_set": "parakeet-tdt-ctc-v1",
   "variants": {
     "ctc": {
-      "artifacts": {
-        "primary": "ctc/model.onnx"
-      },
+      "artifacts": {"primary": "ctc/model.onnx"},
       "tokenizer": "tokenizer/vocabulary.json"
     },
     "tdt": {
@@ -54,95 +91,224 @@ human-authored `metadata.json` は以下だけを表現します。
 }
 ```
 
-禁止される代表例:
+metadataへ書かないもの:
 
 ```text
 schema_version
 candidate_id
-catalog
-bundle_sha256
-artifact sha256 / size
-profile
-artifact_contract
+catalog ID/SHA
+bundle SHA
+artifact SHA/size
+runtime profile
 decoder
-input_kind
-I/O binding
-blank_id / bos_id / durations
-KV cache names
-state shapes / dtypes
-features
+artifact contract
+input kind / graph I/O
+blank/BOS/duration IDs
+KV/state names/shapes/dtypes
+provider support
+evaluation/storage routing
 ```
 
-これらはgenerated candidate contract側の責務です。
+## 5. ASR catalog
 
-## 4. Runtime catalog
+`config/asr-catalog.json` がruntime profile semanticsを一元管理します。
 
-`config/asr-catalog.json` がdecoder semanticsを一元管理します。
+現行profile:
 
-現在のprofile:
-
-| profile | decoder | artifact roles | tokenizer |
+| profile | decoder | required artifact roles | tokenizer |
 |---|---|---|---|
 | `ctc-v1` | CTC | `primary` | vocabulary |
 | `tdt-v1` | TDT | `encoder`, `predictor`, `joint` | vocabulary |
-| `whisper-autoregressive-v1` | Whisper autoregressive | `encoder`, `decoder`, optional `decoder_with_past` | Transformers processor |
+| `whisper-autoregressive-v1` | Whisper autoregressive | `encoder`, `decoder`; optional `decoder_with_past` | Transformers processor |
 
 profile set:
 
-- `parakeet-tdt-ctc-v1`
-  - default: `ctc`
-  - variants: `ctc`, `tdt`
-- `whisper-autoregressive-v1`
-  - default: `whisper`
+```text
+parakeet-tdt-ctc-v1
+  default_variant = ctc
+  ctc -> ctc-v1
+  tdt -> tdt-v1
 
-revision JSONやcandidate metadataでdecoder declarationを重複させません。
+whisper-autoregressive-v1
+  default_variant = whisper
+  whisper -> whisper-autoregressive-v1
+```
 
-## 5. Four-document revision bundle
+revision JSONやcandidate metadataへdecoder mappingを複製しません。
 
-必須:
+## 6. Revision bundle
+
+human-authored source:
 
 ```text
 reference.json
 evaluation-schema.json
 datasets-lock.json
+```
+
+publish時generated:
+
+```text
 runtime.json
 ```
 
-`runtime.json` はsource-controlled `config/asr-catalog.json` のID/SHAとprofile setをpinします。
+versioned bundle:
 
-`datasets-lock.json` ではload自体にはoptionalなfieldがあっても、execution snapshot生成時には各datasetについて `sha256` と `manifest` が必須です。`subset` / `split` が省略された場合だけtyped execution snapshotで仕様上の `default` に正規化されます。
+```text
+config/versions/config-NNNNNN/
+├── reference.json
+├── evaluation-schema.json
+├── datasets-lock.json
+└── runtime.json
+```
 
-## 6. Run context
+`runtime.json` はASR catalog ID/SHAとprofile setをpinします。
 
-`run-context.json` schema v2はnullable compatibilityを持ちません。
+fetch後は隣接する `resolved.json` がconcrete config versionを固定します。versionless revision bundleだけをexecution identityとして扱いません。
 
-必須identity:
+## 7. Allocation contract
 
-- candidate ID / artifact role / artifact SHA / size
+allocation catalog JSONは存在しません。
+
+```text
+candidates  -> candidate
+experiments -> experiment
+config      -> config
+```
+
+allocation response schema v4は最小fieldです。
+
+```json
+{
+  "schema_version": 4,
+  "request_id": "...",
+  "id": "candidate-000124",
+  "bucket": "namespace/bucket",
+  "collection": "candidates"
+}
+```
+
+prefix key、catalog fingerprint、variant、provider等をresponseへ重複保存しません。
+
+## 8. Candidate location contract
+
+new write:
+
+```text
+candidates/candidate-NNNNNN/
+```
+
+historical read-only fallback:
+
+```text
+candidates/<variant>/candidate-NNNNNN/
+```
+
+canonical candidateが1つでも存在する場合、ID省略readはcanonicalを優先します。historical pathはmigration inputであり、新規publish targetではありません。
+
+## 9. Generated candidate contract
+
+Python-native ONNX inspection boundaryがactual filesから生成します。
+
+含まれる主なidentity:
+
+- candidate root / candidate ID
+- profile set / variant / profile / decoder
+- artifact contract
+- catalog ID/SHA
+- bundle SHA
+- roleごとのpath/SHA/size
+- tokenizer kind/path
+- features
+- graph I/O binding
+- decoder config
+
+Rust evaluator/policyはこのfile contractを独立して検証・消費します。
+
+## 10. Resolved manifest
+
+HF dataset acquisitionはPython-nativeですが、Rust runtimeへ渡すのはPython objectではなくmaterialized/resolved manifestです。
+
+execution snapshot時にはdataset revision/hash/manifest identityが確定している必要があります。
+
+## 11. Run context
+
+`run-context.json` schema v2はimmutable execution snapshotです。
+
+必須identityの代表:
+
+- target/model
+- candidate ID / bundle / selected artifact
+- runtime variant/profile/decoder
 - Git repository / commit / ref / dirty
-- host OS / arch / hostname / Python identity
-- runtime implementation / ONNX Runtime version / provider
+- host OS / arch / hostname
+- runtime implementation / ORT / provider
 - config version / revision bundle SHA
-- dataset SHA / manifest
-- resolved config identity
+- dataset/manifest
+- resolved config snapshot
 - generated candidate contract
+- experiment ID
 
-外部から読んだrun-contextもJSON Schemaだけでなくtyped parserでsemantic cross-checkします。
+外部から読んだrun-contextもJSON Schemaだけでなくtyped semantic cross-checkを行います。
 
-## 7. Metricsとsample result
+## 12. Sample / metrics nullable policy
 
-`metrics.json` と `samples.jsonl` はexecution evidenceなので、一部の観測不能値には `null` が許可されています。これはrun-context identityのnull禁止とは目的が異なります。
+`run-context` identityはnull禁止ですが、観測結果には `null` が必要です。
 
 例:
 
-- node assignmentを計測していない → `assigned_nodes: null`
-- parity runでない → parity numeric fieldsが `null`
-- device memoryを計測できない → `peak_device_memory_mb: null`
+```text
+node assignment未計測 -> assigned_nodes: null
+parity非対象 -> parity numeric field: null
+device memory未取得 -> peak_device_memory_mb: null
+```
 
-観測していない値を0やfalseで偽装しません。
+未観測を0/falseへ捏造しません。
 
-## 8. Rust / Python parity
+## 13. ExperimentCapsuleV1
 
-PythonはCTC/TDT/Whisper runtimeを持ちます。Rust evaluatorは現時点でCTCのみです。
+`run.parquet` はgenerated durable analytical contractです。
 
-このcapability差をmetadataやdocsで埋めません。Rust TDT/Whisper対応を宣言できるのは、multi-session state/KV/feature extractionを実装し、同じgenerated contractで検証できるようになった時点だけです。
+record kind:
+
+```text
+manifest
+sample
+metric
+artifact
+diagnostic
+```
+
+JSON/JSONL execution evidenceとidentityを一致させ、run upload前に検証します。
+
+large artifactはParquetへ複製せず、immutable external URI/hash/sizeを参照します。
+
+## 14. Promotion contract
+
+promotion前に再検証します。
+
+```text
+run-context valid
+metrics valid
+run ID一致
+candidate ID一致
+candidate bundle SHA一致
+acceptance.passed == true
+原則 evaluation_id == full
+```
+
+さらにBucket candidateを再fetchしてactual bundle/runtime contractを検証します。
+
+## 15. Rust / Python boundary
+
+PythonはCTC/TDT/Whisper runtimeおよびML/tooling/reference pathを持ちます。Rust evaluatorは現時点でCTCのみです。
+
+境界はversioned file contractです。
+
+```text
+Python ONNX inspection -> GeneratedCandidateContract -> Rust
+Python HF datasets -> ResolvedManifest -> Rust
+Rust capsule -> run.parquet -> Python compatibility reader
+```
+
+capability差をmetadataやfallback codeで隠しません。

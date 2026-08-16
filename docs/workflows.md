@@ -1,124 +1,108 @@
-# Workflows
+# Operational Workflows
 
-## 1. 基本方針
+この文書は、現行repositoryで **config versionを作る → candidateをpublishする → 評価する → run/benchmarkを保存する → accepted candidateをpromotionする** までの運用フローを説明します。GitHub Actionsの個別仕様は [github-actions.md](./github-actions.md) を参照してください。
 
-GitHub Actionsは、source-controlled contractとHF Bucket上のimmutable-by-policy artifactを接続するexecution layerです。
+## 1. 運用原則
 
-workflowにruntime semanticsを再定義しません。workflowは次のsource of truthを呼び出します。
+- human-authored入力は必要最小限にする。
+- target/Bucket/model/upstream/runtime profile/decoderはsource-controlled configとASR catalogから導出する。
+- candidate/config/experiment IDは中央Allocatorで採番し、人がsuffixを選ばない。
+- new writeはcanonical layoutだけを使用する。
+- historical Bucket layoutはread-only fallbackとしてのみ解釈する。
+- persistent execution artifactはRust contract validatorで再検証する。
+- PythonはONNX/Transformers/NeMo/HF datasets等のPython-native boundaryに限定する。
+- network/authは公式 `hf` / `gh` CLIを利用する。
 
-```text
-config/asr-catalog.json
-config/hf-targets/*.toml
-config/models/*.toml
-config/providers/*.toml
-config/environments/*.toml
-config/evaluation/*.toml
-evaluation/schemas/*.schema.json
-```
+## 2. Target resolution
 
-## 2. Core CI
-
-### Python Unit
-
-目的:
-
-- locked uv environment
-- pinned ONNX Runtime
-- Python unit tests
-- strict contract parser
-- candidate/revision/runtime validation
-
-標準環境:
+最初のoperator inputは通常 `hf_target` です。
 
 ```bash
-uv lock --check
-uv sync --locked --extra datasets --extra onnx --extra dev
-uv run python -m pytest -q python/tests/unit
+cargo run --quiet --locked -p asr-hf -- \
+  resolve-target \
+  --target parakeet-tdt_ctc-0.6b-ja
 ```
 
-### Validate HF Layout
+runtime variantを明示する場合:
 
-目的:
+```bash
+cargo run --quiet --locked -p asr-hf -- \
+  resolve-target \
+  --target parakeet-tdt_ctc-0.6b-ja \
+  --runtime-variant ctc
+```
 
-- source-controlled catalogs
-- HF target routing
-- JSON/schema contracts
-- HF shell scripts syntax
-- optimizer canary
-- dependency pins
+省略時は `config/asr-catalog.json` のprofile-set default variantを使います。
 
-### Rust CI
-
-matrix:
+resolverが確定する主な値:
 
 ```text
-Linux   -> CPU
-Windows -> DirectML
-macOS   -> CoreML
+HF_TARGET_ID
+HF_BUCKET
+HF_MODEL_REPO
+EXPECTED_DEVELOPMENT_REPO_ID
+EXPECTED_UPSTREAM_REPO_ID
+EXPECTED_TOKENIZER_REPO_ID
+EXPECTED_FRAMEWORK
+HF_PROFILE_SET
+ASR_RUNTIME_VARIANT
+EXPECTED_RUNTIME_PROFILE
+EXPECTED_DECODER
 ```
 
-各matrixでlockfile/check/clippy/testsを実施します。
+## 3. Config version publish
 
-CI成功はreal-model accelerator E2Eと同義ではありません。real-model E2Eは別workflowで扱います。
+### Human-authored source
 
-## 3. HF target resolution
-
-例:
+source directoryへ3文書を用意します。
 
 ```text
-parakeet-tdt_ctc-0.6b-ja
-  -> nvidia/parakeet-tdt_ctc-0.6b-ja
-  -> parakeet-tdt-ctc-v1
-  -> gawohok7/jpapt-v2.2-dev-bucket
-  -> gawohok7/jpapt-v2.2-dev
-
-kotoba-whisper-v1.0
-  -> kotoba-tech/kotoba-whisper-v1.0
-  -> whisper-autoregressive-v1
-  -> gawohok7/tf-v1-onnx-dev-bucket
-  -> gawohok7/tf-v1-onnx-dev
+revision-source/
+├── reference.json
+├── evaluation-schema.json
+└── datasets-lock.json
 ```
 
-runtimeで手入力したBucket/Model Repoを正本にせず、target configから解決します。
+`runtime.json` は手書きしません。
 
-## 4. Config version publish
-
-source directoryには3つのhuman-authored documentを用意します。
-
-```text
-reference.json
-evaluation-schema.json
-datasets-lock.json
-```
-
-`runtime.json` はpublish scriptが生成します。
+### Publish
 
 ```bash
 export HF_TOKEN=...
 export HF_TARGET_ID=parakeet-tdt_ctc-0.6b-ja
-export HF_BUCKET=gawohok7/jpapt-v2.2-dev-bucket
 
-scripts/hf/hf-push-config-version.sh ./revision-source
+bash scripts/hf/hf-push-config-version.sh ./revision-source
 ```
 
-内部処理:
+実処理:
 
-1. human-authored 3文書を検証
-2. decoder宣言重複を拒否
-3. target/profile setを解決
-4. `runtime.json` をcatalog fingerprintから生成
-5. revision bundle SHAを計算
-6. 中央Allocatorへconfig IDを要求
+1. target/profile setをRustで解決
+2. 3 human-authored documentを検証
+3. catalog fingerprintから `runtime.json` をRustで生成
+4. 4-document revision bundleをvalidation
+5. bundle SHAを計算
+6. central allocatorへ `config` allocationを要求
 7. `config/versions/config-NNNNNN/` へpublish
 8. `config/current.json` を更新
 
-## 5. Config fetch
+canonical path:
 
-```bash
-scripts/hf/hf-fetch-revisions.sh
+```text
+config/versions/config-NNNNNN/
+├── README.md
+├── reference.json
+├── evaluation-schema.json
+├── datasets-lock.json
+└── runtime.json
 ```
 
-生成local layout:
+## 4. Config fetch
+
+```bash
+bash scripts/hf/hf-fetch-revisions.sh
+```
+
+local:
 
 ```text
 .ci/hf/config/
@@ -131,221 +115,374 @@ scripts/hf/hf-fetch-revisions.sh
     └── runtime.json
 ```
 
-`HF_CONFIG_VERSION` を指定した場合はcurrent pointerではなく明示versionを選び、`resolved.json.selection_source` が `override` になります。
+`resolved.json` は「どのconfig versionを実際に選択したか」をfreezeします。
 
-現行strict loaderでは `runtime.json` と `resolved.json` が必須です。script内にlegacy説明が残っていても、execution contractとしてlegacy 3-file configを正当化しません。
-
-## 6. Candidate publish
-
-candidate source:
-
-```text
-candidate/
-├── metadata.json
-├── *.onnx / subgraphs
-└── tokenizer/...
-```
-
-publish:
+override:
 
 ```bash
-export HF_TOKEN=...
-export HF_BUCKET=gawohok7/jpapt-v2.2-dev-bucket
-
-scripts/hf/hf-push-candidate.sh ./candidate
+export HF_CONFIG_VERSION=config-000123
+bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-内部処理:
+この場合 `selection_source=override` になります。
 
-1. `metadata.json` 検証
-2. profile setをcatalogで解決
-3. 全variantをload/inspect
-4. runtime contract validation
-5. allocation catalogからprefix key解決
-6. 中央Allocatorへcandidate ID要求
-7. `hf buckets sync --plan`
-8. fresh `upload` 以外のoperationを拒否
-9. exact planをapply
+## 5. Candidate作成
 
-source candidateに `.candidate-id` が既に存在する場合はrepublishを拒否します。
+human-authored candidate metadataは最小形です。
 
-## 7. Candidate fetch
+Parakeet hybrid例:
 
-fetch後local materializationでは `.candidate-id` を作り、Bucket identityをcandidate loaderへ渡します。
-
-fetch先を再利用して古いfileを混在させず、fresh stagingから置換する運用を使用します。
-
-## 8. Python evaluation
-
-標準フロー:
-
-```text
-resolve target/config
-      ↓
-fetch revisions
-      ↓
-fetch candidate
-      ↓
-resolve dataset manifest
-      ↓
-strict run-context build
-      ↓
-Python evaluator
-      ↓
-run-context.json + samples.jsonl + metrics.json
+```json
+{
+  "profile_set": "parakeet-tdt-ctc-v1",
+  "variants": {
+    "ctc": {
+      "artifacts": {"primary": "ctc/model.onnx"},
+      "tokenizer": "tokenizer/vocabulary.json"
+    },
+    "tdt": {
+      "artifacts": {
+        "encoder": "tdt/encoder.onnx",
+        "predictor": "tdt/predictor.onnx",
+        "joint": "tdt/joint.onnx"
+      },
+      "tokenizer": "tokenizer/vocabulary.json"
+    }
+  }
+}
 ```
 
-Python evaluatorはCTC/TDT/Whisper autoregressiveを扱います。
+candidate ID、hash、size、decoder、profile、graph binding、blank/BOS/cache/duration semanticsは書きません。
 
-## 9. Rust evaluation
+## 6. Candidate contract inspection
 
-Rust evaluatorへ直接human metadataを渡しません。
-
-```text
-candidate directory
-      ↓ Python inspection
-GeneratedCandidateContract
-      ↓
-strict RunContext
-      ↓
-Rust CTC evaluator
-```
-
-代表的なCI script:
+Python-native ONNX inspection boundary:
 
 ```bash
 python scripts/ci/resolve-candidate-artifacts.py \
-  --candidate-dir .ci/hf/candidate \
+  --candidate-dir ./candidate \
   --runtime-variant ctc \
   --contract-out .ci/candidate-contract.json
+```
 
+ここで実artifactからgenerated contractを確定します。そのcontractはRust policyでも検証されます。
+
+## 7. Candidate publish
+
+```bash
+export HF_TOKEN=...
+export HF_TARGET_ID=parakeet-tdt_ctc-0.6b-ja
+
+bash scripts/hf/hf-push-candidate.sh ./candidate
+```
+
+実処理:
+
+1. candidate sourceをcanonical local pathとして解決
+2. `.candidate-id` がsourceに存在しないことを確認
+3. metadata/profile setを検証
+4. Python-native ONNX runtime contract inspection
+5. Rust側candidate/HF policy validation
+6. central allocatorへ `candidates` allocationを要求
+7. canonical ID `candidate-NNNNNN` を取得
+8. `hf buckets sync --plan` を生成
+9. planをRustで検証し、fresh `upload` 以外を拒否
+10. canonical pathへapply
+
+新規write:
+
+```text
+candidates/candidate-NNNNNN/
+```
+
+以下は新規生成しません。
+
+```text
+candidates/ctc/candidate-NNNNNN/
+candidates/tdt/candidate-NNNNNN/
+```
+
+## 8. Candidate selection / fetch
+
+明示ID:
+
+```bash
+bash scripts/hf/hf-fetch-candidate.sh candidate-000124
+```
+
+workflowでIDを省略した場合:
+
+1. `hf buckets list .../candidates -R -q`
+2. Rust `resolve-candidate-location`
+3. canonical candidateが存在すれば最新canonicalを選択
+4. canonicalが無いhistorical Bucketのみvariant配下をfallback解決
+
+resolverはHF CLIが次のどちらを返しても正規化します。
+
+```text
+ctc/candidate-000001/metadata.json
+candidates/ctc/candidate-000001/metadata.json
+```
+
+fetch後local candidateには `.candidate-id` がmaterializeされます。
+
+## 9. Experiment allocation
+
+評価workflowはrunの前に `experiments` collectionからIDを採番します。
+
+```bash
+bash scripts/hf/hf-allocate-id.sh experiments
+```
+
+canonical ID:
+
+```text
+experiment-NNNNNN
+```
+
+workflow種別、provider、candidate、evaluation名をID prefixへ埋め込みません。これらはgenerated metadata/run-contextで保持します。
+
+## 10. Python evaluation
+
+Python evaluatorはCTC/TDT/Whisper autoregressiveを扱います。
+
+標準flow:
+
+```text
+resolve target
+  ↓
+fetch revisions
+  ↓
+fetch candidate
+  ↓
+CandidateArtifacts / ONNX inspection
+  ↓
+dataset manifest resolution/materialization
+  ↓
+run-context freeze
+  ↓
+Python evaluator
+  ↓
+run-context.json
+samples.jsonl
+metrics.json
+run.parquet
+```
+
+代表workflow:
+
+- `cpu-full-eval.yml`
+- `cross-platform-parity.yml`
+
+## 11. Rust evaluation
+
+Rust evaluatorは現時点でCTCのみです。
+
+```text
+candidate
+  ↓ Python ONNX inspection boundary
+GeneratedCandidateContract
+  +
+HF dataset
+  ↓ Python datasets boundary
+ResolvedManifest
+  ↓
+Rust asr-contracts build-run-context
+  ↓
+Rust asr-eval evaluate
+  ↓
+Rust validate-run
+```
+
+代表CLI:
+
+```bash
 cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
   build-run-context \
   --repository-root . \
   --model parakeet-tdt_ctc-0.6b-ja \
   --provider cpu \
-  --evaluation full \
+  --evaluation smoke \
   --environment linux \
   --revisions .ci/hf/config/revisions \
   --candidate-contract .ci/candidate-contract.json \
   --runtime-variant ctc \
+  --experiment-id experiment-000125 \
+  --optimization-level configured \
   --output .ci/run-context.json
 ```
 
-Rust evaluatorのdecoder capabilityはCTCのみです。
+strict accelerator proofではnon-CPU providerに `--strict-provider` を追加します。
 
-## 10. Strict provider diagnostics
+## 12. Result validation
 
-Rust run-context生成では次をoverrideできます。
-
-```text
---strict-provider
---optimization-level configured|disable|basic|extended|all
-```
-
-`--strict-provider` はnon-CPU providerでCPU fallbackを無効化するproof run用です。
-
-DirectMLではsession設定が次を満たさない場合runtime guardでfailします。
+run directory:
 
 ```text
-sequential execution
-memory pattern disabled
+results/<run>/
+├── run-context.json
+├── samples.jsonl
+├── metrics.json
+└── run.parquet
 ```
 
-## 11. Run upload
+Rust validation:
 
 ```bash
-scripts/hf/hf-push-run.sh results/<run>
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  validate-run results/<run>
 ```
 
-必須:
+`run.parquet` はExperimentCapsuleV1のdurable analytical representationです。大きなmodel/audioをParquetへ複製せず、external artifact referenceを保持します。
 
-```text
-run-context.json
-metrics.json
-samples.jsonl
-```
-
-upload前にrun ID一致とschema validationを行います。
-
-## 12. Benchmark upload
+## 13. Run publish
 
 ```bash
-scripts/hf/hf-push-benchmark.sh \
-  results/<run>/metrics.json \
-  cpu
+bash scripts/hf/hf-push-run.sh results/<run>
 ```
 
 remote:
 
 ```text
-benchmarks/<candidate-id>/cpu/<run-id>.json
+runs/<run-id>/
 ```
 
-## 13. Promotion
+upload前にJSON/JSONL contract、run identity、ExperimentCapsuleV1整合性を検証します。run upload wrapperはremote削除を目的とした `--delete` を使用しません。
+
+## 14. Benchmark publish
 
 ```bash
-scripts/hf/hf-promote-candidate.sh \
-  candidate-000124 \
-  results/<run>
+bash scripts/hf/hf-push-benchmark.sh \
+  results/<run>/metrics.json \
+  linux-cpu-full
 ```
 
-標準条件:
+remote:
 
 ```text
-acceptance.passed == true
-evaluation_id == full
+benchmarks/<candidate-id>/<benchmark-name>/<run-id>.json
+```
+
+benchmark documentは軽量indexであり、full runの代替ではありません。
+
+## 15. Provider proof
+
+strict provider modeで確認したいのは「providerを登録できた」ではなく、CPU fallbackなしで対象provider executionが成立したかです。
+
+DirectML/CoreMLについては `provider-strict-probes.yml` がsynthetic CTC fixtureを使ってreadiness evidenceを生成します。
+
+provider state:
+
+```text
+compiled
+registered
+session_created
+execution_proven
+assignment_proven
+```
+
+各段階を同一視しません。
+
+## 16. Promotion
+
+```bash
+bash scripts/hf/hf-promote-candidate.sh \
+  candidate-000124 \
+  results/<accepted-full-run>
+```
+
+標準gate:
+
+```text
+run-context valid
+metrics valid
+run ID一致
 candidate ID一致
 candidate bundle SHA一致
-run ID一致
+acceptance.passed == true
+evaluation_id == full
 ```
 
-promotion scriptはcandidateをBucketから再fetchしてbundle hashを再計算し、release stagingへ `run-context.json`, `metrics.json`, `promotion.json` を加えてHF Model Repoへuploadします。
+promotionはBucket candidateを再fetchし、runtime contractとbundle hashを再検証してからModel Repoへuploadします。
 
-## 14. 中央Allocator
-
-ID collection:
+release stagingへ代表的に以下を含めます。
 
 ```text
-candidates
-experiments
-config
+candidate artifacts
+run-context.json
+metrics.json
+promotion.json
 ```
 
-prefixはcollectionからRustが決定します。workflowはprefix keyを入力せず、candidate IDも省略時は対象Bucketから自動解決します。
+成功後、run側にも `promotion.json` を記録します。
 
-採番はcollection内に存在する全prefixの6桁suffixを走査し、最大値+1を採用します。ID suffixを人が選びません。
+## 17. GitHub Actionsでの実行
 
-Allocatorは採番時に対象prefixへ `README.md` を作成し、Bucket root `README.md` のmanaged blockも更新します。
+### Full CPU
 
-## 15. Real-model E2E
+Actions -> `CPU Full Evaluation`
 
-実モデルE2Eの標準fixture:
+- targetを選ぶ
+- candidate blankなら最新を自動選択
+- runtime variant blankならcatalog default
+- Linux CPUで`full`
+- run + benchmarkをHFへpublish
+
+### Python cross-platform parity
+
+Actions -> `Cross Platform ONNX Parity`
+
+- Linux CPU
+- Windows CPU
+- macOS CPU
+- macOS CoreML
+
+### Rust CTC matrix
+
+Actions -> `Rust Cross Platform Evaluation`
+
+- Linux CPU
+- Windows CPU
+- Windows DirectML
+- macOS CPU
+- macOS CoreML
+- strict provider / optimization levelをinputで制御
+
+詳細なinputs/secrets/artifactsは [github-actions.md](./github-actions.md)。
+
+## 18. Config / candidate / runのimmutable policy
+
+### Immutable-by-policy
 
 ```text
-DirectML / Whisper:
-  kotoba-tech/kotoba-whisper-v1.0
-
-CTC:
-  nvidia/parakeet-tdt_ctc-0.6b-ja
-
-Dataset:
-  japanese-asr/ja_asr.jsut_basic5000
+config/versions/config-NNNNNN/
+candidates/candidate-NNNNNN/
+runs/<run-id>/
 ```
 
-DirectMLはWindows runnerで実行します。HF JobsはLinuxなのでDirectML execution proofには使用しません。
+同じidentityへ別内容を上書きして「最新化」しません。
 
-## 16. 変更時の確認順序
-
-contractまたはworkflowを変更した場合:
+### Mutable pointer/status
 
 ```text
-1. source-controlled schema/catalog
-2. Python strict parser/unit
-3. HF layout validation
-4. Rust CI
-5. real-model E2E（必要な変更のみ）
-6. candidate/run/promotion dry run
+config/current.json
+Bucket root README managed block
 ```
 
-CIを通すためにlegacy parserやnullable compatibilityを戻すことはしません。fixture/workflowを現行contractへ移行します。
+mutable objectとimmutable execution evidenceを分離します。
+
+## 19. 変更後のvalidation順序
+
+```text
+1. source-controlled config/schema/catalog
+2. cargo fmt/check/clippy/test
+3. Python unit/reference boundary tests
+4. Validate HF Layout
+5. Capsule Interop (capsule変更時)
+6. provider strict probe (provider/runtime変更時)
+7. public-model E2E (model/runtime/reference変更時)
+8. production candidate evaluation
+9. promotion
+```
+
+CIの都合でhuman-authored inputを増やしたり、generated stateをconfigへコピーしたりしないことが重要です。
