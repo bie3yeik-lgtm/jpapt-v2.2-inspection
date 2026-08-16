@@ -17,7 +17,16 @@ PREFIX="${2:-}"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
 command -v python >/dev/null 2>&1 || fail "python is required"
 
-ALLOCATOR_REPOSITORY="${HF_ALLOCATOR_REPOSITORY:-${GITHUB_REPOSITORY:-bie3yeik-lgtm/jpapt-v2.2-inspection}}"
+# Same-repository callers may use github.token. Cross-repository callers must
+# provide HF_ALLOCATOR_GITHUB_TOKEN (or GH_TOKEN) that can dispatch/read Actions
+# in the allocator repository.
+if [[ -z "${GH_TOKEN:-}" && -n "${HF_ALLOCATOR_GITHUB_TOKEN:-}" ]]; then
+  export GH_TOKEN="$HF_ALLOCATOR_GITHUB_TOKEN"
+fi
+[[ -n "${GH_TOKEN:-}" ]] || fail \
+  "GH_TOKEN or HF_ALLOCATOR_GITHUB_TOKEN is required to call the central allocator"
+
+ALLOCATOR_REPOSITORY="${HF_ALLOCATOR_REPOSITORY:-bie3yeik-lgtm/jpapt-v2.2-inspection}"
 ALLOCATOR_WORKFLOW="${HF_ALLOCATOR_WORKFLOW:-hf-central-allocator.yml}"
 ALLOCATOR_REF="${HF_ALLOCATOR_REF:-main}"
 
