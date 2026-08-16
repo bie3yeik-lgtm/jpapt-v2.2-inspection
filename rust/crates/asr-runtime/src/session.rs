@@ -147,6 +147,7 @@ impl OrtCtcSession {
         if !config.model_path.is_file() {
             return Err(RuntimeError::ModelMissing(config.model_path));
         }
+        validate_provider_session_constraints(config.provider, &config.tuning)?;
 
         let started = Instant::now();
         let mut builder = Session::builder()?
@@ -271,6 +272,25 @@ impl OrtCtcSession {
             inference_ms: elapsed,
         })
     }
+}
+
+fn validate_provider_session_constraints(
+    provider: ProviderKind,
+    tuning: &SessionTuning,
+) -> Result<()> {
+    if provider == ProviderKind::DirectMl {
+        if tuning.parallel_execution {
+            return Err(RuntimeError::ProviderConfiguration(
+                "DirectML requires sequential ORT execution mode".into(),
+            ));
+        }
+        if tuning.memory_pattern {
+            return Err(RuntimeError::ProviderConfiguration(
+                "DirectML requires ORT memory pattern optimization to be disabled".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn builder_error(error: ort::Error<ort::session::builder::SessionBuilder>) -> RuntimeError {
