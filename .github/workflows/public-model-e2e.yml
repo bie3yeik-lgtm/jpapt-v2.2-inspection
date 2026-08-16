@@ -32,8 +32,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: /dev/null
       - name: Install pinned Transformers.js
         shell: bash
         run: |
@@ -48,7 +46,6 @@ jobs:
           WHISPER_MODEL_ID: onnx-community/whisper-small
         run: |
           set -euo pipefail
-          export NODE_PATH="$PWD/.ci/transformersjs/node_modules"
           ln -sfn "$PWD/.ci/transformersjs/node_modules" node_modules
           node scripts/ci/e2e-whisper-transformersjs.mjs | tee .ci/whisper-e2e-result.json
       - uses: actions/upload-artifact@v6
