@@ -29,6 +29,7 @@ fn run() -> Result<(), String> {
 
     let catalog = Catalog::load(&repository_root.join("config/asr-catalog.json"))?;
     match args.as_slice() {
+        [command] if command == "summary" => print_summary(&catalog)?,
         [command, field] if command == "fingerprint" => match field.as_str() {
             "catalog_id" => println!("{}", catalog.catalog_id),
             "sha256" => println!("{}", catalog.sha256),
@@ -57,7 +58,24 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "usage: asr-catalog [--repository-root <path>] fingerprint <catalog_id|sha256>\n       asr-catalog [--repository-root <path>] profile <profile_id> <decoder|artifact_contract|tokenizer_kind>\n       asr-catalog [--repository-root <path>] profile-set <profile_set_id> [--variant <variant>] <profile_id|decoder|artifact_contract|tokenizer_kind|default_variant>"
+    "usage: asr-catalog [--repository-root <path>] summary\n       asr-catalog [--repository-root <path>] fingerprint <catalog_id|sha256>\n       asr-catalog [--repository-root <path>] profile <profile_id> <decoder|artifact_contract|tokenizer_kind>\n       asr-catalog [--repository-root <path>] profile-set <profile_set_id> [--variant <variant>] <profile_id|decoder|artifact_contract|tokenizer_kind|default_variant>"
+}
+
+fn print_summary(catalog: &Catalog) -> Result<(), String> {
+    println!(
+        "ASR runtime catalog: {} {}",
+        catalog.catalog_id, catalog.sha256
+    );
+    println!("Runtime profile sets:");
+    for (profile_set_id, profile_set) in &catalog.profile_sets {
+        let variants =
+            serde_json::to_string(&profile_set.variants).map_err(|error| error.to_string())?;
+        println!(
+            "- {profile_set_id}: {variants} default={}",
+            profile_set.default_variant
+        );
+    }
+    Ok(())
 }
 
 fn print_profile_set(

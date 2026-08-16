@@ -115,23 +115,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "HF allocation catalog: $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id) $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256)"
-          python - <<'PY'
-          from pathlib import Path
-          from parakeet_onnx.config.catalog import load_repository_catalog
-          runtime_catalog=load_repository_catalog(Path.cwd())
-          targets=sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
-          evaluators=sorted(path.stem for path in Path("config/evaluators").glob("*.toml"))
-          if not targets or not evaluators:
-              raise SystemExit("HF targets and evaluator capabilities are required")
-          print(f"ASR runtime catalog: {runtime_catalog.catalog_id} {runtime_catalog.sha256}")
-          print("Runtime profile sets:")
-          for profile_set_id, profile_set in sorted(runtime_catalog.profile_sets.items()):
-              print(f"- {profile_set_id}: {dict(profile_set.variants)} default={profile_set.default_variant}")
-          print("Configured HF targets:")
-          for target in targets: print(f"- {target}")
-          print("Configured evaluator capabilities:")
-          for evaluator in evaluators: print(f"- {evaluator}")
-          PY
+          cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- summary
+          mapfile -t targets < <(find config/hf-targets -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
+          mapfile -t evaluators < <(find config/evaluators -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
+          (( ${#targets[@]} > 0 )) || { echo "HF targets are required" >&2; exit 1; }
+          (( ${#evaluators[@]} > 0 )) || { echo "evaluator capabilities are required" >&2; exit 1; }
+          echo "Configured HF targets:"
+          printf -- '- %s\n' "${targets[@]}"
+          echo "Configured evaluator capabilities:"
+          printf -- '- %s\n' "${evaluators[@]}"
 
   validate-selected:
     name: Validate selected HF configuration
