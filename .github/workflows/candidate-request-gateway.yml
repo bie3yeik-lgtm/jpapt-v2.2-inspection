@@ -242,7 +242,6 @@ jobs:
 
       - name: Build normalized workflow dispatch body
         id: body
-        shell: bash
         env:
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
@@ -255,24 +254,7 @@ jobs:
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
           HF_FLAVOR: ${{ steps.resolve.outputs.hf_flavor }}
           HF_JOBS_IMAGE: ${{ steps.resolve.outputs.hf_jobs_image }}
-        run: |
-          # jq variables intentionally use $name inside a single-quoted filter.
-          # shellcheck disable=SC2016
-          jq -nc \
-            --arg source_repository "$SOURCE_REPOSITORY" \
-            --arg hf_bucket "$HF_BUCKET" \
-            --arg candidate_id "$CANDIDATE_ID" \
-            --arg package_name "$PACKAGE_NAME" \
-            --arg dataset_source "$DATASET_SOURCE" \
-            --arg dataset_id "$DATASET_ID" \
-            --arg suite "$SUITE" \
-            --arg executor "$EXECUTOR" \
-            --arg environment "$ENVIRONMENT" \
-            --arg hf_flavor "$HF_FLAVOR" \
-            --arg hf_jobs_image "$HF_JOBS_IMAGE" \
-            '{ref:"main",inputs:{source_repository:$source_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:$dataset_source,dataset_id:$dataset_id,suite:$suite,executor:$executor,environment:$environment,hf_flavor:$hf_flavor,hf_jobs_image:$hf_jobs_image,dry_run:false}}' \
-            > /tmp/body.json
-          echo "body=$(cat /tmp/body.json)" >> "$GITHUB_OUTPUT"
+        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"
 
   execute:
     name: Dispatch normalized evaluation
