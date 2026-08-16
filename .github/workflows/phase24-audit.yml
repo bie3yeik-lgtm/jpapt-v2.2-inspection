@@ -1,0 +1,77 @@
+name: Phase24 Audit
+
+on:
+  push:
+    branches: [agent/review-minimal-json-bucket-phase24]
+    paths:
+      - ".github/workflows/phase24-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_BUCKET: gawohok7/jpapt-v2.2-dev-bucket
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install HF CLI
+        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+      - name: Audit source configuration and generated identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== source JSON/TOML files ==='
+          find config evaluation -type f \( -name '*.json' -o -name '*.toml' \) | sort
+          echo '=== explicit ids / hashes / revisions in source config ==='
+          git grep -nE '(^|["[:space:]])(id|model_id|catalog_id|schema_version|profile_set|repo_id|revision|sha256|bucket|model_repo)["[:space:]]*[=:]' -- config evaluation || true
+          echo '=== repeated literal identity values ==='
+          python - <<'PY'
+          import json, pathlib, re, tomllib, collections
+          vals=collections.defaultdict(list)
+          for p in pathlib.Path('config').rglob('*'):
+              if p.suffix not in {'.json','.toml'}: continue
+              try:
+                  data=json.loads(p.read_text()) if p.suffix=='.json' else tomllib.loads(p.read_text())
+              except Exception: continue
+              def walk(v,path=''):
+                  if isinstance(v,dict):
+                      for k,x in v.items(): walk(x,f'{path}.{k}' if path else k)
+                  elif isinstance(v,list):
+                      for i,x in enumerate(v): walk(x,f'{path}[{i}]')
+                  elif isinstance(v,str) and len(v)>=4:
+                      vals[v].append(f'{p}:{path}')
+              walk(data)
+          for v, locs in sorted(vals.items(), key=lambda kv:(-len(kv[1]),kv[0])):
+              if len(locs)>=2:
+                  print(len(locs),repr(v),*locs,sep='\t')
+          PY
+          echo '=== bucket-related shell inputs ==='
+          git grep -nE 'HF_BUCKET|HF_TARGET_ID|CANDIDATE_ID|EVALUATION_ID|PROVIDER_ID|CONFIG_VERSION|PREFIX_KEY|allocation-prefix|candidate-prefix-key' -- scripts .github/workflows rust/crates/asr-hf || true
+      - name: Audit current bucket layout
+        if: env.HF_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="hf://buckets/${HF_BUCKET}"
+          echo '=== bucket root listing ==='
+          hf buckets list --token "$HF_TOKEN" "$root" -R -q | head -n 500 || true
+          echo '=== metadata/json/readme objects ==='
+          hf buckets list --token "$HF_TOKEN" "$root" -R -q \
+            | grep -E '(^|/)(README\.md|[^/]+\.json)$' \
+            | head -n 300 || true
+          echo '=== sample allocation readmes ==='
+          mapfile -t readmes < <(hf buckets list --token "$HF_TOKEN" "$root" -R -q | grep '/README\.md$' | head -n 12)
+          for rel in "${readmes[@]:-}"; do
+            [[ -n "$rel" ]] || continue
+            echo "--- $rel"
+            tmp="$(mktemp)"
+            hf buckets cp --token "$HF_TOKEN" "${root}/${rel}" "$tmp" >/dev/null 2>&1 || continue
+            sed -n '1,120p' "$tmp"
+            rm -f "$tmp"
+          done
