@@ -24,11 +24,7 @@ impl AllocationMetadata {
         let mut values = BTreeMap::<String, String>::new();
         insert_nonempty(&mut values, "source_repository", &self.source_repository);
         insert_nonempty(&mut values, "source_run_id", &self.source_run_id);
-        insert_nonempty(
-            &mut values,
-            "source_run_attempt",
-            &self.source_run_attempt,
-        );
+        insert_nonempty(&mut values, "source_run_attempt", &self.source_run_attempt);
         insert_nonempty(&mut values, "target_id", &self.target_id);
         insert_nonempty(&mut values, "candidate_id", &self.candidate_id);
         insert_nonempty(&mut values, "evaluation_id", &self.evaluation_id);
@@ -91,7 +87,10 @@ pub fn write_allocation_response(
     validate_response_fields(response)?;
 
     let mut catalog = BTreeMap::<String, Value>::new();
-    catalog.insert("id".to_owned(), Value::String(response.catalog_id.to_owned()));
+    catalog.insert(
+        "id".to_owned(),
+        Value::String(response.catalog_id.to_owned()),
+    );
     catalog.insert(
         "sha256".to_owned(),
         Value::String(response.catalog_sha256.to_owned()),
@@ -102,7 +101,10 @@ pub fn write_allocation_response(
         "allocation_catalog".to_owned(),
         serde_json::to_value(catalog)?,
     );
-    root.insert("bucket".to_owned(), Value::String(response.bucket.to_owned()));
+    root.insert(
+        "bucket".to_owned(),
+        Value::String(response.bucket.to_owned()),
+    );
     root.insert(
         "collection".to_owned(),
         Value::String(response.collection.to_owned()),
@@ -167,7 +169,10 @@ pub fn read_allocation_response_id(path: impl AsRef<Path>) -> Result<String> {
         ("id", response.id.as_str()),
         ("bucket", response.bucket.as_str()),
         ("collection", response.collection.as_str()),
-        ("allocation_catalog.id", response.allocation_catalog.id.as_str()),
+        (
+            "allocation_catalog.id",
+            response.allocation_catalog.id.as_str(),
+        ),
         (
             "allocation_catalog.sha256",
             response.allocation_catalog.sha256.as_str(),
