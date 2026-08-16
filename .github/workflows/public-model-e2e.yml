@@ -113,6 +113,7 @@ jobs:
             --contract-out .ci/public-model-e2e/ctc/candidate-contract.json
           uv run python scripts/ci/e2e-rust-ctc.py prepare \
             --contract .ci/public-model-e2e/ctc/candidate-contract.json \
+            --reference .ci/public-model-e2e/ctc/result.json \
             --output .ci/public-model-e2e/ctc/run-context.json
       - uses: dtolnay/rust-toolchain@stable
       - name: Build Rust evaluator
