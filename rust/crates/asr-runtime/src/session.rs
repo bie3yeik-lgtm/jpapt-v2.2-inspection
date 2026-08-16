@@ -4,14 +4,14 @@ use std::{
 };
 
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
+    session::{Session, builder::GraphOptimizationLevel},
     value::TensorRef,
 };
 
 use crate::{
+    Result, RuntimeError,
     metadata::model_metadata::CtcRuntimeContract,
     providers::{self, ProviderKind},
-    Result, RuntimeError,
 };
 
 #[derive(Debug, Clone)]

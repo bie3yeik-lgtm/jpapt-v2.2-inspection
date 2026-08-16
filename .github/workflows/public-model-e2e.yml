@@ -1,0 +1,148 @@
+name: Public Model E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/public-model-e2e
+      - agent/public-model-rust-e2e
+    paths:
+      - ".github/workflows/public-model-e2e.yml"
+      - "scripts/ci/e2e-whisper-transformersjs.mjs"
+      - "scripts/ci/e2e-ctc-onnx.py"
+      - "scripts/ci/e2e-rust-ctc.py"
+      - "scripts/ci/resolve-candidate-artifacts.py"
+      - "python/src/parakeet_onnx/runtime/**"
+      - "rust/crates/asr-audio/**"
+      - "rust/crates/asr-eval/**"
+      - "rust/crates/asr-runtime/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-model-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+
+jobs:
+  whisper-onnx-jsut:
+    name: Whisper ONNX + JSUT
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install pinned Transformers.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/transformersjs
+          cd .ci/transformersjs
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund @huggingface/transformers@4.2.0
+      - name: Materialize canonical JSUT PCM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          curl --fail --location --retry 3 \
+            https://huggingface.co/datasets/japanese-asr/ja_asr.jsut_basic5000/resolve/main/sample.flac \
+            --output .ci/jsut-sample.flac
+          ffmpeg -hide_banner -loglevel error -y \
+            -i .ci/jsut-sample.flac -ac 1 -ar 16000 -f f32le .ci/jsut-sample.f32
+          test -s .ci/jsut-sample.f32
+      - name: Run real ONNX Whisper inference
+        shell: bash
+        env:
+          WHISPER_MODEL_ID: onnx-community/whisper-small
+          JSUT_PCM_PATH: .ci/jsut-sample.f32
+        run: |
+          set -euo pipefail
+          ln -sfn "$PWD/.ci/transformersjs/node_modules" node_modules
+          node scripts/ci/e2e-whisper-transformersjs.mjs | tee .ci/whisper-e2e-result.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: whisper-onnx-jsut-result
+          path: .ci/whisper-e2e-result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ctc-onnx-jsut:
+    name: Japanese CTC PyTorch → ONNX → ORT → Rust + JSUT
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Sync authoritative Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --extra onnx --extra transformers --extra hf
+      - name: Run real Japanese CTC ONNX parity smoke and materialize candidate
+        shell: bash
+        env:
+          CTC_MODEL_ID: TKU410410103/wav2vec2-base-japanese-asr
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/e2e-ctc-onnx.py
+      - name: Generate strict candidate execution contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/public-model-e2e/ctc/candidate \
+            --runtime-variant ctc \
+            --contract-out .ci/public-model-e2e/ctc/candidate-contract.json
+          uv run python scripts/ci/e2e-rust-ctc.py prepare \
+            --contract .ci/public-model-e2e/ctc/candidate-contract.json \
+            --output .ci/public-model-e2e/ctc/run-context.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Rust evaluator
+        shell: bash
+        run: cargo build --locked --release -p asr-eval --no-default-features --features cpu
+      - name: Run the canonical Rust evaluator on the real model
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/asr-eval evaluate \
+            --provider cpu \
+            --candidate-contract .ci/public-model-e2e/ctc/candidate-contract.json \
+            --run-context .ci/public-model-e2e/ctc/run-context.json \
+            --resolved-manifest .ci/public-model-e2e/ctc/resolved-manifest.json \
+            --output .ci/public-model-e2e/ctc/rust-results
+      - name: Require Rust and Python ORT transcript parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/e2e-rust-ctc.py validate \
+            --reference .ci/public-model-e2e/ctc/result.json \
+            --samples .ci/public-model-e2e/ctc/rust-results/samples.jsonl \
+            --metrics .ci/public-model-e2e/ctc/rust-results/metrics.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: japanese-ctc-onnx-rust-jsut-result
+          path: |
+            .ci/public-model-e2e/ctc/result.json
+            .ci/public-model-e2e/ctc/candidate-contract.json
+            .ci/public-model-e2e/ctc/run-context.json
+            .ci/public-model-e2e/ctc/rust-results
+          if-no-files-found: ignore
+          retention-days: 7

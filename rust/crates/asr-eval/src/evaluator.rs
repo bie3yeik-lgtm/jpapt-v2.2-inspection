@@ -1,18 +1,18 @@
 use std::{fs, path::PathBuf, time::Instant};
 
-use asr_audio::{decode_audio, CanonicalAudio};
+use asr_audio::{CanonicalAudio, decode_audio};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
 use asr_runtime::{
-    metadata::model_metadata::GeneratedCandidateContract, OrtCtcSession, ProviderKind,
-    SessionConfig, SessionTuning,
+    OrtCtcSession, ProviderKind, SessionConfig, SessionTuning,
+    metadata::model_metadata::GeneratedCandidateContract,
 };
 
 use crate::{
-    benchmark::{build_benchmark, BenchmarkInput, ProviderTelemetry, SampleAggregate},
+    EvalError, Result,
+    benchmark::{BenchmarkInput, ProviderTelemetry, SampleAggregate, build_benchmark},
     decoding::ctc::Vocabulary,
     manifest::load_resolved_manifest,
     writer::{ensure_dir, write_json, write_jsonl},
-    EvalError, Result,
 };
 
 #[derive(Debug, Clone)]

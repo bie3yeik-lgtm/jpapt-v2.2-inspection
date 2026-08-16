@@ -20,7 +20,8 @@ pub fn resample_bandlimited(input: &[f32], input_rate: u32, output_rate: u32) ->
         return Ok(input.to_vec());
     }
 
-    let output_len = (input.len() as u128 * output_rate as u128).div_ceil(input_rate as u128) as usize;
+    let output_len =
+        (input.len() as u128 * output_rate as u128).div_ceil(input_rate as u128) as usize;
     let cutoff = (output_rate as f64 / input_rate as f64).min(1.0) * CUTOFF_MARGIN;
     let kernels = build_polyphase_kernels(cutoff);
     let source_per_output = input_rate as f64 / output_rate as f64;
