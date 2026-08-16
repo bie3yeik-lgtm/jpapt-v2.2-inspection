@@ -31,6 +31,7 @@ class OrtCtcRunner:
             audio.waveform[np.newaxis, :],
             dtype=np.float32,
         )
+        _require_finite_nonempty(waveform, "CTC waveform input")
         feeds: dict[str, np.ndarray] = {
             self.contract.primary_input: waveform,
         }
@@ -45,10 +46,10 @@ class OrtCtcRunner:
         if self.contract.input_kind != "features":
             raise ValueError("candidate expects canonical waveform, not features")
 
+        primary = np.ascontiguousarray(features.features, dtype=np.float32)
+        _require_finite_nonempty(primary, "CTC feature input")
         feeds: dict[str, np.ndarray] = {
-            self.contract.primary_input: np.ascontiguousarray(
-                features.features, dtype=np.float32
-            ),
+            self.contract.primary_input: primary,
         }
         if self.contract.length_input is not None:
             feeds[self.contract.length_input] = np.ascontiguousarray(
@@ -72,8 +73,16 @@ class OrtCtcRunner:
             raise RuntimeError(
                 f"CTC logits must have rank 2 or 3, got {logits.shape!r}"
             )
+        _require_finite_nonempty(logits, "CTC logits")
 
         return InferenceOutput(
             logits=logits,
             inference_ms=elapsed_ms,
         )
+
+
+def _require_finite_nonempty(value: np.ndarray, label: str) -> None:
+    if value.size == 0 or any(dimension == 0 for dimension in value.shape):
+        raise RuntimeError(f"{label} has a zero-size runtime shape: {value.shape!r}")
+    if np.issubdtype(value.dtype, np.floating) and not np.all(np.isfinite(value)):
+        raise RuntimeError(f"{label} contains NaN or infinity")
