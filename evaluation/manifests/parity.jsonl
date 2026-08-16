@@ -1,6 +1,6 @@
-{"schema_version":1,"id":"parity-jsut-short","dataset_id":"jsut-basic5000","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-jsut-short-v1"},"filters":{"min_duration_sec":0.5,"max_duration_sec":5.0},"tags":["parity","japanese","short","clean-speech"]}
-{"schema_version":1,"id":"parity-jsut-medium","dataset_id":"jsut-basic5000","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-jsut-medium-v1"},"filters":{"min_duration_sec":5.0,"max_duration_sec":15.0},"tags":["parity","japanese","medium","clean-speech"]}
-{"schema_version":1,"id":"parity-jsut-long","dataset_id":"jsut-basic5000","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-jsut-long-v1"},"filters":{"min_duration_sec":15.0,"max_duration_sec":60.0},"tags":["parity","japanese","long","clean-speech"]}
-{"schema_version":1,"id":"parity-common-voice-short","dataset_id":"common-voice-8-ja","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-common-voice-short-v1"},"filters":{"min_duration_sec":0.5,"max_duration_sec":5.0},"tags":["parity","japanese","short","common-voice"]}
-{"schema_version":1,"id":"parity-common-voice-medium","dataset_id":"common-voice-8-ja","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-common-voice-medium-v1"},"filters":{"min_duration_sec":5.0,"max_duration_sec":15.0},"tags":["parity","japanese","medium","common-voice"]}
-{"schema_version":1,"id":"parity-common-voice-long","dataset_id":"common-voice-8-ja","selection":{"strategy":"stable_hash","count":8,"seed":"parakeet-onnx-parity-common-voice-long-v1"},"filters":{"min_duration_sec":15.0,"max_duration_sec":60.0},"tags":["parity","japanese","long","common-voice"]}
+{"dataset_id":"jsut-basic5000","count":8,"seed":"parakeet-onnx-parity-jsut-short-v1","min_duration_sec":0.5,"max_duration_sec":5.0}
+{"dataset_id":"jsut-basic5000","count":8,"seed":"parakeet-onnx-parity-jsut-medium-v1","min_duration_sec":5.0,"max_duration_sec":15.0}
+{"dataset_id":"jsut-basic5000","count":8,"seed":"parakeet-onnx-parity-jsut-long-v1","min_duration_sec":15.0,"max_duration_sec":60.0}
+{"dataset_id":"common-voice-8-ja","count":8,"seed":"parakeet-onnx-parity-common-voice-short-v1","min_duration_sec":0.5,"max_duration_sec":5.0}
+{"dataset_id":"common-voice-8-ja","count":8,"seed":"parakeet-onnx-parity-common-voice-medium-v1","min_duration_sec":5.0,"max_duration_sec":15.0}
+{"dataset_id":"common-voice-8-ja","count":8,"seed":"parakeet-onnx-parity-common-voice-long-v1","min_duration_sec":15.0,"max_duration_sec":60.0}

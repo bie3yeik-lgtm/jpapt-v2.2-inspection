@@ -2,84 +2,40 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parakeet-onnx.local/schemas/candidate-metadata.schema.json",
   "title": "ASR ONNX Candidate Metadata",
-  "description": "Candidate-specific artifact identities and runtime bindings. Reusable decoder semantics live in config/asr-catalog.json and are pinned by catalog identity.",
+  "description": "Minimal human-authored candidate layout. Generated identity, hashes, sizes, catalog fingerprints, tensor bindings and decoder configuration are intentionally excluded.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "candidate_id",
-    "catalog",
-    "profile_set",
-    "variants"
-  ],
+  "required": ["profile_set", "variants"],
   "properties": {
-    "schema_version": {"type": "integer", "const": 3},
-    "candidate_id": {"type": "string", "minLength": 1},
-    "catalog": {"$ref": "#/$defs/catalogReference"},
-    "profile_set": {"type": "string", "minLength": 1},
+    "profile_set": {
+      "type": "string",
+      "minLength": 1
+    },
     "variants": {
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": {"$ref": "#/$defs/variant"}
+      "additionalProperties": {
+        "$ref": "#/$defs/variant"
+      }
     }
   },
   "$defs": {
-    "catalogReference": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "sha256"],
-      "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
-      }
-    },
-    "artifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "sha256", "size_bytes"],
-      "properties": {
-        "path": {"type": "string", "minLength": 1},
-        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
-        "size_bytes": {"type": "integer", "minimum": 0}
-      }
-    },
-    "tokenizerBinding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path"],
-      "properties": {
-        "path": {"type": "string", "minLength": 1}
-      }
-    },
-    "bindings": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["input_kind", "io", "decoder_config"],
-      "properties": {
-        "input_kind": {
-          "type": "string",
-          "enum": ["canonical_waveform", "features"]
-        },
-        "io": {"type": "object"},
-        "decoder_config": {"type": "object"}
-      }
-    },
     "variant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifacts", "bindings", "tokenizer"],
+      "required": ["artifacts"],
       "properties": {
         "artifacts": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": {"$ref": "#/$defs/artifact"}
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "bindings": {"$ref": "#/$defs/bindings"},
         "tokenizer": {
-          "oneOf": [
-            {"type": "null"},
-            {"$ref": "#/$defs/tokenizerBinding"}
-          ]
+          "type": "string",
+          "minLength": 1
         }
       }
     }

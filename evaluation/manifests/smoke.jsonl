@@ -1,2 +1,2 @@
-{"schema_version":1,"id":"smoke-jsut","dataset_id":"jsut-basic5000","selection":{"strategy":"stable_hash","count":6,"seed":"parakeet-onnx-smoke-jsut-v1"},"filters":{"min_duration_sec":1.0,"max_duration_sec":15.0},"tags":["smoke","japanese","clean-speech"]}
-{"schema_version":1,"id":"smoke-common-voice","dataset_id":"common-voice-8-ja","selection":{"strategy":"stable_hash","count":6,"seed":"parakeet-onnx-smoke-common-voice-v1"},"filters":{"min_duration_sec":1.0,"max_duration_sec":20.0},"tags":["smoke","japanese","common-voice"]}
+{"dataset_id":"jsut-basic5000","count":6,"seed":"parakeet-onnx-smoke-jsut-v1","min_duration_sec":1.0,"max_duration_sec":15.0}
+{"dataset_id":"common-voice-8-ja","count":6,"seed":"parakeet-onnx-smoke-common-voice-v1","min_duration_sec":1.0,"max_duration_sec":20.0}

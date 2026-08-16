@@ -1,106 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parakeet-onnx.local/schemas/manifest.schema.json",
-  "title": "Parakeet ONNX Evaluation Manifest Entry",
-  "description": "One deterministic dataset selection instruction from an evaluation manifest JSONL file.",
+  "title": "ASR Evaluation Manifest Entry",
+  "description": "Minimal human-authored dataset selection instruction. Stable-hash selection, entry identity and derived metadata are implementation details.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "id",
-    "dataset_id",
-    "selection",
-    "filters",
-    "tags"
-  ],
+  "required": ["dataset_id", "count", "seed"],
   "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 1
-    },
-    "id": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "Unique logical ID of this manifest entry."
-    },
     "dataset_id": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "Dataset ID resolved through datasets-lock.json."
+      "minLength": 1
     },
-    "selection": {
-      "$ref": "#/$defs/selection"
+    "count": {
+      "type": "integer",
+      "minimum": 1
     },
-    "filters": {
-      "$ref": "#/$defs/filters"
+    "seed": {
+      "type": "string",
+      "minLength": 1
     },
-    "tags": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true
-    }
-  },
-  "$defs": {
-    "selection": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "strategy",
-        "count",
-        "seed"
-      ],
-      "properties": {
-        "strategy": {
-          "type": "string",
-          "const": "stable_hash",
-          "description": "Deterministic SHA-256 based sample selection."
-        },
-        "count": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "seed": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Versioned deterministic selection seed."
-        }
-      }
+    "min_duration_sec": {
+      "type": "number",
+      "minimum": 0
     },
-    "filters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "min_duration_sec",
-        "max_duration_sec"
-      ],
-      "properties": {
-        "min_duration_sec": {
-          "type": "number",
-          "minimum": 0
-        },
-        "max_duration_sec": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "required": [
-              "min_duration_sec",
-              "max_duration_sec"
-            ]
-          },
-          "then": {
-            "description": "Runtime validation must additionally verify max_duration_sec >= min_duration_sec."
-          }
-        }
-      ]
+    "max_duration_sec": {
+      "type": "number",
+      "exclusiveMinimum": 0
     }
   }
 }
