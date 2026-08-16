@@ -400,8 +400,14 @@ fn validate_semantics(report: &ValidationReport) -> Result<()> {
     nonempty("resolved_model.normalize", &model.normalize)?;
     ensure!(model.dither >= 0.0, "dither cannot be negative");
     let _ = model.xscaling;
-    nonempty("resolved_model.tokenizer_type", &model.tokenizer_type)?;
-    ensure!(model.vocab_size > 1, "vocab_size must be > 1");
+    ensure!(
+        model.tokenizer_type == "sentencepiece",
+        "Model Card tokenizer type must be sentencepiece"
+    );
+    ensure!(
+        model.vocab_size == 3072,
+        "Model Card tokenizer vocabulary size must be 3072"
+    );
     ensure!(
         model.ctc_blank_id >= model.vocab_size,
         "CTC blank must not collide with tokenizer vocabulary"
@@ -413,6 +419,10 @@ fn validate_semantics(report: &ValidationReport) -> Result<()> {
     ensure!(
         model.tdt_durations.contains(&0),
         "TDT duration vocabulary must expose duration=0 for loop-safety validation"
+    );
+    ensure!(
+        model.tdt_durations.iter().all(|duration| *duration <= 4),
+        "Model Card constrains TDT duration advance to at most 4 encoder frames"
     );
 
     let frontend = &report.frontend;
