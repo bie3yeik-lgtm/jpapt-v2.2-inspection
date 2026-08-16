@@ -4,14 +4,14 @@ use std::{
 };
 
 use ort::{
-    session::{Session, builder::GraphOptimizationLevel},
+    session::{builder::GraphOptimizationLevel, Session},
     value::TensorRef,
 };
 
 use crate::{
-    Result, RuntimeError,
     metadata::model_metadata::CtcRuntimeContract,
     providers::{self, ProviderKind},
+    Result, RuntimeError,
 };
 
 #[derive(Debug, Clone)]
@@ -176,12 +176,12 @@ impl OrtCtcSession {
                 contract.primary_input
             )));
         }
-        if let Some(length) = &contract.length_input {
-            if !inputs.iter().any(|name| *name == length) {
-                return Err(RuntimeError::InvalidMetadata(format!(
-                    "length input '{length}' not found in model inputs {inputs:?}"
-                )));
-            }
+        if let Some(length) = &contract.length_input
+            && !inputs.iter().any(|name| *name == length)
+        {
+            return Err(RuntimeError::InvalidMetadata(format!(
+                "length input '{length}' not found in model inputs {inputs:?}"
+            )));
         }
         if !session
             .outputs()
@@ -253,7 +253,7 @@ impl OrtCtcSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        if shape.iter().any(|dimension| *dimension == 0) {
+        if shape.contains(&0) {
             return Err(RuntimeError::UnsupportedContract(format!(
                 "zero-dimension logits shape is not accepted: {shape:?}"
             )));
