@@ -17,8 +17,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Check Docker build inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build_required: ${{ steps.changes.outputs.build_required }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - id: changes
+        name: Skip PR synchronize runs without Docker changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          required=true
+          if [[ "$EVENT_NAME" == pull_request && "$EVENT_ACTION" == synchronize && -n "$BEFORE_SHA" ]]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+            if ! git diff --quiet "$BEFORE_SHA" "$AFTER_SHA" -- docker/ .github/workflows/ghcr-build-publish.yml; then
+              required=true
+            else
+              required=false
+              echo "No Docker build input changed since the previous PR head; skipping the expensive image rebuild."
+            fi
+          fi
+          echo "build_required=$required" >> "$GITHUB_OUTPUT"
+
   discover:
     name: Discover Docker packages
+    needs: changes
+    if: needs.changes.outputs.build_required == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
