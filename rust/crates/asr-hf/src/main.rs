@@ -9,7 +9,7 @@ use allocation_envelope::{
     write_allocation_response,
 };
 use asr_hf::allocation::{
-    AllocationReadme, collection_prefix, latest_candidate_location, next_sequence_id,
+    AllocationReadme, candidate_location, collection_prefix, next_sequence_id,
     write_allocation_readme,
 };
 use asr_hf::{ResolveTargetOptions, TargetSelector, append_github_file, resolve_target};
@@ -57,6 +57,8 @@ enum Command {
     ResolveCandidateLocation {
         #[arg(long, default_value = "-")]
         listing: String,
+        #[arg(long)]
+        candidate_id: Option<String>,
         #[arg(long)]
         runtime_variant: Option<String>,
         #[arg(long)]
@@ -210,11 +212,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ResolveCandidateLocation {
             listing,
+            candidate_id,
             runtime_variant,
             github_output,
         } => {
             let content = read_listing(&listing)?;
-            let resolved = latest_candidate_location(&content, runtime_variant.as_deref())?;
+            let resolved = candidate_location(
+                &content,
+                candidate_id.as_deref(),
+                runtime_variant.as_deref(),
+            )?;
             let legacy = if resolved.legacy { "true" } else { "false" };
             let values = [
                 ("candidate_id", resolved.id.as_str()),
