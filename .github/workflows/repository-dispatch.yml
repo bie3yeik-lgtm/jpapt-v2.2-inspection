@@ -70,6 +70,28 @@ jobs:
             --inputs-json "$inputs_json" \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: Write normalized dispatch summary
+        shell: bash
+        env:
+          WORKFLOW_ALIAS: ${{ steps.request.outputs.alias }}
+          WORKFLOW_FILE: ${{ steps.request.outputs.workflow }}
+          TARGET_REF: ${{ steps.request.outputs.ref }}
+          NORMALIZED_INPUTS: ${{ steps.request.outputs.inputs }}
+        run: |
+          {
+            echo '## Repository dispatch'
+            echo
+            echo '| Field | Value |'
+            echo '|---|---|'
+            printf '| Workflow | `%s` (`%s`) |\n' "$WORKFLOW_ALIAS" "$WORKFLOW_FILE"
+            printf '| Ref | `%s` |\n' "$TARGET_REF"
+            echo
+            echo '### Normalized inputs'
+            echo '```json'
+            printf '%s\n' "$NORMALIZED_INPUTS" | jq .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Dispatch workflow
         env:
           GH_TOKEN: ${{ github.token }}
