@@ -7,6 +7,9 @@ from typing import Protocol
 from parakeet_onnx.contracts import RunContext
 from parakeet_onnx.datasets.models import ResolvedDatasetSample, ResolvedManifest
 from parakeet_onnx.evaluation.aggregate import aggregate_sample_results
+from parakeet_onnx.evaluation.capsule_streaming_writer import (
+    StreamingExperimentCapsuleWriter,
+)
 from parakeet_onnx.evaluation.models import (
     AcceptanceSummary,
     BenchmarkResult,
@@ -15,7 +18,6 @@ from parakeet_onnx.evaluation.models import (
     RuntimeIdentity,
     SampleResult,
 )
-from parakeet_onnx.evaluation.parquet import ExperimentCapsuleWriter
 from parakeet_onnx.evaluation.writer import BenchmarkWriter, SampleResultWriter
 
 
@@ -110,7 +112,7 @@ def run_evaluation(
         errors=aggregate.errors,
     )
     BenchmarkWriter(inputs.output_dir / "metrics.json").write(benchmark)
-    ExperimentCapsuleWriter(inputs.output_dir / "run.parquet").write(
+    StreamingExperimentCapsuleWriter(inputs.output_dir / "run.parquet").write(
         run_context=inputs.run_context,
         samples=results,
         benchmark=benchmark,
