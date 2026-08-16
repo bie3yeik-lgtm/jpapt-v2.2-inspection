@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.hf.revisions import RevisionError, load_revision_bundle
+
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _write(root: Path, name: str, value: dict[str, object]) -> None:
@@ -25,7 +29,7 @@ def _datasets() -> dict[str, object]:
     }
 
 
-def _reference(decoders: dict[str, object]) -> dict[str, object]:
+def _reference() -> dict[str, object]:
     return {
         "schema_version": 1,
         "development_artifact": {
@@ -45,90 +49,75 @@ def _reference(decoders: dict[str, object]) -> dict[str, object]:
             "revision": "reference-sha",
             "canonical_framework": "nemo",
         },
-        "decoders": decoders,
     }
 
 
-def _evaluation(decoders: dict[str, object]) -> dict[str, object]:
+def _evaluation() -> dict[str, object]:
     return {
         "schema_version": 1,
         "schema": {"id": "asr-eval", "revision": "schema-sha"},
-        "decoders": decoders,
     }
 
 
-def test_structured_decoder_entries_are_normalized(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "reference.json",
-        _reference(
-            {
-                "supported": [
-                    {"id": "ctc", "enabled": True},
-                    {"name": "tdt", "enabled": True},
-                ],
-                "default": {"id": "ctc"},
-            }
-        ),
-    )
-    _write(
-        tmp_path,
-        "evaluation-schema.json",
-        _evaluation(
-            {
-                "supported": [
-                    {"id": "ctc", "thresholds": {}},
-                    {"type": "tdt", "thresholds": {}},
-                ],
-                "default": {"decoder": "ctc"},
-            }
-        ),
-    )
-    _write(tmp_path, "datasets-lock.json", _datasets())
+def _runtime() -> dict[str, object]:
+    catalog = load_repository_catalog(ROOT)
+    return {
+        "schema_version": 1,
+        "catalog": {"id": catalog.catalog_id, "sha256": catalog.sha256},
+        "profile_set": "parakeet-tdt-ctc-v1",
+    }
 
+
+def _write_normalized(root: Path) -> None:
+    _write(root, "reference.json", _reference())
+    _write(root, "evaluation-schema.json", _evaluation())
+    _write(root, "datasets-lock.json", _datasets())
+    _write(root, "runtime.json", _runtime())
+
+
+def test_runtime_profile_set_derives_ctc_and_tdt(tmp_path: Path) -> None:
+    _write_normalized(tmp_path)
     bundle = load_revision_bundle(tmp_path)
-
+    assert bundle.runtime is not None
+    assert bundle.runtime.decoders.supported == ("ctc", "tdt")
+    assert bundle.runtime.decoders.default == "ctc"
     assert bundle.reference.decoders.supported == ("ctc", "tdt")
-    assert bundle.reference.decoders.default == "ctc"
     assert bundle.evaluation_schema.decoders.supported == ("ctc", "tdt")
 
 
-def test_decorders_typo_is_rejected(tmp_path: Path) -> None:
-    value = _reference(
-        {
-            "supported": ["whisper_autoregressive"],
-            "default": "whisper_autoregressive",
-        }
-    )
-    value["decorders"] = value.pop("decoders")
+def test_decorders_typo_is_rejected_in_normalized_config(tmp_path: Path) -> None:
+    value = _reference()
+    value["decorders"] = {"supported": ["ctc"], "default": "ctc"}
     _write(tmp_path, "reference.json", value)
-    _write(
-        tmp_path,
-        "evaluation-schema.json",
-        _evaluation(
-            {
-                "supported": ["whisper_autoregressive"],
-                "default": "whisper_autoregressive",
-            }
-        ),
-    )
+    _write(tmp_path, "evaluation-schema.json", _evaluation())
     _write(tmp_path, "datasets-lock.json", _datasets())
+    _write(tmp_path, "runtime.json", _runtime())
 
     with pytest.raises(RevisionError, match="unsupported legacy fields.*decorders"):
         load_revision_bundle(tmp_path)
 
 
-def test_single_decoder_field_is_rejected(tmp_path: Path) -> None:
-    value = _reference({"supported": ["ctc"], "default": "ctc"})
-    value.pop("decoders")
+def test_single_decoder_field_is_rejected_in_normalized_config(tmp_path: Path) -> None:
+    value = _reference()
     value["decoder"] = "ctc"
     _write(tmp_path, "reference.json", value)
-    _write(
-        tmp_path,
-        "evaluation-schema.json",
-        _evaluation({"supported": ["ctc"], "default": "ctc"}),
-    )
+    _write(tmp_path, "evaluation-schema.json", _evaluation())
     _write(tmp_path, "datasets-lock.json", _datasets())
+    _write(tmp_path, "runtime.json", _runtime())
 
     with pytest.raises(RevisionError, match="unsupported legacy fields.*decoder"):
         load_revision_bundle(tmp_path)
+
+
+def test_legacy_three_file_config_remains_readable(tmp_path: Path) -> None:
+    reference = _reference()
+    reference["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
+    evaluation = _evaluation()
+    evaluation["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
+    _write(tmp_path, "reference.json", reference)
+    _write(tmp_path, "evaluation-schema.json", evaluation)
+    _write(tmp_path, "datasets-lock.json", _datasets())
+
+    bundle = load_revision_bundle(tmp_path)
+    assert bundle.runtime is None
+    assert bundle.reference.decoders.supported == ("ctc", "tdt")
