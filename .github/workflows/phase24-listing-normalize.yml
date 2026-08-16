@@ -37,7 +37,6 @@ jobs:
           if marker not in s:
               raise SystemExit('helper insertion marker not found')
           s=s.replace(marker,helper+marker,1)
-          # Sequence allocation must tolerate the same hf CLI root-prefixed output.
           old2='''fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {\n    let parts = raw\n        .trim()\n        .trim_start_matches('/')\n        .split('/')\n'''
           new2='''fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {\n    let value = raw.trim().trim_start_matches('/');\n    let value = ["candidates", "experiments", "config"]\n        .iter()\n        .find_map(|collection| {\n            value\n                .strip_prefix(collection)\n                .and_then(|rest| rest.strip_prefix('/'))\n        })\n        .unwrap_or(value);\n    let parts = value\n        .split('/')\n'''
           if old2 not in s:
@@ -50,6 +49,7 @@ jobs:
           s=s.replace(test_marker,test+test_marker,1)
           p.write_text(s)
           PY
+          cargo generate-lockfile
           cargo fmt --all
           cargo clippy --locked -p asr-hf --all-targets -- -D warnings
           cargo test --locked -p asr-hf
@@ -59,6 +59,6 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add rust/crates/asr-hf/src/allocation.rs
+          git add Cargo.lock rust/crates/asr-hf/src/allocation.rs
           git commit -m 'Normalize HF Bucket listing roots'
           git push origin HEAD:agent/review-minimal-json-bucket-phase24
