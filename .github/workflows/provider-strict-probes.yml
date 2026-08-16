@@ -8,7 +8,6 @@ on:
     paths:
       - ".github/workflows/provider-strict-probes.yml"
       - "scripts/ci/e2e-provider-ctc.py"
-      - "scripts/ci/prepare-provider-run-context.py"
       - "scripts/ci/resolve-candidate-artifacts.py"
       - "rust/**"
       - "Cargo.toml"
@@ -52,6 +51,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install uv
         run: python -m pip install --disable-pip-version-check uv
       - name: Sync minimal authoritative environment
@@ -69,11 +69,10 @@ jobs:
             --candidate-dir .ci/provider-probe/candidate \
             --runtime-variant ctc \
             --contract-out .ci/provider-probe/candidate-contract.json
-          uv run python scripts/ci/prepare-provider-run-context.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-probe-context -- \
             --contract .ci/provider-probe/candidate-contract.json \
             --provider coreml \
             --output .ci/provider-probe/run-context.json
-      - uses: dtolnay/rust-toolchain@stable
       - name: Build CoreML evaluator
         shell: bash
         run: cargo build --locked --release -p asr-eval --no-default-features --features coreml
@@ -153,6 +152,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install uv
         run: python -m pip install --disable-pip-version-check uv
       - name: Sync minimal authoritative environment
@@ -170,11 +170,10 @@ jobs:
             --candidate-dir .ci/provider-probe/candidate \
             --runtime-variant ctc \
             --contract-out .ci/provider-probe/candidate-contract.json
-          uv run python scripts/ci/prepare-provider-run-context.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-probe-context -- \
             --contract .ci/provider-probe/candidate-contract.json \
             --provider directml \
             --output .ci/provider-probe/run-context.json
-      - uses: dtolnay/rust-toolchain@stable
       - name: Build DirectML evaluator
         shell: bash
         run: cargo build --locked --release -p asr-eval --no-default-features --features directml
