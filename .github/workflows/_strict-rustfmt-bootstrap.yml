@@ -1,0 +1,38 @@
+name: Strict Rustfmt Bootstrap
+
+on:
+  push:
+    branches:
+      - agent/provider-strict-probes
+    paths:
+      - ".github/workflows/_strict-rustfmt-bootstrap.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/provider-strict-probes
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply canonical formatting
+        shell: bash
+        run: cargo fmt --all
+      - name: Commit formatting if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No rustfmt changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust
+          git commit -m "Apply canonical rustfmt after strict contract hardening"
+          git push origin HEAD:agent/provider-strict-probes

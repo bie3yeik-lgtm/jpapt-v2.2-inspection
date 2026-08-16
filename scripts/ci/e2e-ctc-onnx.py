@@ -1,45 +1,79 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import math
 import os
 from pathlib import Path
+import re
+import shutil
 
 import numpy as np
 import onnx
 import onnxruntime as ort
+from scipy.signal import resample_poly
 import soundfile as sf
 import torch
-from huggingface_hub import hf_hub_download
-from scipy.signal import resample_poly
+from huggingface_hub import HfApi, hf_hub_download
 from transformers import AutoModelForCTC, AutoProcessor
 
 MODEL_ID = os.environ.get("CTC_MODEL_ID", "TKU410410103/wav2vec2-base-japanese-asr")
 DATASET_ID = "japanese-asr/ja_asr.jsut_basic5000"
-TARGET_SAMPLE_RATE = 16_000
+REFERENCE_TEXT = "水をマレーシアから買わなくてはならないのです"
 OUT = Path(os.environ.get("CTC_E2E_OUT", ".ci/public-model-e2e/ctc"))
+CANDIDATE = OUT / "candidate"
+TOKENIZER = CANDIDATE / "tokenizer"
 OUT.mkdir(parents=True, exist_ok=True)
+TOKENIZER.mkdir(parents=True, exist_ok=True)
 
-sample_path = Path(hf_hub_download(DATASET_ID, "sample.flac", repo_type="dataset"))
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def require_commit_sha(name: str, value: str | None) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", value) is None:
+        raise RuntimeError(f"{name} did not resolve to a concrete Hub commit SHA: {value!r}")
+    return value.lower()
+
+
+api = HfApi()
+model_revision = require_commit_sha("model revision", api.model_info(MODEL_ID).sha)
+dataset_revision = require_commit_sha(
+    "dataset revision", api.dataset_info(DATASET_ID).sha
+)
+
+sample_path = Path(
+    hf_hub_download(
+        DATASET_ID,
+        "sample.flac",
+        repo_type="dataset",
+        revision=dataset_revision,
+    )
+)
 audio, source_sample_rate = sf.read(sample_path, dtype="float32", always_2d=False)
 if audio.ndim == 2:
     audio = audio.mean(axis=1)
 if audio.size == 0 or not np.isfinite(audio).all():
     raise RuntimeError("JSUT sample is empty or non-finite")
-
-if source_sample_rate != TARGET_SAMPLE_RATE:
-    divisor = math.gcd(source_sample_rate, TARGET_SAMPLE_RATE)
-    audio = resample_poly(
-        audio,
-        TARGET_SAMPLE_RATE // divisor,
-        source_sample_rate // divisor,
-    ).astype(np.float32, copy=False)
+source_sample_count = int(audio.size)
+source_duration_sec = float(audio.size / source_sample_rate)
+if source_sample_rate != 16_000:
+    divisor = int(np.gcd(source_sample_rate, 16_000))
+    audio = resample_poly(audio, 16_000 // divisor, source_sample_rate // divisor).astype(
+        np.float32,
+        copy=False,
+    )
+sample_rate = 16_000
 if audio.size == 0 or not np.isfinite(audio).all():
     raise RuntimeError("resampled JSUT sample is empty or non-finite")
 
-processor = AutoProcessor.from_pretrained(MODEL_ID)
-model = AutoModelForCTC.from_pretrained(MODEL_ID).eval()
-inputs = processor(audio, sampling_rate=TARGET_SAMPLE_RATE, return_tensors="pt")
+processor = AutoProcessor.from_pretrained(MODEL_ID, revision=model_revision)
+model = AutoModelForCTC.from_pretrained(MODEL_ID, revision=model_revision).eval()
+inputs = processor(audio, sampling_rate=sample_rate, return_tensors="pt")
 input_values = inputs.input_values
 
 with torch.inference_mode():
@@ -55,7 +89,7 @@ class LogitsOnly(torch.nn.Module):
         return self.inner(input_values=input_values).logits
 
 
-onnx_path = OUT / "model.onnx"
+onnx_path = CANDIDATE / "model.onnx"
 torch.onnx.export(
     LogitsOnly(model),
     (input_values,),
@@ -72,7 +106,10 @@ torch.onnx.export(
 )
 onnx.checker.check_model(onnx.load(onnx_path, load_external_data=False))
 
-session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+session = ort.InferenceSession(
+    str(onnx_path),
+    providers=["CPUExecutionProvider"],
+)
 ort_logits = session.run(
     ["logits"],
     {"input_values": input_values.cpu().numpy()},
@@ -95,14 +132,92 @@ if pt_text != ort_text:
         f"PyTorch/ONNX transcript mismatch: torch={pt_text!r}, ort={ort_text!r}"
     )
 
-max_abs = float(np.max(np.abs(torch_logits - ort_logits)))
 blank_id = int(model.config.pad_token_id)
+raw_vocab = processor.tokenizer.get_vocab()
+id_to_token: dict[str, str] = {}
+for token, index in raw_vocab.items():
+    rendered = " " if token == processor.tokenizer.word_delimiter_token else token
+    id_to_token[str(int(index))] = rendered
+
+vocabulary_path = TOKENIZER / "vocabulary.json"
+vocabulary_path.write_text(
+    json.dumps(id_to_token, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+(CANDIDATE / "config.json").write_text(
+    json.dumps(
+        {"blank_id": blank_id, "pad_token_id": blank_id},
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+(CANDIDATE / "metadata.json").write_text(
+    json.dumps(
+        {
+            "profile_set": "parakeet-tdt-ctc-v1",
+            "variants": {
+                "ctc": {
+                    "artifacts": {"primary": "model.onnx"},
+                    "tokenizer": "tokenizer/vocabulary.json",
+                }
+            },
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+(CANDIDATE / ".candidate-id").write_text("public-wav2vec2-japanese-ctc\n", encoding="utf-8")
+
+materialized_audio = OUT / "sample.flac"
+shutil.copyfile(sample_path, materialized_audio)
+selection_hash = sha256_file(materialized_audio)
+resolved_manifest = {
+    "schema_version": 1,
+    "manifest_path": "public-model-e2e:jsut-sample.flac",
+    "expected_sample_count": 1,
+    "resolved_sample_count": 1,
+    "samples": [
+        {
+            "id": "jsut-sample",
+            "manifest_entry_id": "jsut-sample",
+            "dataset_id": "jsut-basic5000",
+            "dataset_repo_id": DATASET_ID,
+            "dataset_revision": dataset_revision,
+            "subset": None,
+            "split": None,
+            "row_index": 0,
+            "source_identity": f"{DATASET_ID}@{dataset_revision}:sample.flac",
+            "selection_hash": selection_hash,
+            "selection_rank": 0,
+            "duration_sec": source_duration_sec,
+            "sample_rate_hz": int(source_sample_rate),
+            "transcription": REFERENCE_TEXT,
+            "tags": ["public-model-e2e", "jsut"],
+            "audio_path": str(materialized_audio.resolve()),
+            "audio_sha256": selection_hash,
+        }
+    ],
+}
+(OUT / "resolved-manifest.json").write_text(
+    json.dumps(resolved_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+
+max_abs = float(np.max(np.abs(torch_logits - ort_logits)))
 summary = {
     "model_id": MODEL_ID,
+    "model_revision": model_revision,
     "dataset_id": DATASET_ID,
+    "dataset_revision": dataset_revision,
     "sample_file": "sample.flac",
-    "source_sample_rate_hz": source_sample_rate,
-    "sample_rate_hz": TARGET_SAMPLE_RATE,
+    "sample_sha256": selection_hash,
+    "source_sample_rate_hz": int(source_sample_rate),
+    "source_sample_count": source_sample_count,
+    "sample_rate_hz": sample_rate,
     "sample_count": int(audio.size),
     "onnx_opset": 17,
     "onnxruntime_version": ort.__version__,
@@ -113,6 +228,8 @@ summary = {
     "onnx_transcript": ort_text,
     "transcript_parity": True,
     "max_abs_logit_error": max_abs,
+    "candidate_dir": str(CANDIDATE.resolve()),
+    "resolved_manifest": str((OUT / "resolved-manifest.json").resolve()),
 }
 (OUT / "result.json").write_text(
     json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
