@@ -23,7 +23,15 @@ def build_parser() -> argparse.ArgumentParser:
     profile_set.add_argument("profile_set_id")
     profile_set.add_argument("--variant")
     profile_set.add_argument(
-        "field", choices=["profile_id", "decoder", "artifact_contract", "tokenizer_kind"]
+        "field",
+        choices=[
+            "profile_id",
+            "decoder",
+            "artifact_contract",
+            "tokenizer_kind",
+            "candidate_prefix_key",
+            "default_variant",
+        ],
     )
 
     fingerprint = sub.add_parser("fingerprint")
@@ -44,7 +52,11 @@ def main() -> int:
         profile = catalog.decoder_profile(args.profile_id)
         print(getattr(profile, args.field))
         return 0
+
     profile_set = catalog.profile_set(args.profile_set_id)
+    if args.field in {"candidate_prefix_key", "default_variant"}:
+        print(getattr(profile_set, args.field))
+        return 0
     profile_id = profile_set.profile_id_for(args.variant)
     if args.field == "profile_id":
         print(profile_id)
