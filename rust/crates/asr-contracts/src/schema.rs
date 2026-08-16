@@ -67,28 +67,20 @@ fn validate_node(
         validate_type(instance, type_schema, schema_name, path)?;
     }
 
-    if let Some(min_length) = schema_object.get("minLength").and_then(Value::as_u64) {
-        let value = instance.as_str().ok_or_else(|| {
-            ContractError::validation(format!(
-                "schema={schema_name}; instance_path={path}; minLength applies to strings"
-            ))
-        })?;
-        if value.chars().count() < min_length as usize {
+    if let Some(value) = instance.as_str() {
+        if let Some(min_length) = schema_object.get("minLength").and_then(Value::as_u64)
+            && value.chars().count() < min_length as usize
+        {
             return violation(
                 schema_name,
                 path,
                 format!("string length must be at least {min_length}"),
             );
         }
-    }
 
-    if let Some(pattern) = schema_object.get("pattern").and_then(Value::as_str) {
-        let value = instance.as_str().ok_or_else(|| {
-            ContractError::validation(format!(
-                "schema={schema_name}; instance_path={path}; pattern applies to strings"
-            ))
-        })?;
-        if !matches_supported_pattern(pattern, value)? {
+        if let Some(pattern) = schema_object.get("pattern").and_then(Value::as_str)
+            && !matches_supported_pattern(pattern, value)?
+        {
             return violation(
                 schema_name,
                 path,
@@ -97,24 +89,16 @@ fn validate_node(
         }
     }
 
-    if let Some(minimum) = schema_object.get("minimum").and_then(Value::as_f64) {
-        let value = instance.as_f64().ok_or_else(|| {
-            ContractError::validation(format!(
-                "schema={schema_name}; instance_path={path}; minimum applies to numbers"
-            ))
-        })?;
-        if value < minimum {
+    if let Some(value) = instance.as_f64() {
+        if let Some(minimum) = schema_object.get("minimum").and_then(Value::as_f64)
+            && value < minimum
+        {
             return violation(schema_name, path, format!("number must be >= {minimum}"));
         }
-    }
 
-    if let Some(maximum) = schema_object.get("maximum").and_then(Value::as_f64) {
-        let value = instance.as_f64().ok_or_else(|| {
-            ContractError::validation(format!(
-                "schema={schema_name}; instance_path={path}; maximum applies to numbers"
-            ))
-        })?;
-        if value > maximum {
+        if let Some(maximum) = schema_object.get("maximum").and_then(Value::as_f64)
+            && value > maximum
+        {
             return violation(schema_name, path, format!("number must be <= {maximum}"));
         }
     }
@@ -326,5 +310,17 @@ mod tests {
             .validate(&serde_json::json!({"sha":"a".repeat(64)}))
             .unwrap();
         assert!(schema.validate(&serde_json::json!({"sha":"bad"})).is_err());
+    }
+
+    #[test]
+    fn type_specific_keywords_ignore_null_union_members() {
+        let schema = EmbeddedSchema::parse(
+            "test",
+            r#"{"type":["number","null"],"minimum":0}"#,
+        )
+        .unwrap();
+        schema.validate(&Value::Null).unwrap();
+        schema.validate(&serde_json::json!(0.0)).unwrap();
+        assert!(schema.validate(&serde_json::json!(-1.0)).is_err());
     }
 }
