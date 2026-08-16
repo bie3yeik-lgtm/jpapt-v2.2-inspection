@@ -70,8 +70,8 @@ def test_unknown_bucket_is_rejected() -> None:
     assert "is not present in the current HF target mapping" in result.stderr
 
 
-def _shared_mapping() -> str:
-    return json.dumps(
+def test_duplicate_bucket_is_rejected_in_current_snapshot() -> None:
+    duplicated = json.dumps(
         {
             "kotoba-whisper-v1.0": {
                 "HF_BUCKET": "gawohok7/shared-bucket",
@@ -83,50 +83,15 @@ def _shared_mapping() -> str:
             },
         }
     )
-
-
-def test_shared_bucket_mapping_is_allowed_but_bucket_only_resolution_is_ambiguous() -> None:
     result = _run(
         "--bucket",
         "gawohok7/shared-bucket",
         "--targets-json",
-        _shared_mapping(),
+        duplicated,
     )
 
     assert result.returncode == 1
-    assert "maps to multiple targets" in result.stderr
-    assert "provide --target to disambiguate" in result.stderr
-
-
-def test_explicit_target_and_shared_bucket_resolve_together() -> None:
-    result = _run(
-        "--target",
-        "kotoba-whisper-v1.0",
-        "--bucket",
-        "gawohok7/shared-bucket",
-        "--targets-json",
-        _shared_mapping(),
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
-    assert "HF_BUCKET=gawohok7/shared-bucket" in result.stdout
-    assert "HF_MODEL_REPO=gawohok7/tf-v1-onnx-dev" in result.stdout
-
-
-def test_explicit_target_rejects_mismatched_requested_bucket() -> None:
-    result = _run(
-        "--target",
-        "kotoba-whisper-v1.0",
-        "--bucket",
-        "gawohok7/jpapt-v2.2-dev-bucket",
-        "--targets-json",
-        _mapping(),
-    )
-
-    assert result.returncode == 1
-    assert "currently routes to HF_BUCKET" in result.stderr
-    assert "not requested bucket" in result.stderr
+    assert "in the current routing snapshot" in result.stderr
 
 
 def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
@@ -143,8 +108,6 @@ def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
         }
     )
     result = _run(
-        "--target",
-        "kotoba-whisper-v1.0",
         "--bucket",
         "gawohok7/tf-v1-capacity-bucket-b",
         "--targets-json",
@@ -152,4 +115,5 @@ def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+    assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
     assert "HF_BUCKET=gawohok7/tf-v1-capacity-bucket-b" in result.stdout
