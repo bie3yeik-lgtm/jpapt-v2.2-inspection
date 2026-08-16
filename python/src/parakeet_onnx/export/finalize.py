@@ -2,54 +2,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from parakeet_onnx.config.catalog import load_repository_catalog
+from parakeet_onnx.runtime.artifacts import CandidateArtifacts
+from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
-from .metadata import (
-    ArtifactMetadata,
-    CandidateMetadata,
-    CandidateVariantMetadata,
-    CatalogReference,
-    TokenizerBinding,
-    write_candidate_metadata,
-)
+from .metadata import CandidateMetadata, CandidateVariantMetadata, write_candidate_metadata
 from .validate import validate_onnx_model
-
-
-def load_runtime_contract(path: str | Path) -> dict[str, Any]:
-    value_path = Path(path).expanduser().resolve()
-    raw = json.loads(value_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("runtime contract JSON root must be an object")
-    # Staging contracts may still include decoder for human readability. It is
-    # not serialized into canonical candidate metadata; the central profile is
-    # authoritative for decoder semantics.
-    for key in ("input_kind", "io", "decoder_config"):
-        if key not in raw:
-            raise ValueError(f"runtime contract is missing required field: {key}")
-    return raw
 
 
 def finalize_candidate_variant(
     *,
     output_dir: Path,
-    candidate_id: str,
     profile_set: str,
     variant: str,
     artifact_roles: dict[str, str],
-    runtime_contract: dict[str, Any],
     tokenizer_path: str | None = None,
     repository_root: str | Path | None = None,
 ) -> CandidateMetadata:
-    """Create or extend canonical schema-v3 candidate metadata.
-
-    Reusable decoder semantics are resolved from config/asr-catalog.json. The
-    candidate pins that catalog snapshot and stores only candidate-specific
-    artifact identities, tensor/runtime bindings, and tokenizer asset paths.
-    `profile_set + variant` determines the decoder profile; profile IDs are not
-    repeated inside every variant.
-    """
+    """Create or extend minimal candidate metadata and validate derived runtime data."""
 
     root = Path(output_dir).expanduser().resolve()
     repo_root = (
@@ -62,7 +33,7 @@ def finalize_candidate_variant(
     profile_id = profile_set_value.profile_id_for(variant)
     profile = catalog.decoder_profile(profile_id)
 
-    artifacts: dict[str, ArtifactMetadata] = {}
+    normalized_artifacts: dict[str, str] = {}
     for role, relative in artifact_roles.items():
         path = (root / relative).resolve()
         path.relative_to(root)
@@ -70,80 +41,63 @@ def finalize_candidate_variant(
             raise FileNotFoundError(path)
         if path.suffix.lower() == ".onnx":
             validate_onnx_model(path)
-        artifacts[role] = ArtifactMetadata.from_file(path, relative_to=root)
+        normalized_artifacts[role] = path.relative_to(root).as_posix()
 
-    missing = sorted(set(profile.required_artifact_roles) - set(artifacts))
+    missing = sorted(set(profile.required_artifact_roles) - set(normalized_artifacts))
     if missing:
         raise ValueError(
             f"variant {variant!r} is missing profile-required artifact roles: {missing}"
         )
     allowed = set(profile.required_artifact_roles) | set(profile.optional_artifact_roles)
-    unexpected = sorted(set(artifacts) - allowed)
+    unexpected = sorted(set(normalized_artifacts) - allowed)
     if unexpected:
         raise ValueError(
             f"variant {variant!r} contains roles not allowed by profile {profile_id!r}: "
             f"{unexpected}"
         )
 
-    tokenizer: TokenizerBinding | None = None
+    normalized_tokenizer: str | None = None
     if tokenizer_path is not None:
         resolved = (root / tokenizer_path).resolve()
         resolved.relative_to(root)
         if not resolved.exists():
             raise FileNotFoundError(resolved)
-        tokenizer = TokenizerBinding(path=tokenizer_path)
-
-    bindings = {
-        "input_kind": runtime_contract["input_kind"],
-        "io": runtime_contract["io"],
-        "decoder_config": runtime_contract["decoder_config"],
-    }
-    variant_metadata = CandidateVariantMetadata(
-        artifacts=artifacts,
-        bindings=bindings,
-        tokenizer=tokenizer,
-    )
+        normalized_tokenizer = resolved.relative_to(root).as_posix()
 
     metadata_path = root / "metadata.json"
     variants: dict[str, CandidateVariantMetadata] = {}
-    catalog_ref = CatalogReference(id=catalog.catalog_id, sha256=catalog.sha256)
     if metadata_path.is_file():
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if existing.get("schema_version") != 3:
-            raise ValueError(
-                "cannot merge a new canonical variant into pre-v3 candidate metadata"
-            )
-        if existing.get("candidate_id") != candidate_id:
-            raise ValueError("candidate_id differs from existing metadata.json")
+        if not isinstance(existing, dict):
+            raise ValueError("metadata.json root must be an object")
         if existing.get("profile_set") != profile_set:
             raise ValueError("profile_set differs from existing metadata.json")
-        existing_catalog = existing.get("catalog")
-        if existing_catalog != {"id": catalog.catalog_id, "sha256": catalog.sha256}:
-            raise ValueError(
-                "candidate catalog pin differs from the checked-out central catalog"
-            )
-        for name, value in existing.get("variants", {}).items():
+        existing_variants = existing.get("variants")
+        if not isinstance(existing_variants, dict):
+            raise ValueError("existing metadata.json variants must be an object")
+        for name, value in existing_variants.items():
+            if not isinstance(value, dict) or not isinstance(value.get("artifacts"), dict):
+                raise ValueError(f"existing variant {name!r} is invalid")
             variants[name] = CandidateVariantMetadata(
-                artifacts={
-                    role: ArtifactMetadata(**artifact)
-                    for role, artifact in value["artifacts"].items()
-                },
-                bindings=dict(value["bindings"]),
-                tokenizer=(
-                    TokenizerBinding(**value["tokenizer"])
-                    if value.get("tokenizer") is not None
-                    else None
-                ),
+                artifacts={str(k): str(v) for k, v in value["artifacts"].items()},
+                tokenizer=(str(value["tokenizer"]) if value.get("tokenizer") is not None else None),
             )
-    variants[variant] = variant_metadata
 
-    metadata = CandidateMetadata(
-        candidate_id=candidate_id,
-        catalog=catalog_ref,
-        profile_set=profile_set,
-        variants=variants,
+    variants[variant] = CandidateVariantMetadata(
+        artifacts=normalized_artifacts,
+        tokenizer=normalized_tokenizer,
     )
+    metadata = CandidateMetadata(profile_set=profile_set, variants=variants)
     write_candidate_metadata(metadata_path, metadata)
+
+    # The human-authored file is now complete. Everything else is derived and
+    # validated immediately so invalid graph/tokenizer combinations fail early.
+    candidate = CandidateArtifacts.load(
+        root,
+        variant=variant,
+        repository_root=repo_root,
+    )
+    validate_candidate_runtime_contract(candidate)
     return metadata
 
 

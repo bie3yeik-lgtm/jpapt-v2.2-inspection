@@ -1,81 +1,82 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
+
+import onnx
+from onnx import TensorProto, helper
 
 from parakeet_onnx.runtime import CandidateArtifacts, registered_decoders
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 
-def _artifact(root: Path, name: str) -> dict[str, object]:
-    path = root / name
-    path.write_bytes(name.encode("utf-8"))
-    return {
-        "path": name,
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "size_bytes": path.stat().st_size,
-    }
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _save(path: Path, inputs: list[object], outputs: list[object]) -> None:
+    onnx.save(helper.make_model(helper.make_graph([], path.stem, inputs, outputs)), path)
 
 
 def test_registry_contains_all_python_decoder_adapters() -> None:
     assert registered_decoders() == ("ctc", "tdt", "whisper_autoregressive")
 
 
-def test_tdt_runtime_contract_validates_without_ort_sessions(tmp_path: Path) -> None:
-    (tmp_path / "vocabulary.json").write_text('["<blank>", "a"]', encoding="utf-8")
-    metadata = {
-        "schema_version": 2,
-        "candidate_id": "tdt-000002",
-        "decoder": "tdt",
-        "artifact_contract": "tdt-multi-graph-v1",
-        "artifacts": {
-            "encoder": _artifact(tmp_path, "encoder.onnx"),
-            "predictor": _artifact(tmp_path, "predictor.onnx"),
-            "joint": _artifact(tmp_path, "joint.onnx"),
-        },
-        "runtime_contract": {
-            "decoder": "tdt",
-            "input_kind": "canonical_waveform",
-            "io": {
-                "encoder": {
-                    "input": "audio",
-                    "length_input": "audio_length",
-                    "output": "encoded",
-                    "length_output": "encoded_length",
+def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(tmp_path: Path) -> None:
+    (tmp_path / "vocabulary.json").write_text('["<blank>", "a"]\n', encoding="utf-8")
+    _save(
+        tmp_path / "encoder.onnx",
+        [
+            helper.make_tensor_value_info("audio", TensorProto.FLOAT, [1, "samples"]),
+            helper.make_tensor_value_info("audio_length", TensorProto.INT64, [1]),
+        ],
+        [
+            helper.make_tensor_value_info("encoded", TensorProto.FLOAT, [1, "frames", 64]),
+            helper.make_tensor_value_info("encoded_length", TensorProto.INT64, [1]),
+        ],
+    )
+    _save(
+        tmp_path / "predictor.onnx",
+        [
+            helper.make_tensor_value_info("token", TensorProto.INT64, [1, 1]),
+            helper.make_tensor_value_info("h_in", TensorProto.FLOAT, [1, 1, 64]),
+        ],
+        [
+            helper.make_tensor_value_info("prediction", TensorProto.FLOAT, [1, 1, 64]),
+            helper.make_tensor_value_info("h_out", TensorProto.FLOAT, [1, 1, 64]),
+        ],
+    )
+    _save(
+        tmp_path / "joint.onnx",
+        [
+            helper.make_tensor_value_info("encoder_frame", TensorProto.FLOAT, [1, 1, 64]),
+            helper.make_tensor_value_info("prediction", TensorProto.FLOAT, [1, 1, 64]),
+        ],
+        [
+            helper.make_tensor_value_info("token_logits", TensorProto.FLOAT, [1, 1, 2]),
+            helper.make_tensor_value_info("duration_logits", TensorProto.FLOAT, [1, 1, 4]),
+        ],
+    )
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "profile_set": "parakeet-tdt-ctc-v1",
+                "variants": {
+                    "tdt": {
+                        "artifacts": {
+                            "encoder": "encoder.onnx",
+                            "predictor": "predictor.onnx",
+                            "joint": "joint.onnx",
+                        },
+                        "tokenizer": "vocabulary.json",
+                    }
                 },
-                "predictor": {
-                    "token_input": "token",
-                    "output": "prediction",
-                    "state_inputs": ["h_in"],
-                    "state_outputs": ["h_out"],
-                    "state_shapes": [[1, 1, 64]],
-                    "state_dtypes": ["float32"],
-                },
-                "joint": {
-                    "encoder_input": "encoder_frame",
-                    "predictor_input": "prediction",
-                    "token_output": "token_logits",
-                    "duration_output": "duration_logits",
-                    "output_mode": "separate",
-                },
-            },
-            "decoder_config": {
-                "blank_id": 0,
-                "bos_id": 1,
-                "durations": [0, 1, 2, 4],
-                "max_symbols_per_step": 10,
-            },
-        },
-        "tokenizer": {"kind": "vocabulary", "path": "vocabulary.json"},
-        "features": {
-            "kv_cache": False,
-            "multi_graph": True,
-            "transformers_processor": False,
-            "external_frontend": False,
-            "timestamps": False,
-        },
-    }
-    (tmp_path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
-    candidate = CandidateArtifacts.load(tmp_path)
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    candidate = CandidateArtifacts.load(tmp_path, variant="tdt", repository_root=ROOT)
     validate_candidate_runtime_contract(candidate)
+    assert candidate.runtime_contract["decoder_config"]["blank_id"] == 0
+    assert candidate.runtime_contract["decoder_config"]["durations"] == [0, 1, 2, 3]
+    assert candidate.runtime_contract["io"]["predictor"]["state_shapes"] == [[1, 1, 64]]

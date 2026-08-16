@@ -11,7 +11,7 @@ from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Resolve one selected candidate runtime variant into CI outputs."
+        description="Resolve one minimal candidate runtime variant into generated CI outputs."
     )
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--runtime-variant")
@@ -35,17 +35,21 @@ def main() -> int:
 
     values: dict[str, str] = {
         "candidate_id": candidate.candidate_id,
-        "profile_set": candidate.profile_set_id or "legacy",
-        "runtime_variant": candidate.variant or candidate.decoder,
-        "runtime_profile": candidate.profile_id or "legacy",
+        "profile_set": candidate.profile_set_id,
+        "runtime_variant": candidate.variant,
+        "runtime_profile": candidate.profile_id,
         "decoder": candidate.decoder,
         "artifact_contract": candidate.artifact_contract,
         "bundle_sha256": candidate.bundle_sha256,
         "primary_artifact": str(candidate.primary_artifact.path),
+        "catalog_id": candidate.catalog_id,
+        "catalog_sha256": candidate.catalog_sha256,
     }
     for role, artifact in sorted(candidate.artifacts.items()):
         safe_role = role.replace("-", "_")
         values[f"artifact_{safe_role}"] = str(artifact.path)
+        values[f"artifact_{safe_role}_sha256"] = artifact.sha256
+        values[f"artifact_{safe_role}_size_bytes"] = str(artifact.size_bytes)
     if candidate.tokenizer is not None:
         values["tokenizer_kind"] = candidate.tokenizer.kind
         values["tokenizer_path"] = str(candidate.tokenizer.path)

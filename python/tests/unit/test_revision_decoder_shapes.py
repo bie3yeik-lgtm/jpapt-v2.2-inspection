@@ -75,19 +75,21 @@ def _write_normalized(root: Path) -> None:
     _write(root, "runtime.json", _runtime())
 
 
-def test_runtime_profile_set_derives_ctc_and_tdt(tmp_path: Path) -> None:
+def test_runtime_profile_set_resolves_ctc_and_tdt_from_catalog(tmp_path: Path) -> None:
     _write_normalized(tmp_path)
     bundle = load_revision_bundle(tmp_path)
-    assert bundle.runtime is not None
-    assert bundle.runtime.decoders.supported == ("ctc", "tdt")
-    assert bundle.runtime.decoders.default == "ctc"
-    assert bundle.reference.decoders.supported == ("ctc", "tdt")
-    assert bundle.evaluation_schema.decoders.supported == ("ctc", "tdt")
+    catalog = load_repository_catalog(ROOT)
+
+    assert bundle.runtime.profile_set_id == "parakeet-tdt-ctc-v1"
+    assert bundle.runtime.resolve_variant(None, catalog=catalog) == ("ctc", "ctc-v1", "ctc")
+    assert bundle.runtime.resolve_variant("tdt", catalog=catalog) == ("tdt", "tdt-v1", "tdt")
+    snapshot = bundle.to_dict()
+    assert set(snapshot["runtime"]) == {"document_sha256", "catalog", "profile_set"}
+    assert "decoders" not in snapshot["reference"]
+    assert "decoders" not in snapshot["evaluation_schema"]
 
 
-def test_duplicate_decoder_declaration_is_rejected_in_normalized_config(
-    tmp_path: Path,
-) -> None:
+def test_duplicate_decoder_declaration_is_rejected(tmp_path: Path) -> None:
     value = _reference()
     value["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
     _write(tmp_path, "reference.json", value)
@@ -95,19 +97,14 @@ def test_duplicate_decoder_declaration_is_rejected_in_normalized_config(
     _write(tmp_path, "datasets-lock.json", _datasets())
     _write(tmp_path, "runtime.json", _runtime())
 
-    with pytest.raises(RevisionError, match="must not repeat decoder declarations"):
+    with pytest.raises(RevisionError, match="unsupported fields"):
         load_revision_bundle(tmp_path)
 
 
-def test_legacy_three_file_config_remains_readable(tmp_path: Path) -> None:
-    reference = _reference()
-    reference["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
-    evaluation = _evaluation()
-    evaluation["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
-    _write(tmp_path, "reference.json", reference)
-    _write(tmp_path, "evaluation-schema.json", evaluation)
+def test_three_file_config_is_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "reference.json", _reference())
+    _write(tmp_path, "evaluation-schema.json", _evaluation())
     _write(tmp_path, "datasets-lock.json", _datasets())
 
-    bundle = load_revision_bundle(tmp_path)
-    assert bundle.runtime is None
-    assert bundle.reference.decoders.supported == ("ctc", "tdt")
+    with pytest.raises(RevisionError, match="runtime.json is required"):
+        load_revision_bundle(tmp_path)
