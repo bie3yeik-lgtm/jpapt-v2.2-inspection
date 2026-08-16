@@ -20,6 +20,17 @@ and routes the request to the selected workflow through GitHub's `workflow_dispa
 
 The workflow YAML remains the source of truth for manual inputs. Rust reads those YAML input definitions directly; there is no second JSON catalog to maintain.
 
+## GitHub platform constraints
+
+`repository_dispatch` and `workflow_dispatch` are GitHub platform events, so two upstream rules matter operationally:
+
+1. the workflow that receives `repository_dispatch` must exist on the repository default branch;
+2. a workflow must expose `workflow_dispatch` to be started through the downstream workflow-dispatch API / Run workflow UI.
+
+Therefore this router becomes an external integration endpoint after the router workflow exists on `main`. A branch cannot introduce a brand-new router and expect GitHub to receive `repository_dispatch` through that branch before merge.
+
+GitHub currently limits `workflow_dispatch` to 25 top-level inputs and 65,535 characters of input payload. This repository intentionally keeps workflow inputs far below those limits and derives candidate IDs, runtime defaults, Bucket routing and artifact identity rather than exposing them all as manual fields.
+
 ## Rust implementation
 
 The canonical resolver is:
@@ -59,6 +70,8 @@ The resolver performs:
 - final GitHub workflow-dispatch API body generation.
 
 This moves dispatch policy out of shell/jq while retaining GitHub workflow YAML as the authoritative UI/input contract.
+
+The parser intentionally accepts the workflow-input YAML forms currently used by this repository. `ghcr-contracts.yml` runs the parser against every workflow, so introducing a new YAML input form that the Rust policy layer does not understand fails the fast contract gate rather than silently bypassing validation.
 
 ## Request shape
 
@@ -125,6 +138,8 @@ The router rejects:
 - unsafe or malformed Git refs.
 
 The router does not reproduce defaults or option lists in shell. These are parsed from the selected workflow's own `workflow_dispatch.inputs` block.
+
+For normal automation, prefer `ref: main`. A non-default ref is syntactically validated by the router, but the external integration should treat branch-specific workflow-schema changes carefully: the router policy itself runs from the default-branch workflow contract, while the downstream workflow executes at the requested ref.
 
 ## Example API call
 
