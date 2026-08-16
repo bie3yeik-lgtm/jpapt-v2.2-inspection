@@ -65,7 +65,9 @@ fn run() -> Result<(), String> {
             }
         }
         "describe" => {
-            let selector = args.next().ok_or_else(|| "describe requires <workflow>".to_owned())?;
+            let selector = args
+                .next()
+                .ok_or_else(|| "describe requires <workflow>".to_owned())?;
             reject_extra(args)?;
             let workflow = select_workflow(&workflows, &selector)?;
             println!(
@@ -76,7 +78,10 @@ fn run() -> Result<(), String> {
         "validate" => {
             reject_extra(args)?;
             validate_catalog(&workflows)?;
-            println!("OK: {} workflow(s) are repository-dispatch reachable", workflows.len() - 1);
+            println!(
+                "OK: {} workflow(s) are repository-dispatch reachable",
+                workflows.len() - 1
+            );
         }
         "resolve" => resolve_command(args, &workflows)?,
         _ => return Err(format!("unsupported command {command:?}\n{}", usage())),
@@ -112,7 +117,10 @@ fn resolve_command(
         return Err("repository-dispatch.yml cannot dispatch itself".to_owned());
     }
     if !workflow.workflow_dispatch {
-        return Err(format!("{} does not expose workflow_dispatch", workflow.file));
+        return Err(format!(
+            "{} does not expose workflow_dispatch",
+            workflow.file
+        ));
     }
 
     let raw: Value = serde_json::from_str(&inputs_json)
@@ -211,7 +219,11 @@ fn validate_input_value(
                 return Err(format!("{workflow} input {name:?} must be string"));
             }
         }
-        other => return Err(format!("{workflow} input {name:?} has unsupported type {other:?}")),
+        other => {
+            return Err(format!(
+                "{workflow} input {name:?} has unsupported type {other:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -242,17 +254,19 @@ fn parse_workflow(path: &Path) -> Result<WorkflowSpec, String> {
         .and_then(|value| value.to_str())
         .ok_or_else(|| format!("invalid workflow filename: {}", path.display()))?
         .to_owned();
-    let alias = file
-        .strip_suffix(".yml")
-        .unwrap_or(&file)
-        .to_owned();
+    let alias = file.strip_suffix(".yml").unwrap_or(&file).to_owned();
     let name = text
         .lines()
-        .find_map(|line| line.strip_prefix("name:").map(|value| unquote(value.trim())))
+        .find_map(|line| {
+            line.strip_prefix("name:")
+                .map(|value| unquote(value.trim()))
+        })
         .unwrap_or_else(|| alias.clone());
 
     let lines = text.lines().collect::<Vec<_>>();
-    let dispatch_index = lines.iter().position(|line| line.trim_end() == "  workflow_dispatch:");
+    let dispatch_index = lines
+        .iter()
+        .position(|line| line.trim_end() == "  workflow_dispatch:");
     let Some(dispatch_index) = dispatch_index else {
         return Ok(WorkflowSpec {
             file,
@@ -315,7 +329,11 @@ fn parse_workflow(path: &Path) -> Result<WorkflowSpec, String> {
     })
 }
 
-fn parse_input_spec(path: &Path, lines: &[&str], mut index: usize) -> Result<(InputSpec, usize), String> {
+fn parse_input_spec(
+    path: &Path,
+    lines: &[&str],
+    mut index: usize,
+) -> Result<(InputSpec, usize), String> {
     let mut spec = InputSpec {
         kind: "string".to_owned(),
         ..InputSpec::default()
@@ -332,7 +350,11 @@ fn parse_input_spec(path: &Path, lines: &[&str], mut index: usize) -> Result<(In
             break;
         }
         if indent != 8 {
-            return Err(format!("{}:{}: unsupported input indentation", path.display(), index + 1));
+            return Err(format!(
+                "{}:{}: unsupported input indentation",
+                path.display(),
+                index + 1
+            ));
         }
         let (key, raw) = trimmed
             .split_once(':')
@@ -354,16 +376,23 @@ fn parse_input_spec(path: &Path, lines: &[&str], mut index: usize) -> Result<(In
                 index += 1;
                 while index < lines.len() {
                     let option_line = lines[index];
-                    if leading_spaces(option_line) != 10 || !option_line.trim_start().starts_with("- ") {
+                    if leading_spaces(option_line) != 10
+                        || !option_line.trim_start().starts_with("- ")
+                    {
                         break;
                     }
-                    spec.options.push(unquote(option_line.trim_start()[2..].trim()));
+                    spec.options
+                        .push(unquote(option_line.trim_start()[2..].trim()));
                     index += 1;
                 }
                 continue;
             }
             "options" => {
-                return Err(format!("{}:{}: unsupported options syntax", path.display(), index + 1));
+                return Err(format!(
+                    "{}:{}: unsupported options syntax",
+                    path.display(),
+                    index + 1
+                ));
             }
             other => {
                 return Err(format!(
@@ -390,7 +419,10 @@ fn validate_catalog(workflows: &BTreeMap<String, WorkflowSpec>) -> Result<(), St
         }
         for (name, spec) in &workflow.inputs {
             if spec.kind == "choice" && spec.options.is_empty() {
-                errors.push(format!("{} input {name:?} is choice without options", workflow.file));
+                errors.push(format!(
+                    "{} input {name:?} is choice without options",
+                    workflow.file
+                ));
             }
             if let Some(default) = &spec.default
                 && let Err(error) = validate_input_value(&workflow.file, name, spec, default)
@@ -413,14 +445,19 @@ fn select_workflow<'a>(
     if let Some(workflow) = workflows.get(selector) {
         return Ok(workflow);
     }
-    let normalized = selector.strip_suffix(".yaml").or_else(|| selector.strip_suffix(".yml")).unwrap_or(selector);
+    let normalized = selector
+        .strip_suffix(".yaml")
+        .or_else(|| selector.strip_suffix(".yml"))
+        .unwrap_or(selector);
     let matches = workflows
         .values()
         .filter(|workflow| workflow.alias == normalized)
         .collect::<Vec<_>>();
     match matches.as_slice() {
         [workflow] => Ok(*workflow),
-        [] => Err(format!("unknown workflow {selector:?}; run `asr-workflow-dispatch list`")),
+        [] => Err(format!(
+            "unknown workflow {selector:?}; run `asr-workflow-dispatch list`"
+        )),
         _ => Err(format!("ambiguous workflow alias {selector:?}")),
     }
 }
@@ -434,7 +471,9 @@ fn validate_ref(value: &str) -> Result<(), String> {
         || value.contains("@{")
         || value.ends_with('.')
         || value.ends_with('/')
-        || value.chars().any(|ch| ch.is_control() || ch.is_whitespace() || "~^:?*[\\".contains(ch))
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace() || "~^:?*[\\".contains(ch))
     {
         return Err(format!("unsafe or invalid Git ref {value:?}"));
     }
@@ -454,7 +493,11 @@ fn parse_bool(raw: &str, path: &Path, index: usize) -> Result<bool, String> {
     match raw {
         "true" => Ok(true),
         "false" => Ok(false),
-        _ => Err(format!("{}:{}: expected boolean", path.display(), index + 1)),
+        _ => Err(format!(
+            "{}:{}: expected boolean",
+            path.display(),
+            index + 1
+        )),
     }
 }
 
@@ -524,7 +567,23 @@ mod tests {
             default: Some(Value::String("smoke".to_owned())),
             options: vec!["smoke".to_owned(), "full".to_owned()],
         };
-        assert!(validate_input_value("x.yml", "evaluation", &spec, &Value::String("full".to_owned())).is_ok());
-        assert!(validate_input_value("x.yml", "evaluation", &spec, &Value::String("bad".to_owned())).is_err());
+        assert!(
+            validate_input_value(
+                "x.yml",
+                "evaluation",
+                &spec,
+                &Value::String("full".to_owned())
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_input_value(
+                "x.yml",
+                "evaluation",
+                &spec,
+                &Value::String("bad".to_owned())
+            )
+            .is_err()
+        );
     }
 }
