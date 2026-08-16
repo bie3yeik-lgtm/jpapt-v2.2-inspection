@@ -5,20 +5,28 @@ on:
     branches:
       - main
     paths:
+      - .github/actionlint.yaml
       - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - docker/candidate-package/Dockerfile
+      - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/run-candidate-package-evaluation.sh
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   pull_request:
     paths:
+      - .github/actionlint.yaml
       - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - docker/candidate-package/Dockerfile
+      - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/run-candidate-package-evaluation.sh
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   workflow_dispatch:
 
 permissions:
@@ -32,7 +40,7 @@ jobs:
   contracts:
     name: Lint workflow and helper contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -41,6 +49,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: "1.26"
+          cache: false
 
       - name: Cache Go build state
         uses: actions/cache@v5
@@ -59,6 +68,7 @@ jobs:
           set -euo pipefail
           actionlint -color \
             .github/workflows/candidate-package-evaluate.yml \
+            .github/workflows/candidate-request-gateway.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
 
@@ -66,8 +76,14 @@ jobs:
         shell: bash
         run: bash -n scripts/ci/run-candidate-package-evaluation.sh
 
-      - name: Validate Python evaluator syntax
-        run: python -m py_compile scripts/ci/generic-candidate-evaluate.py
+      - name: Validate Python helper syntax
+        run: |
+          python -m py_compile \
+            scripts/ci/estimate-candidate-runtime.py \
+            scripts/ci/generic-candidate-evaluate.py
+
+      - name: Test Rust candidate request contract
+        run: cargo test --locked -p asr-contracts --bin asr-candidate-request
 
       - name: Verify candidate Dockerfile parses
         run: docker buildx build --check -f docker/candidate-package/Dockerfile .
