@@ -8,7 +8,6 @@ from onnx import TensorProto, helper
 import pytest
 
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
-from parakeet_onnx.runtime.inspection import CandidateInspectionError
 from parakeet_onnx.runtime.whisper import WhisperRuntimeContract
 
 
@@ -152,7 +151,7 @@ def test_whisper_contract_separates_cache_position_from_kv_cache(tmp_path: Path)
 
 
 def test_whisper_contract_rejects_unknown_decoder_control_input(tmp_path: Path) -> None:
-    with pytest.raises(CandidateInspectionError, match="neither a supported auxiliary input"):
+    with pytest.raises(CandidateMetadataError, match="neither a supported auxiliary input"):
         _candidate(tmp_path, unknown_auxiliary=True)
 
 
