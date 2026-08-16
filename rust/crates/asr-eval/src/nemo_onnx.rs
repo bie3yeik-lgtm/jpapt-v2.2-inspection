@@ -197,7 +197,12 @@ fn nonempty(name: &str, value: &str) -> Result<()> {
 
 fn valid_sha(name: &str, value: &str) -> Result<()> {
     ensure!(value.len() == 64, "{name} must be a 64-character SHA256");
-    ensure!(value.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{name} must be lowercase hexadecimal");
+    ensure!(
+        value
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "{name} must be lowercase hexadecimal"
+    );
     Ok(())
 }
 
@@ -205,8 +210,15 @@ fn safe_relative_path(name: &str, value: &str) -> Result<PathBuf> {
     nonempty(name, value)?;
     let path = Path::new(value);
     ensure!(!path.is_absolute(), "{name} must be relative: {value}");
-    ensure!(!value.contains('\\'), "{name} must use forward slashes: {value}");
-    ensure!(path.components().all(|component| matches!(component, std::path::Component::Normal(_))), "unsafe {name}: {value}");
+    ensure!(
+        !value.contains('\\'),
+        "{name} must use forward slashes: {value}"
+    );
+    ensure!(
+        path.components()
+            .all(|component| matches!(component, std::path::Component::Normal(_))),
+        "unsafe {name}: {value}"
+    );
     Ok(path.to_path_buf())
 }
 
@@ -215,24 +227,47 @@ fn sha256(path: &Path) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-fn verify_file(root: &Path, label: &str, path: &str, expected_sha: &str, expected_size: u64) -> Result<()> {
+fn verify_file(
+    root: &Path,
+    label: &str,
+    path: &str,
+    expected_sha: &str,
+    expected_size: u64,
+) -> Result<()> {
     valid_sha(&format!("{label}.sha256"), expected_sha)?;
     ensure!(expected_size > 0, "{label}.size_bytes must be > 0");
     let relative = safe_relative_path(&format!("{label}.path"), path)?;
-    let root = root.canonicalize().context("failed to canonicalize bundle root")?;
+    let root = root
+        .canonicalize()
+        .context("failed to canonicalize bundle root")?;
     let full = root.join(relative);
     ensure!(full.is_file(), "{label} file missing: {}", full.display());
     let canonical = full.canonicalize()?;
-    ensure!(canonical.starts_with(&root), "{label} escapes bundle root: {}", canonical.display());
+    ensure!(
+        canonical.starts_with(&root),
+        "{label} escapes bundle root: {}",
+        canonical.display()
+    );
     let metadata = fs::metadata(&canonical)?;
-    ensure!(metadata.len() == expected_size, "{label} size mismatch: expected={expected_size}, observed={}", metadata.len());
-    ensure!(sha256(&canonical)? == expected_sha, "{label} SHA256 mismatch");
+    ensure!(
+        metadata.len() == expected_size,
+        "{label} size mismatch: expected={expected_size}, observed={}",
+        metadata.len()
+    );
+    ensure!(
+        sha256(&canonical)? == expected_sha,
+        "{label} SHA256 mismatch"
+    );
     Ok(())
 }
 
 fn require_gate(name: &str, gate: &Gate) -> Result<()> {
     nonempty(&format!("gate {name} evidence"), &gate.evidence)?;
-    ensure!(gate.status == "passed", "required gate {name} is not passed: {}", gate.status);
+    ensure!(
+        gate.status == "passed",
+        "required gate {name} is not passed: {}",
+        gate.status
+    );
     Ok(())
 }
 
@@ -242,66 +277,166 @@ fn validate_obstacles(report: &ValidationReport, scope: RequiredScope) -> Result
     for obstacle in &report.obstacles {
         nonempty("obstacle.id", &obstacle.id)?;
         nonempty("obstacle.evidence", &obstacle.evidence)?;
-        ensure!(matches!(obstacle.status.as_str(), "passed" | "failed" | "not_applicable"), "invalid obstacle status for {}: {}", obstacle.id, obstacle.status);
-        ensure!(observed.insert(obstacle.id.as_str(), obstacle.status.as_str()).is_none(), "duplicate obstacle id: {}", obstacle.id);
+        ensure!(
+            matches!(
+                obstacle.status.as_str(),
+                "passed" | "failed" | "not_applicable"
+            ),
+            "invalid obstacle status for {}: {}",
+            obstacle.id,
+            obstacle.status
+        );
+        ensure!(
+            observed
+                .insert(obstacle.id.as_str(), obstacle.status.as_str())
+                .is_none(),
+            "duplicate obstacle id: {}",
+            obstacle.id
+        );
     }
     let observed_ids: BTreeSet<_> = observed.keys().copied().collect();
-    ensure!(observed_ids == required, "obstacle set mismatch: expected={required:?}, observed={observed_ids:?}");
+    ensure!(
+        observed_ids == required,
+        "obstacle set mismatch: expected={required:?}, observed={observed_ids:?}"
+    );
     for (id, status) in observed {
         ensure!(status != "failed", "known obstacle check failed: {id}");
-        if scope == RequiredScope::Tdt && matches!(id, "E-01-predictor-state-shape" | "F-01-duration-zero-loop-guard") {
-            ensure!(status == "passed", "TDT requires obstacle check {id} to pass, not {status}");
+        if scope == RequiredScope::Tdt
+            && matches!(
+                id,
+                "E-01-predictor-state-shape" | "F-01-duration-zero-loop-guard"
+            )
+        {
+            ensure!(
+                status == "passed",
+                "TDT requires obstacle check {id} to pass, not {status}"
+            );
         }
     }
     Ok(())
 }
 
 fn validate_semantics(report: &ValidationReport) -> Result<()> {
-    ensure!(report.schema_version == 1, "unsupported report schema_version");
+    ensure!(
+        report.schema_version == 1,
+        "unsupported report schema_version"
+    );
     ensure!(report.profile_id == PROFILE_ID, "unexpected profile_id");
     let source = &report.source;
     ensure!(source.repo_id == REPO_ID, "unexpected source repo");
     nonempty("source.revision_requested", &source.revision_requested)?;
-    ensure!(source.revision_resolved.len() >= 40 && source.revision_resolved.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "source revision must be immutable lowercase hexadecimal");
+    ensure!(
+        source.revision_resolved.len() >= 40
+            && source
+                .revision_resolved
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "source revision must be immutable lowercase hexadecimal"
+    );
     ensure!(source.library == "nemo", "source library must be nemo");
     ensure!(source.language == "ja", "source language must be ja");
     ensure!(source.license == "cc-by-4.0", "source license mismatch");
-    ensure!(source.datasets.iter().any(|dataset| dataset == "reazon-research/reazonspeech"), "Model Card dataset is missing");
-    ensure!(source.model_file == MODEL_FILE, "unexpected source model file");
+    ensure!(
+        source
+            .datasets
+            .iter()
+            .any(|dataset| dataset == "reazon-research/reazonspeech"),
+        "Model Card dataset is missing"
+    );
+    ensure!(
+        source.model_file == MODEL_FILE,
+        "unexpected source model file"
+    );
     valid_sha("source.model_file_sha256", &source.model_file_sha256)?;
 
     let env = &report.environment;
-    for (name, value) in [("python", env.python.as_str()), ("nemo", env.nemo.as_str()), ("torch", env.torch.as_str()), ("onnx", env.onnx.as_str()), ("onnxruntime", env.onnxruntime.as_str())] {
+    for (name, value) in [
+        ("python", env.python.as_str()),
+        ("nemo", env.nemo.as_str()),
+        ("torch", env.torch.as_str()),
+        ("onnx", env.onnx.as_str()),
+        ("onnxruntime", env.onnxruntime.as_str()),
+    ] {
         nonempty(&format!("environment.{name}"), value)?;
     }
     ensure!(env.opset >= 17, "ONNX opset must be >= 17");
-    ensure!(matches!(env.exporter.as_str(), "nemo_export" | "torch_onnx_legacy" | "torch_onnx_dynamo"), "unsupported exporter");
+    ensure!(
+        matches!(
+            env.exporter.as_str(),
+            "nemo_export" | "torch_onnx_legacy" | "torch_onnx_dynamo"
+        ),
+        "unsupported exporter"
+    );
     if env.exporter == "torch_onnx_dynamo" {
         ensure!(env.dynamo, "torch_onnx_dynamo requires dynamo=true");
     }
 
     let model = &report.resolved_model;
-    ensure!(model.architecture == "hybrid_fastconformer_tdt_ctc", "architecture mismatch");
-    let decoders: BTreeSet<_> = model.supported_decoders.iter().map(String::as_str).collect();
-    ensure!(decoders == BTreeSet::from(["ctc", "tdt"]), "supported decoders must be exactly ctc+tdt");
-    ensure!(model.default_decoder == "tdt", "Model Card default decoder must be tdt");
-    ensure!(model.sample_rate_hz == 16000, "resolved sample rate must be 16 kHz");
-    ensure!(model.n_mels > 0, "resolved n_mels must come from checkpoint and be > 0");
+    ensure!(
+        model.architecture == "hybrid_fastconformer_tdt_ctc",
+        "architecture mismatch"
+    );
+    let decoders: BTreeSet<_> = model
+        .supported_decoders
+        .iter()
+        .map(String::as_str)
+        .collect();
+    ensure!(
+        decoders == BTreeSet::from(["ctc", "tdt"]),
+        "supported decoders must be exactly ctc+tdt"
+    );
+    ensure!(
+        model.default_decoder == "tdt",
+        "Model Card default decoder must be tdt"
+    );
+    ensure!(
+        model.sample_rate_hz == 16000,
+        "resolved sample rate must be 16 kHz"
+    );
+    ensure!(
+        model.n_mels > 0,
+        "resolved n_mels must come from checkpoint and be > 0"
+    );
     nonempty("resolved_model.normalize", &model.normalize)?;
     ensure!(model.dither >= 0.0, "dither cannot be negative");
     let _ = model.xscaling;
     nonempty("resolved_model.tokenizer_type", &model.tokenizer_type)?;
     ensure!(model.vocab_size > 1, "vocab_size must be > 1");
-    ensure!(model.ctc_blank_id >= model.vocab_size, "CTC blank must not collide with tokenizer vocabulary");
-    ensure!(!model.tdt_durations.is_empty(), "TDT durations are required");
-    ensure!(model.tdt_durations.contains(&0), "TDT duration vocabulary must expose duration=0 for loop-safety validation");
+    ensure!(
+        model.ctc_blank_id >= model.vocab_size,
+        "CTC blank must not collide with tokenizer vocabulary"
+    );
+    ensure!(
+        !model.tdt_durations.is_empty(),
+        "TDT durations are required"
+    );
+    ensure!(
+        model.tdt_durations.contains(&0),
+        "TDT duration vocabulary must expose duration=0 for loop-safety validation"
+    );
 
     let frontend = &report.frontend;
-    ensure!(frontend.location == "outside_onnx", "complex STFT frontend must stay outside canonical ONNX graph");
-    ensure!(frontend.fixture_dither >= 0.0, "fixture dither cannot be negative");
-    ensure!(frontend.feature_shape_verified, "frontend feature shape is not verified");
-    for (name, value) in [("max_abs", frontend.parity.max_abs), ("mean_abs", frontend.parity.mean_abs), ("relative_l2", frontend.parity.relative_l2)] {
-        ensure!(value.is_finite() && value >= 0.0, "frontend parity {name} must be finite and non-negative");
+    ensure!(
+        frontend.location == "outside_onnx",
+        "complex STFT frontend must stay outside canonical ONNX graph"
+    );
+    ensure!(
+        frontend.fixture_dither >= 0.0,
+        "fixture dither cannot be negative"
+    );
+    ensure!(
+        frontend.feature_shape_verified,
+        "frontend feature shape is not verified"
+    );
+    for (name, value) in [
+        ("max_abs", frontend.parity.max_abs),
+        ("mean_abs", frontend.parity.mean_abs),
+        ("relative_l2", frontend.parity.relative_l2),
+    ] {
+        ensure!(
+            value.is_finite() && value >= 0.0,
+            "frontend parity {name} must be finite and non-negative"
+        );
     }
     Ok(())
 }
@@ -311,23 +446,77 @@ fn validate_artifacts(report: &ValidationReport, root: &Path, scope: RequiredSco
     let mut paths = BTreeSet::new();
     let mut roles = BTreeSet::new();
     for artifact in &report.artifacts {
-        ensure!(matches!(artifact.role.as_str(), "primary" | "encoder" | "predictor" | "joint" | "tokenizer" | "fixture"), "unsupported artifact role: {}", artifact.role);
-        ensure!(matches!(artifact.format.as_str(), "onnx" | "sentencepiece" | "json" | "npy" | "npz"), "unsupported artifact format: {}", artifact.format);
-        ensure!(matches!(artifact.precision.as_str(), "fp32" | "int8" | "metadata"), "unsupported artifact precision: {}", artifact.precision);
-        ensure!(paths.insert(artifact.path.as_str()), "duplicate artifact path: {}", artifact.path);
+        ensure!(
+            matches!(
+                artifact.role.as_str(),
+                "primary" | "encoder" | "predictor" | "joint" | "tokenizer" | "fixture"
+            ),
+            "unsupported artifact role: {}",
+            artifact.role
+        );
+        ensure!(
+            matches!(
+                artifact.format.as_str(),
+                "onnx" | "sentencepiece" | "json" | "npy" | "npz"
+            ),
+            "unsupported artifact format: {}",
+            artifact.format
+        );
+        ensure!(
+            matches!(artifact.precision.as_str(), "fp32" | "int8" | "metadata"),
+            "unsupported artifact precision: {}",
+            artifact.precision
+        );
+        ensure!(
+            paths.insert(artifact.path.as_str()),
+            "duplicate artifact path: {}",
+            artifact.path
+        );
         if artifact.role != "fixture" {
-            ensure!(roles.insert(artifact.role.as_str()), "duplicate artifact role: {}", artifact.role);
+            ensure!(
+                roles.insert(artifact.role.as_str()),
+                "duplicate artifact role: {}",
+                artifact.role
+            );
         }
-        verify_file(root, &format!("artifact {}", artifact.role), &artifact.path, &artifact.sha256, artifact.size_bytes)?;
+        verify_file(
+            root,
+            &format!("artifact {}", artifact.role),
+            &artifact.path,
+            &artifact.sha256,
+            artifact.size_bytes,
+        )?;
         let mut external_paths = BTreeSet::new();
         for external in &artifact.external_data {
-            ensure!(external_paths.insert(external.path.as_str()), "duplicate external data path for {}", artifact.path);
-            verify_file(root, &format!("external data for {}", artifact.path), &external.path, &external.sha256, external.size_bytes)?;
+            ensure!(
+                external_paths.insert(external.path.as_str()),
+                "duplicate external data path for {}",
+                artifact.path
+            );
+            verify_file(
+                root,
+                &format!("external data for {}", artifact.path),
+                &external.path,
+                &external.sha256,
+                external.size_bytes,
+            )?;
         }
     }
-    ensure!(roles.contains("primary"), "CTC primary ONNX artifact is required");
-    ensure!(roles.contains("tokenizer"), "revision-locked tokenizer artifact is required");
-    ensure!(report.artifacts.iter().any(|artifact| artifact.role == "fixture"), "at least one reference fixture is required");
+    ensure!(
+        roles.contains("primary"),
+        "CTC primary ONNX artifact is required"
+    );
+    ensure!(
+        roles.contains("tokenizer"),
+        "revision-locked tokenizer artifact is required"
+    );
+    ensure!(
+        report
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.role == "fixture"),
+        "at least one reference fixture is required"
+    );
     if scope == RequiredScope::Tdt {
         for role in ["encoder", "predictor", "joint"] {
             ensure!(roles.contains(role), "TDT artifact role {role} is required");
@@ -368,17 +557,28 @@ fn validate_gates(report: &ValidationReport, scope: RequiredScope) -> Result<()>
             ("tdt_state_trace_parity", &gates.tdt_state_trace_parity),
         ] {
             nonempty(&format!("gate {name} evidence"), &gate.evidence)?;
-            ensure!(matches!(gate.status.as_str(), "passed" | "blocked" | "not_run"), "invalid optional TDT gate status for {name}: {}", gate.status);
+            ensure!(
+                matches!(gate.status.as_str(), "passed" | "blocked" | "not_run"),
+                "invalid optional TDT gate status for {name}: {}",
+                gate.status
+            );
         }
     }
     Ok(())
 }
 
-pub fn validate_report(report_path: &Path, bundle_root: &Path, scope: RequiredScope) -> Result<ValidationReport> {
-    let bytes = fs::read(report_path).with_context(|| format!("failed to read {}", report_path.display()))?;
-    let value: Value = serde_json::from_slice(&bytes).context("NeMo ONNX validation report is not valid JSON")?;
+pub fn validate_report(
+    report_path: &Path,
+    bundle_root: &Path,
+    scope: RequiredScope,
+) -> Result<ValidationReport> {
+    let bytes = fs::read(report_path)
+        .with_context(|| format!("failed to read {}", report_path.display()))?;
+    let value: Value =
+        serde_json::from_slice(&bytes).context("NeMo ONNX validation report is not valid JSON")?;
     reject_nulls(&value, "$")?;
-    let report: ValidationReport = serde_json::from_value(value).context("NeMo ONNX validation report violates the typed contract")?;
+    let report: ValidationReport = serde_json::from_value(value)
+        .context("NeMo ONNX validation report violates the typed contract")?;
     validate_semantics(&report)?;
     validate_artifacts(&report, bundle_root, scope)?;
     validate_gates(&report, scope)?;

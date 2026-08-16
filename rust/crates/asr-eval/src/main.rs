@@ -47,7 +47,10 @@ fn main() -> anyhow::Result<()> {
         Command::NemoOnnxValidate(args) => {
             let scope = RequiredScope::parse(&args.require)?;
             validate_report(&args.report, &args.bundle_root, scope)?;
-            println!("NeMo ONNX validation passed for required scope: {}", args.require);
+            println!(
+                "NeMo ONNX validation passed for required scope: {}",
+                args.require
+            );
         }
     }
     Ok(())

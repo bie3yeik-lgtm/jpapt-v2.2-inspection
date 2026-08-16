@@ -64,7 +64,11 @@ fn report(root: &Path) -> Value {
     let primary = write_artifact(root, "ctc/model.onnx", b"fake canonical fp32 onnx");
     let external = write_artifact(root, "ctc/model.onnx.data", b"fake external weights");
     let tokenizer = write_artifact(root, "tokenizer/tokenizer.model", b"fake sentencepiece");
-    let fixture = write_artifact(root, "fixtures/ctc-reference.npz", b"fake reference fixture");
+    let fixture = write_artifact(
+        root,
+        "fixtures/ctc-reference.npz",
+        b"fake reference fixture",
+    );
 
     json!({
         "schema_version": 1,
@@ -169,7 +173,11 @@ fn report(root: &Path) -> Value {
 fn accepts_complete_ctc_bundle_and_rejects_tdt_scope() {
     let root = temp_root();
     let report_path = root.join("nemo-onnx-validation.json");
-    fs::write(&report_path, serde_json::to_vec_pretty(&report(&root)).unwrap()).unwrap();
+    fs::write(
+        &report_path,
+        serde_json::to_vec_pretty(&report(&root)).unwrap(),
+    )
+    .unwrap();
 
     validate_report(&report_path, &root, RequiredScope::Ctc).unwrap();
     assert!(validate_report(&report_path, &root, RequiredScope::Tdt).is_err());
@@ -181,7 +189,11 @@ fn accepts_complete_ctc_bundle_and_rejects_tdt_scope() {
 fn rejects_artifact_tampering() {
     let root = temp_root();
     let report_path = root.join("nemo-onnx-validation.json");
-    fs::write(&report_path, serde_json::to_vec_pretty(&report(&root)).unwrap()).unwrap();
+    fs::write(
+        &report_path,
+        serde_json::to_vec_pretty(&report(&root)).unwrap(),
+    )
+    .unwrap();
     fs::write(root.join("ctc/model.onnx"), b"tampered").unwrap();
 
     assert!(validate_report(&report_path, &root, RequiredScope::Ctc).is_err());
