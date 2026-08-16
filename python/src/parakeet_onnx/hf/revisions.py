@@ -63,14 +63,24 @@ def _optional_string(source: Mapping[str, Any], key: str) -> str | None:
     return value
 
 
-def _decoder_id(
-    value: Any,
+def _optional_identity(
+    raw: Mapping[str, Any],
+    key: str,
     *,
     document: str,
-    field: str,
-) -> str:
-    """Normalize a string or structured decoder declaration to one ID."""
+) -> tuple[str | None, str | None]:
+    value = raw.get(key)
+    if value is None:
+        return None, None
+    if not isinstance(value, Mapping):
+        raise RevisionError(f"{document}: {key!r} must be an object when present.")
+    return (
+        _require_string(value, "repo_id", document=document),
+        _require_string(value, "revision", document=document),
+    )
 
+
+def _decoder_id(value: Any, *, document: str, field: str) -> str:
     if isinstance(value, str) and value:
         return value
     if isinstance(value, Mapping):
@@ -96,11 +106,7 @@ def _decoder_list(
     if not isinstance(value, list):
         raise RevisionError(f"{document}: {key!r} must be an array when present.")
     result = tuple(
-        _decoder_id(
-            item,
-            document=document,
-            field=f"{key}[{index}]",
-        )
+        _decoder_id(item, document=document, field=f"{key}[{index}]")
         for index, item in enumerate(value)
     )
     if len(result) != len(set(result)):
@@ -110,8 +116,6 @@ def _decoder_list(
 
 @dataclass(frozen=True, slots=True)
 class DecoderRevisionSet:
-    """Framework-neutral decoder capability declaration."""
-
     supported: tuple[str, ...]
     default: str | None
 
@@ -131,13 +135,6 @@ def _parse_decoders(
     *,
     document: str,
 ) -> DecoderRevisionSet:
-    """Parse decoder capability metadata without assuming one framework.
-
-    Accepted forms include string IDs and structured objects such as
-    ``{"id": "ctc", ...}``.  ``decorders`` is accepted as a legacy typo but
-    normalized output always uses ``decoders``.
-    """
-
     value = raw.get("decoders")
     if value is None:
         value = raw.get("decorders")
@@ -145,11 +142,7 @@ def _parse_decoders(
         legacy = raw.get("decoder")
         if legacy is None:
             return DecoderRevisionSet((), None)
-        decoder = _decoder_id(
-            legacy,
-            document=document,
-            field="decoder",
-        )
+        decoder = _decoder_id(legacy, document=document, field="decoder")
         return DecoderRevisionSet((decoder,), decoder)
 
     if isinstance(value, list):
@@ -210,36 +203,90 @@ class RevisionDocument:
 @dataclass(frozen=True, slots=True)
 class ReferenceRevision:
     document: RevisionDocument
-    model_id: str
-    model_revision: str
+    development_artifact_repo_id: str
+    development_artifact_revision: str
+    upstream_repo_id: str | None
+    upstream_revision: str | None
+    tokenizer_repo_id: str | None
+    tokenizer_revision: str | None
     reference_id: str | None
     reference_revision: str | None
-    tokenizer_revision: str | None
     canonical_framework: str | None
     decoders: DecoderRevisionSet
+    legacy_model_shape: bool
+
+    @property
+    def model_id(self) -> str:
+        """Backward-compatible alias for the development artifact repo id."""
+        return self.development_artifact_repo_id
+
+    @property
+    def model_revision(self) -> str:
+        """Backward-compatible alias for the development artifact revision."""
+        return self.development_artifact_revision
 
     @classmethod
     def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
         raw = document.raw
-        model = raw.get("model")
-        if isinstance(model, Mapping):
-            model_id = _require_string(model, "repo_id", document=document.name)
-            model_revision = _require_string(
-                model,
+
+        development = raw.get("development_artifact")
+        legacy_model_shape = not isinstance(development, Mapping)
+        model_framework: str | None = None
+
+        if isinstance(development, Mapping):
+            development_repo_id = _require_string(
+                development,
+                "repo_id",
+                document=document.name,
+            )
+            development_revision = _require_string(
+                development,
                 "revision",
                 document=document.name,
             )
-            tokenizer_revision = _optional_string(model, "tokenizer_revision")
-            model_framework = _optional_string(model, "framework")
         else:
-            model_id = _require_string(raw, "model_id", document=document.name)
-            model_revision = _require_string(
-                raw,
-                "model_revision",
-                document=document.name,
-            )
-            tokenizer_revision = _optional_string(raw, "tokenizer_revision")
-            model_framework = None
+            model = raw.get("model")
+            if isinstance(model, Mapping):
+                development_repo_id = _require_string(
+                    model,
+                    "repo_id",
+                    document=document.name,
+                )
+                development_revision = _require_string(
+                    model,
+                    "revision",
+                    document=document.name,
+                )
+                model_framework = _optional_string(model, "framework")
+            else:
+                development_repo_id = _require_string(
+                    raw,
+                    "model_id",
+                    document=document.name,
+                )
+                development_revision = _require_string(
+                    raw,
+                    "model_revision",
+                    document=document.name,
+                )
+
+        upstream_repo_id, upstream_revision = _optional_identity(
+            raw,
+            "upstream",
+            document=document.name,
+        )
+        tokenizer_repo_id, tokenizer_revision = _optional_identity(
+            raw,
+            "tokenizer",
+            document=document.name,
+        )
+
+        if legacy_model_shape and tokenizer_revision is None:
+            model = raw.get("model")
+            if isinstance(model, Mapping):
+                tokenizer_revision = _optional_string(model, "tokenizer_revision")
+            else:
+                tokenizer_revision = _optional_string(raw, "tokenizer_revision")
 
         reference = raw.get("reference")
         if isinstance(reference, Mapping):
@@ -256,17 +303,21 @@ class ReferenceRevision:
 
         return cls(
             document=document,
-            model_id=model_id,
-            model_revision=model_revision,
+            development_artifact_repo_id=development_repo_id,
+            development_artifact_revision=development_revision,
+            upstream_repo_id=upstream_repo_id,
+            upstream_revision=upstream_revision,
+            tokenizer_repo_id=tokenizer_repo_id,
+            tokenizer_revision=tokenizer_revision,
             reference_id=reference_id,
             reference_revision=reference_revision,
-            tokenizer_revision=tokenizer_revision,
             canonical_framework=(
                 reference_framework
                 or model_framework
                 or _optional_string(raw, "canonical_framework")
             ),
             decoders=_parse_decoders(raw, document=document.name),
+            legacy_model_shape=legacy_model_shape,
         )
 
 
@@ -409,17 +460,28 @@ class RevisionBundle:
         return digest.hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
+        reference = self.reference
         return {
             "bundle_sha256": self.sha256,
             "reference": {
-                "document_sha256": self.reference.document.sha256,
-                "model_id": self.reference.model_id,
-                "model_revision": self.reference.model_revision,
-                "reference_id": self.reference.reference_id,
-                "reference_revision": self.reference.reference_revision,
-                "tokenizer_revision": self.reference.tokenizer_revision,
-                "canonical_framework": self.reference.canonical_framework,
-                "decoders": self.reference.decoders.to_dict(),
+                "document_sha256": reference.document.sha256,
+                "development_artifact": {
+                    "repo_id": reference.development_artifact_repo_id,
+                    "revision": reference.development_artifact_revision,
+                },
+                "upstream": {
+                    "repo_id": reference.upstream_repo_id,
+                    "revision": reference.upstream_revision,
+                },
+                "tokenizer": {
+                    "repo_id": reference.tokenizer_repo_id,
+                    "revision": reference.tokenizer_revision,
+                },
+                "reference_id": reference.reference_id,
+                "reference_revision": reference.reference_revision,
+                "canonical_framework": reference.canonical_framework,
+                "decoders": reference.decoders.to_dict(),
+                "legacy_model_shape": reference.legacy_model_shape,
             },
             "evaluation_schema": {
                 "document_sha256": self.evaluation_schema.document.sha256,
