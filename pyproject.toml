@@ -22,7 +22,7 @@ datasets = [
 ]
 onnx = [
     "onnx>=1.17",
-    "onnxruntime>=1.20",
+    "onnxruntime==1.28.0",
 ]
 transformers-runtime = [
     "transformers>=4.39",
