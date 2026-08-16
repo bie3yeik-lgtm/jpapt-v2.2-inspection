@@ -30,6 +30,10 @@ def _write_ctc(path: Path) -> None:
 
 
 def _write_tdt(root: Path) -> None:
+    (root / "model_config.json").write_text(
+        json.dumps({"tdt_durations": [0, 1, 2]}) + "\n",
+        encoding="utf-8",
+    )
     _save(
         root / "encoder.onnx",
         [
@@ -80,7 +84,7 @@ def test_one_minimal_candidate_metadata_selects_ctc_or_tdt_without_rewrite(
     _write_ctc(tmp_path / "model.onnx")
     _write_tdt(tmp_path)
     (tmp_path / "vocabulary.json").write_text(
-        json.dumps(["<blank>", "a", "b"]) + "\n", encoding="utf-8"
+        json.dumps(["<blank>", "<bos>", "a"]) + "\n", encoding="utf-8"
     )
     metadata = {
         "profile_set": "parakeet-tdt-ctc-v1",
@@ -116,6 +120,7 @@ def test_one_minimal_candidate_metadata_selects_ctc_or_tdt_without_rewrite(
     assert tdt.decoder == "tdt"
     assert tdt.profile_id == "tdt-v1"
     assert tdt.artifact_contract == "tdt-multi-graph-v1"
+    assert tdt.runtime_contract["decoder_config"]["bos_id"] == 1
     assert tdt.runtime_contract["decoder_config"]["durations"] == [0, 1, 2]
     assert set(tdt.artifacts) == {"encoder", "predictor", "joint"}
     assert default.variant == "ctc"
