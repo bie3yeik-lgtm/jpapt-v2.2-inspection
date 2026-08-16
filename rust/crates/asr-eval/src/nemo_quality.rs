@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::evaluator::{EvaluateOptions, evaluate};
+use crate::nemo_onnx::{RequiredScope, validate_report};
 use crate::writer::{ensure_dir, write_json, write_jsonl};
 use crate::{EvalError, Result};
 
@@ -22,6 +23,8 @@ pub struct NemoOnnxQualityOptions {
     pub run_context: PathBuf,
     pub resolved_manifest: PathBuf,
     pub nemo_reference: PathBuf,
+    pub nemo_validation_report: PathBuf,
+    pub nemo_validation_bundle_root: PathBuf,
     pub output: PathBuf,
     pub max_cer_regression: f64,
     pub max_wer_regression: f64,
@@ -205,6 +208,46 @@ fn required_str<'a>(value: &'a Value, path: &[&str], label: &str) -> Result<&'a 
         .ok_or_else(|| invalid(format!("{label} must be a string")))
 }
 
+fn validate_source_identity(options: &NemoOnnxQualityOptions, reference: &NemoReferenceDocument) -> Result<()> {
+    validate_report(
+        &options.nemo_validation_report,
+        &options.nemo_validation_bundle_root,
+        RequiredScope::Ctc,
+    )
+    .map_err(|error| invalid(format!("NeMo ONNX validation evidence failed: {error}")))?;
+
+    let raw = fs::read_to_string(&options.nemo_validation_report)?;
+    let value: Value = serde_json::from_str(&raw)?;
+    reject_nulls(&value, "$")?;
+    let report_repo = required_str(&value, &["source", "repo_id"], "validation source.repo_id")?;
+    let report_revision = required_str(
+        &value,
+        &["source", "revision_resolved"],
+        "validation source.revision_resolved",
+    )?;
+    let report_model_file = required_str(
+        &value,
+        &["source", "model_file"],
+        "validation source.model_file",
+    )?;
+    let report_model_sha = required_str(
+        &value,
+        &["source", "model_file_sha256"],
+        "validation source.model_file_sha256",
+    )?;
+
+    if report_repo != reference.source.repo_id
+        || report_revision != reference.source.revision_resolved
+        || report_model_file != reference.source.model_file
+        || report_model_sha != reference.source.model_file_sha256
+    {
+        return Err(invalid(
+            "NeMo reference identity does not match the validated ONNX export source identity",
+        ));
+    }
+    Ok(())
+}
+
 pub fn measure_nemo_onnx_quality(options: NemoOnnxQualityOptions) -> Result<Value> {
     for (name, value) in [
         ("max_cer_regression", options.max_cer_regression),
@@ -216,6 +259,8 @@ pub fn measure_nemo_onnx_quality(options: NemoOnnxQualityOptions) -> Result<Valu
     }
 
     let reference = load_reference(&options.nemo_reference)?;
+    validate_source_identity(&options, &reference)?;
+
     ensure_dir(&options.output)?;
     let onnx_output = options.output.join("onnx");
     let onnx_metrics = evaluate(EvaluateOptions {
