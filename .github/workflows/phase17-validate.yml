@@ -1,0 +1,50 @@
+name: Phase17 Validate
+
+on:
+  push:
+    branches: [agent/rust-hf-layout-listing-phase17]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-hf-layout-listing-phase17
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate Phase 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          summary="$(cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- summary)"
+          grep -q '^ASR runtime catalog: asr-runtime-catalog-v1 ' <<<"$summary"
+          grep -q '^Runtime profile sets:$' <<<"$summary"
+          grep -q 'parakeet-tdt-ctc-v1' <<<"$summary"
+          grep -q 'whisper-autoregressive-v1' <<<"$summary"
+          mapfile -t targets < <(find config/hf-targets -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
+          mapfile -t evaluators < <(find config/evaluators -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
+          (( ${#targets[@]} > 0 ))
+          (( ${#evaluators[@]} > 0 ))
+          if grep -q 'runtime_catalog=load_repository_catalog' .github/workflows/validate-hf-layout.yml; then
+            echo 'Python runtime catalog listing still present' >&2
+            exit 1
+          fi
+      - name: Normalize production files and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          rm -f .github/workflows/phase17-validate.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/asr-contracts/src/bin/asr-catalog.rs .github/workflows/phase17-validate.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'Normalize Rust HF layout catalog listing'
+            git push origin HEAD:agent/rust-hf-layout-listing-phase17
+          fi
