@@ -1,0 +1,73 @@
+name: HF Central Sequence Allocator
+run-name: HF allocate ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Globally unique request identifier supplied by the caller"
+        required: true
+        type: string
+      hf_bucket:
+        description: "Hugging Face Bucket in namespace/bucket format"
+        required: true
+        type: string
+      collection:
+        description: "Sequence collection"
+        required: true
+        type: choice
+        options: [candidates, experiments, config]
+      prefix:
+        description: "Human-readable ID prefix"
+        required: true
+        type: string
+      metadata_json:
+        description: "Optional allocation provenance JSON"
+        required: false
+        default: "{}"
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+# This workflow repository is the global serialization point. Every repository
+# that shares an HF Bucket must dispatch allocation requests here instead of
+# running list -> max+1 locally.
+concurrency:
+  group: hf-central-sequence-${{ inputs.hf_bucket }}-${{ inputs.collection }}
+  cancel-in-progress: false
+
+jobs:
+  allocate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_BUCKET: ${{ inputs.hf_bucket }}
+      HF_ALLOCATOR_INTERNAL: "1"
+      HF_ALLOCATION_METADATA_JSON: ${{ inputs.metadata_json }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hugging Face CLI
+        run: python -m pip install --upgrade huggingface_hub
+      - name: Allocate sequence
+        id: allocate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}" "${{ inputs.prefix }}")"
+          echo "id=${ID}" >> "${GITHUB_OUTPUT}"
+          printf '{"schema_version":1,"request_id":"%s","id":"%s","bucket":"%s","collection":"%s","prefix":"%s"}\n' \
+            "${{ inputs.request_id }}" "${ID}" "${HF_BUCKET}" "${{ inputs.collection }}" "${{ inputs.prefix }}" \
+            > allocation.json
+      - name: Publish allocation response
+        uses: actions/upload-artifact@v4
+        with:
+          name: hf-allocation-${{ inputs.request_id }}
+          path: allocation.json
+          retention-days: 1
+          if-no-files-found: error
