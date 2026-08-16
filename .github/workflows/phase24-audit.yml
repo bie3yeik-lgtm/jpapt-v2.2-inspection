@@ -32,7 +32,7 @@ jobs:
           git grep -nE '(^|["[:space:]])(id|model_id|catalog_id|schema_version|profile_set|repo_id|revision|sha256|bucket|model_repo)["[:space:]]*[=:]' -- config evaluation || true
           echo '=== repeated literal identity values ==='
           python - <<'PY'
-          import json, pathlib, re, tomllib, collections
+          import json, pathlib, tomllib, collections
           vals=collections.defaultdict(list)
           for p in pathlib.Path('config').rglob('*'):
               if p.suffix not in {'.json','.toml'}: continue
@@ -51,8 +51,27 @@ jobs:
               if len(locs)>=2:
                   print(len(locs),repr(v),*locs,sep='\t')
           PY
-          echo '=== bucket-related shell inputs ==='
-          git grep -nE 'HF_BUCKET|HF_TARGET_ID|CANDIDATE_ID|EVALUATION_ID|PROVIDER_ID|CONFIG_VERSION|PREFIX_KEY|allocation-prefix|candidate-prefix-key' -- scripts .github/workflows rust/crates/asr-hf || true
+          echo '=== potentially duplicated model policy consumers ==='
+          for term in \
+            'storage.hf_target' \
+            'candidate_prefix' \
+            'reference_prefix' \
+            'run_prefix' \
+            'benchmark_prefix' \
+            'temporary_prefix' \
+            'smoke_config' \
+            'parity_config' \
+            'full_config' \
+            'provider_configuration_root' \
+            'supported_providers' \
+            'execution.platforms' \
+            'expected_components'; do
+            echo "--- ${term}"
+            git grep -nF "$term" -- ':!config/models/*.toml' ':!docs/**' || true
+          done
+          echo '=== direct config model table consumers ==='
+          git grep -nE 'storage.*hf_target|hf_target.*storage|candidate_prefix|reference_prefix|run_prefix|benchmark_prefix|temporary_prefix|smoke_config|parity_config|full_config|provider_configuration_root|supported_providers|execution.*platforms|expected_components' -- \
+            python rust scripts .github || true
       - name: Audit current bucket layout
         if: env.HF_TOKEN != ''
         shell: bash
@@ -65,13 +84,3 @@ jobs:
           hf buckets list --token "$HF_TOKEN" "$root" -R -q \
             | grep -E '(^|/)(README\.md|[^/]+\.json)$' \
             | head -n 300 || true
-          echo '=== sample allocation readmes ==='
-          mapfile -t readmes < <(hf buckets list --token "$HF_TOKEN" "$root" -R -q | grep '/README\.md$' | head -n 12)
-          for rel in "${readmes[@]:-}"; do
-            [[ -n "$rel" ]] || continue
-            echo "--- $rel"
-            tmp="$(mktemp)"
-            hf buckets cp --token "$HF_TOKEN" "${root}/${rel}" "$tmp" >/dev/null 2>&1 || continue
-            sed -n '1,120p' "$tmp"
-            rm -f "$tmp"
-          done
