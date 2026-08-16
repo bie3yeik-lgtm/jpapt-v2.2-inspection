@@ -9,7 +9,7 @@ on:
         default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
       candidate_id:
-        description: "HF Bucket candidates/<candidate_id>"
+        description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
         required: true
         type: string
 
@@ -31,6 +31,7 @@ env:
   EXPECTED_FRAMEWORK: ""
   EXPECTED_DECODER: ""
   HF_TARGET_ID: ""
+  EXPERIMENT_ID: ""
 
 jobs:
   evaluate:
@@ -82,6 +83,18 @@ jobs:
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
+
+      - name: Allocate experiment ID
+        shell: bash
+        env:
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          EVALUATION_ID: full
+          PROVIDER_ID: cpu
+        run: |
+          set -euo pipefail
+          EXPERIMENT_ID="$(bash scripts/hf/hf-allocate-id.sh experiments cpu-full-eval)"
+          echo "EXPERIMENT_ID=${EXPERIMENT_ID}" >> "${GITHUB_ENV}"
+          echo "Experiment: ${EXPERIMENT_ID}"
 
       - name: Prepare directories
         shell: bash
@@ -185,6 +198,7 @@ jobs:
             --model "${{ steps.model.outputs.path }}" \
             --candidate-dir ".ci/candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
+            --experiment-id "${EXPERIMENT_ID}" \
             --revisions ".ci/hf/config/revisions" \
             --output "results/linux-cpu-full"
 
