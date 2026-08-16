@@ -1,0 +1,28 @@
+name: Phase23 Audit
+
+on:
+  push:
+    branches: [agent/rust-first-completion-audit-phase23]
+    paths:
+      - ".github/workflows/phase23-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit Python operational boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== scripts/ci Python files ==='
+          find scripts/ci -maxdepth 1 -type f -name '*.py' -printf '%f\n' | sort
+          echo '=== scripts/ci Python callers ==='
+          git grep -nE 'scripts/ci/[A-Za-z0-9_.-]+\.py' -- ':!.github/workflows/phase23-audit.yml' || true
+          echo '=== inline Python workflow blocks ==='
+          git grep -nE 'shell: python|python - <<|python -c |python -m |uv run python' -- '.github/workflows/*.yml' ':!.github/workflows/phase23-audit.yml' || true
+          echo '=== legacy/stable-policy terms ==='
+          git grep -nE 'validate-evaluator-capability|prepare-provider-run-context|make-run-context|resolve-asr-catalog|resolve-allocation-catalog|next-hf-sequence-id|validate-github-action-versions' || true
