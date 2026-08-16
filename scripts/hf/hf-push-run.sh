@@ -48,20 +48,12 @@ normalize_bucket_id() {
 require_env HF_TOKEN
 require_env HF_BUCKET
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable."
-command -v python >/dev/null 2>&1 || fail "python is unavailable."
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable."
 
 RUN_DIRECTORY="${1:-}"
 [[ -n "$RUN_DIRECTORY" ]] || fail "Run directory is required. Usage: $0 <run-directory>"
-
-RUN_DIRECTORY="$(
-    python - "$RUN_DIRECTORY" <<'PY'
-import sys
-from pathlib import Path
-print(Path(sys.argv[1]).expanduser().resolve())
-PY
-)"
 [[ -d "$RUN_DIRECTORY" ]] || fail "Run directory does not exist: $RUN_DIRECTORY"
+RUN_DIRECTORY="$(cd -- "$RUN_DIRECTORY" >/dev/null 2>&1 && pwd -P)"
 
 REQUIRED_FILES=(
     "run-context.json"
@@ -73,89 +65,22 @@ for filename in "${REQUIRED_FILES[@]}"; do
     [[ -s "$RUN_DIRECTORY/$filename" ]] || fail "Required run artifact missing or empty: $filename"
 done
 
+log "Validating JSON/JSONL contracts with Rust..."
+CONTRACT_SUMMARY="$(
+    cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+        validate-run "$RUN_DIRECTORY"
+)" || fail "Rust run-contract validation failed."
+
 RUN_ID="$(
-    python - "$RUN_DIRECTORY/run-context.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-with Path(sys.argv[1]).open("r", encoding="utf-8") as file:
-    value = json.load(file)
-run_id = value.get("run_id")
-if not isinstance(run_id, str) or not run_id:
-    raise SystemExit("run-context.json has no valid run_id")
-print(run_id)
-PY
+    printf '%s\n' "$CONTRACT_SUMMARY" \
+        | awk -F= '$1 == "run_id" { print $2 }'
 )"
-
-METRICS_RUN_ID="$(
-    python - "$RUN_DIRECTORY/metrics.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-with Path(sys.argv[1]).open("r", encoding="utf-8") as file:
-    value = json.load(file)
-run_id = value.get("run_id")
-if not isinstance(run_id, str) or not run_id:
-    raise SystemExit("metrics.json has no valid run_id")
-print(run_id)
-PY
+JSONL_COUNT="$(
+    printf '%s\n' "$CONTRACT_SUMMARY" \
+        | awk -F= '$1 == "sample_count" { print $2 }'
 )"
-[[ "$RUN_ID" == "$METRICS_RUN_ID" ]] || fail "run-context.json and metrics.json use different run IDs."
-
-if command -v uv >/dev/null 2>&1; then
-    log "Validating JSON contracts..."
-    JSONL_COUNT="$(
-        uv run python - \
-            "$RUN_DIRECTORY/run-context.json" \
-            "$RUN_DIRECTORY/metrics.json" \
-            "$RUN_DIRECTORY/samples.jsonl" \
-            "$RUN_ID" \
-            <<'PY'
-import json
-import sys
-from pathlib import Path
-
-from parakeet_onnx.evaluation import (
-    validate_benchmark,
-    validate_run_context,
-    validate_sample_result,
-)
-
-run_context_path = Path(sys.argv[1])
-metrics_path = Path(sys.argv[2])
-samples_path = Path(sys.argv[3])
-run_id = sys.argv[4]
-
-with run_context_path.open("r", encoding="utf-8") as file:
-    validate_run_context(json.load(file))
-with metrics_path.open("r", encoding="utf-8") as file:
-    validate_benchmark(json.load(file))
-
-count = 0
-with samples_path.open("r", encoding="utf-8") as file:
-    for line_number, line in enumerate(file, start=1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise SystemExit(f"samples.jsonl line {line_number}: {exc}") from exc
-        if value.get("run_id") != run_id:
-            raise SystemExit(
-                f"samples.jsonl line {line_number}: run_id does not match {run_id!r}"
-            )
-        validate_sample_result(value)
-        count += 1
-
-if count == 0:
-    raise SystemExit("samples.jsonl contains no sample results")
-print(count)
-PY
-    )"
-else
-    fail "uv is required until JSON contract validation is migrated to Rust."
-fi
+[[ -n "$RUN_ID" ]] || fail "Rust contract validator returned no run_id."
+[[ "$JSONL_COUNT" =~ ^[0-9]+$ ]] || fail "Rust contract validator returned no valid sample_count."
 
 log "Validating Parquet capsule with Rust..."
 CAPSULE_SUMMARY="$(
