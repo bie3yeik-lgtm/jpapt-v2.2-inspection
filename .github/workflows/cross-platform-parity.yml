@@ -3,14 +3,15 @@ name: Cross Platform ONNX Parity
 on:
   workflow_dispatch:
     inputs:
-      hf_bucket:
-        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
+      hf_target:
+        description: "Source-controlled HF target ID"
         required: true
-        default: gawohok7/jpapt-v2.2-dev-bucket
+        default: parakeet-tdt_ctc-0.6b-ja
         type: string
       candidate_id:
-        description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
-        required: true
+        description: "Optional candidate-NNNNNN (blank = latest candidate in target Bucket)"
+        required: false
+        default: ""
         type: string
       runtime_variant:
         description: "Runtime variant from the target profile set (blank = catalog default)"
@@ -29,12 +30,11 @@ permissions:
   actions: write
 
 concurrency:
-  group: cross-platform-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}-${{ inputs.evaluation }}
+  group: cross-platform-${{ inputs.hf_target }}-${{ inputs.candidate_id || 'latest' }}-${{ inputs.runtime_variant || 'default' }}-${{ inputs.evaluation }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
   GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
   HF_ALLOCATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
 
@@ -44,24 +44,51 @@ jobs:
     timeout-minutes: 10
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
+      candidate_id: ${{ steps.candidate.outputs.candidate_id }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install project for catalog resolution
-        run: python -m pip install -e ".[dev]"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Hugging Face CLI
+        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+      - name: Resolve target
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(resolve-target --target "${{ inputs.hf_target }}" --github-env "${GITHUB_ENV}")
+          if [[ -n "${{ inputs.runtime_variant }}" ]]; then
+            ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
+          fi
+          cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}"
+      - name: Resolve candidate from Bucket
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="${{ inputs.candidate_id }}"
+          if [[ -n "$candidate" ]]; then
+            [[ "$candidate" =~ ^candidate-[0-9]{6}$ ]] || { echo "::error::candidate_id must use candidate-NNNNNN"; exit 1; }
+          else
+            listing="$(mktemp)"
+            trap 'rm -f "$listing"' EXIT
+            hf buckets list --token "$HF_TOKEN" "hf://buckets/${HF_BUCKET}/candidates" -R -q > "$listing"
+            summary="$(cargo run --quiet --locked -p asr-hf -- resolve-candidate-location --listing "$listing" --runtime-variant "$ASR_RUNTIME_VARIANT")"
+            candidate="$(printf '%s\n' "$summary" | sed -n 's/^candidate_id=//p')"
+            legacy="$(printf '%s\n' "$summary" | sed -n 's/^legacy=//p')"
+            [[ "$legacy" != true ]] || echo "::warning::Using legacy Bucket candidate layout for ${candidate}; new candidates are written canonically."
+          fi
+          echo "candidate_id=${candidate}" >> "$GITHUB_OUTPUT"
       - id: allocate
         name: Allocate ID through central allocator
         shell: bash
         env:
-          HF_BUCKET: ${{ inputs.hf_bucket }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_ID: ${{ steps.candidate.outputs.candidate_id }}
           EVALUATION_ID: ${{ inputs.evaluation }}
-          ASR_RUNTIME_VARIANT: ${{ inputs.runtime_variant }}
         run: |
           set -euo pipefail
-          ID="$(bash scripts/hf/hf-allocate-id.sh experiments experiment.cross_platform_parity)"
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments)"
           echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "Experiment: ${ID}"
 
@@ -106,6 +133,7 @@ jobs:
       EXPECTED_RUNTIME_PROFILE: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
+      CANDIDATE_ID: ${{ needs.allocate-experiment.outputs.candidate_id }}
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
@@ -117,6 +145,7 @@ jobs:
           echo "Runner OS: ${{ runner.os }}"
           echo "Runner arch: ${{ runner.arch }}"
           echo "Provider: ${{ matrix.provider }}"
+          echo "Candidate: ${CANDIDATE_ID}"
           echo "Experiment: ${EXPERIMENT_ID}"
       - uses: actions/setup-python@v7
         with:
@@ -129,22 +158,21 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[datasets,onnx,transformers-runtime,dev]"
           python -m pip install --upgrade huggingface_hub
-      - name: Resolve HF Bucket and runtime variant
+      - name: Resolve HF target and runtime variant
         id: hf
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${HF_TARGETS_JSON:-}" ]] || { echo "::error::HF_TARGETS_JSON is required."; exit 1; }
           ARGS=(
-            --bucket "${{ inputs.hf_bucket }}"
-            --targets-json "${HF_TARGETS_JSON}"
+            resolve-target
+            --target "${{ inputs.hf_target }}"
             --github-env "${GITHUB_ENV}"
             --github-output "${GITHUB_OUTPUT}"
           )
           if [[ -n "${{ inputs.runtime_variant }}" ]]; then
             ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
           fi
-          cargo run --quiet --locked -p asr-hf -- resolve-target "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}"
       - name: Prepare directories
         shell: bash
         run: |
@@ -177,10 +205,10 @@ jobs:
             .cache/evaluation
             .ci/candidate
             .ci/reference
-          key: py-eval-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-${{ hashFiles('.ci/hf/config/revisions/reference.json', '.ci/hf/config/revisions/evaluation-schema.json', '.ci/hf/config/revisions/datasets-lock.json', '.ci/hf/config/revisions/runtime.json', 'config/asr-catalog.json', 'pyproject.toml') }}
+          key: py-eval-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ matrix.os }}-${{ runner.arch }}-${{ needs.allocate-experiment.outputs.candidate_id }}-${{ hashFiles('.ci/hf/config/revisions/reference.json', '.ci/hf/config/revisions/evaluation-schema.json', '.ci/hf/config/revisions/datasets-lock.json', '.ci/hf/config/revisions/runtime.json', 'config/asr-catalog.json', 'pyproject.toml') }}
       - name: Fetch candidate
         shell: bash
-        run: bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
+        run: bash scripts/hf/hf-fetch-candidate.sh "$CANDIDATE_ID"
       - name: Resolve candidate execution contract
         shell: bash
         run: |
@@ -213,7 +241,7 @@ jobs:
             --model-config "${HF_TARGET_ID}" \
             --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --candidate-dir .ci/candidate \
-            --candidate-id "${{ inputs.candidate_id }}" \
+            --candidate-id "${CANDIDATE_ID}" \
             --experiment-id "${EXPERIMENT_ID}" \
             --revisions .ci/hf/config/revisions \
             --output "results/${{ matrix.result_name }}"
@@ -239,7 +267,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: parity-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ matrix.result_name }}-${{ inputs.candidate_id }}
+          name: parity-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ matrix.result_name }}-${{ needs.allocate-experiment.outputs.candidate_id }}
           path: results/${{ matrix.result_name }}
           retention-days: 7
           if-no-files-found: warn
