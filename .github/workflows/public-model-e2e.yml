@@ -6,6 +6,7 @@ on:
     branches:
       - agent/public-model-e2e
       - agent/public-model-rust-e2e
+      - agent/provider-strict-probes
     paths:
       - ".github/workflows/public-model-e2e.yml"
       - "scripts/ci/e2e-whisper-transformersjs.mjs"
