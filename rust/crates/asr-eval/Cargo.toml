@@ -17,7 +17,7 @@ asr-runtime = { path = "../asr-runtime", default-features = false }
 asr-audio = { path = "../asr-audio" }
 asr-metrics = { path = "../asr-metrics" }
 asr-input = { path = "../asr-input" }
-asr-capsule = { path = "../asr-capsule" }
+asr-onnx-capsule = { path = "../asr-capsule" }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
