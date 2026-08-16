@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,9 +10,16 @@ fn canonical_sha(value: &Value) -> String {
     format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
 }
 
+fn repository_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .expect("repository root must be reachable from the asr-contracts manifest")
+}
+
 #[test]
 fn validates_revision_bundle_against_repository_catalog() {
-    let root = std::env::current_dir().unwrap();
+    let root = repository_root();
     let catalog_path = root.join("config/asr-catalog.json");
     let catalog: Value = serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
     let catalog_sha = canonical_sha(&catalog);
@@ -83,6 +91,7 @@ fn validates_revision_bundle_against_repository_catalog() {
     .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_asr-contracts"))
+        .current_dir(&root)
         .args([
             "validate-revisions",
             "--root",
