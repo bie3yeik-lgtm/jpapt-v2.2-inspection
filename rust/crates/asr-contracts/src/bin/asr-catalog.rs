@@ -265,12 +265,15 @@ impl Catalog {
 impl ProfileSet {
     fn profile_id_for(&self, variant: Option<&str>) -> Result<&str, String> {
         let selected = variant.unwrap_or(&self.default_variant);
-        self.variants.get(selected).map(String::as_str).ok_or_else(|| {
-            format!(
-                "unknown runtime variant {selected:?}; available={:?}",
-                self.variants.keys().collect::<Vec<_>>()
-            )
-        })
+        self.variants
+            .get(selected)
+            .map(String::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "unknown runtime variant {selected:?}; available={:?}",
+                    self.variants.keys().collect::<Vec<_>>()
+                )
+            })
     }
 }
 
@@ -339,7 +342,10 @@ mod tests {
     #[test]
     fn canonical_json_sorts_object_keys() {
         let value: Value = serde_json::from_str(r#"{"b":2,"a":{"d":4,"c":3}}"#).unwrap();
-        assert_eq!(canonical_json(&value).unwrap(), r#"{"a":{"c":3,"d":4},"b":2}"#);
+        assert_eq!(
+            canonical_json(&value).unwrap(),
+            r#"{"a":{"c":3,"d":4},"b":2}"#
+        );
     }
 
     #[test]
