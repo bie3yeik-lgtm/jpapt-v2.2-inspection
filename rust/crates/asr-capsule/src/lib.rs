@@ -31,9 +31,9 @@ mod tests {
     #[test]
     fn schema_matches_python_v1_width() {
         let schema = experiment_capsule_v1_schema();
-        assert_eq!(schema.fields().len(), 54);
+        assert_eq!(schema.fields().len(), 53);
         assert_eq!(schema.field(0).name(), "schema_version");
-        assert_eq!(schema.field(53).name(), "payload");
+        assert_eq!(schema.field(52).name(), "payload");
     }
 
     #[test]
