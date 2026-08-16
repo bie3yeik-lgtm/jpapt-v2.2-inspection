@@ -3,61 +3,58 @@
 ## Purpose
 
 This repository develops, validates, and promotes ONNX deployment artifacts for
-Japanese ASR models, with `nvidia/parakeet-tdt_ctc-0.6b-ja` as the primary
-model.
+Japanese ASR models across multiple canonical frameworks.
 
-The project uses NVIDIA NeMo as the canonical reference environment and ONNX
-Runtime as the portable deployment runtime.
+Current reference families include:
 
-The initial implementation is Python-first. Rust is introduced later for
-deployment/runtime code after the Python reference and evaluation contracts are
-stable.
+```text
+NeMo / Hybrid FastConformer
+Transformers / Whisper
+```
+
+ONNX Runtime is the portable deployment runtime. Python owns canonical model
+integration/export/evaluation orchestration; Rust owns the production-oriented
+runtime/evaluator path where implemented.
 
 ## Architectural principles
 
-1. The upstream model/reference revision is always pinned.
+1. Development artifact, upstream model, tokenizer/processor, and reference revisions are pinned independently.
 2. Evaluation dataset revisions are always pinned.
 3. Large model, audio, and tensor artifacts are not stored in Git.
 4. Hugging Face Bucket is used for mutable development/evaluation artifacts.
 5. Hugging Face Model Repo contains only validated release artifacts.
-6. NeMo is the canonical reference implementation.
+6. Canonical framework is selected per target (`nemo`, `transformers`, ...).
 7. ONNX Runtime is the deployment/runtime abstraction.
-8. CPU, CUDA, DirectML, and CoreML are Execution Provider concerns, not model
-   definitions.
+8. CPU, CUDA, DirectML, and CoreML are Execution Provider concerns, not model definitions.
 9. Generic audio processing is separated from model-specific feature extraction.
-10. Python and future Rust evaluators consume the same logical data contracts.
+10. Python and Rust evaluators consume the same logical data contracts.
 
 ## Repository layers
 
 ```text
 config/
-    Static model, provider, environment, and evaluation configuration.
+    Static model, target, provider, environment, and evaluation configuration.
 
 evaluation/
     JSON Schemas, deterministic manifests, and Git-tracked smoke expectations.
 
 python/src/parakeet_onnx/
-    Canonical Python implementation.
+    Canonical Python implementation and framework adapters.
 
 rust/crates/
-    Future production/runtime implementation.
+    Production/runtime implementation.
 
 scripts/
-    Thin operational wrappers for development, CI, and Hugging Face lifecycle.
+    Operational wrappers for development, CI, and Hugging Face lifecycle.
 
 docker/
-    Isolated canonical NeMo reference/export environment.
+    Isolated framework/reference/export environments where required.
 
 docs/
     Architectural and operational documentation.
-
-tools/
-    Optional developer inspection and diagnostic utilities.
 ```
 
 ## External storage
-
-The project separates Git, Hugging Face Bucket, and Hugging Face Model Repo.
 
 ```text
 GitHub Repository
@@ -65,7 +62,6 @@ GitHub Repository
     configuration
     schemas
     manifests
-    lightweight expected data
           |
           v
 Hugging Face Bucket
@@ -83,84 +79,64 @@ Hugging Face Model Repo
     release provenance
 ```
 
-### Hugging Face Bucket
+### Revision identity
 
-Expected layout:
-
-```text
-hf://buckets/<namespace>/<bucket>/
-├── config/
-│   └── revisions/
-│       ├── reference.json
-│       ├── evaluation-schema.json
-│       └── datasets-lock.json
-├── benchmarks/
-├── runs/
-├── candidates/
-├── reference/
-├── scripts/
-└── tmp/
-```
-
-`reference.json` identifies the exact upstream model/reference revisions.
-
-`datasets-lock.json` identifies the exact dataset revisions.
-
-`evaluation-schema.json` identifies the acceptance-rule revision and numerical
-thresholds. It is not a JSON Schema document.
-
-### Hugging Face Model Repo
-
-The Model Repo is the release boundary.
-
-A typical promoted release contains:
+Each target Bucket contains:
 
 ```text
-README.md
-model.onnx
-metadata.json
-tokenizer/
-release/
-├── run-context.json
-├── metrics.json
-└── promotion.json
+config/revisions/
+├── reference.json
+├── evaluation-schema.json
+└── datasets-lock.json
 ```
 
-Candidates must not be exported directly into the Model Repo.
+`reference.json` must identify all of the following independently:
 
-## Canonical ASR pipeline
+```text
+development_artifact  generated ONNX/deployment repo + revision
+upstream              canonical source checkpoint repo + revision
+tokenizer             tokenizer/processor repo + revision
+reference             reference implementation/artifact revision
+canonical_framework   nemo / transformers / ...
+decoders              supported/default decoding contract
+```
 
-The first deployment target is the CTC path.
+There is no legacy revision mode. Old overloaded `model.revision` metadata is
+not part of the runtime contract.
+
+## ASR pipeline abstraction
+
+Framework-specific model execution begins after canonical audio.
 
 ```text
 audio asset
     ↓
 decode
     ↓
-DecodedAudio
-    ↓
-downmix + resample
-    ↓
 CanonicalAudio
 float32 / mono / 16 kHz
     ↓
-model frontend
+framework/model frontend
     ↓
-FastConformer encoder
+encoder/model graph
     ↓
-CTC logits
-    ↓
-CTC collapse/token decoding
+decoder-specific outputs
     ↓
 text
 ```
 
-TDT support is added after the CTC deployment path is stable.
+Examples:
+
+```text
+Parakeet CTC: FastConformer -> CTC logits -> CTC collapse
+Parakeet TDT: FastConformer -> predictor/joint -> duration-aware decode
+Whisper:      encoder -> autoregressive decoder -> tokenizer
+```
+
+The current Python and Rust ONNX evaluators are still CTC-oriented; target
+routing and revision contracts are already framework-neutral.
 
 ## Dataset boundary
-
-Evaluation manifests do not contain explicit hundreds of selected rows. They
-contain deterministic selection directives.
 
 ```text
 evaluation/manifests/*.jsonl
@@ -176,17 +152,10 @@ DatasetMaterializer
 ResolvedDatasetSample
 ```
 
-`ResolvedDatasetSample.audio_path` has a strict meaning:
-
-> A materialized local audio asset that the evaluation runtime can read through
-> ordinary file I/O.
-
-It must not be a remote URL, Arrow reference, temporary HF Dataset object, or
-other opaque reference.
+`ResolvedDatasetSample.audio_path` is a materialized local audio asset readable
+through ordinary file I/O.
 
 ## Audio boundary
-
-Generic audio processing stops at `CanonicalAudio`.
 
 ```text
 ResolvedDatasetSample.audio_path
@@ -213,70 +182,52 @@ memory      C-contiguous
 
 Model-specific feature extraction starts after this boundary.
 
-This allows Python and Rust implementations to compare the exact same
-canonical waveform before frontend parity is evaluated.
-
 ## Reference and candidate paths
 
-Reference:
+Reference execution is target-specific:
 
 ```text
 CanonicalAudio
       ↓
-NeMo preprocessor
+canonical framework adapter
       ↓
-reference frontend output
+reference model outputs
       ↓
-NeMo encoder/head
-      ↓
-reference logits/tokens/text
+reference tokens/text/tensors
 ```
 
-Candidate:
+Candidate execution:
 
 ```text
 CanonicalAudio
       ↓
-candidate frontend
+candidate frontend/runtime contract
       ↓
-ONNX encoder/head
+ONNX Runtime
       ↓
-candidate logits/tokens/text
+candidate tokens/text/tensors
 ```
 
-Parity checkpoints include:
+Parity checkpoints may include frontend, encoder, logits, tokens, text, CER,
+and WER depending on the target architecture.
 
-```text
-frontend
-encoder
-logits
-tokens
-text
-CER/WER
-```
-
-## Runtime configuration
-
-Configuration is intentionally namespaced instead of blindly deep-merged.
+## Configuration
 
 ```text
 config/models/
+config/hf-targets/
 config/providers/
 config/environments/
 config/evaluation/
 ```
 
-Model configuration describes the model.
-
-Provider configuration describes the ONNX Runtime Execution Provider.
-
-Environment configuration describes OS/cache/resource policy.
-
-Evaluation configuration describes suite behavior and acceptance behavior.
+- Model configuration describes architecture/framework semantics.
+- HF target configuration binds model semantics to upstream/reference/decoder/storage roles.
+- Provider configuration describes ONNX Runtime Execution Providers.
+- Environment configuration describes OS/cache/resource policy.
+- Evaluation configuration describes suite and acceptance behavior.
 
 ## Python architecture
-
-Important packages:
 
 ```text
 parakeet_onnx/
@@ -293,17 +244,10 @@ parakeet_onnx/
 └── cli/
 ```
 
-Python remains authoritative for:
-
-- NeMo loading
-- canonical reference generation
-- initial ONNX export
-- tensor diagnostics
-- initial evaluation orchestration
+Python is authoritative for framework integration, canonical reference
+generation, initial ONNX export, tensor diagnostics, and dataset materialization.
 
 ## Rust architecture
-
-Planned crates:
 
 ```text
 rust/crates/
@@ -313,21 +257,8 @@ rust/crates/
 └── asr-eval/
 ```
 
-Dependency direction:
-
-```text
-asr-audio ───────┐
-                 │
-asr-runtime ─────┼──> asr-eval
-                 │
-asr-metrics ─────┘
-```
-
-The library crates must not depend on `asr-eval`.
-
-The initial Rust evaluator should consume already resolved/materialized
-evaluation inputs rather than reimplementing the Hugging Face `datasets`
-ecosystem.
+Rust consumes resolved/materialized evaluation inputs rather than reimplementing
+the Hugging Face `datasets` ecosystem.
 
 ## Reproducibility identity
 
@@ -335,12 +266,14 @@ Every meaningful evaluation run records:
 
 ```text
 candidate artifact SHA-256
+development artifact repo/revision
+upstream repo/revision
+tokenizer repo/revision
+reference implementation revision
 Git commit/ref/dirty state
 OS and architecture
-Python/runtime versions
-ONNX Runtime version
+runtime/backend versions
 Execution Provider
-reference revision
 dataset-lock revision/hash
 evaluation-schema revision/hash
 resolved configuration snapshot
@@ -351,19 +284,15 @@ These fields are serialized into `run-context.json`.
 ## Release lifecycle
 
 ```text
-pinned upstream reference
+pinned target identities
         ↓
-NeMo reference/export environment
+canonical framework reference/export
         ↓
 ONNX candidate
         ↓
 HF Bucket/candidates/
         ↓
-smoke
-        ↓
-parity
-        ↓
-full
+smoke / parity / full
         ↓
 acceptance.passed == true
         ↓
