@@ -9,13 +9,13 @@ fn usage() -> &'static str {
 
 fn summary_json(summary: &CapsuleSummary) -> serde_json::Value {
     serde_json::json!({
-        "run_id": summary.run_id,
+        "run_id": &summary.run_id,
         "row_count": summary.row_count,
         "sample_count": summary.sample_count,
         "diagnostic_count": summary.diagnostic_count,
         "artifact_count": summary.artifact_ids.len(),
-        "artifact_ids": summary.artifact_ids,
-        "metrics": summary.metrics,
+        "artifact_ids": &summary.artifact_ids,
+        "metrics": &summary.metrics,
     })
 }
 
