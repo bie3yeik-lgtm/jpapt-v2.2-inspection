@@ -202,25 +202,35 @@ framework, and decoder.
 
 ## Validate HF Layout flow
 
-The workflow is separated into three responsibilities:
+Automatic PR/push validation intentionally does not read the remote Bucket. It
+validates only source-controlled target profiles, schemas, scripts, and unit-test
+fixtures using synthetic revision identities.
 
 ```text
-local-contracts
-  -> validate source-controlled config/tests
-  -> build target matrix from config/hf-targets/*.toml
-
-workflow_dispatch
-  -> validate-selected
-  -> strict validation of the chosen HF_BUCKET
-
 pull_request / push
-  -> validate-targets matrix
-  -> probe each source-controlled target
-  -> report external Bucket drift as warnings
+  -> local-contracts
+  -> validate source-controlled config/schema/scripts
+  -> run strict revision tests against synthetic fixtures
+  -> list config/hf-targets/*.toml
 ```
 
-The automatic matrix is generated from `config/hf-targets/*.toml`; adding a new
-source-controlled target no longer requires editing a hard-coded matrix list.
+Actual HF Bucket validation is explicit and manual:
+
+```text
+workflow_dispatch
+  -> local-contracts
+  -> validate-selected
+  -> resolve selected HF_BUCKET
+  -> fetch remote revision files
+  -> strict RevisionBundle validation
+  -> target identity validation
+  -> Bucket directory validation
+```
+
+This separation is deliberate: source-code CI remains deterministic while a
+Bucket that has not yet been migrated to the canonical `reference.json` contract
+does not create unrelated PR failures. After Bucket metadata is migrated, run
+`Validate HF Layout` manually to validate the real values.
 
 ## Evaluation behavior by target
 
