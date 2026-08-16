@@ -36,7 +36,6 @@ STAGING="$STAGING_PARENT/revisions"
 CURRENT="$STAGING_PARENT/current.json"
 trap 'rm -rf "$STAGING_PARENT"' EXIT
 
-# Rust owns deterministic config bookkeeping; shell keeps allocation and transport orchestration only.
 log "Preparing and validating normalized revision bundle with Rust..."
 PREPARE_SUMMARY="$(
   cargo run --quiet --locked \
@@ -60,7 +59,7 @@ VERSIONS="hf://buckets/${BUCKET}/config/versions"
 
 CONFIG_VERSION="$(
   CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= \
-  bash scripts/hf/hf-request-id.sh config config.version
+  bash scripts/hf/hf-request-id.sh config
 )"
 [[ "$CONFIG_VERSION" =~ ^config-[0-9]{6}$ ]] || fail \
   "central allocator returned an invalid config version: $CONFIG_VERSION"
