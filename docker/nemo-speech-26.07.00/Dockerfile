@@ -43,4 +43,28 @@ RUN python -m pip install --no-cache-dir \
         "scipy>=1.14" \
         jiwer
 
+# Make environment compatibility part of the image build itself. This avoids
+# exporting a very large PR image to the Docker daemon solely to run an import
+# smoke test, and avoids re-pulling a just-pushed image on main.
+RUN python - <<'PY'
+import json
+import huggingface_hub
+import nemo
+import onnx
+import onnxruntime
+import torch
+
+versions = {
+    "nemo": nemo.__version__,
+    "torch": torch.__version__,
+    "cuda_available_at_build": torch.cuda.is_available(),
+    "onnx": onnx.__version__,
+    "onnxruntime": onnxruntime.__version__,
+    "huggingface_hub": huggingface_hub.__version__,
+}
+print(json.dumps(versions, sort_keys=True))
+assert onnxruntime.__version__ == "1.28.0"
+assert huggingface_hub.__version__ == "1.24.0"
+PY
+
 CMD ["/bin/bash"]
