@@ -69,24 +69,36 @@ jobs:
           python scripts/dev/verify-python-first.py
           python scripts/dev/doctor.py
           python scripts/ci/validate-hf-targets.py
+          bash -n scripts/hf/hf-allocate-id.sh
+          bash -n scripts/hf/hf-request-id.sh
+          bash -n scripts/hf/hf-update-root-readme.sh
+          bash -n scripts/hf/hf-push-candidate.sh
+          bash -n scripts/hf/hf-push-config-version.sh
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py \
             python/tests/unit/test_hf_target_bucket_resolution.py \
-            python/tests/unit/test_hf_sequence_id.py
+            python/tests/unit/test_hf_sequence_id.py \
+            python/tests/unit/test_evaluator_capability.py
 
-      - name: List source-controlled HF targets
+      - name: List source-controlled HF targets and evaluators
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
           targets = sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
+          evaluators = sorted(path.stem for path in Path("config/evaluators").glob("*.toml"))
           if not targets:
               raise SystemExit("No config/hf-targets/*.toml files were found.")
+          if not evaluators:
+              raise SystemExit("No config/evaluators/*.toml files were found.")
           print("Configured HF targets:")
           for target in targets:
               print(f"- {target}")
+          print("Configured evaluator capabilities:")
+          for evaluator in evaluators:
+              print(f"- {evaluator}")
           PY
 
   validate-selected:
