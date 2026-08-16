@@ -70,9 +70,7 @@ fn resolve_config_command(
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--current" => current = Some(PathBuf::from(take_value(&mut args, "--current")?)),
-            "--resolved" => {
-                resolved = Some(PathBuf::from(take_value(&mut args, "--resolved")?))
-            }
+            "--resolved" => resolved = Some(PathBuf::from(take_value(&mut args, "--resolved")?)),
             "--override" => override_version = Some(take_value(&mut args, "--override")?),
             other => return Err(format!("unsupported argument: {other}\n{}", usage())),
         }
@@ -105,12 +103,15 @@ fn resolve_config_command(
     let temporary = resolved.with_extension("json.tmp");
     fs::write(&temporary, [bytes.as_slice(), b"\n"].concat())
         .map_err(|error| format!("{}: {error}", temporary.display()))?;
-    fs::rename(&temporary, &resolved).map_err(|error| format!("{}: {error}", resolved.display()))?;
+    fs::rename(&temporary, &resolved)
+        .map_err(|error| format!("{}: {error}", resolved.display()))?;
     println!("{}", payload["config_version"].as_str().expect("string"));
     Ok(())
 }
 
-fn config_version_command(mut args: impl Iterator<Item = String>) -> std::result::Result<(), String> {
+fn config_version_command(
+    mut args: impl Iterator<Item = String>,
+) -> std::result::Result<(), String> {
     let path = args
         .next()
         .map(PathBuf::from)
@@ -119,7 +120,10 @@ fn config_version_command(mut args: impl Iterator<Item = String>) -> std::result
         return Err(usage().to_owned());
     }
     let value = require_config_document(&path)?;
-    println!("{}", config_version_from(&value, &path.display().to_string())?);
+    println!(
+        "{}",
+        config_version_from(&value, &path.display().to_string())?
+    );
     Ok(())
 }
 

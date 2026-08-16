@@ -21,10 +21,8 @@ fn validates_revision_bundle_against_repository_catalog() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let parent = std::env::temp_dir().join(format!(
-        "jpapt-revisions-{}-{unique}",
-        std::process::id()
-    ));
+    let parent =
+        std::env::temp_dir().join(format!("jpapt-revisions-{}-{unique}", std::process::id()));
     let revisions = parent.join("revisions");
     fs::create_dir_all(&revisions).unwrap();
 
