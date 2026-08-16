@@ -179,6 +179,11 @@ def main() -> int:
             output_dir=args.output,
             candidate_id=candidate.candidate_id,
             decoder=candidate.decoder,
+            candidate_bundle_sha256=candidate.bundle_sha256,
+            candidate_bundle_size_bytes=sum(
+                artifact.path.stat().st_size
+                for artifact in candidate.artifacts.values()
+            ),
         ),
     )
 
