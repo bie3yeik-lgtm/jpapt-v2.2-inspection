@@ -40,10 +40,21 @@ jobs:
           cd .ci/transformersjs
           npm init -y >/dev/null
           npm install --no-audit --no-fund @huggingface/transformers@4.2.0
+      - name: Materialize canonical JSUT PCM
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://huggingface.co/datasets/japanese-asr/ja_asr.jsut_basic5000/resolve/main/sample.flac \
+            --output .ci/jsut-sample.flac
+          ffmpeg -hide_banner -loglevel error -y \
+            -i .ci/jsut-sample.flac -ac 1 -ar 16000 -f f32le .ci/jsut-sample.f32
+          test -s .ci/jsut-sample.f32
       - name: Run real ONNX Whisper inference
         shell: bash
         env:
           WHISPER_MODEL_ID: onnx-community/whisper-small
+          JSUT_PCM_PATH: .ci/jsut-sample.f32
         run: |
           set -euo pipefail
           ln -sfn "$PWD/.ci/transformersjs/node_modules" node_modules
