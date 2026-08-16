@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jpapt:nemo-onnx-validation:v1",
+  "title": "NeMo ONNX Validation Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "source",
+    "environment",
+    "resolved_model",
+    "frontend",
+    "artifacts",
+    "gates",
+    "obstacles"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_id": {"const": "parakeet-nemo-onnx-v1"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision_requested", "revision_resolved", "library", "language", "license", "datasets", "model_file", "model_file_sha256"],
+      "properties": {
+        "repo_id": {"const": "nvidia/parakeet-tdt_ctc-0.6b-ja"},
+        "revision_requested": {"type": "string", "minLength": 1},
+        "revision_resolved": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+        "library": {"const": "nemo"},
+        "language": {"const": "ja"},
+        "license": {"const": "cc-by-4.0"},
+        "datasets": {"type": "array", "minItems": 1, "uniqueItems": true, "contains": {"const": "reazon-research/reazonspeech"}},
+        "model_file": {"const": "parakeet-tdt_ctc-0.6b-ja.nemo"},
+        "model_file_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "nemo", "torch", "onnx", "onnxruntime", "opset", "exporter", "dynamo"],
+      "properties": {
+        "python": {"type": "string", "minLength": 1},
+        "nemo": {"type": "string", "minLength": 1},
+        "torch": {"type": "string", "minLength": 1},
+        "onnx": {"type": "string", "minLength": 1},
+        "onnxruntime": {"type": "string", "minLength": 1},
+        "opset": {"type": "integer", "minimum": 17},
+        "exporter": {"enum": ["nemo_export", "torch_onnx_legacy", "torch_onnx_dynamo"]},
+        "dynamo": {"type": "boolean"}
+      }
+    },
+    "resolved_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["architecture", "supported_decoders", "default_decoder", "sample_rate_hz", "n_mels", "normalize", "dither", "xscaling", "tokenizer_type", "vocab_size", "ctc_blank_id", "tdt_durations"],
+      "properties": {
+        "architecture": {"const": "hybrid_fastconformer_tdt_ctc"},
+        "supported_decoders": {"type": "array", "uniqueItems": true, "minItems": 2, "contains": {"const": "ctc"}},
+        "default_decoder": {"const": "tdt"},
+        "sample_rate_hz": {"const": 16000},
+        "n_mels": {"type": "integer", "minimum": 1},
+        "normalize": {"type": "string", "minLength": 1},
+        "dither": {"type": "number", "minimum": 0},
+        "xscaling": {"type": "boolean"},
+        "tokenizer_type": {"type": "string", "minLength": 1},
+        "vocab_size": {"type": "integer", "minimum": 2},
+        "ctc_blank_id": {"type": "integer", "minimum": 0},
+        "tdt_durations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "fixture_dither", "feature_shape_verified", "parity"],
+      "properties": {
+        "location": {"const": "outside_onnx"},
+        "fixture_dither": {"type": "number", "minimum": 0},
+        "feature_shape_verified": {"type": "boolean"},
+        "parity": {"$ref": "#/$defs/parity"}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_manifest", "nemo_load", "frontend_fixture", "ctc_export", "ctc_onnx_check", "ctc_ort_cpu", "ctc_reference_parity", "tdt_export", "predictor_state_parity", "joint_parity", "tdt_single_step_parity", "tdt_state_trace_parity"],
+      "properties": {
+        "source_manifest": {"$ref": "#/$defs/gate"},
+        "nemo_load": {"$ref": "#/$defs/gate"},
+        "frontend_fixture": {"$ref": "#/$defs/gate"},
+        "ctc_export": {"$ref": "#/$defs/gate"},
+        "ctc_onnx_check": {"$ref": "#/$defs/gate"},
+        "ctc_ort_cpu": {"$ref": "#/$defs/gate"},
+        "ctc_reference_parity": {"$ref": "#/$defs/gate"},
+        "tdt_export": {"$ref": "#/$defs/gate"},
+        "predictor_state_parity": {"$ref": "#/$defs/gate"},
+        "joint_parity": {"$ref": "#/$defs/gate"},
+        "tdt_single_step_parity": {"$ref": "#/$defs/gate"},
+        "tdt_state_trace_parity": {"$ref": "#/$defs/gate"}
+      }
+    },
+    "obstacles": {
+      "type": "array",
+      "minItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed", "not_applicable"]},
+          "evidence": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {"enum": ["passed", "failed", "blocked", "not_run"]},
+        "evidence": {"type": "string", "minLength": 1}
+      }
+    },
+    "parity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_abs", "mean_abs", "relative_l2"],
+      "properties": {
+        "max_abs": {"type": "number", "minimum": 0},
+        "mean_abs": {"type": "number", "minimum": 0},
+        "relative_l2": {"type": "number", "minimum": 0}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "sha256", "size_bytes", "format", "precision", "external_data"],
+      "properties": {
+        "role": {"enum": ["primary", "encoder", "predictor", "joint", "tokenizer", "fixture"]},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "format": {"enum": ["onnx", "sentencepiece", "json", "npy", "npz"]},
+        "precision": {"enum": ["fp32", "int8", "metadata"]},
+        "external_data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "size_bytes"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "size_bytes": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    }
+  }
+}
