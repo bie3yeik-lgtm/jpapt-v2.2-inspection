@@ -50,9 +50,11 @@ else
     if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q > "$listing"; then
         fail "failed to list candidate collection: $REMOTE_ROOT"
     fi
-    SUMMARY="$(cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
-        --listing "$listing" \
-        ${ASR_RUNTIME_VARIANT:+--runtime-variant "$ASR_RUNTIME_VARIANT"})"
+    ARGS=(resolve-candidate-location --listing "$listing")
+    if [[ -n "${ASR_RUNTIME_VARIANT:-}" ]]; then
+        ARGS+=(--runtime-variant "$ASR_RUNTIME_VARIANT")
+    fi
+    SUMMARY="$(cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}")"
     CANDIDATE_ID="$(printf '%s\n' "$SUMMARY" | sed -n 's/^candidate_id=//p')"
     CANDIDATE_RELATIVE_PATH="$(printf '%s\n' "$SUMMARY" | sed -n 's/^relative_path=//p')"
     LEGACY_LAYOUT="$(printf '%s\n' "$SUMMARY" | sed -n 's/^legacy=//p')"
