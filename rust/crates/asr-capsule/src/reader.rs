@@ -139,9 +139,7 @@ pub fn read_capsule_summary(path: impl AsRef<Path>) -> Result<CapsuleSummary> {
                             .insert(name.clone(), metric_values.value(index))
                             .is_some()
                     {
-                        return Err(CapsuleError::Contract(format!(
-                            "duplicate metric: {name}"
-                        )));
+                        return Err(CapsuleError::Contract(format!("duplicate metric: {name}")));
                     }
                 }
             }
