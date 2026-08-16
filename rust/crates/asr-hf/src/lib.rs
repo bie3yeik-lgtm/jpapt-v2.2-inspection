@@ -446,3 +446,5 @@ fn reject_line_breaks(key: &str, value: &str) -> Result<()> {
 fn contract(message: impl Into<String>) -> HfError {
     HfError::Contract(message.into())
 }
+
+pub mod allocation;

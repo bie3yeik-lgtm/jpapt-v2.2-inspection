@@ -77,7 +77,9 @@ impl AllocationCatalog {
     }
 }
 
-pub fn load_repository_allocation_catalog(repository_root: impl AsRef<Path>) -> Result<AllocationCatalog> {
+pub fn load_repository_allocation_catalog(
+    repository_root: impl AsRef<Path>,
+) -> Result<AllocationCatalog> {
     AllocationCatalog::load(
         repository_root
             .as_ref()
@@ -93,7 +95,11 @@ pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
         if value.is_empty() {
             continue;
         }
-        let directory = value.split('/').next().unwrap_or_default().trim_end_matches('/');
+        let directory = value
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('/');
         let Some((_, suffix)) = directory.rsplit_once('-') else {
             continue;
         };
@@ -174,10 +180,8 @@ pub fn write_allocation_readme(
         "targetとBucketの対応は採番時点のrouting snapshotであり、恒久的なidentityではありません。".to_owned(),
     ]);
     let path = output.as_ref().to_path_buf();
-    fs::write(&path, format!("{}\n", lines.join("\n"))).map_err(|source| HfError::Io {
-        path,
-        source,
-    })
+    fs::write(&path, format!("{}\n", lines.join("\n")))
+        .map_err(|source| HfError::Io { path, source })
 }
 
 fn validate_prefix(prefix: &str) -> Result<()> {
@@ -186,9 +190,7 @@ fn validate_prefix(prefix: &str) -> Result<()> {
         || !bytes[0].is_ascii_alphanumeric()
         || !bytes[bytes.len() - 1].is_ascii_alphanumeric()
         || !bytes.iter().all(|byte| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'.' | b'_' | b'-')
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
         })
     {
         return Err(contract(

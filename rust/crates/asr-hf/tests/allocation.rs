@@ -21,10 +21,7 @@ fn allocation_catalog_matches_python_canonical_fingerprint() {
         catalog.sha256,
         "adfacbb8e9d248d7b6296272c8230390771de917f8bfda01aab83c34d5335a23"
     );
-    assert_eq!(
-        catalog.prefix("experiment.rust_eval").unwrap(),
-        "rust-eval"
-    );
+    assert_eq!(catalog.prefix("experiment.rust_eval").unwrap(), "rust-eval");
 }
 
 #[test]
@@ -58,11 +55,7 @@ fn collection_sequence_is_shared_across_prefixes() {
 #[test]
 fn example_allocation_advances_real_sequence() {
     assert_eq!(
-        next_sequence_id(
-            "cpu-full-eval",
-            "structure-example-000001/README.md\n"
-        )
-        .unwrap(),
+        next_sequence_id("cpu-full-eval", "structure-example-000001/README.md\n").unwrap(),
         "cpu-full-eval-000002"
     );
 }
@@ -70,9 +63,7 @@ fn example_allocation_advances_real_sequence() {
 #[test]
 fn invalid_prefix_and_exhaustion_are_rejected() {
     assert!(next_sequence_id("CPU Full Eval", "").is_err());
-    assert!(
-        next_sequence_id("candidate", "anything-999999/README.md\n").is_err()
-    );
+    assert!(next_sequence_id("candidate", "anything-999999/README.md\n").is_err());
 }
 
 #[test]
