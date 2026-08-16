@@ -1,0 +1,197 @@
+name: Provider Strict Probes
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/provider-strict-probes
+    paths:
+      - ".github/workflows/provider-strict-probes.yml"
+      - "scripts/ci/e2e-provider-ctc.py"
+      - "scripts/ci/prepare-provider-run-context.py"
+      - "scripts/ci/resolve-candidate-artifacts.py"
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-strict-probes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-build-gate:
+    name: ${{ matrix.provider }} compile/link gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            provider: directml
+          - os: macos-14
+            provider: coreml
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build provider-specific Rust evaluator
+        shell: bash
+        run: cargo build --locked --release -p asr-eval --no-default-features --features "${{ matrix.provider }}"
+
+  coreml-strict-runtime:
+    name: CoreML strict runtime probe
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Sync minimal authoritative environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --extra onnx
+      - name: Materialize synthetic CTC provider probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/e2e-provider-ctc.py --output .ci/provider-probe
+          uv run python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/provider-probe/candidate \
+            --runtime-variant ctc \
+            --contract-out .ci/provider-probe/candidate-contract.json
+          uv run python scripts/ci/prepare-provider-run-context.py \
+            --contract .ci/provider-probe/candidate-contract.json \
+            --provider coreml \
+            --output .ci/provider-probe/run-context.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build CoreML evaluator
+        shell: bash
+        run: cargo build --locked --release -p asr-eval --no-default-features --features coreml
+      - name: Require strict CoreML execution without CPU fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/asr-eval evaluate \
+            --provider coreml \
+            --candidate-contract .ci/provider-probe/candidate-contract.json \
+            --run-context .ci/provider-probe/run-context.json \
+            --resolved-manifest .ci/provider-probe/resolved-manifest.json \
+            --output .ci/provider-probe/results
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          metrics = json.loads(Path('.ci/provider-probe/results/metrics.json').read_text())
+          provider = metrics['provider']
+          if provider.get('registered') is not True:
+              raise SystemExit(f'CoreML was not registered: {provider}')
+          if provider.get('execution_proven') is not True:
+              raise SystemExit(f'CoreML execution was not proven: {provider}')
+          if provider.get('fallback_detected') is not False:
+              raise SystemExit(f'CoreML fallback state is not strict: {provider}')
+          if metrics['acceptance'].get('passed') is not True:
+              raise SystemExit(f'CoreML evaluator acceptance failed: {metrics["acceptance"]}')
+          print(json.dumps({'provider': provider, 'acceptance': metrics['acceptance']}, indent=2))
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: coreml-strict-provider-probe
+          path: .ci/provider-probe
+          if-no-files-found: ignore
+          retention-days: 7
+
+  directml-readiness:
+    name: DirectML strict readiness probe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Sync minimal authoritative environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --extra onnx
+      - name: Materialize synthetic CTC provider probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/e2e-provider-ctc.py --output .ci/provider-probe
+          uv run python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/provider-probe/candidate \
+            --runtime-variant ctc \
+            --contract-out .ci/provider-probe/candidate-contract.json
+          uv run python scripts/ci/prepare-provider-run-context.py \
+            --contract .ci/provider-probe/candidate-contract.json \
+            --provider directml \
+            --output .ci/provider-probe/run-context.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build DirectML evaluator
+        shell: bash
+        run: cargo build --locked --release -p asr-eval --no-default-features --features directml
+      - name: Measure DirectML strict readiness
+        id: dml
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          target/release/asr-eval.exe evaluate \
+            --provider directml \
+            --candidate-contract .ci/provider-probe/candidate-contract.json \
+            --run-context .ci/provider-probe/run-context.json \
+            --resolved-manifest .ci/provider-probe/resolved-manifest.json \
+            --output .ci/provider-probe/results \
+            > .ci/provider-probe/directml.stdout.txt \
+            2> .ci/provider-probe/directml.stderr.txt
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Record truthful DirectML readiness result
+        if: always()
+        shell: python
+        env:
+          DML_OUTCOME: ${{ steps.dml.outcome }}
+          DML_EXIT_CODE: ${{ steps.dml.outputs.exit_code }}
+        run: |
+          import json, os
+          from pathlib import Path
+          root = Path('.ci/provider-probe')
+          metrics_path = root / 'results' / 'metrics.json'
+          result = {
+              'provider': 'directml',
+              'runner': 'windows-latest',
+              'strict_provider_mode': True,
+              'cpu_fallback_allowed': False,
+              'step_outcome': os.environ.get('DML_OUTCOME'),
+              'exit_code': os.environ.get('DML_EXIT_CODE'),
+              'execution_proven': False,
+          }
+          if metrics_path.is_file():
+              metrics = json.loads(metrics_path.read_text())
+              provider = metrics.get('provider', {})
+              result['telemetry'] = provider
+              result['execution_proven'] = provider.get('execution_proven') is True
+          (root / 'directml-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: directml-strict-readiness-probe
+          path: .ci/provider-probe
+          if-no-files-found: ignore
+          retention-days: 7
