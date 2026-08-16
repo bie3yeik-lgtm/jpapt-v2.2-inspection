@@ -38,9 +38,16 @@ fn maximum_collection_sequence(listing: &str) -> u32 {
 }
 
 fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {
-    let parts = raw
-        .trim()
-        .trim_start_matches('/')
+    let value = raw.trim().trim_start_matches('/');
+    let value = ["candidates", "experiments", "config"]
+        .iter()
+        .find_map(|collection| {
+            value
+                .strip_prefix(collection)
+                .and_then(|rest| rest.strip_prefix('/'))
+        })
+        .unwrap_or(value);
+    let parts = value
         .split('/')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
@@ -107,7 +114,7 @@ pub fn candidate_location(
     let mut legacy = BTreeSet::<(String, String)>::new();
 
     for raw in listing.lines() {
-        let value = raw.trim().trim_start_matches('/');
+        let value = normalize_collection_listing_path(raw, "candidates");
         if value.is_empty() {
             continue;
         }
@@ -137,8 +144,7 @@ pub fn candidate_location(
         let matches = legacy
             .iter()
             .filter(|(variant, candidate_id)| {
-                candidate_id == id
-                    && requested_variant.is_none_or(|expected| variant == expected)
+                candidate_id == id && requested_variant.is_none_or(|expected| variant == expected)
             })
             .collect::<Vec<_>>();
         return resolve_legacy_exact(id, requested_variant, matches);
@@ -178,6 +184,14 @@ pub fn candidate_location(
         id: id.clone(),
         legacy: true,
     })
+}
+
+fn normalize_collection_listing_path<'a>(raw: &'a str, collection: &str) -> &'a str {
+    let value = raw.trim().trim_start_matches('/');
+    value
+        .strip_prefix(collection)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(value)
 }
 
 fn resolve_legacy_exact(
@@ -345,7 +359,23 @@ mod tests {
 
     #[test]
     fn empty_collection_starts_at_one() {
-        assert_eq!(next_sequence_id("candidate", "").unwrap(), "candidate-000001");
+        assert_eq!(
+            next_sequence_id("candidate", "").unwrap(),
+            "candidate-000001"
+        );
+    }
+
+    #[test]
+    fn collection_root_prefix_is_ignored_in_bucket_listing() {
+        let listing = "candidates/ctc/candidate-000001/metadata.json\ncandidates/tdt/candidate-000004/metadata.json\n";
+        assert_eq!(
+            next_sequence_id("candidate", listing).unwrap(),
+            "candidate-000005"
+        );
+        let location = candidate_location(listing, None, Some("ctc")).unwrap();
+        assert_eq!(location.id, "candidate-000001");
+        assert_eq!(location.relative_path, "ctc/candidate-000001");
+        assert!(location.legacy);
     }
 
     #[test]
