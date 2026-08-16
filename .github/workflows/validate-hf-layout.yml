@@ -123,7 +123,7 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
           )
           if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-missing-framework --allow-missing-decoder)
+            args+=(--allow-legacy-metadata)
           fi
           python scripts/ci/validate-revisions.py "${args[@]}"
 
@@ -205,7 +205,7 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
           )
           if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-missing-framework --allow-missing-decoder)
+            args+=(--allow-legacy-metadata)
           fi
           python scripts/ci/validate-revisions.py "${args[@]}"
 
