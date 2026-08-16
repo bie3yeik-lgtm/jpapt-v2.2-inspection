@@ -1,3 +1,3 @@
-{"schema_version":1,"id":"full-jsut","dataset_id":"jsut-basic5000","selection":{"strategy":"stable_hash","count":256,"seed":"parakeet-onnx-full-jsut-v1"},"filters":{"min_duration_sec":0.5,"max_duration_sec":600.0},"tags":["full","japanese","clean-speech"]}
-{"schema_version":1,"id":"full-common-voice","dataset_id":"common-voice-8-ja","selection":{"strategy":"stable_hash","count":256,"seed":"parakeet-onnx-full-common-voice-v1"},"filters":{"min_duration_sec":0.5,"max_duration_sec":600.0},"tags":["full","japanese","common-voice"]}
-{"schema_version":1,"id":"full-reazonspeech-test","dataset_id":"reazonspeech-test","selection":{"strategy":"stable_hash","count":256,"seed":"parakeet-onnx-full-reazonspeech-test-v1"},"filters":{"min_duration_sec":0.5,"max_duration_sec":600.0},"tags":["full","japanese","reazonspeech"]}
+{"dataset_id":"jsut-basic5000","count":256,"seed":"parakeet-onnx-full-jsut-v1","min_duration_sec":0.5,"max_duration_sec":600.0}
+{"dataset_id":"common-voice-8-ja","count":256,"seed":"parakeet-onnx-full-common-voice-v1","min_duration_sec":0.5,"max_duration_sec":600.0}
+{"dataset_id":"reazonspeech-test","count":256,"seed":"parakeet-onnx-full-reazonspeech-test-v1","min_duration_sec":0.5,"max_duration_sec":600.0}
