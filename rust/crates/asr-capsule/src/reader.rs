@@ -134,12 +134,14 @@ pub fn read_capsule_summary(path: impl AsRef<Path>) -> Result<CapsuleSummary> {
                         ));
                     }
                     let name = metric_names.value(index).to_owned();
-                    if !metric_values.is_null(index) {
-                        if metrics.insert(name.clone(), metric_values.value(index)).is_some() {
-                            return Err(CapsuleError::Contract(format!(
-                                "duplicate metric: {name}"
-                            )));
-                        }
+                    if !metric_values.is_null(index)
+                        && metrics
+                            .insert(name.clone(), metric_values.value(index))
+                            .is_some()
+                    {
+                        return Err(CapsuleError::Contract(format!(
+                            "duplicate metric: {name}"
+                        )));
                     }
                 }
             }
