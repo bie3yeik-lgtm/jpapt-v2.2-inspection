@@ -77,28 +77,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          value = {
-              "schema_version": 3,
-              "request_id": "${{ inputs.request_id }}",
-              "id": "${{ steps.allocate.outputs.id }}",
-              "bucket": os.environ["HF_BUCKET"],
-              "collection": "${{ inputs.collection }}",
-              "allocation_catalog": {
-                  "id": "${{ steps.allocate.outputs.allocation_catalog_id }}",
-                  "sha256": "${{ steps.allocate.outputs.allocation_catalog_sha256 }}",
-              },
-              "prefix_key": "${{ inputs.prefix_key }}",
-              "resolved_prefix": "${{ steps.allocate.outputs.prefix }}",
-          }
-          Path("allocation.json").write_text(
-              json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          PY
+          cargo run --quiet --locked -p asr-hf -- write-allocation-response \
+            --output allocation.json \
+            --request-id "${{ inputs.request_id }}" \
+            --allocation-id "${{ steps.allocate.outputs.id }}" \
+            --bucket "${HF_BUCKET}" \
+            --collection "${{ inputs.collection }}" \
+            --catalog-id "${{ steps.allocate.outputs.allocation_catalog_id }}" \
+            --catalog-sha256 "${{ steps.allocate.outputs.allocation_catalog_sha256 }}" \
+            --prefix-key "${{ inputs.prefix_key }}" \
+            --resolved-prefix "${{ steps.allocate.outputs.prefix }}"
       - name: Publish allocation response
         uses: actions/upload-artifact@v7
         with:
