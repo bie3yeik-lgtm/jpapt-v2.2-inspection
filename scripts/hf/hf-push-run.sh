@@ -49,6 +49,7 @@ require_env HF_TOKEN
 require_env HF_BUCKET
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable."
 command -v python >/dev/null 2>&1 || fail "python is unavailable."
+command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable."
 
 RUN_DIRECTORY="${1:-}"
 [[ -n "$RUN_DIRECTORY" ]] || fail "Run directory is required. Usage: $0 <run-directory>"
@@ -102,21 +103,20 @@ PY
 [[ "$RUN_ID" == "$METRICS_RUN_ID" ]] || fail "run-context.json and metrics.json use different run IDs."
 
 if command -v uv >/dev/null 2>&1; then
-    log "Validating JSON contracts and Parquet capsule..."
-    uv run python - \
-        "$RUN_DIRECTORY/run-context.json" \
-        "$RUN_DIRECTORY/metrics.json" \
-        "$RUN_DIRECTORY/samples.jsonl" \
-        "$RUN_DIRECTORY/run.parquet" \
-        "$RUN_ID" \
-        <<'PY'
+    log "Validating JSON contracts..."
+    JSONL_COUNT="$(
+        uv run python - \
+            "$RUN_DIRECTORY/run-context.json" \
+            "$RUN_DIRECTORY/metrics.json" \
+            "$RUN_DIRECTORY/samples.jsonl" \
+            "$RUN_ID" \
+            <<'PY'
 import json
 import sys
 from pathlib import Path
 
 from parakeet_onnx.evaluation import (
     validate_benchmark,
-    validate_experiment_capsule,
     validate_run_context,
     validate_sample_result,
 )
@@ -124,8 +124,7 @@ from parakeet_onnx.evaluation import (
 run_context_path = Path(sys.argv[1])
 metrics_path = Path(sys.argv[2])
 samples_path = Path(sys.argv[3])
-parquet_path = Path(sys.argv[4])
-run_id = sys.argv[5]
+run_id = sys.argv[4]
 
 with run_context_path.open("r", encoding="utf-8") as file:
     validate_run_context(json.load(file))
@@ -151,18 +150,28 @@ with samples_path.open("r", encoding="utf-8") as file:
 
 if count == 0:
     raise SystemExit("samples.jsonl contains no sample results")
-
-parquet_count = validate_experiment_capsule(parquet_path, expected_run_id=run_id)
-if parquet_count != count:
-    raise SystemExit(
-        "samples.jsonl and run.parquet contain different sample counts: "
-        f"jsonl={count}, parquet={parquet_count}"
-    )
-print(f"[hf-push-run] validated {count} JSONL/Parquet sample results")
+print(count)
 PY
+    )"
 else
-    fail "uv is required to validate run.parquet before Hugging Face upload."
+    fail "uv is required until JSON contract validation is migrated to Rust."
 fi
+
+log "Validating Parquet capsule with Rust..."
+CAPSULE_SUMMARY="$(
+    cargo run --quiet --locked -p asr-capsule --bin asr-capsule -- \
+        validate "$RUN_DIRECTORY/run.parquet" \
+        --expected-run-id "$RUN_ID"
+)" || fail "Rust capsule validation failed."
+
+PARQUET_COUNT="$(
+    printf '%s\n' "$CAPSULE_SUMMARY" \
+        | awk -F= '$1 == "sample_count" { print $2 }'
+)"
+[[ "$PARQUET_COUNT" =~ ^[0-9]+$ ]] || fail "Rust capsule validator returned no valid sample_count."
+[[ "$JSONL_COUNT" == "$PARQUET_COUNT" ]] || fail \
+    "samples.jsonl and run.parquet contain different sample counts: jsonl=$JSONL_COUNT, parquet=$PARQUET_COUNT"
+log "Validated $JSONL_COUNT JSONL/Parquet sample results."
 
 HF_BUCKET_ID="$(normalize_bucket_id "$HF_BUCKET")"
 REMOTE="hf://buckets/${HF_BUCKET_ID}/runs/${RUN_ID}"

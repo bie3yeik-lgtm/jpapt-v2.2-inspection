@@ -25,38 +25,68 @@ with `nvidia/parakeet-tdt_ctc-0.6b-ja`.
 10. `ResolvedDatasetSample.audio_path` must refer to a materialized local file.
 11. Candidate output must never overwrite expected/reference data.
 12. Promotion requires accepted evaluation and verified artifact SHA-256.
-13. Python is the initial implementation language.
-14. Rust should adopt stable contracts rather than reimplementing unresolved
-    Python/Hugging Face behavior prematurely.
+13. Rust is the canonical implementation language for production/runtime,
+    validation, evaluation orchestration, capsule persistence, analytics, and
+    other behavior that can be implemented without Python-only ML tooling.
+14. Python must be kept as a thin compatibility/reference layer. New Python
+    production logic requires a concrete reason why the responsibility cannot
+    live in Rust.
+15. Python remains appropriate at boundaries that are intrinsically tied to
+    Python-first ecosystems such as NeMo/PyTorch model export or a Hugging Face
+    API that has no adequate Rust/CLI equivalent. Keep those boundaries narrow,
+    explicit, deterministic, and machine-readable.
+16. When a stable Python contract already exists, migrate it to Rust behind
+    compatibility tests before deleting or reducing the Python implementation.
+17. Shell and PowerShell remain orchestration wrappers only; they should invoke
+    Rust binaries for core behavior whenever a Rust implementation exists.
 
 ## Repository responsibilities
 
 ```text
 config/       static configuration
 evaluation/   schemas, manifests, lightweight expected data
-python/       canonical Python implementation
-rust/         future production/runtime implementation
-scripts/      operational wrappers
+rust/         canonical production/runtime/validation implementation
+python/       thin Python-only ML/HF compatibility and reference layer
+scripts/      operational wrappers only
 docker/       canonical NeMo reference/export environment
 docs/         architecture and workflow documentation
 tools/        optional inspection/diagnostic utilities
 ```
 
+## Rust-first migration order
+
+Prefer migration in this order so each phase reduces Python runtime surface
+without destabilizing model export:
+
+```text
+1. capsule read/validate/analytics + run validation
+2. JSON contract validation and generated-candidate I/O
+3. evaluation orchestration and dataset-manifest handling
+4. Hugging Face operational logic where CLI/API support is sufficient
+5. model-independent preprocessing/frontend utilities
+6. Python-only export/reference code last
+```
+
+For a migrated responsibility, CI must prove compatibility against existing
+fixtures/contracts before the Python implementation is removed.
+
 ## Do not place production logic in scripts
 
 Shell and PowerShell scripts must remain thin wrappers.
 
-Core behavior belongs under:
+Core behavior belongs primarily under:
+
+```text
+rust/crates/
+```
+
+Python-only boundary behavior may live under:
 
 ```text
 python/src/parakeet_onnx/
 ```
 
-or later:
-
-```text
-rust/crates/
-```
+Do not add a Python implementation merely because invoking Python is easier.
 
 ## Git restrictions
 

@@ -1,0 +1,75 @@
+use std::fs;
+use std::process::Command;
+
+use asr_capsule::{CapsuleRow, RecordKind, write_capsule};
+use uuid::Uuid;
+
+fn fixture_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("jpapt-capsule-cli-{}.parquet", Uuid::new_v4()))
+}
+
+fn write_fixture(path: &std::path::Path) {
+    let rows = [
+        CapsuleRow::new("cli-run", RecordKind::Manifest, 0)
+            .unwrap()
+            .with_string("name", "run")
+            .with_string("category", "evaluation")
+            .with_string(
+                "metadata_json",
+                r#"{"run_context":{"run_id":"cli-run"},"benchmark":{"run_id":"cli-run"}}"#,
+            ),
+        CapsuleRow::new("cli-run", RecordKind::Sample, 1)
+            .unwrap()
+            .with_string("sample_id", "sample-1"),
+        CapsuleRow::new("cli-run", RecordKind::Metric, 2)
+            .unwrap()
+            .with_string("metric_name", "quality.cer")
+            .with_float64("metric_value", 0.1),
+    ];
+    write_capsule(path, "cli-run", &rows).unwrap();
+}
+
+#[test]
+fn validate_reports_operational_counts() {
+    let path = fixture_path();
+    write_fixture(&path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_asr-capsule"))
+        .args([
+            "validate",
+            path.to_str().unwrap(),
+            "--expected-run-id",
+            "cli-run",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("run_id=cli-run"));
+    assert!(stdout.contains("sample_count=1"));
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn validate_rejects_unexpected_run_id() {
+    let path = fixture_path();
+    write_fixture(&path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_asr-capsule"))
+        .args([
+            "validate",
+            path.to_str().unwrap(),
+            "--expected-run-id",
+            "other-run",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("does not match expected run_id"));
+
+    fs::remove_file(path).unwrap();
+}
