@@ -256,6 +256,8 @@ jobs:
           HF_FLAVOR: ${{ steps.resolve.outputs.hf_flavor }}
           HF_JOBS_IMAGE: ${{ steps.resolve.outputs.hf_jobs_image }}
         run: |
+          # jq variables intentionally use $name inside a single-quoted filter.
+          # shellcheck disable=SC2016
           jq -nc \
             --arg source_repository "$SOURCE_REPOSITORY" \
             --arg hf_bucket "$HF_BUCKET" \
