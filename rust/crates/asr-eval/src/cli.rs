@@ -12,6 +12,7 @@ pub struct Cli { #[command(subcommand)] pub command:Command }
  #[arg(long)] pub model:PathBuf,
  #[arg(long)] pub candidate_dir:PathBuf,
  #[arg(long)] pub candidate_id:Option<String>,
+ #[arg(long)] pub experiment_id:Option<String>,
  #[arg(long)] pub vocabulary:PathBuf,
  #[arg(long)] pub resolved_manifest:PathBuf,
  #[arg(long,default_value="smoke")] pub evaluation:String,

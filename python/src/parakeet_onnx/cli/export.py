@@ -6,13 +6,26 @@ from pathlib import Path
 from parakeet_onnx.export import export_ctc_candidate
 
 
+UNALLOCATED_CANDIDATE_ID = "unallocated"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parakeet-onnx-export",
-        description="Export a pinned NeMo ASR model to an ONNX candidate.",
+        description=(
+            "Export a pinned NeMo ASR model to a local ONNX candidate. "
+            "The durable HF candidate ID is allocated by hf-push-candidate.sh."
+        ),
     )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--candidate-id", required=True)
+    parser.add_argument(
+        "--candidate-id",
+        default=UNALLOCATED_CANDIDATE_ID,
+        help=(
+            "Optional provisional local ID. Normally omitted; durable "
+            "prefix-NNNNNN allocation happens when publishing to the HF Bucket."
+        ),
+    )
     parser.add_argument("--decoder", choices=("ctc", "tdt"), default="ctc")
     return parser
 

@@ -51,8 +51,11 @@ def test_bucket_resolves_kotoba_target() -> None:
     assert result.returncode == 0, result.stderr
     assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
     assert "HF_MODEL_REPO=gawohok7/tf-v1-onnx-dev" in result.stdout
+    assert "EXPECTED_DEVELOPMENT_REPO_ID=gawohok7/tf-v1-onnx-dev" in result.stdout
     assert "EXPECTED_UPSTREAM_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
     assert "EXPECTED_TOKENIZER_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
+    assert "EXPECTED_FRAMEWORK=transformers" in result.stdout
+    assert "EXPECTED_DECODER=whisper_autoregressive" in result.stdout
 
 
 def test_unknown_bucket_is_rejected() -> None:
@@ -64,12 +67,11 @@ def test_unknown_bucket_is_rejected() -> None:
     )
 
     assert result.returncode == 1
-    assert "is not present in HF target mapping" in result.stderr
-    assert "gawohok7/tf-v1-onnx-dev-bucket" in result.stderr
+    assert "is not present in the current HF target mapping" in result.stderr
 
 
-def test_duplicate_bucket_is_rejected() -> None:
-    mapping = json.dumps(
+def test_duplicate_bucket_is_rejected_in_current_snapshot() -> None:
+    duplicated = json.dumps(
         {
             "kotoba-whisper-v1.0": {
                 "HF_BUCKET": "gawohok7/shared-bucket",
@@ -81,13 +83,37 @@ def test_duplicate_bucket_is_rejected() -> None:
             },
         }
     )
-
     result = _run(
         "--bucket",
         "gawohok7/shared-bucket",
         "--targets-json",
-        mapping,
+        duplicated,
     )
 
     assert result.returncode == 1
-    assert "is assigned to both" in result.stderr
+    assert "in the current routing snapshot" in result.stderr
+
+
+def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
+    moved = json.dumps(
+        {
+            "kotoba-whisper-v1.0": {
+                "HF_BUCKET": "gawohok7/tf-v1-capacity-bucket-b",
+                "HF_MODEL_REPO": "gawohok7/tf-v1-onnx-dev",
+            },
+            "parakeet-tdt_ctc-0.6b-ja": {
+                "HF_BUCKET": "gawohok7/jpapt-v2.2-dev-bucket",
+                "HF_MODEL_REPO": "gawohok7/jpapt-v2.2-dev",
+            },
+        }
+    )
+    result = _run(
+        "--bucket",
+        "gawohok7/tf-v1-capacity-bucket-b",
+        "--targets-json",
+        moved,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
+    assert "HF_BUCKET=gawohok7/tf-v1-capacity-bucket-b" in result.stdout

@@ -2,22 +2,27 @@
 
 ## Purpose
 
-The project separates mutable development/evaluation data from released model
+The project separates mutable development/evaluation data from promoted model
 artifacts.
-
-Two Hugging Face storage roles are used:
 
 ```text
 Hugging Face Bucket
-    development and evaluation state
+    development, experiments, candidates, evaluation history
 
 Hugging Face Model Repo
-    validated release artifacts
+    validated promoted artifacts
 ```
 
-## Environment variables
+For the complete reusable operating model, including sequential ID allocation,
+concurrency, reproduction, and migration to other repositories, see:
 
-Operational scripts use:
+```text
+docs/hf-bucket-operations.md
+```
+
+## Target routing
+
+GitHub Actions receives target storage through `vars.HF_TARGETS_JSON` and uses:
 
 ```text
 HF_TOKEN
@@ -25,112 +30,221 @@ HF_BUCKET
 HF_MODEL_REPO
 ```
 
-`HF_BUCKET` format:
+Bucket routing is operational state. `reference.json` does not duplicate the
+Bucket name.
 
-```text
-<namespace>/<bucket>
-```
-
-`HF_MODEL_REPO` format:
-
-```text
-<namespace>/<model-repository>
-```
-
-Secrets must not be committed to Git.
-
-## Bucket layout
+## Canonical Bucket layout
 
 ```text
 hf://buckets/<namespace>/<bucket>/
 ├── config/
-│   └── revisions/
-│       ├── reference.json
-│       ├── evaluation-schema.json
-│       └── datasets-lock.json
-├── benchmarks/
-├── runs/
+│   ├── current.json
+│   └── versions/
+│       └── config-NNNNNN/
+│           ├── reference.json
+│           ├── evaluation-schema.json
+│           └── datasets-lock.json
+├── experiments/
+│   └── <prefix>-NNNNNN/
+│       └── README.md
 ├── candidates/
+│   └── <prefix>-NNNNNN/
+│       ├── README.md
+│       ├── metadata.json
+│       └── <deployment artifacts>
 ├── reference/
+│   ├── manifests/
+│   ├── outputs/
+│   ├── tensors/
+│   └── metadata/
+├── runs/
+│   └── <run-id>/
+├── benchmarks/
+│   └── <candidate-id>/
+│       └── <environment-provider>/
 ├── scripts/
 └── tmp/
 ```
 
-## `config/revisions/`
+Framework and decoder names are not top-level storage categories. NeMo,
+Transformers, CTC, TDT, and Whisper autoregressive behavior are encoded in
+configuration and metadata.
 
-### `reference.json`
+## Versioned revision configuration
 
-Pins the canonical model/reference identity.
-
-Conceptual structure:
+### `config/current.json`
 
 ```json
 {
   "schema_version": 1,
-  "model": {
-    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
-    "revision": "<FULL_HF_COMMIT_SHA>",
-    "tokenizer_revision": "<FULL_HF_COMMIT_SHA>"
+  "config_version": "config-000002"
+}
+```
+
+Normal workflows follow this pointer. Reproduction may set:
+
+```bash
+HF_CONFIG_VERSION=config-000002
+```
+
+to select an immutable historical version directly.
+
+### `config/versions/config-NNNNNN/`
+
+Every version contains exactly the canonical revision documents:
+
+```text
+reference.json
+evaluation-schema.json
+datasets-lock.json
+```
+
+Published versions are immutable. Any revision-document change creates a new
+`config-NNNNNN`, followed by an update of `current.json`.
+
+### Fetch flow
+
+```text
+config/current.json
+        ↓
+config/versions/<selected-version>/
+        ↓
+hf-fetch-revisions.sh
+        ↓
+.ci/hf/config/revisions/
+        ↓
+RevisionBundle strict loader
+```
+
+The selected version is saved in `.ci/hf/config/resolved.json` and propagated to
+`run-context.json.revisions.config_version`.
+
+## `reference.json`
+
+Canonical structure:
+
+```json
+{
+  "schema_version": 1,
+  "development_artifact": {
+    "repo_id": "example/development-model-repo",
+    "revision": "<DEVELOPMENT_ARTIFACT_REVISION>"
+  },
+  "upstream": {
+    "repo_id": "vendor/upstream-model",
+    "revision": "<UPSTREAM_REVISION>"
+  },
+  "tokenizer": {
+    "repo_id": "vendor/tokenizer-or-processor",
+    "revision": "<TOKENIZER_REVISION>"
   },
   "reference": {
-    "id": "nemo-reference-v1",
-    "revision": "<REFERENCE_ARTIFACT_REVISION>"
+    "id": "framework-reference-v1",
+    "revision": "<REFERENCE_REVISION>",
+    "canonical_framework": "transformers"
+  },
+  "decoders": {
+    "supported": ["whisper_autoregressive"],
+    "default": "whisper_autoregressive"
   }
 }
 ```
 
-### `evaluation-schema.json`
+Meanings:
 
-Pins evaluation rules and thresholds.
+- `development_artifact`: the HF Model Repo snapshot containing the development
+  or promoted deployment artifact;
+- `upstream`: the source model/checkpoint;
+- `tokenizer`: the independently pinned tokenizer/processor source;
+- `reference`: the implementation used to produce canonical expected results.
 
-It is not the same thing as:
+## `evaluation-schema.json`
+
+Pins evaluation-rule identity and supported decoders through canonical `schema`
+and `decoders` objects. It is separate from Git JSON Schema files under
+`evaluation/schemas/`.
+
+## `datasets-lock.json`
+
+Pins exact evaluation dataset revisions and maps logical manifest IDs to their
+HF Dataset repositories/revisions.
+
+## Sequential candidate and experiment IDs
+
+Candidates and experiments use:
 
 ```text
-evaluation/schemas/*.schema.json
+<prefix>-NNNNNN
 ```
 
-The HF document answers:
-
-> Which acceptance rule revision applies?
-
-The Git JSON Schemas answer:
-
-> Is this result document structurally valid?
-
-### `datasets-lock.json`
-
-Pins exact evaluation dataset revisions.
-
-Logical IDs used by manifests map through this document, for example:
-
-```text
-jsut-basic5000
-common-voice-8-ja
-reazonspeech-test
-```
-
-## `candidates/`
-
-Unvalidated or not-yet-promoted deployment artifacts.
+The prefix is descriptive; the numeric sequence is machine managed across the
+entire collection irrespective of prefix.
 
 Example:
 
 ```text
-candidates/
-└── ctc-0007/
-    ├── model.onnx
-    ├── metadata.json
-    └── tokenizer/
+experiments/
+├── cpu-full-eval-000002/
+├── cross-platform-parity-000003/
+└── rust-eval-000004/
 ```
 
-Candidates may be replaced during active development, so evaluation identity
-must always include artifact SHA-256.
+The next experiment with any prefix is `...-000005`.
 
-## `reference/`
+`scripts/hf/hf-allocate-id.sh` lists the collection, computes maximum suffix + 1,
+and immediately writes `README.md` to reserve/document the allocated path.
+GitHub Actions serializes the short allocator job using a Bucket-scoped
+concurrency group so heavy evaluations can still run in parallel.
 
-Canonical NeMo-generated evaluation/reference artifacts.
+## Candidates
 
-Possible structure:
+Candidates are unpromoted deployment artifacts selected for evaluation.
+New candidate publication uses:
+
+```text
+scripts/hf/hf-push-candidate.sh
+```
+
+which allocates the ID automatically. Existing candidate IDs remain explicit
+inputs to evaluation workflows because selecting which immutable artifact to
+evaluate is different from allocating a new ID.
+
+A Whisper-style candidate may contain multiple ONNX graphs:
+
+```text
+candidates/<candidate-id>/
+├── README.md
+├── metadata.json
+├── encoder.onnx
+├── decoder.onnx
+├── decoder_with_past.onnx
+└── tokenizer/
+```
+
+A CTC candidate may contain one primary ONNX graph. The lifecycle structure is
+the same.
+
+## Experiments
+
+Experiments group a logical attempt or evaluation across one or more concrete
+runs. Current workflow prefixes include:
+
+```text
+cpu-full-eval
+cross-platform-parity
+rust-eval
+```
+
+The ID is recorded in:
+
+```text
+run-context.json.metadata.experiment_id
+```
+
+Cross-platform matrix jobs share one experiment ID but each produces its own
+run ID.
+
+## Reference assets
 
 ```text
 reference/
@@ -140,181 +254,48 @@ reference/
 └── metadata/
 ```
 
-Large frontend/encoder/logit tensors belong here rather than Git.
+Large canonical framework outputs/tensors belong in the Bucket rather than Git.
 
-## `runs/`
-
-Complete evaluation histories.
+## Runs
 
 ```text
-runs/
-└── <run-id>/
-    ├── run-context.json
-    ├── samples.jsonl
-    ├── metrics.json
-    └── promotion.json
+runs/<run-id>/
+├── run-context.json
+├── samples.jsonl
+├── metrics.json
+└── promotion.json
 ```
 
-`promotion.json` is added when that accepted run is used to promote a
-candidate.
+Runs are execution records, not sequential human-managed entities. They retain
+candidate, experiment, configuration version, revision bundle, artifact hash,
+runtime/provider, host, and Git identity.
 
-Runs are append-oriented history and operational scripts must not use
-destructive synchronization by default.
+## Benchmarks
 
-## `benchmarks/`
-
-Lightweight comparable summaries.
-
-Recommended layout:
+Use environment/provider names rather than framework names:
 
 ```text
-benchmarks/
-└── <candidate-id>/
-    └── <benchmark-name>/
-        └── <run-id>.json
+benchmarks/<candidate-id>/
+├── linux-cpu/
+├── linux-cuda/
+├── windows-cpu/
+├── windows-cuda/
+├── windows-directml/
+├── macos-cpu/
+└── macos-coreml/
 ```
 
-Examples of benchmark names:
+Only directories for actually executed benchmark configurations need to exist.
 
-```text
-linux-cpu
-windows-cpu
-macos-cpu
-coreml
-cuda
-directml
-```
+## `scripts/` and `tmp/`
 
-The benchmark file is normally a copy of validated `metrics.json`.
-
-## `scripts/`
-
-Reserved for Bucket-side operational material if required later.
-
-Repository source scripts remain under:
-
-```text
-scripts/hf/
-```
-
-Do not duplicate normal source code into the Bucket unless there is a concrete
-artifact-history requirement.
-
-## `tmp/`
-
-Disposable Bucket workspace.
-
-Nothing under `tmp/` should be treated as canonical evaluation identity or a
-release artifact.
-
-## Local staging
-
-HF revision files:
-
-```text
-.ci/hf/config/revisions/
-```
-
-Candidate:
-
-```text
-.ci/candidate/
-```
-
-Reference:
-
-```text
-.ci/reference/
-```
-
-Promotion staging:
-
-```text
-.ci/promotion/
-```
-
-These locations are disposable and excluded from Git.
-
-## Operational scripts
-
-```text
-scripts/hf/
-├── hf-fetch-revisions.sh
-├── hf-fetch-candidate.sh
-├── hf-fetch-reference.sh
-├── hf-push-run.sh
-├── hf-push-benchmark.sh
-└── hf-promote-model.sh
-```
-
-### Revision fetch
-
-```text
-HF Bucket/config/revisions
-        ↓
-hf-fetch-revisions.sh
-        ↓
-.ci/hf/config/revisions
-```
-
-### Candidate fetch
-
-```text
-HF Bucket/candidates/<candidate-id>
-        ↓
-hf-fetch-candidate.sh
-        ↓
-.ci/candidate
-```
-
-### Reference fetch
-
-```text
-HF Bucket/reference
-        ↓
-hf-fetch-reference.sh
-        ↓
-.ci/reference
-```
-
-### Run upload
-
-```text
-results/<run>/
-        ↓
-hf-push-run.sh
-        ↓
-HF Bucket/runs/<run-id>/
-```
-
-### Benchmark upload
-
-```text
-metrics.json
-        ↓
-hf-push-benchmark.sh
-        ↓
-HF Bucket/benchmarks/...
-```
-
-### Promotion
-
-```text
-accepted candidate
-        ↓
-hf-promote-model.sh
-        ↓
-HF Model Repo
-```
-
-Promotion verifies artifact identity and records provenance back into the
-Bucket.
+Bucket `scripts/` is reserved for artifact-history material when required.
+Source code remains in Git. `tmp/` is disposable and is never canonical
+identity/history.
 
 ## Model Repo policy
 
-The Model Repo contains validated artifacts only.
-
-Typical layout:
+Validated/promotion artifacts live in the Model Repo, for example:
 
 ```text
 README.md
@@ -327,43 +308,26 @@ release/
 └── promotion.json
 ```
 
-Development candidates must not be uploaded directly as official releases.
-
-## Git policy
-
-Do not store:
-
-```text
-*.onnx
-*.nemo
-*.npy
-*.npz
-*.wav
-*.flac
-large dataset caches
-HF caches
-```
-
-in the Git repository.
-
-Git stores only source/config/schema/manifest/lightweight expected data.
+Development candidates remain in the Bucket until promotion.
 
 ## Lifecycle
 
 ```text
-reference revisions
+config/current.json
         ↓
-export candidate
+immutable config version
         ↓
-Bucket/candidates
+export/build artifact
         ↓
-evaluation
+auto-numbered candidate
         ↓
-Bucket/runs + benchmarks
+auto-numbered experiment
+        ↓
+one or more runs
+        ↓
+benchmarks
         ↓
 acceptance
         ↓
-promotion
-        ↓
-Model Repo
+promotion to HF Model Repo
 ```

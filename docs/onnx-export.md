@@ -3,13 +3,12 @@
 ## Purpose
 
 ONNX is a deployment artifact, not the canonical source representation.
-
-The canonical model/reference is the pinned upstream NeMo model.
+The canonical source/reference framework is selected by the HF target profile.
 
 ```text
-NeMo model
+pinned target
     ↓
-reference validation
+canonical framework/reference
     ↓
 ONNX export
     ↓
@@ -18,44 +17,11 @@ structural validation
 candidate
 ```
 
-## Initial target
+Current examples include NeMo/Parakeet and Transformers/Whisper.
 
-The first export target is the simpler CTC deployment path.
+## Pinned source revisions
 
-```text
-waveform/features
-    ↓
-frontend
-    ↓
-FastConformer encoder
-    ↓
-CTC head
-    ↓
-logits
-```
-
-TDT export and decoding are added after CTC correctness is stable.
-
-## Reference environment
-
-Canonical export development runs in:
-
-```text
-docker/Dockerfile.nemo
-```
-
-The container isolates:
-
-- NeMo
-- PyTorch
-- CUDA
-- canonical reference dependencies
-
-The normal ORT runtime must not depend on this environment.
-
-## Pinned source revision
-
-The source model revision must be obtained from:
+Export must use the exact identities from:
 
 ```text
 .ci/hf/config/revisions/reference.json
@@ -64,10 +30,21 @@ The source model revision must be obtained from:
 which is downloaded from:
 
 ```text
-hf://buckets/<namespace>/<bucket>/config/revisions/reference.json
+hf://buckets/<HF_BUCKET>/config/revisions/reference.json
+```
+
+The fields have distinct meanings:
+
+```text
+development_artifact.revision  revision of generated deployment-artifact repo
+upstream.revision              source checkpoint revision used for export
+ tokenizer.revision            tokenizer/processor revision
+reference.revision             canonical reference implementation/artifact revision
 ```
 
 Do not export from a floating `main`, `latest`, or implicit HEAD revision.
+Do not use `development_artifact.revision` as a substitute for the upstream
+checkpoint revision.
 
 ## Audio/frontend boundary
 
@@ -80,6 +57,8 @@ mono
 16000 Hz
 ```
 
+Framework/model-specific frontend logic begins after this boundary.
+
 Two export strategies are supported conceptually.
 
 ### Frontend outside ONNX
@@ -87,43 +66,29 @@ Two export strategies are supported conceptually.
 ```text
 CanonicalAudio
     ↓
-standalone frontend
+standalone framework frontend
     ↓
 features
     ↓
-encoder/head ONNX
+model ONNX
 ```
 
-Advantages:
-
-- easiest frontend parity inspection
-- easier localization of conversion errors
-- explicit Rust frontend path later
-
-This is the preferred initial development path.
+This is useful when frontend parity must be inspected independently.
 
 ### Frontend inside ONNX
 
 ```text
 CanonicalAudio waveform
     ↓
-frontend + encoder/head ONNX
+frontend + model ONNX
 ```
 
-Advantages:
+This simplifies deployment but moves frontend compatibility into the graph.
 
-- simpler deployment interface
+## Export adapters
 
-Disadvantages:
-
-- frontend differences become part of the graph
-- harder to isolate numerical mismatch
-
-This can be adopted after parity is understood.
-
-## Export modules
-
-Expected Python implementation:
+The export layer should dispatch by the selected target/framework rather than
+assuming NeMo globally.
 
 ```text
 python/src/parakeet_onnx/export/
@@ -133,61 +98,22 @@ python/src/parakeet_onnx/export/
 └── validate.py
 ```
 
-### `ctc.py`
+Architecture-specific adapters may additionally exist for Transformers/Whisper.
 
 Responsibilities:
 
-- prepare pinned NeMo model
-- isolate CTC path
-- define export input/output contracts
-- invoke export
-- write candidate artifacts
-
-### `tdt.py`
-
-Future responsibilities:
-
-- predictor export
-- joint export
-- duration/token output contract
-- TDT deployment components
-
-### `metadata.py`
-
-Responsibilities:
-
-- candidate identity
-- model/source revision
-- primary artifact
-- input/output contract
-- decoder type
-- tokenizer identity
-- frontend strategy
-- compatibility metadata
-
-### `validate.py`
-
-Responsibilities:
-
-- load exported ONNX
-- run ONNX checker
-- inspect inputs/outputs
-- verify expected tensor names/dtypes/ranks
-- create ORT CPU session
-- perform minimal numerical comparison
+- load the exact `upstream` revision
+- load the exact `tokenizer` revision
+- create the requested decoder-specific graph(s)
+- write candidate metadata with provenance
+- validate ONNX structure and runtime contract
 
 ## Candidate staging
 
-Exports should first go to a disposable local path such as:
+Exports first go to disposable local staging:
 
 ```text
 tmp/export/<candidate-id>/
-```
-
-Example:
-
-```text
-tmp/export/ctc-0007/
 ├── model.onnx
 ├── metadata.json
 └── tokenizer/
@@ -196,17 +122,15 @@ tmp/export/ctc-0007/
 After local validation they may be uploaded to:
 
 ```text
-hf://buckets/<namespace>/<bucket>/candidates/ctc-0007/
+hf://buckets/<HF_BUCKET>/candidates/<candidate-id>/
 ```
 
-Do not write directly to the final Model Repo.
+Do not write development candidates directly to the final Model Repo.
 
 ## Candidate metadata
 
-If a candidate contains more than one ONNX file, `metadata.json` must identify
-the primary artifact.
-
-Conceptual example:
+Candidate metadata must identify the primary artifact and preserve source
+provenance. If multiple ONNX files exist, the primary artifact must be explicit.
 
 ```json
 {
@@ -218,8 +142,6 @@ Conceptual example:
 }
 ```
 
-This is required for unambiguous SHA-256 promotion verification.
-
 ## Validation checkpoints
 
 At minimum:
@@ -227,66 +149,33 @@ At minimum:
 ```text
 1. graph loads
 2. graph passes structural validation
-3. CPUExecutionProvider session creates
+3. CPUExecutionProvider session creates where applicable
 4. input/output contract matches metadata
 5. frontend parity passes where frontend is external
-6. encoder output parity is within threshold
-7. logits parity is within threshold
-8. tokens/text meet parity rules
+6. architecture-specific intermediate parity is within threshold
+7. decoder/token/text parity meets target rules
+8. run-context records exact revision identities
 ```
 
 ## Dynamic shapes
 
-Audio ASR inputs are variable length.
-
-The export contract should preserve dynamic time dimensions where required
-rather than producing OS-specific model files by default.
-
-Provider-specific incompatibilities should be treated as provider/runtime
-issues before introducing multiple model artifacts.
-
-The portable baseline is preferred.
+Audio ASR inputs are variable length. Preserve dynamic time dimensions where
+required rather than producing OS-specific model files by default.
+Provider-specific incompatibilities should be treated as provider/runtime issues
+before introducing multiple model artifacts.
 
 ## Numerical parity
 
-Do not judge export correctness only by final transcript.
-
-Intermediate checkpoints may expose significant numerical drift that happens
-not to change the decoded text for a small sample.
-
-Recommended progression:
-
-```text
-frontend
-    ↓
-encoder
-    ↓
-logits
-    ↓
-tokens
-    ↓
-text
-```
+Do not judge export correctness only by final transcript. Compare meaningful
+architecture-specific intermediate checkpoints before token/text metrics.
 
 ## Artifact SHA-256
 
-The candidate ONNX SHA-256 is part of the run identity.
-
-Promotion requires:
-
-```text
-run-context artifact SHA
-        ==
-metrics candidate artifact SHA
-        ==
-actual candidate file SHA
-```
-
-This prevents a candidate from being replaced after evaluation.
+The candidate ONNX SHA-256 is part of the run identity. Promotion requires the
+artifact SHA evaluated by the accepted run to match the artifact being
+promoted.
 
 ## Release
-
-The release path is:
 
 ```text
 candidate

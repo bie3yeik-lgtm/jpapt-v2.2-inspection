@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,6 +41,60 @@ def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _load_config_version(root: Path) -> str | None:
+    """Read the config version materialized by hf-fetch-revisions.sh."""
+    path = root.parent / "resolved.json"
+    if not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            value = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise RevisionError(f"Invalid JSON in config selection file {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RevisionError(f"Config selection root must be an object: {path}")
+    if value.get("schema_version") != 1:
+        raise RevisionError(
+            f"{path.name}: schema_version must equal 1; "
+            f"got {value.get('schema_version')!r}"
+        )
+    config_version = value.get("config_version")
+    if not isinstance(config_version, str) or re.fullmatch(
+        r"config-\d{6}", config_version
+    ) is None:
+        raise RevisionError(
+            f"{path.name}: config_version must match config-NNNNNN; "
+            f"got {config_version!r}"
+        )
+    return config_version
+
+
+def _reject_keys(
+    source: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    document: str,
+) -> None:
+    present = [key for key in keys if key in source]
+    if present:
+        raise RevisionError(
+            f"{document}: unsupported legacy fields are present: {present!r}. "
+            "Rewrite the document using the canonical revision contract."
+        )
+
+
+def _require_mapping(
+    source: Mapping[str, Any],
+    key: str,
+    *,
+    document: str,
+) -> Mapping[str, Any]:
+    value = source.get(key)
+    if not isinstance(value, Mapping):
+        raise RevisionError(f"{document}: {key!r} must be an object.")
+    return value
+
+
 def _require_string(
     source: Mapping[str, Any],
     key: str,
@@ -63,20 +118,16 @@ def _optional_string(source: Mapping[str, Any], key: str) -> str | None:
     return value
 
 
-def _optional_identity(
+def _require_identity(
     raw: Mapping[str, Any],
     key: str,
     *,
     document: str,
-) -> tuple[str | None, str | None]:
-    value = raw.get(key)
-    if value is None:
-        return None, None
-    if not isinstance(value, Mapping):
-        raise RevisionError(f"{document}: {key!r} must be an object when present.")
+) -> tuple[str, str]:
+    value = _require_mapping(raw, key, document=document)
     return (
-        _require_string(value, "repo_id", document=document),
-        _require_string(value, "revision", document=document),
+        _require_string(value, "repo_id", document=f"{document}.{key}"),
+        _require_string(value, "revision", document=f"{document}.{key}"),
     )
 
 
@@ -101,10 +152,10 @@ def _decoder_list(
     document: str,
 ) -> tuple[str, ...]:
     value = source.get(key)
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise RevisionError(f"{document}: {key!r} must be an array when present.")
+    if not isinstance(value, list) or not value:
+        raise RevisionError(
+            f"{document}: {key!r} must be a non-empty array."
+        )
     result = tuple(
         _decoder_id(item, document=document, field=f"{key}[{index}]")
         for index, item in enumerate(value)
@@ -117,10 +168,10 @@ def _decoder_list(
 @dataclass(frozen=True, slots=True)
 class DecoderRevisionSet:
     supported: tuple[str, ...]
-    default: str | None
+    default: str
 
     def validate(self, *, document: str) -> None:
-        if self.default is not None and self.default not in self.supported:
+        if self.default not in self.supported:
             raise RevisionError(
                 f"{document}: default decoder {self.default!r} is not present "
                 f"in decoders.supported={list(self.supported)!r}."
@@ -135,48 +186,14 @@ def _parse_decoders(
     *,
     document: str,
 ) -> DecoderRevisionSet:
-    value = raw.get("decoders")
-    if value is None:
-        value = raw.get("decorders")
-    if value is None:
-        legacy = raw.get("decoder")
-        if legacy is None:
-            return DecoderRevisionSet((), None)
-        decoder = _decoder_id(legacy, document=document, field="decoder")
-        return DecoderRevisionSet((decoder,), decoder)
-
-    if isinstance(value, list):
-        supported = _decoder_list(
-            {"supported": value},
-            "supported",
-            document=document,
-        )
-        result = DecoderRevisionSet(
-            supported=supported,
-            default=supported[0] if len(supported) == 1 else None,
-        )
-        result.validate(document=document)
-        return result
-
-    if not isinstance(value, Mapping):
-        raise RevisionError(
-            f"{document}: 'decoders' must be an object or an array."
-        )
-
+    _reject_keys(raw, ("decoder", "decorders"), document=document)
+    value = _require_mapping(raw, "decoders", document=document)
     supported = _decoder_list(value, "supported", document=document)
-    default_raw = value.get("default")
-    default = (
-        None
-        if default_raw is None
-        else _decoder_id(
-            default_raw,
-            document=document,
-            field="decoders.default",
-        )
+    default = _decoder_id(
+        value.get("default"),
+        document=document,
+        field="decoders.default",
     )
-    if default is not None and not supported:
-        supported = (default,)
-
     result = DecoderRevisionSet(supported=supported, default=default)
     result.validate(document=document)
     return result
@@ -205,101 +222,41 @@ class ReferenceRevision:
     document: RevisionDocument
     development_artifact_repo_id: str
     development_artifact_revision: str
-    upstream_repo_id: str | None
-    upstream_revision: str | None
-    tokenizer_repo_id: str | None
-    tokenizer_revision: str | None
-    reference_id: str | None
-    reference_revision: str | None
-    canonical_framework: str | None
+    upstream_repo_id: str
+    upstream_revision: str
+    tokenizer_repo_id: str
+    tokenizer_revision: str
+    reference_id: str
+    reference_revision: str
+    canonical_framework: str
     decoders: DecoderRevisionSet
-    legacy_model_shape: bool
-
-    @property
-    def model_id(self) -> str:
-        """Backward-compatible alias for the development artifact repo id."""
-        return self.development_artifact_repo_id
-
-    @property
-    def model_revision(self) -> str:
-        """Backward-compatible alias for the development artifact revision."""
-        return self.development_artifact_revision
 
     @classmethod
     def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
         raw = document.raw
-
-        development = raw.get("development_artifact")
-        legacy_model_shape = not isinstance(development, Mapping)
-        model_framework: str | None = None
-
-        if isinstance(development, Mapping):
-            development_repo_id = _require_string(
-                development,
-                "repo_id",
-                document=document.name,
-            )
-            development_revision = _require_string(
-                development,
-                "revision",
-                document=document.name,
-            )
-        else:
-            model = raw.get("model")
-            if isinstance(model, Mapping):
-                development_repo_id = _require_string(
-                    model,
-                    "repo_id",
-                    document=document.name,
-                )
-                development_revision = _require_string(
-                    model,
-                    "revision",
-                    document=document.name,
-                )
-                model_framework = _optional_string(model, "framework")
-            else:
-                development_repo_id = _require_string(
-                    raw,
-                    "model_id",
-                    document=document.name,
-                )
-                development_revision = _require_string(
-                    raw,
-                    "model_revision",
-                    document=document.name,
-                )
-
-        upstream_repo_id, upstream_revision = _optional_identity(
+        _reject_keys(
             raw,
-            "upstream",
-            document=document.name,
-        )
-        tokenizer_repo_id, tokenizer_revision = _optional_identity(
-            raw,
-            "tokenizer",
-            document=document.name,
-        )
-
-        if legacy_model_shape and tokenizer_revision is None:
-            model = raw.get("model")
-            if isinstance(model, Mapping):
-                tokenizer_revision = _optional_string(model, "tokenizer_revision")
-            else:
-                tokenizer_revision = _optional_string(raw, "tokenizer_revision")
-
-        reference = raw.get("reference")
-        if isinstance(reference, Mapping):
-            reference_id = _optional_string(reference, "id")
-            reference_revision = _optional_string(reference, "revision")
-            reference_framework = _optional_string(
-                reference,
+            (
+                "model",
+                "model_id",
+                "model_revision",
+                "tokenizer_revision",
+                "reference_id",
+                "reference_revision",
                 "canonical_framework",
-            )
-        else:
-            reference_id = _optional_string(raw, "reference_id")
-            reference_revision = _optional_string(raw, "reference_revision")
-            reference_framework = None
+            ),
+            document=document.name,
+        )
+        development_repo_id, development_revision = _require_identity(
+            raw, "development_artifact", document=document.name
+        )
+        upstream_repo_id, upstream_revision = _require_identity(
+            raw, "upstream", document=document.name
+        )
+        tokenizer_repo_id, tokenizer_revision = _require_identity(
+            raw, "tokenizer", document=document.name
+        )
+        reference = _require_mapping(raw, "reference", document=document.name)
 
         return cls(
             document=document,
@@ -309,15 +266,18 @@ class ReferenceRevision:
             upstream_revision=upstream_revision,
             tokenizer_repo_id=tokenizer_repo_id,
             tokenizer_revision=tokenizer_revision,
-            reference_id=reference_id,
-            reference_revision=reference_revision,
-            canonical_framework=(
-                reference_framework
-                or model_framework
-                or _optional_string(raw, "canonical_framework")
+            reference_id=_require_string(
+                reference, "id", document=f"{document.name}.reference"
+            ),
+            reference_revision=_require_string(
+                reference, "revision", document=f"{document.name}.reference"
+            ),
+            canonical_framework=_require_string(
+                reference,
+                "canonical_framework",
+                document=f"{document.name}.reference",
             ),
             decoders=_parse_decoders(raw, document=document.name),
-            legacy_model_shape=legacy_model_shape,
         )
 
 
@@ -329,30 +289,22 @@ class EvaluationSchemaRevision:
     decoders: DecoderRevisionSet
 
     @classmethod
-    def from_document(
-        cls,
-        document: RevisionDocument,
-    ) -> "EvaluationSchemaRevision":
+    def from_document(cls, document: RevisionDocument) -> "EvaluationSchemaRevision":
         raw = document.raw
-        schema = raw.get("schema")
-        if isinstance(schema, Mapping):
-            schema_id = _require_string(schema, "id", document=document.name)
-            schema_revision = _require_string(
-                schema,
-                "revision",
-                document=document.name,
-            )
-        else:
-            schema_id = _require_string(raw, "schema_id", document=document.name)
-            schema_revision = _require_string(
-                raw,
-                "schema_revision",
-                document=document.name,
-            )
+        _reject_keys(
+            raw,
+            ("schema_id", "schema_revision"),
+            document=document.name,
+        )
+        schema = _require_mapping(raw, "schema", document=document.name)
         return cls(
             document=document,
-            schema_id=schema_id,
-            schema_revision=schema_revision,
+            schema_id=_require_string(
+                schema, "id", document=f"{document.name}.schema"
+            ),
+            schema_revision=_require_string(
+                schema, "revision", document=f"{document.name}.schema"
+            ),
             decoders=_parse_decoders(raw, document=document.name),
         )
 
@@ -392,14 +344,10 @@ class DatasetLock:
                 DatasetLockEntry(
                     id=_require_string(item, "id", document=document.name),
                     repo_id=_require_string(
-                        item,
-                        "repo_id",
-                        document=document.name,
+                        item, "repo_id", document=document.name
                     ),
                     revision=_require_string(
-                        item,
-                        "revision",
-                        document=document.name,
+                        item, "revision", document=document.name
                     ),
                     subset=_optional_string(item, "subset"),
                     split=_optional_string(item, "split"),
@@ -430,19 +378,19 @@ class RevisionBundle:
     reference: ReferenceRevision
     evaluation_schema: EvaluationSchemaRevision
     datasets: DatasetLock
+    config_version: str | None = None
 
     def validate_compatibility(self) -> None:
         reference_decoders = set(self.reference.decoders.supported)
         schema_decoders = set(self.evaluation_schema.decoders.supported)
-        if reference_decoders and schema_decoders:
-            unsupported = reference_decoders - schema_decoders
-            if unsupported:
-                raise RevisionError(
-                    "evaluation-schema.json does not support all reference "
-                    f"decoders: {sorted(unsupported)!r}"
-                )
+        unsupported = reference_decoders - schema_decoders
+        if unsupported:
+            raise RevisionError(
+                "evaluation-schema.json does not support all reference "
+                f"decoders: {sorted(unsupported)!r}"
+            )
         default = self.reference.decoders.default
-        if default is not None and schema_decoders and default not in schema_decoders:
+        if default not in schema_decoders:
             raise RevisionError(
                 "evaluation-schema.json does not support the reference "
                 f"default decoder: {default!r}"
@@ -462,6 +410,7 @@ class RevisionBundle:
     def to_dict(self) -> dict[str, Any]:
         reference = self.reference
         return {
+            "config_version": self.config_version,
             "bundle_sha256": self.sha256,
             "reference": {
                 "document_sha256": reference.document.sha256,
@@ -481,7 +430,6 @@ class RevisionBundle:
                 "reference_revision": reference.reference_revision,
                 "canonical_framework": reference.canonical_framework,
                 "decoders": reference.decoders.to_dict(),
-                "legacy_model_shape": reference.legacy_model_shape,
             },
             "evaluation_schema": {
                 "document_sha256": self.evaluation_schema.document.sha256,
@@ -535,6 +483,7 @@ class RevisionLoader:
                     path=self.root / self.DATASETS_LOCK_FILE,
                 )
             ),
+            config_version=_load_config_version(self.root),
         )
         bundle.validate_compatibility()
         return bundle

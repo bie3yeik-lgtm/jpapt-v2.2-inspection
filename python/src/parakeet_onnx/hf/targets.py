@@ -18,7 +18,6 @@ class HfTarget:
     model_id: str
     upstream_repo_id: str
     canonical_framework: str
-    revision_contract: str
     supported_decoders: tuple[str, ...]
     default_decoder: str
     bucket: str
@@ -26,17 +25,12 @@ class HfTarget:
     datasets_policy: str
     path: Path
 
-    @property
-    def allow_legacy_revision_metadata(self) -> bool:
-        return self.revision_contract == "legacy"
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "model_id": self.model_id,
             "upstream_repo_id": self.upstream_repo_id,
             "canonical_framework": self.canonical_framework,
-            "revision_contract": self.revision_contract,
             "supported_decoders": list(self.supported_decoders),
             "default_decoder": self.default_decoder,
             "bucket": self.bucket,
@@ -107,12 +101,6 @@ def load_hf_target(path: str | Path) -> HfTarget:
             f"decoders.supported={list(supported)!r}."
         )
 
-    revision_contract = reference.get("revision_contract", "strict")
-    if revision_contract not in {"legacy", "strict"}:
-        raise HfTargetError(
-            f"{resolved}: reference.revision_contract must be 'legacy' or 'strict'."
-        )
-
     return HfTarget(
         id=_require_string(target, "id", path=resolved),
         model_id=_require_string(target, "model_id", path=resolved),
@@ -122,7 +110,6 @@ def load_hf_target(path: str | Path) -> HfTarget:
             "canonical_framework",
             path=resolved,
         ),
-        revision_contract=revision_contract,
         supported_decoders=supported,
         default_decoder=default,
         bucket=_require_string(storage, "bucket", path=resolved),

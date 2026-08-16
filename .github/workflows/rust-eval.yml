@@ -9,7 +9,7 @@ on:
         default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
       candidate_id:
-        description: "HF Bucket candidates/<candidate_id>"
+        description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
         required: true
         type: string
       evaluation:
@@ -22,21 +22,43 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rust-eval-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
+  cancel-in-progress: true
+
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
-  HF_BUCKET: ""
-  HF_MODEL_REPO: ""
-  EXPECTED_DEVELOPMENT_REPO_ID: ""
-  EXPECTED_UPSTREAM_REPO_ID: ""
-  EXPECTED_TOKENIZER_REPO_ID: ""
-  EXPECTED_FRAMEWORK: ""
-  EXPECTED_DECODER: ""
-  ALLOW_LEGACY_REVISION_METADATA: "false"
-  HF_TARGET_ID: ""
 
 jobs:
+  allocate-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: hf-experiment-id-${{ inputs.hf_bucket }}
+      cancel-in-progress: false
+    outputs:
+      experiment_id: ${{ steps.allocate.outputs.experiment_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade huggingface_hub
+      - id: allocate
+        shell: bash
+        env:
+          HF_BUCKET: ${{ inputs.hf_bucket }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          EVALUATION_ID: ${{ inputs.evaluation }}
+        run: |
+          set -euo pipefail
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments rust-eval)"
+          echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
+          echo "Experiment: ${ID}"
+
   evaluate:
+    needs: allocate-experiment
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +85,16 @@ jobs:
             features: cpu,coreml
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    env:
+      HF_BUCKET: ""
+      HF_MODEL_REPO: ""
+      EXPECTED_DEVELOPMENT_REPO_ID: ""
+      EXPECTED_UPSTREAM_REPO_ID: ""
+      EXPECTED_TOKENIZER_REPO_ID: ""
+      EXPECTED_FRAMEWORK: ""
+      EXPECTED_DECODER: ""
+      HF_TARGET_ID: ""
+      EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -83,60 +115,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
-            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
-            exit 1
-          }
+          [[ -n "${HF_TARGETS_JSON:-}" ]] || { echo "::error::HF_TARGETS_JSON is required."; exit 1; }
           python scripts/ci/resolve-hf-target.py \
             --bucket "${{ inputs.hf_bucket }}" \
             --targets-json "${HF_TARGETS_JSON}" \
             --github-env "${GITHUB_ENV}" \
             --github-output "${GITHUB_OUTPUT}"
 
-      - name: Validate GitHub configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is not configured."; exit 1; }
-          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved."; exit 1; }
-          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved."; exit 1; }
-          echo "HF target: ${HF_TARGET_ID}"
-          echo "HF Bucket: ${HF_BUCKET}"
-          echo "HF Model Repo: ${HF_MODEL_REPO}"
-
       - name: Prepare directories and revision locks
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p \
-            .ci/hf/config/revisions \
-            .ci/candidate \
-            .cache/evaluation/audio \
-            "results/${{ matrix.name }}"
+          mkdir -p .ci/hf/config/revisions .ci/candidate .cache/evaluation/audio "results/${{ matrix.name }}"
           echo "HF_HOME=$(pwd)/.cache/huggingface" >> "$GITHUB_ENV"
           bash scripts/hf/hf-fetch-revisions.sh
-          args=(
-            --root .ci/hf/config/revisions
-            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
-            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
-            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
-            --expected-framework "${EXPECTED_FRAMEWORK}"
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions \
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
+            --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
-          )
-          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-legacy-metadata)
-          fi
-          python scripts/ci/validate-revisions.py "${args[@]}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
       - name: Verify Rust decoder compatibility
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${EXPECTED_DECODER}" != "ctc" ]]; then
-            echo "::error::Rust evaluator currently supports CTC candidates only. Resolved target '${HF_TARGET_ID}' requires decoder '${EXPECTED_DECODER}'."
+          [[ "${EXPECTED_DECODER}" == "ctc" ]] || {
+            echo "::error::Rust evaluator currently supports CTC candidates only; target '${HF_TARGET_ID}' requires '${EXPECTED_DECODER}'."
             exit 1
-          fi
+          }
 
       - name: Materialize locked dataset selection
         shell: bash
@@ -179,9 +188,11 @@ jobs:
             --model "${{ steps.assets.outputs.model }}" \
             --candidate-dir .ci/candidate \
             --candidate-id "${{ inputs.candidate_id }}" \
+            --experiment-id "${EXPERIMENT_ID}" \
             --vocabulary "${{ steps.assets.outputs.vocab }}" \
             --resolved-manifest .ci/resolved-manifest.json \
             --evaluation "${{ inputs.evaluation }}" \
+            --model-id "${HF_TARGET_ID}" \
             --revisions .ci/hf/config/revisions \
             --output "results/${{ matrix.name }}"
 
@@ -189,7 +200,6 @@ jobs:
         if: always()
         shell: bash
         run: |
-          set -euo pipefail
           if [[ -f "results/${{ matrix.name }}/metrics.json" ]]; then
             python scripts/ci/validate-result.py "results/${{ matrix.name }}"
           fi

@@ -9,7 +9,6 @@ repo_id = "kotoba-tech/kotoba-whisper-v1.0"
 
 [reference]
 canonical_framework = "transformers"
-revision_contract = "strict"
 
 [decoders]
 supported = ["whisper_autoregressive"]

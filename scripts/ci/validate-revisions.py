@@ -15,51 +15,27 @@ DEFAULT_ROOT = Path(".ci/hf/config/revisions")
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate the three pinned Hugging Face revision documents, "
-            "including framework/decoder and model identity compatibility."
+            "Validate the pinned Hugging Face revision documents and their "
+            "framework, decoder, and repository identities."
         )
     )
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument(
-        "--expected-development-repo-id",
-        dest="expected_development_repo_id",
-    )
-    parser.add_argument(
-        "--expected-model-id",
-        dest="expected_development_repo_id",
-        help=argparse.SUPPRESS,
-    )
+    parser.add_argument("--expected-development-repo-id")
     parser.add_argument("--expected-upstream-repo-id")
     parser.add_argument("--expected-tokenizer-repo-id")
     parser.add_argument("--expected-framework")
     parser.add_argument("--expected-decoder")
-    parser.add_argument(
-        "--allow-legacy-metadata",
-        action="store_true",
-        help=(
-            "Allow upstream/tokenizer/framework/decoder identity to be absent "
-            "from older revision documents. Present values must still match."
-        ),
-    )
     parser.add_argument("--json", action="store_true")
     return parser
 
 
 def _expect(
     *,
-    actual: str | None,
+    actual: str,
     expected: str | None,
     label: str,
-    allow_missing: bool = False,
 ) -> None:
     if expected is None:
-        return
-    if actual is None and allow_missing:
-        print(
-            f"WARN: {label} is absent from legacy revision metadata; "
-            f"target expects {expected!r}.",
-            file=sys.stderr,
-        )
         return
     if actual != expected:
         raise RevisionError(
@@ -72,15 +48,7 @@ def _expect_decoder(
     supported: tuple[str, ...],
     expected: str,
     label: str,
-    allow_missing: bool,
 ) -> None:
-    if not supported and allow_missing:
-        print(
-            f"WARN: {label} is absent from legacy revision metadata; "
-            f"target expects {expected!r}.",
-            file=sys.stderr,
-        )
-        return
     if expected not in supported:
         raise RevisionError(
             f"{label} mismatch: expected {expected!r} in {list(supported)!r}"
@@ -104,50 +72,28 @@ def main() -> int:
             actual=reference.upstream_repo_id,
             expected=args.expected_upstream_repo_id,
             label="upstream.repo_id",
-            allow_missing=args.allow_legacy_metadata,
         )
         _expect(
             actual=reference.tokenizer_repo_id,
             expected=args.expected_tokenizer_repo_id,
             label="tokenizer.repo_id",
-            allow_missing=args.allow_legacy_metadata,
         )
         _expect(
             actual=reference.canonical_framework,
             expected=args.expected_framework,
             label="canonical_framework",
-            allow_missing=args.allow_legacy_metadata,
         )
-
-        if not args.allow_legacy_metadata and reference.legacy_model_shape:
-            raise RevisionError(
-                "strict revision metadata requires 'development_artifact'; "
-                "legacy 'model' identity is not accepted."
-            )
-        if not args.allow_legacy_metadata:
-            if reference.upstream_repo_id is None or reference.upstream_revision is None:
-                raise RevisionError(
-                    "strict revision metadata requires upstream.repo_id and "
-                    "upstream.revision."
-                )
-            if reference.tokenizer_repo_id is None or reference.tokenizer_revision is None:
-                raise RevisionError(
-                    "strict revision metadata requires tokenizer.repo_id and "
-                    "tokenizer.revision."
-                )
 
         if args.expected_decoder is not None:
             _expect_decoder(
                 supported=reference.decoders.supported,
                 expected=args.expected_decoder,
                 label="reference.json decoder",
-                allow_missing=args.allow_legacy_metadata,
             )
             _expect_decoder(
                 supported=bundle.evaluation_schema.decoders.supported,
                 expected=args.expected_decoder,
                 label="evaluation-schema.json decoder",
-                allow_missing=args.allow_legacy_metadata,
             )
 
     except (RevisionError, FileNotFoundError, OSError, ValueError) as exc:
@@ -175,21 +121,16 @@ def main() -> int:
         )
         print(
             "upstream: "
-            f"{reference.upstream_repo_id or '<unspecified>'}@"
-            f"{reference.upstream_revision or '<unspecified>'}"
+            f"{reference.upstream_repo_id}@{reference.upstream_revision}"
         )
         print(
             "tokenizer: "
-            f"{reference.tokenizer_repo_id or '<unspecified>'}@"
-            f"{reference.tokenizer_revision or '<unspecified>'}"
+            f"{reference.tokenizer_repo_id}@{reference.tokenizer_revision}"
         )
-        print(
-            "canonical_framework: "
-            f"{reference.canonical_framework or '<unspecified>'}"
-        )
+        print(f"canonical_framework: {reference.canonical_framework}")
         print(
             "reference_decoders: "
-            f"{','.join(reference.decoders.supported) or '<unspecified>'}"
+            f"{','.join(reference.decoders.supported)}"
         )
         print(
             "evaluation_schema: "
@@ -198,7 +139,7 @@ def main() -> int:
         )
         print(
             "evaluation_decoders: "
-            f"{','.join(bundle.evaluation_schema.decoders.supported) or '<unspecified>'}"
+            f"{','.join(bundle.evaluation_schema.decoders.supported)}"
         )
         print(f"datasets: {len(bundle.datasets.datasets)}")
     return 0

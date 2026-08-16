@@ -21,16 +21,18 @@ def build_parser() -> argparse.ArgumentParser:
     selector.add_argument(
         "--bucket",
         help=(
-            "Resolve the target whose HF_BUCKET in --targets-json matches "
-            "this value."
+            "Resolve the target whose HF_BUCKET matches in the current "
+            "--targets-json routing snapshot. Bucket assignments may change "
+            "between snapshots."
         ),
     )
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     parser.add_argument(
         "--targets-json",
         help=(
-            "Optional JSON object keyed by target id. Each entry may override "
-            "HF_BUCKET and HF_MODEL_REPO from config/hf-targets/*.toml."
+            "Optional JSON object keyed by target id. Each entry supplies the "
+            "current HF_BUCKET and HF_MODEL_REPO routing. HF_BUCKET values "
+            "must be unique within this snapshot, but may change over time."
         ),
     )
     parser.add_argument("--github-env", type=Path)
@@ -78,7 +80,7 @@ def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
         if previous is not None:
             raise HfTargetError(
                 f"HF_BUCKET {bucket!r} is assigned to both {previous!r} "
-                f"and {target_id!r}."
+                f"and {target_id!r} in the current routing snapshot."
             )
         seen_buckets[bucket] = target_id
         result[target_id] = normalized
@@ -94,7 +96,7 @@ def _target_id_from_bucket(
     if not mapping:
         raise HfTargetError(
             "--bucket requires --targets-json because Bucket-to-target "
-            "resolution is defined by vars.HF_TARGETS_JSON."
+            "resolution is defined by the current vars.HF_TARGETS_JSON routing."
         )
     matches = [
         target_id
@@ -104,7 +106,7 @@ def _target_id_from_bucket(
     if not matches:
         available = sorted(entry["HF_BUCKET"] for entry in mapping.values())
         raise HfTargetError(
-            f"HF_BUCKET {bucket!r} is not present in HF target mapping. "
+            f"HF_BUCKET {bucket!r} is not present in the current HF target mapping. "
             f"Available buckets: {available!r}"
         )
     return matches[0]
@@ -155,13 +157,9 @@ def main() -> int:
         "HF_MODEL_REPO": model_repo,
         "EXPECTED_DEVELOPMENT_REPO_ID": model_repo,
         "EXPECTED_UPSTREAM_REPO_ID": target.upstream_repo_id,
-        # Current target definitions source tokenizers/processors from upstream.
         "EXPECTED_TOKENIZER_REPO_ID": target.upstream_repo_id,
         "EXPECTED_FRAMEWORK": target.canonical_framework,
         "EXPECTED_DECODER": target.default_decoder,
-        "ALLOW_LEGACY_REVISION_METADATA": (
-            "true" if target.allow_legacy_revision_metadata else "false"
-        ),
         "HF_TARGET_ID": target.id,
     }
 
