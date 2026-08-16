@@ -220,14 +220,16 @@ python scripts/ci/resolve-candidate-artifacts.py \
   --runtime-variant ctc \
   --contract-out .ci/candidate-contract.json
 
-python scripts/ci/prepare-rust-run-context.py \
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  build-run-context \
+  --repository-root . \
+  --model parakeet-tdt_ctc-0.6b-ja \
   --provider cpu \
   --evaluation full \
   --environment linux \
-  --model-config parakeet-tdt_ctc-0.6b-ja \
-  --candidate-dir .ci/hf/candidate \
-  --runtime-variant ctc \
   --revisions .ci/hf/config/revisions \
+  --candidate-contract .ci/candidate-contract.json \
+  --runtime-variant ctc \
   --output .ci/run-context.json
 ```
 
