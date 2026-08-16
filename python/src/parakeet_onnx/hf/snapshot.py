@@ -2,29 +2,30 @@ from __future__ import annotations
 
 from typing import Any
 
-from .revisions import RevisionBundle
+from .revisions import RevisionBundle, RevisionError
 
 
 def normalized_revision_snapshot(bundle: RevisionBundle) -> dict[str, Any]:
-    """Serialize a revision bundle without repeating runtime semantics.
+    """Serialize the canonical four-document revision bundle.
 
-    New normalized bundles use runtime.json as the only authored decoder/profile
-    selector. reference.json and evaluation-schema.json therefore remain pure
-    identity/rule documents. Legacy bundles without runtime.json retain their
-    historical decoder snapshots for read compatibility.
+    runtime.json is mandatory. Decoder/profile semantics remain centralized in
+    the pinned ASR runtime catalog and are therefore not copied into reference
+    or evaluation snapshots.
     """
 
-    value = bundle.to_dict()
     if bundle.runtime is None:
-        return value
+        raise RevisionError("runtime.json is required for the canonical config contract")
 
-    runtime = value.get("runtime")
-    if isinstance(runtime, dict):
-        value["runtime"] = {
-            "document_sha256": runtime["document_sha256"],
-            "catalog": runtime["catalog"],
-            "profile_set": runtime["profile_set"],
-        }
+    value = bundle.to_dict()
+    runtime = value["runtime"]
+    if not isinstance(runtime, dict):
+        raise RevisionError("runtime revision snapshot is missing")
+
+    value["runtime"] = {
+        "document_sha256": runtime["document_sha256"],
+        "catalog": runtime["catalog"],
+        "profile_set": runtime["profile_set"],
+    }
 
     reference = value.get("reference")
     if isinstance(reference, dict):

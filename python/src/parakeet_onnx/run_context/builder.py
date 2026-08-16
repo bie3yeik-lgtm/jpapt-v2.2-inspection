@@ -31,9 +31,11 @@ import uuid
 from parakeet_onnx.config import ResolvedConfig
 from parakeet_onnx.config.environment import is_wsl
 from parakeet_onnx.hf.revisions import RevisionBundle
+from parakeet_onnx.hf.snapshot import normalized_revision_snapshot
 
 from .hashing import sha256_file
 from .models import (
+    RUN_CONTEXT_SCHEMA_VERSION,
     ArtifactIdentity,
     GitIdentity,
     HostIdentity,
@@ -301,7 +303,7 @@ class RunContextBuilder:
         )
 
         return RunContext(
-            schema_version=1,
+            schema_version=RUN_CONTEXT_SCHEMA_VERSION,
             run_id=final_run_id,
             created_at=created.isoformat(),
             config_identity=(
@@ -325,7 +327,7 @@ class RunContextBuilder:
             runtime=_detect_runtime_identity(
                 self.config
             ),
-            revisions=self.revisions.to_dict(),
+            revisions=normalized_revision_snapshot(self.revisions),
             config=self._serialize_config(),
             metadata=dict(metadata or {}),
         )

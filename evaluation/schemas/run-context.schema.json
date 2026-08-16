@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parakeet-onnx.local/schemas/run-context.schema.json",
   "title": "ASR ONNX Run Context",
-  "description": "Immutable execution context. Schema v2 normalizes runtime/profile semantics under revisions.runtime; schema v1 remains readable for historical runs.",
+  "description": "Immutable execution context. Schema v2 is the only canonical contract and keeps reusable runtime semantics in the pinned ASR runtime catalog.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,7 +23,7 @@
     "metadata"
   ],
   "properties": {
-    "schema_version": {"type": "integer", "enum": [1, 2]},
+    "schema_version": {"type": "integer", "const": 2},
     "run_id": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "format": "date-time"},
     "config_identity": {"type": "string", "minLength": 1},
@@ -51,20 +51,6 @@
         "revision": {"type": "string", "minLength": 1}
       }
     },
-    "decoderRevisionSet": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["supported", "default"],
-      "properties": {
-        "supported": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "minLength": 1},
-          "uniqueItems": true
-        },
-        "default": {"type": "string", "minLength": 1}
-      }
-    },
     "catalogReference": {
       "type": "object",
       "additionalProperties": false,
@@ -75,16 +61,13 @@
       }
     },
     "runtimeRevision": {
-      "type": ["object", "null"],
+      "type": "object",
       "additionalProperties": false,
       "required": ["document_sha256", "catalog", "profile_set"],
       "properties": {
         "document_sha256": {"$ref": "#/$defs/sha256"},
         "catalog": {"$ref": "#/$defs/catalogReference"},
-        "profile_set": {"type": "string", "minLength": 1},
-        "variants": {"type": "object", "additionalProperties": {"type": "string"}},
-        "default_variant": {"type": "string", "minLength": 1},
-        "decoders": {"$ref": "#/$defs/decoderRevisionSet"}
+        "profile_set": {"type": "string", "minLength": 1}
       }
     },
     "artifactIdentity": {
@@ -161,7 +144,14 @@
     "revisionBundle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["config_version", "bundle_sha256", "reference", "evaluation_schema", "datasets"],
+      "required": [
+        "config_version",
+        "bundle_sha256",
+        "runtime",
+        "reference",
+        "evaluation_schema",
+        "datasets"
+      ],
       "properties": {
         "config_version": {"type": ["string", "null"], "pattern": "^config-[0-9]{6}$"},
         "bundle_sha256": {"$ref": "#/$defs/sha256"},
@@ -190,8 +180,7 @@
         "tokenizer": {"$ref": "#/$defs/repoRevisionIdentity"},
         "reference_id": {"type": "string", "minLength": 1},
         "reference_revision": {"type": "string", "minLength": 1},
-        "canonical_framework": {"type": "string", "minLength": 1},
-        "decoders": {"$ref": "#/$defs/decoderRevisionSet"}
+        "canonical_framework": {"type": "string", "minLength": 1}
       }
     },
     "evaluationSchemaRevision": {
@@ -201,8 +190,7 @@
       "properties": {
         "document_sha256": {"$ref": "#/$defs/sha256"},
         "schema_id": {"type": "string", "minLength": 1},
-        "schema_revision": {"type": "string", "minLength": 1},
-        "decoders": {"$ref": "#/$defs/decoderRevisionSet"}
+        "schema_revision": {"type": "string", "minLength": 1}
       }
     },
     "datasetsRevision": {

@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 
+RUN_CONTEXT_SCHEMA_VERSION = 2
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactIdentity:
     """Identity of the actual deployment artifact used for inference."""
@@ -78,27 +81,12 @@ class RunContext:
     metadata: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        revisions = value.get("revisions")
-        if isinstance(revisions, dict) and isinstance(revisions.get("runtime"), dict):
-            # Canonical run-context v2 does not duplicate decoder/profile semantics
-            # under reference/evaluation. runtime.json + the pinned ASR catalog is
-            # the authored source of truth; the selected candidate variant/profile
-            # is recorded in metadata.candidate.
-            runtime = revisions["runtime"]
-            revisions["runtime"] = {
-                "document_sha256": runtime.get("document_sha256"),
-                "catalog": runtime.get("catalog"),
-                "profile_set": runtime.get("profile_set"),
-            }
-            reference = revisions.get("reference")
-            if isinstance(reference, dict):
-                reference.pop("decoders", None)
-            evaluation = revisions.get("evaluation_schema")
-            if isinstance(evaluation, dict):
-                evaluation.pop("decoders", None)
-            value["schema_version"] = 2
-        return value
+        if self.schema_version != RUN_CONTEXT_SCHEMA_VERSION:
+            raise ValueError(
+                "run-context schema_version must equal "
+                f"{RUN_CONTEXT_SCHEMA_VERSION}; got {self.schema_version!r}"
+            )
+        return asdict(self)
 
     def to_json(self, *, indent: int = 2) -> str:
         return json.dumps(

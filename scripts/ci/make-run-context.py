@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--revisions",
         type=Path,
         default=DEFAULT_REVISIONS,
-        help="Local directory containing the three HF revision documents.",
+        help="Local directory containing the four canonical HF revision documents.",
     )
     parser.add_argument(
         "--repository-root",
