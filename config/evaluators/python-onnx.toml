@@ -15,9 +15,23 @@ supported_artifact_contracts = [
   "whisper-autoregressive-v1",
 ]
 
-[features]
+[decoder_features.ctc]
+kv_cache = false
+multi_graph = false
+transformers_processor = false
+external_frontend = false
+timestamps = false
+
+[decoder_features.tdt]
+kv_cache = false
+multi_graph = true
+transformers_processor = false
+external_frontend = false
+timestamps = false
+
+[decoder_features.whisper_autoregressive]
 kv_cache = true
 multi_graph = true
 transformers_processor = true
-external_frontend = false
+external_frontend = true
 timestamps = false
