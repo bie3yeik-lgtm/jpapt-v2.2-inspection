@@ -7,15 +7,16 @@ publish = false
 
 [features]
 default = ["cpu"]
-cpu = ["asr-runtime/cpu"]
-cuda = ["asr-runtime/cuda"]
-directml = ["asr-runtime/directml"]
-coreml = ["asr-runtime/coreml"]
+cpu = ["asr-runtime/cpu", "asr-capsule/cpu"]
+cuda = ["asr-runtime/cuda", "asr-capsule/cuda"]
+directml = ["asr-runtime/directml", "asr-capsule/directml"]
+coreml = ["asr-runtime/coreml", "asr-capsule/coreml"]
 
 [dependencies]
 asr-runtime = { path = "../asr-runtime", default-features = false }
 asr-audio = { path = "../asr-audio" }
 asr-metrics = { path = "../asr-metrics" }
+asr-capsule = { path = "../asr-capsule", default-features = false }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
