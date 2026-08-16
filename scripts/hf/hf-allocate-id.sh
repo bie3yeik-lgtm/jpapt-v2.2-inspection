@@ -74,7 +74,9 @@ The numeric suffix is machine-managed. Do not manually renumber or reuse it.
 The prefix is descriptive only and does not define an independent sequence.
 EOF
 
-hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md"
+# Keep stdout reserved for the allocated ID so callers can safely use command
+# substitution. HF CLI progress remains intentionally suppressed here.
+hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md" >/dev/null
 
 log "Allocated ${COLLECTION}/${ID}"
 printf '%s\n' "$ID"
