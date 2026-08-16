@@ -8,6 +8,7 @@ from .capsule_artifacts import (
     ExternalCapsuleArtifact,
     MAX_EMBEDDED_ARTIFACT_BYTES,
 )
+from .capsule_diagnostics import CapsuleDiagnostic, CapsuleDiagnosticError
 from .capsule_reader import (
     ExperimentCapsule,
     ExperimentCapsuleError,
@@ -40,6 +41,8 @@ __all__ = [
     "BenchmarkWriter",
     "CapsuleArtifact",
     "CapsuleArtifactError",
+    "CapsuleDiagnostic",
+    "CapsuleDiagnosticError",
     "CorpusErrorAccumulator",
     "EmbeddedCapsuleArtifact",
     "EXPERIMENT_CAPSULE_SCHEMA_VERSION",
