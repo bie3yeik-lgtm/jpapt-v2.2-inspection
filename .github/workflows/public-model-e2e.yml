@@ -44,8 +44,6 @@ jobs:
           node-version: "24"
       - name: Resolve exact Hugging Face revisions
         shell: python
-        env:
-          GITHUB_ENV_FILE: ${{ github.env }}
         run: |
           import json
           import os
@@ -68,8 +66,7 @@ jobs:
           dataset_revision = resolve(
               f"https://huggingface.co/api/datasets/{dataset_id}", "JSUT dataset"
           )
-          env_file = os.environ["GITHUB_ENV_FILE"]
-          with open(env_file, "a", encoding="utf-8") as handle:
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
               handle.write(f"WHISPER_MODEL_ID={model_id}\n")
               handle.write(f"WHISPER_MODEL_REVISION={model_revision}\n")
               handle.write(f"JSUT_DATASET_ID={dataset_id}\n")
