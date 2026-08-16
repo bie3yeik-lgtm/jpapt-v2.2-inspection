@@ -123,16 +123,6 @@ def _host_identity() -> HostIdentity:
     return value
 
 
-def _candidate_contract(candidate: CandidateArtifacts) -> dict[str, Any]:
-    value = candidate.provenance_dict()
-    value["schema_version"] = 1
-    value["candidate_root"] = str(candidate.root)
-    if value.get("tokenizer") is None:
-        value.pop("tokenizer", None)
-    reject_nulls(value, "$.metadata.candidate")
-    return value
-
-
 def _config_snapshot(config: ResolvedConfig) -> ConfigSnapshot:
     def relative(path: Path) -> str:
         try:
@@ -188,6 +178,7 @@ class RunContextBuilder:
                 "candidate profile_set does not match revision runtime profile_set"
             )
         primary = candidate.primary_artifact
+        generated_candidate = candidate.generated_contract()
         created = datetime.now(timezone.utc)
         extra = dict(metadata or {})
         if "candidate" in extra:
@@ -228,7 +219,7 @@ class RunContextBuilder:
             revisions=self.revisions.snapshot(),
             config=_config_snapshot(self.config),
             metadata={
-                "candidate": _candidate_contract(candidate),
+                "candidate": generated_candidate.to_dict(),
                 "runtime_variant": candidate.variant,
                 "runtime_profile": candidate.profile_id,
                 **extra,
