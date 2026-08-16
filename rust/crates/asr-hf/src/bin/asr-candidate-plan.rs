@@ -83,14 +83,16 @@ fn validate_fresh_upload_plan(path: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temp_plan(contents: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = env::temp_dir().join(format!("asr-candidate-plan-{nonce}.jsonl"));
+        let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!(
+            "asr-candidate-plan-{}-{sequence}.jsonl",
+            std::process::id()
+        ));
         fs::write(&path, contents).unwrap();
         path
     }
