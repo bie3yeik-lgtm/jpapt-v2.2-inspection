@@ -248,11 +248,7 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
     write_json(&options.output.join("metrics.json"), &benchmark)?;
 
     let capsule_rows = rows_from_evaluation_json(&run_context, &results, &benchmark)?;
-    let receipt = write_capsule(
-        options.output.join("run.parquet"),
-        &run_id,
-        &capsule_rows,
-    )?;
+    let receipt = write_capsule(options.output.join("run.parquet"), &run_id, &capsule_rows)?;
     write_json(
         &options.output.join("capsule-receipt.json"),
         &serde_json::json!({
