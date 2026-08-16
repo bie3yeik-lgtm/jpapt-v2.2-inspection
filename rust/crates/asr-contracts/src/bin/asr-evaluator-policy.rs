@@ -71,8 +71,12 @@ fn validate_evaluator_policy(
         .join("config/evaluators")
         .join(format!("{evaluator_id}.toml"));
     let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let document: EvaluatorDocument = toml::from_str(&text)
-        .map_err(|error| format!("invalid evaluator capability file {}: {error}", path.display()))?;
+    let document: EvaluatorDocument = toml::from_str(&text).map_err(|error| {
+        format!(
+            "invalid evaluator capability file {}: {error}",
+            path.display()
+        )
+    })?;
     document.validate(evaluator_id, decoder, provider)?;
 
     let candidate = if let Some(path) = candidate_contract_path {
@@ -140,7 +144,12 @@ struct EvaluatorCapabilities {
 }
 
 impl EvaluatorDocument {
-    fn validate(&self, requested_id: &str, decoder: &str, provider: Option<&str>) -> Result<(), String> {
+    fn validate(
+        &self,
+        requested_id: &str,
+        decoder: &str,
+        provider: Option<&str>,
+    ) -> Result<(), String> {
         if self.schema_version != 2 {
             return Err("evaluator capability schema_version must equal 2".to_owned());
         }
@@ -168,7 +177,12 @@ impl EvaluatorDocument {
                 self.evaluator.id
             ));
         }
-        if !self.capabilities.supported_decoders.iter().any(|item| item == decoder) {
+        if !self
+            .capabilities
+            .supported_decoders
+            .iter()
+            .any(|item| item == decoder)
+        {
             return Err(format!(
                 "evaluator capability mismatch: evaluator={requested_id:?}, decoder={decoder:?}, supported={:?}",
                 self.capabilities.supported_decoders
@@ -195,7 +209,11 @@ impl EvaluatorDocument {
         Ok(())
     }
 
-    fn validate_candidate(&self, decoder: &str, candidate: &CandidateContract) -> Result<(), String> {
+    fn validate_candidate(
+        &self,
+        decoder: &str,
+        candidate: &CandidateContract,
+    ) -> Result<(), String> {
         if !self.capabilities.supported_artifact_contracts.is_empty()
             && !self
                 .capabilities
@@ -276,9 +294,14 @@ struct CandidateRuntimeContract {
 
 impl CandidateContract {
     fn load(path: &Path) -> Result<Self, String> {
-        let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        serde_json::from_str(&text)
-            .map_err(|error| format!("invalid generated candidate contract {}: {error}", path.display()))
+        let text =
+            fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        serde_json::from_str(&text).map_err(|error| {
+            format!(
+                "invalid generated candidate contract {}: {error}",
+                path.display()
+            )
+        })
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -296,8 +319,14 @@ impl CandidateContract {
             ("catalog.id", self.catalog.id.as_str()),
             ("bundle_sha256", self.bundle_sha256.as_str()),
             ("catalog.sha256", self.catalog.sha256.as_str()),
-            ("runtime_contract.decoder", self.runtime_contract.decoder.as_str()),
-            ("runtime_contract.input_kind", self.runtime_contract.input_kind.as_str()),
+            (
+                "runtime_contract.decoder",
+                self.runtime_contract.decoder.as_str(),
+            ),
+            (
+                "runtime_contract.input_kind",
+                self.runtime_contract.input_kind.as_str(),
+            ),
         ] {
             require_nonempty(name, value)?;
         }
@@ -389,7 +418,9 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_decoder() {
-        let error = evaluator().validate("rust-onnx", "tdt", Some("cpu")).unwrap_err();
+        let error = evaluator()
+            .validate("rust-onnx", "tdt", Some("cpu"))
+            .unwrap_err();
         assert!(error.contains("evaluator capability mismatch"));
     }
 
