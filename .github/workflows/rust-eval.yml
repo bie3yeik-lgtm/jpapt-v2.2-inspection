@@ -259,12 +259,13 @@ jobs:
             --resolved-manifest .ci/resolved-manifest.json \
             --output "results/${{ matrix.name }}"
 
-      - name: Validate shared JSON contracts
+      - name: Validate shared JSON contracts with Rust
         if: always()
         shell: bash
         run: |
           if [[ -f "results/${{ matrix.name }}/metrics.json" ]]; then
-            python scripts/ci/validate-result.py "results/${{ matrix.name }}"
+            cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+              validate-run "results/${{ matrix.name }}"
           fi
 
       - uses: actions/upload-artifact@v7

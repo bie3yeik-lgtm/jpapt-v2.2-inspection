@@ -89,6 +89,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install Python project
         shell: bash
         run: |
@@ -233,13 +236,14 @@ jobs:
             --revisions ".ci/hf/config/revisions" \
             --output "results/linux-cpu-full"
 
-      - name: Validate result contract
+      - name: Validate result contract with Rust
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           if [[ -f results/linux-cpu-full/run-context.json ]]; then
-            python scripts/ci/validate-result.py results/linux-cpu-full
+            cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+              validate-run results/linux-cpu-full
           fi
 
       - name: Upload run to HF Bucket
