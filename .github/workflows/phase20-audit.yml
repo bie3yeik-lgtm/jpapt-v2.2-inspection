@@ -1,0 +1,26 @@
+name: Phase20 Audit
+
+on:
+  push:
+    branches: [agent/rust-python-boundary-cleanup-phase20]
+    paths:
+      - ".github/workflows/phase20-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit remaining Python CI boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== Python CI script callers ==='
+          git grep -nE 'scripts/ci/[A-Za-z0-9_.-]+\.py' -- ':!.github/workflows/phase20-audit.yml' || true
+          echo '=== legacy run-context references ==='
+          git grep -nE 'make-run-context\.py|prepare-provider-run-context\.py|prepare-rust-run-context\.py' -- ':!.github/workflows/phase20-audit.yml' || true
+          echo '=== Python CI files ==='
+          find scripts/ci -maxdepth 1 -type f -name '*.py' -printf '%f\n' | sort
