@@ -139,8 +139,9 @@
     "revisionBundle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bundle_sha256", "reference", "evaluation_schema", "datasets"],
+      "required": ["config_version", "bundle_sha256", "reference", "evaluation_schema", "datasets"],
       "properties": {
+        "config_version": {"type": ["string", "null"], "pattern": "^config-[0-9]{6}$"},
         "bundle_sha256": {"$ref": "#/$defs/sha256"},
         "reference": {"$ref": "#/$defs/referenceRevision"},
         "evaluation_schema": {"$ref": "#/$defs/evaluationSchemaRevision"},
