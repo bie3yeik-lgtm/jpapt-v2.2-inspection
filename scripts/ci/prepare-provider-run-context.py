@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 from pathlib import Path
+import re
+import subprocess
 
-ZERO_SHA256 = "0" * 64
 ORT_NAMES = {
     "cpu": "CPUExecutionProvider",
     "cuda": "CUDAExecutionProvider",
@@ -20,6 +22,16 @@ def load_json(path: Path) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RuntimeError(f"expected JSON object: {path}")
     return value
+
+
+def canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def host_os_id() -> str:
@@ -37,6 +49,102 @@ def nonempty_env(name: str, fallback: str) -> str:
     return os.environ.get(name) or fallback
 
 
+def git_commit() -> str:
+    value = os.environ.get("GITHUB_SHA")
+    if not value:
+        try:
+            value = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError("provider probe requires a concrete Git commit") from exc
+    if re.fullmatch(r"[0-9a-fA-F]{7,64}", value) is None:
+        raise RuntimeError(f"invalid Git commit identity: {value!r}")
+    return value.lower()
+
+
+def revision_snapshot(contract: dict[str, object]) -> dict[str, object]:
+    catalog = contract.get("catalog")
+    if not isinstance(catalog, dict):
+        raise RuntimeError("candidate contract must contain catalog identity")
+    profile_set = str(contract["profile_set"])
+    runtime_document = {
+        "schema_version": 1,
+        "catalog": {
+            "id": str(catalog["id"]),
+            "sha256": str(catalog["sha256"]),
+        },
+        "profile_set": profile_set,
+    }
+    reference_document = {
+        "schema_version": 1,
+        "development_artifact": {
+            "repo_id": "generated/provider-probe",
+            "revision": "synthetic-v1",
+        },
+        "upstream": {
+            "repo_id": "generated/provider-probe",
+            "revision": "synthetic-v1",
+        },
+        "tokenizer": {
+            "repo_id": "generated/provider-probe-tokenizer",
+            "revision": "synthetic-v1",
+        },
+        "reference": {
+            "id": "provider-probe-reference",
+            "revision": "synthetic-v1",
+            "canonical_framework": "generated",
+        },
+    }
+    evaluation_document = {
+        "schema_version": 1,
+        "schema": {"id": "provider-probe-smoke", "revision": "synthetic-v1"},
+        "artifact_contract": "ctc-single-graph-v1",
+    }
+    datasets_document = {"schema_version": 1, "datasets": []}
+
+    reference_hash = canonical_sha256(reference_document)
+    evaluation_hash = canonical_sha256(evaluation_document)
+    datasets_hash = canonical_sha256(datasets_document)
+    runtime_hash = canonical_sha256(runtime_document)
+    bundle = hashlib.sha256()
+    for document_hash in (
+        reference_hash,
+        evaluation_hash,
+        datasets_hash,
+        runtime_hash,
+    ):
+        bundle.update(document_hash.encode("ascii"))
+
+    return {
+        "config_version": "provider-probe-v1",
+        "bundle_sha256": bundle.hexdigest(),
+        "runtime": {
+            "document_sha256": runtime_hash,
+            "catalog": runtime_document["catalog"],
+            "profile_set": profile_set,
+        },
+        "reference": {
+            "document_sha256": reference_hash,
+            "development_artifact": reference_document["development_artifact"],
+            "upstream": reference_document["upstream"],
+            "tokenizer": reference_document["tokenizer"],
+            "reference_id": "provider-probe-reference",
+            "reference_revision": "synthetic-v1",
+            "canonical_framework": "generated",
+        },
+        "evaluation_schema": {
+            "document_sha256": evaluation_hash,
+            "schema_id": "provider-probe-smoke",
+            "schema_revision": "synthetic-v1",
+        },
+        "datasets": {
+            "document_sha256": datasets_hash,
+            "entries": [],
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--contract", type=Path, required=True)
@@ -49,9 +157,6 @@ def main() -> int:
     if not isinstance(artifacts, dict) or not isinstance(artifacts.get("primary"), dict):
         raise RuntimeError("candidate contract must contain primary artifact")
     primary = artifacts["primary"]
-    catalog = contract.get("catalog")
-    if not isinstance(catalog, dict):
-        raise RuntimeError("candidate contract must contain catalog identity")
     candidate_root = Path(str(contract["candidate_root"]))
     model_path = candidate_root / str(primary["path"])
     if not model_path.is_file():
@@ -77,7 +182,7 @@ def main() -> int:
         },
         "git": {
             "repository": "bie3yeik-lgtm/jpapt-v2.2-inspection",
-            "commit": nonempty_env("GITHUB_SHA", ZERO_SHA256),
+            "commit": git_commit(),
             "ref": nonempty_env("GITHUB_REF_NAME", "agent/provider-strict-probes"),
             "dirty": False,
         },
@@ -101,45 +206,7 @@ def main() -> int:
             "provider_ort_name": ORT_NAMES[args.provider],
             "provider_available": False,
         },
-        "revisions": {
-            "config_version": "unversioned",
-            "bundle_sha256": ZERO_SHA256,
-            "runtime": {
-                "document_sha256": ZERO_SHA256,
-                "catalog": {
-                    "id": str(catalog["id"]),
-                    "sha256": str(catalog["sha256"]),
-                },
-                "profile_set": str(contract["profile_set"]),
-            },
-            "reference": {
-                "document_sha256": ZERO_SHA256,
-                "development_artifact": {
-                    "repo_id": "generated/provider-probe",
-                    "revision": "synthetic-v1",
-                },
-                "upstream": {
-                    "repo_id": "generated/provider-probe",
-                    "revision": "synthetic-v1",
-                },
-                "tokenizer": {
-                    "repo_id": "generated/provider-probe-tokenizer",
-                    "revision": "synthetic-v1",
-                },
-                "reference_id": "provider-probe-reference",
-                "reference_revision": "synthetic-v1",
-                "canonical_framework": "generated",
-            },
-            "evaluation_schema": {
-                "document_sha256": ZERO_SHA256,
-                "schema_id": "provider-probe-smoke",
-                "schema_revision": "synthetic-v1",
-            },
-            "datasets": {
-                "document_sha256": ZERO_SHA256,
-                "entries": [],
-            },
-        },
+        "revisions": revision_snapshot(contract),
         "config": {
             "resolved": {
                 "provider": {
