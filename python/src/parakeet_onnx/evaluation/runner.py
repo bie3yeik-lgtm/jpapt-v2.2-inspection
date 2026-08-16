@@ -29,6 +29,8 @@ class EvaluationRunInputs:
     output_dir: Path
     candidate_id: str | None
     decoder: str
+    candidate_bundle_sha256: str | None = None
+    candidate_bundle_size_bytes: int | None = None
 
 
 def run_evaluation(
@@ -63,14 +65,22 @@ def run_evaluation(
         and aggregate.samples.successful == aggregate.samples.expected
         and aggregate.errors.fatal == 0
     )
+    artifact_sha256 = (
+        inputs.candidate_bundle_sha256 or inputs.run_context.artifact.sha256
+    )
+    artifact_size_bytes = (
+        inputs.candidate_bundle_size_bytes
+        if inputs.candidate_bundle_size_bytes is not None
+        else inputs.run_context.artifact.size_bytes
+    )
 
     benchmark = BenchmarkResult.create(
         run_id=inputs.run_context.run_id,
         candidate=CandidateIdentity(
             candidate_id=inputs.candidate_id,
             model_id=inputs.run_context.model_id,
-            artifact_sha256=inputs.run_context.artifact.sha256,
-            artifact_size_bytes=inputs.run_context.artifact.size_bytes,
+            artifact_sha256=artifact_sha256,
+            artifact_size_bytes=artifact_size_bytes,
             decoder=inputs.decoder,  # type: ignore[arg-type]
         ),
         evaluation=EvaluationIdentity(
