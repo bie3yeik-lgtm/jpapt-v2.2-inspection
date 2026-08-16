@@ -49,19 +49,18 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install project and Hugging Face CLI
-        run: |
-          python -m pip install -e ".[dev]"
-          python -m pip install --upgrade huggingface_hub
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Hugging Face CLI
+        run: python -m pip install --upgrade huggingface_hub
       - name: Allocate sequence
         id: allocate
         shell: bash
         run: |
           set -euo pipefail
           ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}" "${{ inputs.prefix_key }}")"
-          PREFIX="$(python scripts/ci/resolve-allocation-catalog.py prefix "${{ inputs.prefix_key }}")"
-          CATALOG_ID="$(python scripts/ci/resolve-allocation-catalog.py fingerprint catalog_id)"
-          CATALOG_SHA="$(python scripts/ci/resolve-allocation-catalog.py fingerprint sha256)"
+          PREFIX="$(cargo run --quiet --locked -p asr-hf -- allocation-prefix "${{ inputs.prefix_key }}")"
+          CATALOG_ID="$(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id)"
+          CATALOG_SHA="$(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256)"
           echo "id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "prefix=${PREFIX}" >> "${GITHUB_OUTPUT}"
           echo "allocation_catalog_id=${CATALOG_ID}" >> "${GITHUB_OUTPUT}"
