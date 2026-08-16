@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
+use asr_runtime::metadata::model_metadata::GeneratedCandidateContract;
 use serde::{Deserialize, Serialize};
 
 use crate::{EvalError, Result};
@@ -76,7 +77,7 @@ impl RunContextV2 {
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)?;
         let value: serde_json::Value = serde_json::from_str(&text)?;
-        reject_nulls(&value, "$" )?;
+        reject_nulls(&value, "$")?;
         let context: Self = serde_json::from_value(value)?;
         context.validate()?;
         Ok(context)
@@ -89,6 +90,7 @@ impl RunContextV2 {
                 self.schema_version
             )));
         }
+
         for (name, value) in [
             ("run_id", self.run_id.as_str()),
             ("created_at", self.created_at.as_str()),
@@ -109,26 +111,82 @@ impl RunContextV2 {
             ("host.hostname", self.host.hostname.as_str()),
             ("host.python_version", self.host.python_version.as_str()),
             ("host.implementation", self.host.implementation.as_str()),
+            ("host.github_runner_os", self.host.github_runner_os.as_str()),
+            ("host.github_runner_arch", self.host.github_runner_arch.as_str()),
+            ("host.github_run_id", self.host.github_run_id.as_str()),
+            ("host.github_run_attempt", self.host.github_run_attempt.as_str()),
             ("runtime.implementation", self.runtime.implementation.as_str()),
             ("runtime.backend", self.runtime.backend.as_str()),
             ("runtime.backend_version", self.runtime.backend_version.as_str()),
             ("runtime.provider_id", self.runtime.provider_id.as_str()),
             ("runtime.provider_ort_name", self.runtime.provider_ort_name.as_str()),
         ] {
-            if value.trim().is_empty() {
-                return Err(EvalError::InvalidInput(format!(
-                    "run-context {name} must be a non-empty string"
-                )));
-            }
+            require_nonempty(name, value)?;
         }
+
+        validate_sha256("artifact.sha256", &self.artifact.sha256)?;
+        validate_git_commit(&self.git.commit)?;
+
         if self.artifact.size_bytes == 0 {
             return Err(EvalError::InvalidInput(
                 "run-context artifact.size_bytes must be greater than zero".into(),
             ));
         }
+        if self.artifact.artifact_role != "primary" {
+            return Err(EvalError::InvalidInput(format!(
+                "Rust CTC evaluator requires artifact.artifact_role=primary; got {:?}",
+                self.artifact.artifact_role
+            )));
+        }
+        require_one_of(
+            "environment_id",
+            &self.environment_id,
+            &["linux", "windows", "macos"],
+        )?;
+        require_one_of(
+            "provider_id",
+            &self.provider_id,
+            &["cpu", "cuda", "directml", "coreml"],
+        )?;
+        require_one_of(
+            "evaluation_id",
+            &self.evaluation_id,
+            &["smoke", "parity", "coreml-parity", "full"],
+        )?;
+        if self.runtime.implementation != "rust" {
+            return Err(EvalError::InvalidInput(format!(
+                "Rust evaluator requires runtime.implementation=rust; got {:?}",
+                self.runtime.implementation
+            )));
+        }
+        if self.runtime.backend != "onnxruntime" {
+            return Err(EvalError::InvalidInput(format!(
+                "Rust evaluator requires runtime.backend=onnxruntime; got {:?}",
+                self.runtime.backend
+            )));
+        }
         if self.runtime.provider_id != self.provider_id {
             return Err(EvalError::InvalidInput(
                 "run-context runtime.provider_id must equal provider_id".into(),
+            ));
+        }
+
+        let candidate_value = self.metadata.get("candidate").ok_or_else(|| {
+            EvalError::InvalidInput("run-context metadata.candidate is required".into())
+        })?;
+        let candidate: GeneratedCandidateContract = serde_json::from_value(candidate_value.clone())?;
+        candidate.validate()?;
+        if candidate.candidate_id != self.artifact.candidate_id {
+            return Err(EvalError::InvalidInput(
+                "run-context artifact.candidate_id must match metadata.candidate.candidate_id".into(),
+            ));
+        }
+        let primary = candidate.artifacts.get("primary").ok_or_else(|| {
+            EvalError::InvalidInput("run-context candidate has no primary artifact".into())
+        })?;
+        if primary.sha256 != self.artifact.sha256 || primary.size_bytes != self.artifact.size_bytes {
+            return Err(EvalError::InvalidInput(
+                "run-context artifact identity must match metadata.candidate primary artifact".into(),
             ));
         }
         Ok(())
@@ -137,6 +195,43 @@ impl RunContextV2 {
     pub fn into_value(self) -> Result<serde_json::Value> {
         Ok(serde_json::to_value(self)?)
     }
+}
+
+fn require_nonempty(name: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(EvalError::InvalidInput(format!(
+            "run-context {name} must be a non-empty string"
+        )));
+    }
+    Ok(())
+}
+
+fn require_one_of(name: &str, value: &str, allowed: &[&str]) -> Result<()> {
+    if !allowed.contains(&value) {
+        return Err(EvalError::InvalidInput(format!(
+            "run-context {name} has unsupported value {value:?}; expected one of {}",
+            allowed.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_sha256(name: &str, value: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(EvalError::InvalidInput(format!(
+            "run-context {name} must be a 64-character SHA-256"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_git_commit(value: &str) -> Result<()> {
+    if !(7..=64).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(EvalError::InvalidInput(
+            "run-context git.commit must be a 7-64 character hexadecimal commit identity".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn reject_nulls(value: &serde_json::Value, path: &str) -> Result<()> {
@@ -169,5 +264,19 @@ mod tests {
         let value = serde_json::json!({"metadata": {"unknown": null}});
         let error = reject_nulls(&value, "$").expect_err("null must fail");
         assert!(error.to_string().contains("$.metadata.unknown"));
+    }
+
+    #[test]
+    fn rejects_invalid_sha256() {
+        let error = validate_sha256("artifact.sha256", "not-a-sha")
+            .expect_err("invalid sha must fail");
+        assert!(error.to_string().contains("64-character SHA-256"));
+    }
+
+    #[test]
+    fn rejects_unknown_provider() {
+        let error = require_one_of("provider_id", "magic", &["cpu", "coreml"])
+            .expect_err("unknown provider must fail");
+        assert!(error.to_string().contains("unsupported value"));
     }
 }
