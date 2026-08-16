@@ -35,6 +35,7 @@ readarray -t META_VALUES < <(run_project_python - "$SOURCE" <<'PY'
 import json
 import sys
 from pathlib import Path
+from parakeet_onnx.config.allocation_catalog import load_repository_allocation_catalog
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
@@ -50,8 +51,8 @@ variants=raw.get("variants")
 if not isinstance(variants,dict) or not variants:
     raise SystemExit("metadata.json variants must be a non-empty object")
 
-catalog=load_repository_catalog(Path.cwd())
-profile_set=catalog.profile_set(profile_set_id)
+runtime_catalog=load_repository_catalog(Path.cwd())
+profile_set=runtime_catalog.profile_set(profile_set_id)
 if set(variants) - set(profile_set.variants):
     raise SystemExit(
         f"candidate defines variants outside profile set: {sorted(set(variants)-set(profile_set.variants))}"
@@ -60,8 +61,9 @@ for variant in variants:
     candidate=CandidateArtifacts.load(root,variant=variant,repository_root=Path.cwd())
     validate_candidate_runtime_contract(candidate)
     print(f"validated:{variant}:{candidate.decoder}:{candidate.artifact_contract}",file=sys.stderr)
+allocation_catalog=load_repository_allocation_catalog(Path.cwd())
 print(profile_set_id)
-print(profile_set.candidate_prefix_key)
+print(allocation_catalog.candidate_prefix_key(profile_set_id))
 PY
 )
 PROFILE_SET="${META_VALUES[0]}"
