@@ -3,10 +3,10 @@ name: Validate HF Layout
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: "HF target id to validate"
+      hf_bucket:
+        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
         required: true
-        default: parakeet-tdt_ctc-0.6b-ja
+        default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
   pull_request:
     paths:
@@ -36,16 +36,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-hf-layout-${{ github.ref }}-${{ inputs.target || vars.HF_DEFAULT_TARGET || 'parakeet-tdt_ctc-0.6b-ja' }}
+  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || vars.HF_DEFAULT_BUCKET || 'gawohok7/jpapt-v2.2-dev-bucket' }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
-  HF_DEFAULT_TARGET: ${{ vars.HF_DEFAULT_TARGET || 'parakeet-tdt_ctc-0.6b-ja' }}
   HF_BUCKET: ""
   HF_MODEL_REPO: ""
-  EXPECTED_MODEL_ID: ""
+  EXPECTED_DEVELOPMENT_REPO_ID: ""
+  EXPECTED_UPSTREAM_REPO_ID: ""
+  EXPECTED_TOKENIZER_REPO_ID: ""
   EXPECTED_FRAMEWORK: ""
   EXPECTED_DECODER: ""
   ALLOW_LEGACY_REVISION_METADATA: "false"
@@ -83,15 +84,19 @@ jobs:
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py
 
-      - name: Resolve selected HF target
+      - name: Resolve selected HF Bucket
         shell: bash
         env:
-          SELECTED_TARGET: ${{ inputs.target || vars.HF_DEFAULT_TARGET || 'parakeet-tdt_ctc-0.6b-ja' }}
+          SELECTED_BUCKET: ${{ inputs.hf_bucket || vars.HF_DEFAULT_BUCKET || 'gawohok7/jpapt-v2.2-dev-bucket' }}
         run: |
           set -euo pipefail
+          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
+            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
+            exit 1
+          }
           python scripts/ci/resolve-hf-target.py \
-            --target "${SELECTED_TARGET}" \
-            --targets-json "${HF_TARGETS_JSON:-}" \
+            --bucket "${SELECTED_BUCKET}" \
+            --targets-json "${HF_TARGETS_JSON}" \
             --github-env "${GITHUB_ENV}"
 
       - name: Validate GitHub HF configuration
@@ -99,11 +104,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is not configured."; exit 1; }
-          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved for ${HF_TARGET_ID}."; exit 1; }
-          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved for ${HF_TARGET_ID}."; exit 1; }
-          echo "HF_TARGET_ID=${HF_TARGET_ID}"
-          echo "HF_BUCKET=${HF_BUCKET}"
-          echo "HF_MODEL_REPO=${HF_MODEL_REPO}"
+          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved."; exit 1; }
+          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved."; exit 1; }
+          echo "HF target: ${HF_TARGET_ID}"
+          echo "HF Bucket: ${HF_BUCKET}"
+          echo "HF Model Repo: ${HF_MODEL_REPO}"
 
       - name: Fetch HF revision locks
         shell: bash
@@ -118,7 +123,9 @@ jobs:
           set -euo pipefail
           args=(
             --root .ci/hf/config/revisions
-            --expected-model-id "${EXPECTED_MODEL_ID}"
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
             --expected-framework "${EXPECTED_FRAMEWORK}"
             --expected-decoder "${EXPECTED_DECODER}"
           )
@@ -151,7 +158,9 @@ jobs:
     env:
       HF_BUCKET: ""
       HF_MODEL_REPO: ""
-      EXPECTED_MODEL_ID: ""
+      EXPECTED_DEVELOPMENT_REPO_ID: ""
+      EXPECTED_UPSTREAM_REPO_ID: ""
+      EXPECTED_TOKENIZER_REPO_ID: ""
       EXPECTED_FRAMEWORK: ""
       EXPECTED_DECODER: ""
       ALLOW_LEGACY_REVISION_METADATA: "false"
@@ -190,7 +199,7 @@ jobs:
             echo "TARGET_INITIALIZED=true" >> "${GITHUB_ENV}"
           else
             echo "TARGET_INITIALIZED=false" >> "${GITHUB_ENV}"
-            echo "::warning::HF target '${{ matrix.target }}' is configured but its revision-lock bundle is not initialized yet. Manual Validate HF Layout remains strict for this target."
+            echo "::warning::HF target '${{ matrix.target }}' is configured but its revision-lock bundle is not initialized yet."
           fi
 
       - name: Validate target revision identity
@@ -200,7 +209,9 @@ jobs:
           set -euo pipefail
           args=(
             --root .ci/hf/config/revisions
-            --expected-model-id "${EXPECTED_MODEL_ID}"
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
             --expected-framework "${EXPECTED_FRAMEWORK}"
             --expected-decoder "${EXPECTED_DECODER}"
           )
