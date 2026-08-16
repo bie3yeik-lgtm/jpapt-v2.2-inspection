@@ -11,9 +11,17 @@ fail() { printf '[hf-allocate-id] ERROR: %s\n' "$*" >&2; exit 1; }
 COLLECTION="${1:-}"
 PREFIX="${2:-}"
 
-[[ "$COLLECTION" == "candidates" || "$COLLECTION" == "experiments" ]] \
-  || fail "collection must be 'candidates' or 'experiments'"
+[[ "$COLLECTION" == "candidates" || "$COLLECTION" == "experiments" || "$COLLECTION" == "config" ]] \
+  || fail "collection must be 'candidates', 'experiments', or 'config'"
 [[ -n "$PREFIX" ]] || fail "prefix is required"
+
+# Public compatibility entrypoint: every non-internal request is forwarded to
+# the central allocator workflow. Only the central workflow sets
+# HF_ALLOCATOR_INTERNAL=1 and performs list -> max+1 -> reservation itself.
+if [[ "${HF_ALLOCATOR_INTERNAL:-}" != "1" ]]; then
+  exec bash scripts/hf/hf-request-id.sh "$COLLECTION" "$PREFIX"
+fi
+
 [[ -n "${HF_TOKEN:-}" ]] || fail "HF_TOKEN is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
@@ -22,45 +30,16 @@ command -v python >/dev/null 2>&1 || fail "python is unavailable"
 BUCKET="${HF_BUCKET#hf://buckets/}"
 BUCKET="${BUCKET%/}"
 [[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
-REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
 
-# Allocation is Bucket-scoped. HF_TARGETS_JSON represents only the current
-# operational routing snapshot: Bucket assignments may change in later
-# snapshots, but within one snapshot every HF_BUCKET must be unique.
-if [[ -n "${HF_TARGETS_JSON:-}" ]]; then
-  HF_TARGET_ID="$(python - "$BUCKET" <<'PY'
-import json
-import os
-import sys
-
-bucket=sys.argv[1]
-raw=json.loads(os.environ["HF_TARGETS_JSON"])
-if not isinstance(raw,dict):
-    raise SystemExit("HF_TARGETS_JSON root must be an object")
-seen={}
-for target,entry in raw.items():
-    if not isinstance(entry,dict):
-        raise SystemExit(f"HF_TARGETS_JSON entry {target!r} must be an object")
-    value=entry.get("HF_BUCKET")
-    if not isinstance(value,str) or not value.strip():
-        raise SystemExit(f"HF_TARGETS_JSON entry {target!r}.HF_BUCKET must be non-empty")
-    value=value.strip()
-    if value in seen:
-        raise SystemExit(
-            f"HF_BUCKET {value!r} is assigned to both {seen[value]!r} and "
-            f"{target!r} in the current routing snapshot"
-        )
-    seen[value]=target
-matches=[target for value,target in seen.items() if value==bucket]
-if len(matches)!=1:
-    raise SystemExit(
-        f"HF_BUCKET {bucket!r} is not present in the current routing snapshot"
-    )
-print(matches[0])
-PY
-)"
-  export HF_TARGET_ID
-fi
+case "$COLLECTION" in
+  candidates|experiments)
+    REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
+    ;;
+  config)
+    REMOTE_ROOT="hf://buckets/${BUCKET}/config/versions"
+    PREFIX="config"
+    ;;
+esac
 
 listing="$(mktemp)"
 readme="$(mktemp)"
@@ -79,29 +58,43 @@ ID="$(python scripts/ci/next-hf-sequence-id.py --prefix "$PREFIX" --listing "$li
 SEQUENCE="${ID##*-}"
 CREATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-cat >"$readme" <<EOF
-# ${ID}
+python - "$readme" "$ID" "$COLLECTION" "$BUCKET" "$PREFIX" "$SEQUENCE" "$CREATED_AT" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
 
-This directory identifier was allocated automatically from the largest existing
-six-digit sequence in \`${COLLECTION}/\` plus one.
+path, allocation_id, collection, bucket, prefix, sequence, created_at = sys.argv[1:]
+try:
+    metadata = json.loads(os.environ.get("HF_ALLOCATION_METADATA_JSON", "{}"))
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"HF_ALLOCATION_METADATA_JSON is invalid JSON: {exc}")
+if not isinstance(metadata, dict):
+    raise SystemExit("HF_ALLOCATION_METADATA_JSON must be a JSON object")
 
-- collection: \`${COLLECTION}\`
-- bucket: \`${BUCKET}\`
-- prefix: \`${PREFIX}\`
-- sequence: \`${SEQUENCE}\`
-- allocated_at: \`${CREATED_AT}\`
-- target_id: \`${HF_TARGET_ID:-not-resolved}\`
-- candidate_id: \`${CANDIDATE_ID:-not-applicable}\`
-- evaluation_id: \`${EVALUATION_ID:-not-applicable}\`
-- provider_id: \`${PROVIDER_ID:-not-applicable}\`
-- github_run_id: \`${GITHUB_RUN_ID:-local}\`
-- github_run_attempt: \`${GITHUB_RUN_ATTEMPT:-local}\`
-
-The numeric suffix is machine-managed. Do not manually renumber or reuse it.
-The prefix is descriptive only and does not define an independent sequence.
-The target/Bucket association above is a snapshot of routing at allocation time,
-not a permanent target identity.
-EOF
+lines = [
+    f"# {allocation_id}",
+    "",
+    "このディレクトリIDは中央Allocatorが自動採番しました。数値suffixは手動で再利用・変更しないでください。",
+    "",
+    f"- collection: `{collection}`",
+    f"- bucket: `{bucket}`",
+    f"- prefix: `{prefix}`",
+    f"- sequence: `{sequence}`",
+    f"- allocated_at: `{created_at}`",
+]
+for key in sorted(metadata):
+    value = metadata[key]
+    if value is not None and value != "":
+        rendered = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+        lines.append(f"- {key}: `{rendered}`")
+lines += [
+    "",
+    "prefixは説明用であり、連番はcollection全体の最大suffix + 1で管理されます。",
+    "targetとBucketの対応は採番時点のrouting snapshotであり、恒久的なidentityではありません。",
+]
+Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
 
 hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md" >/dev/null
 

@@ -4,6 +4,8 @@
 
 この文書は、本リポジトリで採用するHF Bucket運用を他のmodel開発Repositoryにも移植できる形で定義します。NeMo/Transformers、CTC/TDT/Whisperなどのmodel差分には依存しません。
 
+採番実装の詳細は [`central-allocator.md`](./central-allocator.md) を参照してください。
+
 ## 1. 保存先の役割
 
 ```text
@@ -23,10 +25,12 @@ Bucketをcanonical model identityにはしません。
 
 ```text
 hf://buckets/<namespace>/<bucket>/
+├── README.md
 ├── config/
 │   ├── current.json
 │   └── versions/
 │       └── config-NNNNNN/
+│           ├── README.md
 │           ├── reference.json
 │           ├── evaluation-schema.json
 │           └── datasets-lock.json
@@ -54,6 +58,8 @@ hf://buckets/<namespace>/<bucket>/
 
 Framework/decoder/provider名はtop-level treeを分岐させず、metadataで保持します。
 
+Bucketルート`README.md`には人間向け説明に加え、中央Allocatorが管理する現在番号blockを保持します。
+
 ## 3. Routing
 
 GitHub ActionsではRepository Variableを使います。
@@ -62,22 +68,7 @@ GitHub ActionsではRepository Variableを使います。
 HF_TARGETS_JSON
 ```
 
-例:
-
-```json
-{
-  "model-a": {
-    "HF_BUCKET": "owner/bucket-a",
-    "HF_MODEL_REPO": "owner/model-a"
-  },
-  "model-b": {
-    "HF_BUCKET": "owner/bucket-b",
-    "HF_MODEL_REPO": "owner/model-b"
-  }
-}
-```
-
-### 現在snapshotのルール
+同一snapshot内では:
 
 ```text
 target IDは一意
@@ -85,20 +76,18 @@ HF_BUCKETは一意
 各targetにHF_BUCKET/HF_MODEL_REPOが1つ
 ```
 
-### 時系列のルール
-
-Bucket割当は将来変更できます。
+ただしBucket割当は将来変更できます。
 
 ```text
 T1: model-a -> bucket-a
 T2: model-a -> bucket-c
 ```
 
-これは正常です。過去runはrun-contextに保存された当時のroutingを使います。
+過去runはrun-contextに保存された当時のrouting snapshotを使います。
 
 ## 4. Versioned Config
 
-`config/revisions/`を上書きしません。
+revision文書は上書きしません。
 
 ```text
 config/current.json
@@ -106,28 +95,18 @@ config/current.json
 config/versions/config-NNNNNN/
 ```
 
-`current.json`:
-
-```json
-{
-  "schema_version": 1,
-  "config_version": "config-000002"
-}
-```
-
 各versionはimmutableです。
 
 ```text
+README.md
 reference.json
 evaluation-schema.json
 datasets-lock.json
 ```
 
-どれかを変更する場合は新versionを発行します。
+`README.md`は中央Allocatorが番号予約時に作成します。canonical revision bundleは3 JSONです。
 
 ## 5. Config versionのpublish
-
-推奨script:
 
 ```bash
 bash scripts/hf/hf-push-config-version.sh <local-config-dir>
@@ -138,16 +117,18 @@ bash scripts/hf/hf-push-config-version.sh <local-config-dir>
 ```text
 local 3 JSONをstrict validation
   ↓
-次のconfig-NNNNNNを決定
+中央Allocatorへconfig version要求
   ↓
-version directoryへupload
+config-NNNNNN/README.md予約
+  ↓
+3 JSON upload
   ↓
 全file成功確認
   ↓
 最後にconfig/current.json更新
 ```
 
-`current.json`を先に変更して、不完全なversionを指さないことが重要です。
+採番後のuploadが失敗しても番号は再利用しません。また`current.json`は未完成versionを指しません。
 
 ## 6. Configの取得
 
@@ -164,27 +145,19 @@ HF_CONFIG_VERSION=config-000023 \
   bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-ローカル解決結果:
-
-```text
-.ci/hf/config/
-  resolved.json
-  revisions/
-```
-
 Runには`config_version`とrevision bundle hashを保存します。
 
-## 7. Candidate / Experiment自動採番
+## 7. 中央自動採番
 
-形式:
+対象:
 
 ```text
-<prefix>-NNNNNN
+candidates   <prefix>-NNNNNN
+experiments  <prefix>-NNNNNN
+config       config-NNNNNN
 ```
 
 数値suffixはprefixごとではなくcollection全体で管理します。
-
-例:
 
 ```text
 experiments/
@@ -195,31 +168,39 @@ experiments/
 
 次にどのprefixを使ってもsuffixは`000008`です。
 
-### 採番アルゴリズム
+採番要求は全Repositoryから本リポジトリの:
 
 ```text
-collectionをrecursive list
-  ↓
-path先頭componentの末尾6桁を抽出
-  ↓
-最大値を取得
-  ↓
-+1
-  ↓
-<prefix>-NNNNNN
+.github/workflows/hf-central-allocator.yml
 ```
 
-`000001`が構造例として存在すれば最初の実運用値は`000002`になります。
+へ集約します。
 
-## 8. READMEによる予約
+## 8. Race conditionと排他
 
-Object storageには空directoryがないため、採番直後に次を作ります。
+以前の「各Repositoryで`list -> max+1`し、各Repoのconcurrencyで守る」方式は採用しません。GitHub ActionsのconcurrencyはRepositoryをまたいだglobal lockではないためです。
+
+現在は中央Allocator RepositoryのworkflowでBucket全体を直列化します。
+
+```yaml
+concurrency:
+  group: hf-central-sequence-${{ inputs.hf_bucket }}
+  cancel-in-progress: false
+```
+
+したがってRepo A/B/Cが同じBucketを利用しても採番実行点は1つです。
+
+## 9. READMEによる予約
+
+採番直後に:
 
 ```text
 <allocated-id>/README.md
 ```
 
-READMEには少なくとも次を記録します。
+を書きます。
+
+READMEには:
 
 ```text
 collection
@@ -227,6 +208,7 @@ bucket
 prefix
 sequence
 allocated_at
+source_repository
 target_id
 candidate_id
 evaluation_id
@@ -234,29 +216,75 @@ provider_id
 GitHub run metadata
 ```
 
-これにより番号の意味を人間が確認でき、pathも実体化されます。
+など、呼出時に得られるprovenanceを記録します。
 
-## 9. Race condition
+予約後に後続処理が失敗しても番号は欠番として残し、再利用しません。
 
-単純な`list → max+1 → write`は同時実行に弱いため、GitHub Actionsではallocator jobだけをBucket単位で直列化します。
+## 10. BucketルートREADME
 
-```yaml
-concurrency:
-  group: hf-experiment-id-${{ inputs.hf_bucket }}
-  cancel-in-progress: false
+中央Allocatorは採番のたびに:
+
+```text
+hf://buckets/<namespace>/<bucket>/README.md
 ```
 
-他Repositoryへ移植するときも、同じBucket/collectionへ採番するworkflow間で同じconcurrency naming policyを使ってください。
+のmanaged blockを更新します。
 
-## 10. Candidate lifecycle
+```html
+<!-- hf-central-allocator:start -->
+...
+<!-- hf-central-allocator:end -->
+```
 
-ローカルexportでは正式番号を持たなくても構いません。
+記録内容:
+
+```text
+直近採番
+candidates 現在最大番号
+experiments 現在最大番号
+config 現在最大番号
+最終更新時刻
+```
+
+marker外の人間向け説明は保持します。
+
+## 11. 中央Allocator client
+
+通常入口:
+
+```text
+scripts/hf/hf-request-id.sh
+```
+
+互換入口:
+
+```text
+scripts/hf/hf-allocate-id.sh
+```
+
+通常の`hf-allocate-id.sh`呼出は中央clientへ転送されます。低レベル採番は`HF_ALLOCATOR_INTERNAL=1`を設定する中央workflowだけが実行します。
+
+### 他Repositoryからの認証
+
+呼出元Repositoryに:
+
+```text
+HF_ALLOCATOR_GITHUB_TOKEN
+```
+
+を設定します。中央Allocator Repositoryに対してworkflow dispatch/readとartifact readが可能なtokenを使用します。
+
+## 12. Candidate lifecycle
+
+ローカルexport時は:
 
 ```text
 candidate_id = unallocated
 ```
 
-Bucket publish時:
+で構いません。
+
+Bucket publish:
 
 ```bash
 bash scripts/hf/hf-push-candidate.sh ./local-candidate [prefix]
@@ -265,15 +293,14 @@ bash scripts/hf/hf-push-candidate.sh ./local-candidate [prefix]
 処理:
 
 ```text
-ID自動採番
-README予約
+中央AllocatorでID予約
 metadata.jsonのcandidate_id更新
 artifact upload
 ```
 
 既存candidateを評価するときはcandidate IDを明示指定します。これは採番ではなくartifact selectionです。
 
-## 11. Experiment lifecycle
+## 13. Experiment lifecycle
 
 Experimentは1つ以上のrunを束ねる論理単位です。
 
@@ -285,11 +312,11 @@ rust-eval-NNNNNN
 
 Cross-platform matrixでは全jobが同じexperiment IDを共有します。
 
-## 12. Run lifecycle
+## 14. Run lifecycle
 
-Run IDは連番にしません。1 concrete executionを一意に識別します。
+Run IDは連番にしません。
 
-Runに保存すべき情報:
+保存すべき情報:
 
 ```text
 candidate ID / artifact SHA-256
@@ -303,7 +330,7 @@ runtime / provider
 evaluation suite
 ```
 
-## 13. Benchmark lifecycle
+## 15. Benchmark lifecycle
 
 ```text
 benchmarks/<candidate-id>/
@@ -318,7 +345,19 @@ benchmarks/<candidate-id>/
 
 Framework名ではなく実行環境を分類軸にします。
 
-## 14. `reference.json`
+## 16. Evaluator capability
+
+Storage lifecycleとruntime capabilityを混同しません。
+
+```text
+config/evaluators/<evaluator>.toml
+  ↓
+validate-evaluator-capability.py
+```
+
+workflowは`ctc`や`whisper_autoregressive`を直接条件分岐せず、選択targetのdecoderが利用するevaluatorで実行可能かだけを検証します。
+
+## 17. `reference.json`
 
 共通provenance:
 
@@ -332,11 +371,9 @@ decoders              decoder contract
 
 `HF_BUCKET`は書きません。
 
-## 15. 過去runの再現
+## 18. 過去runの再現
 
 現在の`HF_TARGETS_JSON`を過去runへ適用しません。
-
-参照するもの:
 
 ```text
 run-context.metadata.hf_bucket
@@ -345,34 +382,47 @@ run-context.artifact.candidate_id
 run-context.metadata.experiment_id
 ```
 
-その後artifact SHAとrevision bundle hashを照合します。
+を参照し、artifact SHAとrevision bundle hashを照合します。
 
-## 16. 他Repositoryへ移植する最低構成
+## 19. 他Repositoryへ移植する最低構成
+
+中央Allocator Repository側:
 
 ```text
+.github/workflows/hf-central-allocator.yml
 scripts/ci/next-hf-sequence-id.py
 scripts/hf/hf-allocate-id.sh
+scripts/hf/hf-update-root-readme.sh
+```
+
+呼出Repository側:
+
+```text
+scripts/hf/hf-request-id.sh
 scripts/hf/hf-push-candidate.sh
 scripts/hf/hf-push-config-version.sh
 scripts/hf/hf-fetch-revisions.sh
 scripts/hf/hf-fetch-candidate.sh
-scripts/ci/validate-revisions.py
 ```
 
-Repository settings:
+Settings:
 
 ```text
-Secret: HF_TOKEN
-Variable: HF_TARGETS_JSON
+HF_TOKEN
+HF_TARGETS_JSON
+HF_ALLOCATOR_GITHUB_TOKEN  # cross-repository caller
 ```
 
-## 17. 不変条件
+## 20. 不変条件
 
 ```text
 既存config-NNNNNNを上書きしない
-candidate/experiment suffixを再利用しない
+candidate/experiment/config suffixを人間が決めない
+予約済みsuffixを再利用しない
 prefixは説明用でcounterを所有しない
+全Repositoryの採番を中央Allocatorへ集約する
 採番直後にREADMEを作る
+BucketルートREADMEのmanaged blockをAllocatorが更新する
 過去candidateを明示的に再評価できる
 通常実行はcurrent.jsonに従う
 過去再現はHF_CONFIG_VERSIONで固定できる
@@ -383,4 +433,4 @@ runとexperimentを別identityにする
 routingの歴史的変更を許容する
 ```
 
-この運用により、frameworkが増えてもstorage lifecycleを変更せずに拡張できます。
+この運用により、framework・runtime・Repository数が増えてもstorage lifecycleと採番規則を変更せず拡張できます。

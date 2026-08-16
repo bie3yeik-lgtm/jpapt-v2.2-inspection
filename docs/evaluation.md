@@ -25,7 +25,7 @@ reference output
 candidate output
 ```
 
-NeMoでもTransformersでもこの考え方は同じです。比較する中間tensorだけがarchitectureによって変わります。
+NeMoでもTransformersでも考え方は同じで、比較する中間tensorやdecoder stateだけがarchitectureによって変わります。
 
 ## Suite
 
@@ -50,8 +50,6 @@ evaluation/manifests/*.jsonl
 
 ## Dataset selection
 
-manifestと`datasets-lock.json`からdeterministicにsampleを選びます。
-
 ```text
 manifest
   +
@@ -66,7 +64,7 @@ materialization
 
 ## CanonicalAudio
 
-評価前のaudio contractは全target共通です。
+全target共通:
 
 ```text
 float32
@@ -79,8 +77,6 @@ C-contiguous
 ここから先のfrontendはmodel/framework固有です。
 
 ## Architecture固有のparity checkpoint
-
-共通ルールは「そのarchitectureで意味のある境界を比較する」です。
 
 ### Parakeet CTC
 
@@ -112,11 +108,34 @@ generated token IDs
 text
 ```
 
-現状のONNX evaluatorはCTC中心です。TDT/Whisperの上記checkpointは共通設計上の目標であり、全てが実装済みという意味ではありません。
+上記はarchitectureとして望ましいcheckpointです。現在どこまで実行可能かはevaluator capabilityで判断します。
+
+## Evaluator capability
+
+Targetが要求するdecoderと、実際のevaluatorが対応するdecoderを分離します。
+
+```text
+Target decoder
+  +
+config/evaluators/<evaluator>.toml
+  ↓
+validate-evaluator-capability.py
+```
+
+現在:
+
+```text
+python-onnx -> ctc
+rust-onnx   -> ctc
+```
+
+です。
+
+したがってTDT/Whisper targetが停止する場合、それはBucketやrevision contractが非対応だからではなく、選択evaluatorのcapabilityが未実装だからです。
+
+workflowへdecoder固有条件を増やさず、runtime実装とcapability declarationを拡張します。
 
 ## ReferenceとDataset正解は別物
-
-次を混同しないでください。
 
 ```text
 dataset ground truth
@@ -126,11 +145,11 @@ canonical reference output
   = conversion parityの正解
 ```
 
-canonical reference自身がdatasetに対して誤認識する可能性はあります。その場合でも、正しいONNX変換はreferenceと同じ挙動を再現することを目指します。
+canonical reference自身がdatasetに対して誤認識していても、ONNX conversion parityではreference挙動を再現することが目的です。
 
 ## Config version
 
-評価時には必ず1つのconfig versionを固定します。
+評価時には1つのconfig versionを固定します。
 
 ```text
 config-NNNNNN
@@ -149,6 +168,16 @@ Experimentは論理的な評価単位です。
 cross-platform-parity-000023
 ```
 
+Experiment IDは各workflowが独自採番せず、中央Allocatorから取得します。
+
+```text
+workflow
+  ↓
+HF Central Sequence Allocator
+  ↓
+experiment ID
+```
+
 Runは1つの具体的な実行です。
 
 ```text
@@ -160,6 +189,8 @@ macOS CoreML run
 
 cross-platform評価ではこれらが同じexperiment IDを共有します。
 
+中央Allocatorが採番するため、複数Repositoryから同じBucketに対して評価を開始してもexperiment suffixは衝突しません。
+
 ## 出力
 
 ```text
@@ -170,8 +201,6 @@ results/<run>/
 ```
 
 ### `run-context.json`
-
-再現性情報を保存します。
 
 ```text
 candidate / artifact SHA
@@ -195,8 +224,6 @@ aggregate metricとacceptance結果です。
 
 ## Performance metric
 
-主要指標:
-
 ```text
 RTF = processing_time / audio_duration
 ```
@@ -217,7 +244,7 @@ Python→Rust化で改善しやすい部分とORT kernel自体の性能を混同
 
 ## Execution Provider
 
-runにはrequested providerだけでなく、provider availabilityやfallback情報も残す必要があります。
+runにはrequested providerだけでなくprovider availabilityやfallback情報も残します。
 
 ```text
 CPU
@@ -230,11 +257,9 @@ session生成成功だけでは全nodeが希望EPで実行された証明には�
 
 ## Acceptance
 
-release品質のthresholdはBucket側のversioned `evaluation-schema.json`で管理します。GitにあるJSON Schemaは構造検証用であり、品質thresholdそのものではありません。
+release品質thresholdはBucket側のversioned `evaluation-schema.json`で管理します。GitにあるJSON Schemaは構造検証用です。
 
 ## Promotion
-
-原則としてaccepted full runをpromotion gateにします。
 
 ```text
 candidate
@@ -250,17 +275,24 @@ Model Repoへpromotion
 
 ## Python / Rust共通contract
 
-両実装は次を共有します。
-
 ```text
 manifest identity
 materialized sample
 config version
 revision bundle
 candidate identity
+experiment identity
 run-context schema
 result schema
 benchmark schema
 ```
 
-framework差分はこれらの外側ではなく、frontend/runtime/decoder adapterへ閉じ込めます。
+framework差分はfrontend/runtime/decoder adapterへ閉じ込め、採番やstorage lifecycleへ持ち込みません。
+
+関連文書:
+
+```text
+docs/multi-framework-asr.md
+docs/central-allocator.md
+docs/github-actions.md
+```

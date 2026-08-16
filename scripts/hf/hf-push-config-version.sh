@@ -14,6 +14,7 @@ SOURCE="${1:-}"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
+command -v gh >/dev/null 2>&1 || fail "gh CLI is unavailable; central allocation requires GitHub access"
 
 SOURCE="$(python - "$SOURCE" <<'PY'
 import sys
@@ -30,7 +31,6 @@ run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
 
-# Validate the exact documents before publishing any remote state.
 BUNDLE_SHA="$(run_project_python - "$SOURCE" <<'PY'
 import sys
 from parakeet_onnx.hf.revisions import load_revision_bundle
@@ -44,28 +44,16 @@ BUCKET="${BUCKET%/}"
 [[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
 VERSIONS="hf://buckets/${BUCKET}/config/versions"
 
-listing="$(mktemp)"
-current="$(mktemp)"
-trap 'rm -f "$listing" "$current" "${listing}.err"' EXIT
-
-if ! hf buckets list --token "$HF_TOKEN" "$VERSIONS" -R -q >"$listing" 2>"${listing}.err"; then
-  if grep -qiE 'not found|does not exist|no files|empty' "${listing}.err"; then
-    : >"$listing"
-  else
-    cat "${listing}.err" >&2
-    fail "failed to list $VERSIONS"
-  fi
-fi
-
-CONFIG_VERSION="$(python scripts/ci/next-hf-sequence-id.py --prefix config --listing "$listing")"
+CONFIG_VERSION="$(CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= bash scripts/hf/hf-request-id.sh config config)"
 REMOTE_VERSION="${VERSIONS}/${CONFIG_VERSION}"
+current="$(mktemp)"
+trap 'rm -f "$current"' EXIT
 
 log "Publishing immutable configuration: ${REMOTE_VERSION}"
+# The central allocator has already reserved README.md in the version directory.
+# Sync without --delete so that provenance reservation remains intact.
 hf buckets sync --token "$HF_TOKEN" "$SOURCE" "$REMOTE_VERSION" >/dev/null
 
-# Only after all three immutable documents are uploaded do we move the mutable
-# current pointer. A failed upload therefore never makes current.json point at a
-# partial version.
 python - "$current" "$CONFIG_VERSION" "$BUNDLE_SHA" <<'PY'
 import json
 import sys

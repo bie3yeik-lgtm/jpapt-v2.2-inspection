@@ -2,20 +2,18 @@
 
 ## 目的
 
-本リポジトリは、日本語ASRモデルを共通の運用基盤で扱い、原モデルの固定、canonical reference生成、ONNX化、candidate評価、複数Execution Providerでの検証、Hugging Face Model Repoへのpromotionまでを再現可能にするための開発基盤です。
+本リポジトリは、日本語ASRモデルを共通の運用基盤で扱い、原モデル固定、canonical reference生成、ONNX化、candidate評価、複数Execution Providerでの検証、Hugging Face Model Repoへのpromotionまでを再現可能にするための開発基盤です。
 
-対象frameworkは1つに固定しません。現在は主に次を扱います。
+対象frameworkは1つに固定しません。
 
 ```text
 NeMo系          例: NVIDIA Parakeet
 Transformers系  例: Kotoba Whisper
 ```
 
-frameworkごとの違いをBucket構造や評価履歴の構造へ持ち込まず、差分はtarget設定・reference adapter・export adapter・decoder/runtimeへ閉じ込めます。
+framework差分をBucket構造や評価履歴へ持ち込まず、target設定・reference adapter・export adapter・decoder/runtime・evaluator capabilityへ閉じ込めます。
 
 ## 共通ライフサイクル
-
-すべてのtargetは次の同じ流れで扱います。
 
 ```text
 Target
@@ -37,13 +35,11 @@ Benchmark / Acceptance
 Promotion
 ```
 
-NeMoかTransformersか、CTCかWhisper autoregressiveかは、この流れ自体を変えるものではありません。
+NeMo/Transformers、CTC/TDT/Whisper autoregressiveの違いは、この流れ自体を変更しません。
 
 ## 責務の分離
 
 ### GitHub Repository
-
-Gitで管理するもの:
 
 ```text
 source code
@@ -55,13 +51,10 @@ GitHub Actions
 docs/
 ```
 
-大容量model、audio、tensor、ONNX実体は原則としてGitへ保存しません。
-
 ### Hugging Face Bucket
 
-mutableな開発・評価履歴を保存します。
-
 ```text
+README.md
 config/
 experiments/
 candidates/
@@ -72,55 +65,84 @@ scripts/
 tmp/
 ```
 
+mutableな開発・評価履歴を保存します。
+
 ### Hugging Face Model Repo
 
-検証済みのdevelopment/release artifactを保存します。Bucketは作業履歴、Model Repoはpromotion先という役割分担です。
+検証済みdevelopment/release artifactを保存します。Bucketは作業履歴、Model Repoはpromotion先です。
 
-## Targetの考え方
+## TargetとRouting
 
-Targetは「どのモデルを、どのcanonical framework、decoder、storage routingで扱うか」を表す論理単位です。
+Targetは安定したmodel semanticsを表します。
 
-静的な意味は次で管理します。
+```text
+model
+canonical framework
+upstream
+tokenizer / processor
+decoder contract
+```
+
+静的設定:
 
 ```text
 config/models/<model-id>.toml
 config/hf-targets/<target-id>.toml
 ```
 
-実行時のHF storage routingはRepository Variable `HF_TARGETS_JSON` が担当します。`HF_BUCKET`は運用上変更可能であり、model identityそのものではありません。
+現在のstorage routing:
+
+```text
+vars.HF_TARGETS_JSON
+```
+
+`HF_BUCKET`はTarget identityそのものではなく、運用上変更可能です。
 
 ## Config version
-
-Bucket内のrevision文書は上書きせず、immutableなversionとして管理します。
 
 ```text
 config/current.json
 config/versions/config-NNNNNN/
+  README.md
   reference.json
   evaluation-schema.json
   datasets-lock.json
 ```
 
-通常実行は`current.json`を参照し、過去runの再現では`HF_CONFIG_VERSION=config-NNNNNN`で明示指定できます。
+3 JSONがcanonical revision bundleです。`README.md`は中央Allocatorによる番号予約・provenanceです。
+
+通常実行は`current.json`、過去再現は`HF_CONFIG_VERSION=config-NNNNNN`を使います。
+
+## 中央Allocator
+
+Candidate、Experiment、Config Versionの数値suffixは人間が決めません。
+
+```text
+複数Repository
+      ↓
+HF Central Sequence Allocator
+      ↓
+対象Bucketの既存最大suffix + 1
+```
+
+中央Allocator RepositoryでBucket単位に直列化するため、複数Repositoryから同じBucketへ同時要求しても同じ番号を発行しません。
+
+採番後はID直下のREADMEを予約し、さらにBucketルートREADMEの現在番号blockを更新します。
 
 ## `reference.json`のidentity
 
-`reference.json`では以下を独立して固定します。
-
 ```text
-development_artifact  自分たちが生成・公開するartifactのModel Repo snapshot
-upstream              変換元となる原モデルのsnapshot
-tokenizer             tokenizer / processorのsnapshot
+development_artifact  自分たちが生成・公開するModel Repo snapshot
+upstream              変換元となる原モデルsnapshot
+tokenizer             tokenizer / processor snapshot
 reference             canonical expected resultを生成する実装
 canonical_framework   nemo / transformers / ...
 decoders              supported/default decoder
 ```
 
-`HF_BUCKET`はここには記録しません。Bucketはrouting、`reference.json`はprovenanceです。
+`HF_BUCKET`はprovenanceではなくroutingなので記録しません。
 
 ## 共通ASR境界
-
-framework差分の前に、audio入力は共通化します。
 
 ```text
 audio asset
@@ -135,8 +157,6 @@ CanonicalAudio
 model-specific frontend
 ```
 
-ここから先がtarget固有です。
-
 ### Parakeet例
 
 ```text
@@ -144,11 +164,9 @@ CanonicalAudio
   ↓
 FastConformer frontend/encoder
   ↓
-CTC head または TDT head
+CTC head または TDT path
   ↓
 decoder
-  ↓
-text
 ```
 
 ### Whisper例
@@ -161,23 +179,21 @@ Whisper feature extraction / encoder
 autoregressive decoder
   ↓
 tokenizer / processor
-  ↓
-text
 ```
 
 ## ReferenceとCandidate
 
-Referenceは「正解系として採用するcanonical implementation」です。
+Reference:
 
 ```text
 CanonicalAudio
   ↓
 canonical framework adapter
   ↓
-reference output
+expected output
 ```
 
-Candidateは評価対象のdeployment artifactです。
+Candidate:
 
 ```text
 CanonicalAudio
@@ -189,44 +205,61 @@ ONNX Runtime
 candidate output
 ```
 
-ONNX parityでは、最終textだけでなく、そのarchitectureで意味のある中間点を比較します。
+Parityではarchitectureに応じた中間点も比較します。
+
+## Evaluator capability
+
+Targetが要求するdecoderと、evaluator実装が現在扱えるdecoderを分離します。
+
+```text
+Target decoder contract
+        +
+config/evaluators/<evaluator>.toml
+        ↓
+validate-evaluator-capability.py
+```
+
+workflow自身は`ctc`等を条件分岐しません。
+
+現在:
+
+```text
+python-onnx -> ctc
+rust-onnx   -> ctc
+```
+
+TDT/Whisper runtime追加時はcapabilityとruntime adapterを拡張します。
 
 ## PythonとRust
 
-Pythonはframework integrationと開発側の正規処理を担当します。
+Python:
 
 ```text
-python/src/parakeet_onnx/
-  config/
-  hf/
-  datasets/
-  audio/
-  reference/
-  export/
-  runtime/
-  decoding/
-  evaluation/
-  cli/
+framework integration
+reference
+export
+dataset materialization
+Python ONNX evaluation
 ```
 
-Rustはproduction寄りのruntime/evaluatorを担当します。
+Rust:
 
 ```text
-rust/crates/
-  asr-runtime/
-  asr-audio/
-  asr-metrics/
-  asr-eval/
+production-oriented ONNX runtime
+audio
+metrics
+evaluation
+binary release
 ```
 
-現状のPython/Rust ONNX evaluatorはCTC中心です。Whisper targetのrevision/layout validationは可能ですが、Whisper autoregressive runtimeはまだ同等に実装されていません。この制約はframework共通仕様ではなく、現在のruntime実装状況です。
+現在のPython/Rust evaluator capabilityはCTC中心です。これは共通storage/revision設計の制約ではありません。
 
 ## Execution Provider
 
-CPU/CUDA/DirectML/CoreMLはmodel定義ではなく実行backendです。
-
 ```text
 model/target
+  ×
+evaluator
   ×
 provider
   ×
@@ -235,7 +268,7 @@ environment
 evaluation suite
 ```
 
-として組み合わせます。
+CPU/CUDA/DirectML/CoreMLはmodel identityではなく実行backendです。
 
 ## 再現性
 
@@ -256,12 +289,13 @@ runtime / provider
 evaluation suite
 ```
 
-現在の`HF_TARGETS_JSON`が将来変更されても、過去runはrun-contextに保存されたrouting snapshotから再現します。
+現在の`HF_TARGETS_JSON`が変わっても、過去runはrun-contextのrouting snapshotから再現します。
 
 ## 関連文書
 
 ```text
 docs/multi-framework-asr.md    framework/decoder差分
+docs/central-allocator.md      中央採番
 docs/hf-layout.md              Bucket構造
 docs/hf-bucket-operations.md   Bucket運用仕様
 docs/evaluation.md             評価仕様

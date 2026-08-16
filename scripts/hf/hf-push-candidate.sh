@@ -14,6 +14,7 @@ SOURCE="${1:-}"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
+command -v gh >/dev/null 2>&1 || fail "gh CLI is unavailable; central allocation requires GitHub access"
 
 PREFIX="${2:-${CANDIDATE_PREFIX:-}}"
 if [[ -z "$PREFIX" ]]; then
@@ -22,7 +23,7 @@ if [[ -z "$PREFIX" ]]; then
   PREFIX="${base}-candidate"
 fi
 
-CANDIDATE_ID="$(CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= bash scripts/hf/hf-allocate-id.sh candidates "$PREFIX")"
+CANDIDATE_ID="$(CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= bash scripts/hf/hf-request-id.sh candidates "$PREFIX")"
 REMOTE="hf://buckets/${HF_BUCKET#hf://buckets/}/candidates/${CANDIDATE_ID}"
 
 metadata="$SOURCE/metadata.json"
@@ -39,8 +40,8 @@ p.write_text(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n",e
 PY
 fi
 
-# The allocator already created README.md remotely. Sync the actual artifact
-# directory without --delete so the reservation/provenance README is retained.
+# The central allocator already created README.md remotely. Sync without
+# --delete so the reservation/provenance README remains part of the candidate.
 hf buckets sync --token "$HF_TOKEN" "$SOURCE" "$REMOTE"
 
 log "Candidate ID: $CANDIDATE_ID"

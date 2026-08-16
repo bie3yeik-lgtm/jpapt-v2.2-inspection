@@ -2,10 +2,12 @@
 
 ## 位置づけ
 
-Execution Provider（EP）は、同じONNX artifactをどのbackendで実行するかを表します。NeMo/Transformersの違いとは独立した概念です。
+Execution Provider（EP）は、同じONNX artifactをどのbackendで実行するかを表します。NeMo/Transformersの違い、decoder実装、evaluator capabilityとは独立した概念です。
 
 ```text
 Target / Model
+  ×
+Evaluator capability
   ×
 ONNX artifact
   ×
@@ -40,7 +42,7 @@ Windows
 macOS
 ```
 
-CPUは最も安定した基準ですが、CPUで通ることはCUDA/DirectML/CoreMLで通ることを保証しません。
+CPUで通ることはCUDA/DirectML/CoreMLで通ることを保証しません。
 
 ## CUDA
 
@@ -57,7 +59,7 @@ Linux
 Windows
 ```
 
-CPU fallbackを許容する場合でも、fallback発生をrun metadataに残す必要があります。
+CPU fallbackを許容する場合でも、fallback発生をrun metadataに残します。
 
 ## DirectML
 
@@ -101,18 +103,36 @@ macOS
 providerはframework非依存です。
 
 ```text
-Parakeet ONNX + CPU
-Parakeet ONNX + CUDA
-Parakeet ONNX + DirectML
-Parakeet ONNX + CoreML
-
-Whisper ONNX + CPU
-Whisper ONNX + CUDA
-Whisper ONNX + DirectML
-Whisper ONNX + CoreML
+Parakeet ONNX + CPU/CUDA/DirectML/CoreML
+Whisper ONNX  + CPU/CUDA/DirectML/CoreML
 ```
 
-ただし実際に特定EPで動くかどうかは、exportされたgraph、dynamic shape、operator support、runtime実装に依存します。
+ただし実際に実行可能かどうかは、少なくとも次の3条件が独立して成立する必要があります。
+
+```text
+1. evaluatorがdecoder/runtimeを実装している
+2. ONNX graphが対象EPでsession化できる
+3. 実行時operator/shape/fallback条件を満たす
+```
+
+## Evaluator capabilityとの違い
+
+Evaluator capabilityは「その実装がどのdecoderを処理できるか」です。
+
+```text
+config/evaluators/python-onnx.toml
+config/evaluators/rust-onnx.toml
+```
+
+Provider capabilityは「そのONNX graphをどのORT backendで実行できるか」です。
+
+したがってWhisper targetについて:
+
+```text
+CoreML EPでgraphが実行可能
+```
+
+であっても、Whisper autoregressive evaluatorが未実装ならend-to-end評価は実行できません。逆にdecoder runtimeが実装済みでも、CoreML graph compilationに失敗すればCoreML runは成立しません。
 
 ## Environmentとの違い
 
@@ -124,16 +144,14 @@ Environment:
 
 > どのOS・cache・resource policyで実行するか
 
-したがって、たとえば`coreml.toml`と`macos.toml`は別責務です。
-
 ```text
 config/providers/coreml.toml
 config/environments/macos.toml
 ```
 
-## CoreML parity
+は別責務です。
 
-CoreML用には専用suiteを持ちます。
+## CoreML parity
 
 ```text
 config/evaluation/coreml-parity.toml
@@ -152,7 +170,7 @@ unexpected CPU fallback
 numerical parity failure
 ```
 
-すべてを単一の「CoreML失敗」にまとめないことが重要です。
+すべてを単一の「CoreML失敗」にまとめません。
 
 ## Benchmark directory
 
@@ -169,11 +187,9 @@ benchmarks/<candidate-id>/
   macos-coreml/
 ```
 
-実際に実行していない組み合わせのdirectoryを事前に作る必要はありません。
+実行していない組み合わせのdirectoryを事前に作る必要はありません。
 
 ## 比較条件
-
-EP同士の性能・精度を比較するときは次を固定します。
 
 ```text
 same candidate ID
@@ -196,4 +212,14 @@ fallback有無
 
 ## 現在の制約
 
-Target routingとrevision validationはframework-neutralですが、現在のPython/Rust ONNX evaluatorはCTC中心です。そのため、Whisper targetがCPU/CUDA/CoreML等を宣言していても、Whisper autoregressive runtimeが実装されるまでは同じ評価workflowを完全には実行できません。これはproviderの制約ではなくdecoder/runtime実装の制約です。
+Target routingとrevision validationはframework-neutralです。一方、現在の`python-onnx` / `rust-onnx` evaluator capabilityはCTCのみです。
+
+この制約はprovider定義へ書かず、`config/evaluators/*.toml`へ保持します。TDT/Whisper runtime追加時もprovider configやworkflowへdecoder固有条件を追加しません。
+
+関連文書:
+
+```text
+docs/multi-framework-asr.md
+docs/evaluation.md
+docs/github-actions.md
+```

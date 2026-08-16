@@ -36,25 +36,9 @@ rust/crates/
 └── asr-eval/
 ```
 
-### `asr-runtime`
-
-ONNX Runtime sessionとExecution Providerを扱います。
-
-### `asr-audio`
-
-runtime側のaudio処理を担当します。
-
-### `asr-metrics`
-
-CER/WER等のmetricを担当します。
-
-### `asr-eval`
-
-manifestを読み、runtime、decoder、metrics、run-context出力を統合します。
-
 ## Frameworkとの関係
 
-Rust runtimeはNeMoそのものやTransformersそのものを実行しません。評価対象はexport済みdeployment artifactです。
+Rust runtimeはNeMoやTransformersそのものを実行しません。評価対象はexport済みdeployment artifactです。
 
 ```text
 NeMo/Transformers
@@ -64,11 +48,37 @@ ONNX Candidate
 Rust runtime
 ```
 
-そのためRust側の主要差分はframework名ではなくcandidate runtime contractとdecoderです。
+したがってRust側の実装差分はframework名よりcandidate runtime contractとdecoderです。
+
+## Evaluator capability
+
+Rust evaluatorが現在扱えるdecoderはworkflow内の条件式ではなく:
+
+```text
+config/evaluators/rust-onnx.toml
+```
+
+で宣言します。
+
+実行前に:
+
+```bash
+python scripts/ci/validate-evaluator-capability.py \
+  --evaluator rust-onnx \
+  --decoder <resolved-decoder>
+```
+
+を行います。
+
+現在のcapability:
+
+```text
+supported_decoders = ["ctc"]
+```
+
+TDTやWhisper runtimeを追加するときは、Rust実装とcapability定義を拡張します。`rust-eval.yml`へdecoder固有のshell条件を追加しません。
 
 ## 現在の対応範囲
-
-現状の主要実装はCTCです。
 
 ```text
 ONNX inference
@@ -88,7 +98,7 @@ Whisper autoregressive decoding
 Whisper KV-cache runtime
 ```
 
-Target/config/BucketがWhisperに対応していることと、Rust runtimeがWhisper inferenceに対応していることは別です。
+Target/config/BucketがWhisperに対応していることと、Rust evaluator capabilityがWhisperを実装していることは別です。
 
 ## Config versionとRun Context
 
@@ -103,7 +113,7 @@ reference
 decoders
 ```
 
-run-contextにはさらに実行時routing snapshotを保存します。
+run-contextには実行時routing snapshotも保存します。
 
 ```text
 hf_target_id
@@ -114,6 +124,22 @@ candidate_id
 ```
 
 これにより将来`HF_TARGETS_JSON`が変更されても過去runを追跡できます。
+
+## Experiment ID
+
+`rust-eval.yml`のexperiment IDはworkflow自身で採番しません。
+
+```text
+rust-eval workflow
+  ↓
+HF Central Sequence Allocator
+  ↓
+rust-eval-NNNNNN
+```
+
+同じcross-platform workflow内のmatrix jobは1つのexperiment IDを共有し、それぞれ独立run IDを生成します。
+
+複数Repositoryから同一Bucketを利用しても中央Allocatorで排他されます。
 
 ## Build
 
@@ -151,7 +177,7 @@ cargo build --release -p asr-eval \
 
 ## GitHub Actions
 
-`.github/workflows/rust-ci.yml`では主に次を検証します。
+`rust-ci.yml`:
 
 ```text
 Linux CPU
@@ -160,7 +186,19 @@ macOS CoreML feature build/test
 rustfmt advisory
 ```
 
-`rust-eval.yml`は既存candidateを選択してcross-platform評価を行い、workflow全体に`rust-eval-NNNNNN`のexperiment IDを自動発行します。
+`rust-eval.yml`:
+
+```text
+existing candidate selection
+  ↓
+central experiment allocation
+  ↓
+target/revision resolution
+  ↓
+rust-onnx capability validation
+  ↓
+cross-platform evaluation
+```
 
 ## Release
 
@@ -193,3 +231,11 @@ CER/WER
 ```
 
 Rust化によってI/Oやdecoder overheadが改善しても、同じORT kernelの純粋なinference時間が大きく変化するとは限りません。
+
+関連文書:
+
+```text
+docs/multi-framework-asr.md
+docs/central-allocator.md
+docs/github-actions.md
+```

@@ -2,7 +2,7 @@
 
 ## 目的
 
-Hugging Face Bucketは、model開発・評価中に増えるmutableな履歴を保存する場所です。検証済みartifactを公開するHF Model Repoとは役割を分けます。
+Hugging Face Bucketはmodel開発・評価中に増えるmutableな履歴を保存する場所です。検証済みartifactを公開するHF Model Repoとは役割を分けます。
 
 ```text
 HF Bucket      = 開発・実験・評価履歴
@@ -16,10 +16,12 @@ GitHub         = source/config/schema/workflow
 
 ```text
 hf://buckets/<namespace>/<bucket>/
+├── README.md
 ├── config/
 │   ├── current.json
 │   └── versions/
 │       └── config-NNNNNN/
+│           ├── README.md
 │           ├── reference.json
 │           ├── evaluation-schema.json
 │           └── datasets-lock.json
@@ -52,6 +54,30 @@ hf://buckets/<namespace>/<bucket>/
 
 `ctc/`、`tdt/`、`whisper/`、`nemo/`、`transformers/`をtop-level分類にはしません。これらはmetadata/configで表現します。
 
+## ルート`README.md`
+
+BucketルートのREADMEは人間向け説明と中央Allocatorの状態表示を兼ねます。
+
+Allocatorが管理するのは次のmarker内だけです。
+
+```html
+<!-- hf-central-allocator:start -->
+...
+<!-- hf-central-allocator:end -->
+```
+
+ここには:
+
+```text
+直近採番
+candidates最大番号
+experiments最大番号
+config最大番号
+最終更新時刻
+```
+
+が自動記録されます。marker外の説明は保持されます。
+
 ## `config/`
 
 ### `current.json`
@@ -67,15 +93,16 @@ hf://buckets/<namespace>/<bucket>/
 
 ### `versions/config-NNNNNN/`
 
-1 versionは3つのrevision文書の集合です。
-
 ```text
-reference.json
-evaluation-schema.json
-datasets-lock.json
+README.md               中央Allocatorによる番号予約・provenance
+reference.json          model/reference identity
+ evaluation-schema.json 評価rule identity
+ datasets-lock.json      dataset revision lock
 ```
 
-公開済みversionは上書きしません。どれか1つでも変更したら新しい`config-NNNNNN`を作ります。
+canonical revision bundleは3 JSONで、READMEは採番履歴です。
+
+公開済みversionは上書きしません。どれか1つでも変更したら中央Allocatorで新しい`config-NNNNNN`を発行します。
 
 通常実行は`current.json`を参照し、再現時は`HF_CONFIG_VERSION`で過去versionを直接指定できます。
 
@@ -103,7 +130,7 @@ cross-platform-parity-000003
 graph-optimization-000004
 ```
 
-prefixは説明用、6桁suffixは機械管理です。
+prefixは説明用、6桁suffixは中央Allocatorが管理します。
 
 ## `candidates/`
 
@@ -135,10 +162,19 @@ frameworkによってtreeの階層を変えず、artifact roleを`metadata.json`
 
 ## 自動採番
 
-CandidateとExperimentは次の形式です。
+対象:
+
+```text
+candidates
+experiments
+config/versions
+```
+
+形式:
 
 ```text
 <prefix>-NNNNNN
+config-NNNNNN
 ```
 
 採番はprefixごとではなくcollection全体で行います。
@@ -147,9 +183,13 @@ CandidateとExperimentは次の形式です。
 最大既存suffix + 1
 ```
 
-`000001`を構造例として置いている場合、最初の実運用IDは自動的に`000002`になります。
+複数Repositoryが同じBucketを扱う場合も、本Repositoryの中央Allocatorを唯一の採番点とします。各Repositoryが独自に`max+1`を計算してはいけません。
 
-採番後すぐ`README.md`を作成し、object storage上でpathを実体化するとともに用途を記録します。
+`000001`を構造例として置いている場合、最初の実運用IDは`000002`になります。
+
+採番後すぐ各ID直下へ`README.md`を作成し番号を予約します。後続publishが失敗してもその番号は再利用しません。
+
+詳細は [`central-allocator.md`](./central-allocator.md) を参照してください。
 
 ## `reference/`
 
@@ -215,4 +255,10 @@ HF Model Repo
 
 現在のBucket割当は`HF_TARGETS_JSON`で管理します。同一snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更でtargetのBucketを変更できます。過去runは当時のBucketをrun-contextに保存します。
 
-詳細は`docs/hf-bucket-operations.md`と`docs/hf-routing-snapshots.md`を参照してください。
+関連文書:
+
+```text
+docs/central-allocator.md
+docs/hf-bucket-operations.md
+docs/hf-routing-snapshots.md
+```
