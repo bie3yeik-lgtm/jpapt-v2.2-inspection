@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       workflow:
-        description: "Workflow filename, e.g. ghcr-evaluate.yml"
+        description: "Workflow filename or alias, e.g. ghcr-evaluate"
         required: true
         type: string
       ref:
@@ -31,10 +31,12 @@ concurrency:
 jobs:
   route:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Resolve dispatch request
+      - name: Resolve and validate dispatch request with Rust
         id: request
         shell: bash
         env:
@@ -52,54 +54,32 @@ jobs:
             workflow="$PAYLOAD_WORKFLOW"
             ref="${PAYLOAD_REF:-main}"
             inputs_json="$PAYLOAD_INPUTS"
+            [[ "$inputs_json" != null && -n "$inputs_json" ]] || inputs_json='{}'
           else
             workflow="$MANUAL_WORKFLOW"
             ref="${MANUAL_REF:-main}"
-            inputs_json="$MANUAL_INPUTS"
+            inputs_json="${MANUAL_INPUTS:-{}}"
           fi
 
-          if [[ -z "$inputs_json" || "$inputs_json" == null ]]; then
-            inputs_json='{}'
-          fi
-
-          [[ "$workflow" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]] || {
-            echo "::error::workflow must be a workflow filename"; exit 1;
-          }
-          [[ -f ".github/workflows/$workflow" ]] || {
-            echo "::error::Unknown workflow: $workflow"; exit 1;
-          }
-          [[ "$workflow" != repository-dispatch.yml ]] || {
-            echo "::error::Router cannot dispatch itself"; exit 1;
-          }
-          jq -e 'type == "object"' <<<"$inputs_json" >/dev/null || {
-            echo "::error::inputs must be a JSON object"; exit 1;
-          }
-
-          # Every routed workflow must expose workflow_dispatch. This keeps one
-          # repository_dispatch contract instead of duplicating client_payload
-          # parsing in every workflow file.
-          if ! grep -qE '^[[:space:]]{2}workflow_dispatch:' ".github/workflows/$workflow"; then
-            echo "::error::$workflow does not expose workflow_dispatch"; exit 1
-          fi
-
-          echo "workflow=$workflow" >> "$GITHUB_OUTPUT"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "inputs=$(jq -c . <<<"$inputs_json")" >> "$GITHUB_OUTPUT"
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- \
+            resolve \
+            --workflow "$workflow" \
+            --ref "$ref" \
+            --inputs-json "$inputs_json" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Dispatch workflow
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW: ${{ steps.request.outputs.workflow }}
-          TARGET_REF: ${{ steps.request.outputs.ref }}
-          INPUTS_JSON: ${{ steps.request.outputs.inputs }}
+          REQUEST_BODY: ${{ steps.request.outputs.body }}
         shell: bash
         run: |
           set -euo pipefail
-          body="$(jq -cn --arg ref "$TARGET_REF" --argjson inputs "$INPUTS_JSON" '{ref:$ref,inputs:$inputs}')"
-          printf '%s\n' "$body" | gh api \
+          printf '%s\n' "$REQUEST_BODY" | gh api \
             --method POST \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW}/dispatches" \
             --input -
-          echo "Dispatched $WORKFLOW on ref $TARGET_REF"
+          echo "Dispatched ${{ steps.request.outputs.alias }} ($WORKFLOW) on ${{ steps.request.outputs.ref }}"
