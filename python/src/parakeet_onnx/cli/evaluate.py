@@ -42,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional assertion; must match metadata.json when supplied.",
     )
+    parser.add_argument("--experiment-id", default=None)
     parser.add_argument(
         "--model",
         type=Path,
@@ -138,13 +139,12 @@ def main() -> int:
         expected_sample_count=config.evaluation.expected_sample_count,
     )
 
-    metadata: dict[str, object] = {
-        "candidate": candidate.provenance_dict(),
-    }
+    metadata: dict[str, object] = {"candidate": candidate.provenance_dict()}
     if args.candidate_id:
         metadata["requested_candidate_id"] = args.candidate_id
-    if os.environ.get("EXPERIMENT_ID"):
-        metadata["experiment_id"] = os.environ["EXPERIMENT_ID"]
+    experiment_id = args.experiment_id or os.environ.get("EXPERIMENT_ID")
+    if experiment_id:
+        metadata["experiment_id"] = experiment_id
     for key, env_name in (
         ("hf_target_id", "HF_TARGET_ID"),
         ("hf_bucket", "HF_BUCKET"),
@@ -183,7 +183,6 @@ def main() -> int:
     )
 
     print(f"run_id: {benchmark.run_id}")
-    experiment_id = metadata.get("experiment_id")
     if experiment_id:
         print(f"experiment_id: {experiment_id}")
     print(f"candidate_id: {candidate.candidate_id}")
