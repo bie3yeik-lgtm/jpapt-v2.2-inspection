@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
+from parakeet_onnx.datasets.models import ResolvedDatasetSample, ResolvedManifest
 from parakeet_onnx.evaluation.aggregate import aggregate_sample_results
 from parakeet_onnx.evaluation.models import (
     AcceptanceSummary,
@@ -10,14 +12,14 @@ from parakeet_onnx.evaluation.models import (
     CandidateIdentity,
     EvaluationIdentity,
     RuntimeIdentity,
+    SampleResult,
 )
-from parakeet_onnx.evaluation.pipeline import PythonCtcEvaluator
-from parakeet_onnx.evaluation.writer import (
-    BenchmarkWriter,
-    SampleResultWriter,
-)
-from parakeet_onnx.datasets.models import ResolvedManifest
+from parakeet_onnx.evaluation.writer import BenchmarkWriter, SampleResultWriter
 from parakeet_onnx.run_context.models import RunContext
+
+
+class SampleEvaluator(Protocol):
+    def evaluate_sample(self, sample: ResolvedDatasetSample) -> SampleResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,11 +28,11 @@ class EvaluationRunInputs:
     run_context: RunContext
     output_dir: Path
     candidate_id: str | None
-    decoder: str = "ctc"
+    decoder: str
 
 
 def run_evaluation(
-    evaluator: PythonCtcEvaluator,
+    evaluator: SampleEvaluator,
     inputs: EvaluationRunInputs,
 ) -> BenchmarkResult:
     inputs.output_dir.mkdir(parents=True, exist_ok=True)
@@ -39,9 +41,7 @@ def run_evaluation(
     inputs.run_context.write_json(run_context_path)
 
     results = []
-    with SampleResultWriter(
-        inputs.output_dir / "samples.jsonl",
-    ) as writer:
+    with SampleResultWriter(inputs.output_dir / "samples.jsonl") as writer:
         for sample in inputs.resolved_manifest.samples:
             result = evaluator.evaluate_sample(sample)
             writer.write(result)
@@ -49,9 +49,7 @@ def run_evaluation(
 
     aggregate = aggregate_sample_results(
         results,
-        expected_sample_count=(
-            inputs.resolved_manifest.expected_sample_count
-        ),
+        expected_sample_count=inputs.resolved_manifest.expected_sample_count,
         requested_provider=inputs.run_context.provider_id,
     )
 
@@ -62,8 +60,7 @@ def run_evaluation(
 
     acceptance_passed = (
         aggregate.samples.failed == 0
-        and aggregate.samples.successful
-        == aggregate.samples.expected
+        and aggregate.samples.successful == aggregate.samples.expected
         and aggregate.errors.fatal == 0
     )
 
@@ -79,21 +76,11 @@ def run_evaluation(
         evaluation=EvaluationIdentity(
             suite=inputs.run_context.evaluation_id,  # type: ignore[arg-type]
             manifest=inputs.resolved_manifest.manifest_path,
-            expected_sample_count=(
-                inputs.resolved_manifest.expected_sample_count
-            ),
-            reference_revision_sha256=(
-                reference_revision["document_sha256"]
-            ),
-            evaluation_schema_sha256=(
-                evaluation_revision["document_sha256"]
-            ),
-            datasets_lock_sha256=(
-                dataset_revision["document_sha256"]
-            ),
-            revision_bundle_sha256=(
-                revisions["bundle_sha256"]
-            ),
+            expected_sample_count=inputs.resolved_manifest.expected_sample_count,
+            reference_revision_sha256=reference_revision["document_sha256"],
+            evaluation_schema_sha256=evaluation_revision["document_sha256"],
+            datasets_lock_sha256=dataset_revision["document_sha256"],
+            revision_bundle_sha256=revisions["bundle_sha256"],
         ),
         runtime=RuntimeIdentity(
             implementation="python",
@@ -117,11 +104,7 @@ def run_evaluation(
             parity_passed=None,
             provider_passed=None,
             performance_passed=None,
-            failed_checks=(
-                []
-                if acceptance_passed
-                else ["sample_execution"]
-            ),
+            failed_checks=[] if acceptance_passed else ["sample_execution"],
             warnings=[
                 "Threshold-based release acceptance is not yet applied; "
                 "evaluation-schema.json remains authoritative."
@@ -130,8 +113,5 @@ def run_evaluation(
         errors=aggregate.errors,
     )
 
-    BenchmarkWriter(
-        inputs.output_dir / "metrics.json"
-    ).write(benchmark)
-
+    BenchmarkWriter(inputs.output_dir / "metrics.json").write(benchmark)
     return benchmark
