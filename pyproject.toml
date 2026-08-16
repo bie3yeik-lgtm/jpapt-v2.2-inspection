@@ -24,6 +24,9 @@ onnx = [
     "onnx>=1.17",
     "onnxruntime==1.28.0",
 ]
+hf = [
+    "huggingface_hub==1.24.0",
+]
 transformers-runtime = [
     "transformers>=4.39",
 ]
