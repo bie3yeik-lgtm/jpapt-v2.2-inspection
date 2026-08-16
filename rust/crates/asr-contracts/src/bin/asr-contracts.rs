@@ -102,7 +102,10 @@ fn validate_revisions_command(
             "tokenizer={}@{}",
             snapshot.reference.tokenizer.repo_id, snapshot.reference.tokenizer.revision
         );
-        println!("canonical_framework={}", snapshot.reference.canonical_framework);
+        println!(
+            "canonical_framework={}",
+            snapshot.reference.canonical_framework
+        );
         println!("runtime_profile_set={}", snapshot.runtime.profile_set);
         println!("runtime_variant={}", resolution.variant);
         println!("runtime_profile={}", resolution.profile);

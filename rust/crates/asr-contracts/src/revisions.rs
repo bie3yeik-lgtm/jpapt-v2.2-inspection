@@ -231,13 +231,15 @@ fn load_revision_document(path: &Path) -> Result<RevisionDocument> {
 }
 
 fn load_config_version(root: &Path) -> Result<String> {
-    let path = root
-        .parent()
-        .unwrap_or(root)
-        .join("resolved.json");
+    let path = root.parent().unwrap_or(root).join("resolved.json");
     let raw = read_json(&path)?;
     let object = as_object(&raw, "resolved.json")?;
-    exact_fields(object, "resolved.json", &["schema_version", "config_version"], &[])?;
+    exact_fields(
+        object,
+        "resolved.json",
+        &["schema_version", "config_version"],
+        &[],
+    )?;
     if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
         return Err(ContractError::validation(
             "resolved.json: schema_version must equal 1",
@@ -330,7 +332,9 @@ fn parse_datasets(document: &RevisionDocument) -> Result<DatasetsRevisionSnapsho
     let datasets = raw
         .get("datasets")
         .and_then(Value::as_array)
-        .ok_or_else(|| ContractError::validation("datasets-lock.json: datasets must be an array"))?;
+        .ok_or_else(|| {
+            ContractError::validation("datasets-lock.json: datasets must be an array")
+        })?;
     let mut entries = Vec::with_capacity(datasets.len());
     let mut ids = BTreeSet::new();
     for (index, value) in datasets.iter().enumerate() {
@@ -363,8 +367,12 @@ fn parse_datasets(document: &RevisionDocument) -> Result<DatasetsRevisionSnapsho
             id,
             repo_id: required_string(object, "repo_id", &name)?.to_owned(),
             revision: required_string(object, "revision", &name)?.to_owned(),
-            subset: optional_string(object, "subset", &name)?.unwrap_or("default").to_owned(),
-            split: optional_string(object, "split", &name)?.unwrap_or("default").to_owned(),
+            subset: optional_string(object, "subset", &name)?
+                .unwrap_or("default")
+                .to_owned(),
+            split: optional_string(object, "split", &name)?
+                .unwrap_or("default")
+                .to_owned(),
             sha256: sha256.to_ascii_lowercase(),
             manifest: manifest.to_owned(),
         });
@@ -388,12 +396,7 @@ fn parse_runtime(
         &[],
     )?;
     let catalog_ref = required_object(raw, "catalog", "runtime.json")?;
-    exact_fields(
-        catalog_ref,
-        "runtime.json.catalog",
-        &["id", "sha256"],
-        &[],
-    )?;
+    exact_fields(catalog_ref, "runtime.json.catalog", &["id", "sha256"], &[])?;
     let catalog_id = required_string(catalog_ref, "id", "runtime.json.catalog")?;
     let catalog_sha = required_string(catalog_ref, "sha256", "runtime.json.catalog")?;
     require_sha256("runtime.json.catalog.sha256", catalog_sha)?;
@@ -481,11 +484,14 @@ fn load_catalog(path: &Path) -> Result<Catalog> {
         let variants_raw = required_object(set, "variants", &format!("profile_sets.{set_id}"))?;
         let mut variants = BTreeMap::new();
         for (variant, profile_value) in variants_raw {
-            let profile_id = profile_value.as_str().filter(|value| !value.trim().is_empty()).ok_or_else(|| {
-                ContractError::validation(format!(
-                    "profile_sets.{set_id}.variants.{variant} must be a non-empty string"
-                ))
-            })?;
+            let profile_id = profile_value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    ContractError::validation(format!(
+                        "profile_sets.{set_id}.variants.{variant} must be a non-empty string"
+                    ))
+                })?;
             if !decoder_profiles.contains_key(profile_id) {
                 return Err(ContractError::validation(format!(
                     "profile set {set_id:?} references unknown decoder profile {profile_id:?}"
@@ -493,7 +499,8 @@ fn load_catalog(path: &Path) -> Result<Catalog> {
             }
             variants.insert(variant.clone(), profile_id.to_owned());
         }
-        let default_variant = required_string(set, "default_variant", &format!("profile_sets.{set_id}"))?;
+        let default_variant =
+            required_string(set, "default_variant", &format!("profile_sets.{set_id}"))?;
         if !variants.contains_key(default_variant) {
             return Err(ContractError::validation(format!(
                 "profile_sets.{set_id}.default_variant must be one of {:?}",
@@ -673,7 +680,9 @@ fn required_string<'a>(value: &'a Map<String, Value>, key: &str, name: &str) -> 
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| ContractError::validation(format!("{name}.{key} must be a non-empty string")))
+        .ok_or_else(|| {
+            ContractError::validation(format!("{name}.{key} must be a non-empty string"))
+        })
 }
 
 fn optional_string<'a>(
