@@ -27,8 +27,7 @@ def main() -> int:
             if model.upstream_repo_id != target.upstream_repo_id:
                 raise HfTargetError(
                     "upstream repo mismatch: "
-                    f"{model.upstream_repo_id!r} != "
-                    f"{target.upstream_repo_id!r}"
+                    f"{model.upstream_repo_id!r} != {target.upstream_repo_id!r}"
                 )
 
             framework = model.get("model.framework")
@@ -38,17 +37,14 @@ def main() -> int:
                     f"{framework!r} != {target.canonical_framework!r}"
                 )
 
-            model_decoders = model.get("decoders.supported", [])
-            if model_decoders:
-                missing = set(target.supported_decoders) - set(model_decoders)
-                if missing:
-                    raise HfTargetError(
-                        f"target decoders missing from model config: {sorted(missing)!r}"
-                    )
-
+            # Do not compare config/models/*.toml decoder capability prose with
+            # deployment runtime profiles. Model config describes what the
+            # upstream architecture can expose; config/asr-catalog.json is the
+            # authoritative deployment runtime/profile contract used by targets.
             print(
                 f"OK {target.id}: "
                 f"{target.upstream_repo_id} -> "
+                f"profile_set={target.profile_set_id} -> "
                 f"{target.model_repo} / {target.bucket}"
             )
         except Exception as exc:

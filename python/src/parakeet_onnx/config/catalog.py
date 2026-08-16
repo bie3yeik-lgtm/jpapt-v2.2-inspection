@@ -25,7 +25,6 @@ class DecoderProfile:
 @dataclass(frozen=True, slots=True)
 class ProfileSet:
     profile_set_id: str
-    candidate_prefix_key: str
     variants: Mapping[str, str]
     default_variant: str
 
@@ -45,7 +44,6 @@ class AsrCatalog:
     path: Path
     catalog_id: str
     sha256: str
-    id_prefixes: Mapping[str, str]
     decoder_profiles: Mapping[str, DecoderProfile]
     profile_sets: Mapping[str, ProfileSet]
 
@@ -60,14 +58,6 @@ class AsrCatalog:
             raise AsrCatalogError("ASR catalog must be a schema_version=1 object")
 
         catalog_id = _string(raw, "catalog_id")
-        prefixes_raw = _mapping(raw, "id_prefixes")
-        id_prefixes = {
-            _nonempty_key(key, "id_prefixes"): _string_value(
-                value, f"id_prefixes.{key}"
-            )
-            for key, value in prefixes_raw.items()
-        }
-
         profiles_raw = _mapping(raw, "decoder_profiles")
         decoder_profiles: dict[str, DecoderProfile] = {}
         for profile_id, value in profiles_raw.items():
@@ -106,12 +96,6 @@ class AsrCatalog:
                 raise AsrCatalogError(
                     f"profile_sets.{profile_set_id} must be an object"
                 )
-            candidate_prefix_key = _string(value, "candidate_prefix_key")
-            if candidate_prefix_key not in id_prefixes:
-                raise AsrCatalogError(
-                    f"profile_sets.{profile_set_id}.candidate_prefix_key references "
-                    f"unknown prefix key {candidate_prefix_key!r}"
-                )
             variants_raw = _mapping(value, "variants")
             variants: dict[str, str] = {}
             for variant, profile_id in variants_raw.items():
@@ -136,7 +120,6 @@ class AsrCatalog:
                 )
             profile_sets[profile_set_id] = ProfileSet(
                 profile_set_id=profile_set_id,
-                candidate_prefix_key=candidate_prefix_key,
                 variants=variants,
                 default_variant=default_variant,
             )
@@ -148,19 +131,9 @@ class AsrCatalog:
             path=resolved,
             catalog_id=catalog_id,
             sha256=hashlib.sha256(canonical).hexdigest(),
-            id_prefixes=id_prefixes,
             decoder_profiles=decoder_profiles,
             profile_sets=profile_sets,
         )
-
-    def prefix(self, key: str) -> str:
-        try:
-            return self.id_prefixes[key]
-        except KeyError as exc:
-            raise AsrCatalogError(
-                f"unknown allocation prefix key {key!r}; "
-                f"available={sorted(self.id_prefixes)}"
-            ) from exc
 
     def profile_set(self, profile_set_id: str) -> ProfileSet:
         try:

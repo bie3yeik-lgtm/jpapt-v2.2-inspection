@@ -8,6 +8,7 @@ import sys
 
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.hf.revisions import RevisionError, load_revision_bundle
+from parakeet_onnx.hf.snapshot import normalized_revision_snapshot
 
 
 DEFAULT_ROOT = Path(".ci/hf/config/revisions")
@@ -134,7 +135,10 @@ def main() -> int:
     if args.json:
         print(
             json.dumps(
-                bundle.to_dict(), ensure_ascii=False, indent=2, sort_keys=True
+                normalized_revision_snapshot(bundle),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
             )
         )
     else:

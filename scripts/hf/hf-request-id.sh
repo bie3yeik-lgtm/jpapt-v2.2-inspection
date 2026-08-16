@@ -19,7 +19,7 @@ command -v python >/dev/null 2>&1 || fail "python is required"
 
 # Validate the semantic key locally before dispatching so typo requests never
 # consume a central sequence number.
-python scripts/ci/resolve-asr-catalog.py prefix "$PREFIX_KEY" >/dev/null \
+python scripts/ci/resolve-allocation-catalog.py prefix "$PREFIX_KEY" >/dev/null \
   || fail "unknown allocation prefix key: $PREFIX_KEY"
 
 if [[ -z "${GH_TOKEN:-}" && -n "${HF_ALLOCATOR_GITHUB_TOKEN:-}" ]]; then

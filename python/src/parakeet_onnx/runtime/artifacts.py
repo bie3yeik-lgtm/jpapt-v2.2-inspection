@@ -62,8 +62,9 @@ class CandidateArtifacts:
     """One resolved runtime variant of a candidate bundle.
 
     Schema-v3 metadata can contain multiple variants (for example CTC and TDT).
-    Central catalog profiles provide reusable semantics; this class exposes the
-    selected variant in the same normalized form used by runtime adapters.
+    Reusable decoder semantics are resolved from a pinned central catalog.
+    Candidate JSON stores only artifact identities and model/export-specific
+    bindings; `profile_set + variant` determines the decoder profile.
     """
 
     root: Path
@@ -164,6 +165,21 @@ class CandidateArtifacts:
         variant: str | None,
     ) -> "CandidateArtifacts":
         candidate_id = _required_string(raw, "candidate_id")
+        catalog_ref = _required_mapping(raw, "catalog")
+        catalog_id = _required_string(catalog_ref, "id")
+        catalog_sha256 = _required_string(catalog_ref, "sha256")
+        if catalog_id != catalog.catalog_id:
+            raise CandidateMetadataError(
+                f"candidate catalog id mismatch: metadata={catalog_id!r}, "
+                f"repository={catalog.catalog_id!r}"
+            )
+        if catalog_sha256.lower() != catalog.sha256.lower():
+            raise CandidateMetadataError(
+                "candidate catalog SHA-256 does not match the checked-out "
+                "config/asr-catalog.json; use the repository revision that contains "
+                "the pinned catalog snapshot"
+            )
+
         profile_set_id = _required_string(raw, "profile_set")
         try:
             profile_set = catalog.profile_set(profile_set_id)
@@ -173,6 +189,13 @@ class CandidateArtifacts:
         variants_raw = raw.get("variants")
         if not isinstance(variants_raw, Mapping) or not variants_raw:
             raise CandidateMetadataError("variants must be a non-empty object")
+        unknown_variants = sorted(set(variants_raw) - set(profile_set.variants))
+        if unknown_variants:
+            raise CandidateMetadataError(
+                f"candidate contains variants not defined by profile set "
+                f"{profile_set_id!r}: {unknown_variants}"
+            )
+
         selected_variant = variant or profile_set.default_variant
         if selected_variant not in profile_set.variants:
             raise CandidateMetadataError(
@@ -186,13 +209,7 @@ class CandidateArtifacts:
                 f"available={sorted(str(key) for key in variants_raw)}"
             )
 
-        expected_profile_id = profile_set.profile_id_for(selected_variant)
-        profile_id = _required_string(variant_raw, "profile")
-        if profile_id != expected_profile_id:
-            raise CandidateMetadataError(
-                f"variant {selected_variant!r} profile mismatch: "
-                f"candidate={profile_id!r}, catalog={expected_profile_id!r}"
-            )
+        profile_id = profile_set.profile_id_for(selected_variant)
         try:
             profile = catalog.decoder_profile(profile_id)
         except AsrCatalogError as exc:
@@ -337,7 +354,9 @@ class CandidateArtifacts:
             schema_version=1,
             candidate_id=candidate_id,
             decoder=decoder,
-            artifact_contract="ctc-single-graph-v0" if decoder == "ctc" else f"{decoder}-legacy-v0",
+            artifact_contract=(
+                "ctc-single-graph-v0" if decoder == "ctc" else f"{decoder}-legacy-v0"
+            ),
             artifacts={
                 "primary": CandidateArtifact(
                     role="primary",
@@ -390,8 +409,11 @@ class CandidateArtifacts:
             "profile": self.profile_id,
             "decoder": self.decoder,
             "artifact_contract": self.artifact_contract,
-            "catalog_id": self.catalog_id,
-            "catalog_sha256": self.catalog_sha256,
+            "catalog": (
+                {"id": self.catalog_id, "sha256": self.catalog_sha256}
+                if self.catalog_id is not None
+                else None
+            ),
             "bundle_sha256": self.bundle_sha256,
             "artifacts": {
                 role: {
@@ -405,9 +427,7 @@ class CandidateArtifacts:
         }
 
 
-def _load_artifacts(
-    root: Path, raw: object
-) -> dict[str, CandidateArtifact]:
+def _load_artifacts(root: Path, raw: object) -> dict[str, CandidateArtifact]:
     if not isinstance(raw, Mapping) or not raw:
         raise CandidateMetadataError("artifacts must be a non-empty object")
     artifacts: dict[str, CandidateArtifact] = {}
@@ -495,7 +515,6 @@ def _discover_repository_root(start: Path) -> Path:
     for parent in (start, *start.parents):
         if (parent / "config" / "asr-catalog.json").is_file():
             return parent
-    # CI candidate directories are usually under <repo>/.ci/candidate.
     cwd = Path.cwd().resolve()
     for parent in (cwd, *cwd.parents):
         if (parent / "config" / "asr-catalog.json").is_file():

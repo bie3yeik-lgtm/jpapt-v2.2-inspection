@@ -24,11 +24,9 @@ def _artifact(path: Path) -> dict[str, object]:
     }
 
 
-def test_catalog_centralizes_prefixes_and_parakeet_variants() -> None:
+def test_runtime_catalog_centralizes_parakeet_variants() -> None:
     catalog = load_repository_catalog(ROOT)
     profile_set = catalog.profile_set("parakeet-tdt-ctc-v1")
-    assert profile_set.candidate_prefix_key == "candidate.parakeet"
-    assert catalog.prefix(profile_set.candidate_prefix_key) == "parakeet-candidate"
     assert profile_set.profile_id_for("ctc") == "ctc-v1"
     assert profile_set.profile_id_for("tdt") == "tdt-v1"
     assert catalog.decoder_profile("ctc-v1").decoder == "ctc"
@@ -52,13 +50,14 @@ def test_one_candidate_metadata_can_select_ctc_or_tdt_without_rewrite(
         path.write_bytes(value)
     vocabulary.write_text('["<blank>", "a"]\n', encoding="utf-8")
 
+    catalog = load_repository_catalog(ROOT)
     metadata = {
         "schema_version": 3,
         "candidate_id": "parakeet-candidate-000002",
+        "catalog": {"id": catalog.catalog_id, "sha256": catalog.sha256},
         "profile_set": "parakeet-tdt-ctc-v1",
         "variants": {
             "ctc": {
-                "profile": "ctc-v1",
                 "artifacts": {"primary": _artifact(model)},
                 "bindings": {
                     "input_kind": "canonical_waveform",
@@ -74,7 +73,6 @@ def test_one_candidate_metadata_can_select_ctc_or_tdt_without_rewrite(
                 "tokenizer": {"path": "vocabulary.json"},
             },
             "tdt": {
-                "profile": "tdt-v1",
                 "artifacts": {
                     "encoder": _artifact(encoder),
                     "predictor": _artifact(predictor),
@@ -110,9 +108,7 @@ def test_one_candidate_metadata_can_select_ctc_or_tdt_without_rewrite(
             },
         },
     }
-    (tmp_path / "metadata.json").write_text(
-        json.dumps(metadata), encoding="utf-8"
-    )
+    (tmp_path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     ctc = CandidateArtifacts.load(tmp_path, variant="ctc", repository_root=ROOT)
     tdt = CandidateArtifacts.load(tmp_path, variant="tdt", repository_root=ROOT)
@@ -174,8 +170,6 @@ def test_normalized_runtime_lock_derives_decoder_set_from_catalog(
         encoding="utf-8",
     )
 
-    # Runtime loader discovers the repository catalog from cwd when the temp
-    # revision directory is outside the checkout.
     bundle = load_revision_bundle(revisions)
     assert bundle.runtime is not None
     assert bundle.runtime.profile_set_id == "parakeet-tdt-ctc-v1"

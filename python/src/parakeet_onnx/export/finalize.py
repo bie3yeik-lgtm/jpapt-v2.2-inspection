@@ -10,6 +10,7 @@ from .metadata import (
     ArtifactMetadata,
     CandidateMetadata,
     CandidateVariantMetadata,
+    CatalogReference,
     TokenizerBinding,
     write_candidate_metadata,
 )
@@ -43,10 +44,11 @@ def finalize_candidate_variant(
 ) -> CandidateMetadata:
     """Create or extend canonical schema-v3 candidate metadata.
 
-    Reusable decoder semantics are resolved from config/asr-catalog.json. This
-    function writes only candidate-specific artifact identities and bindings.
-    Calling it twice with different variants (for example CTC then TDT) merges
-    both variants into one candidate metadata.json without rewriting profiles.
+    Reusable decoder semantics are resolved from config/asr-catalog.json. The
+    candidate pins that catalog snapshot and stores only candidate-specific
+    artifact identities, tensor/runtime bindings, and tokenizer asset paths.
+    `profile_set + variant` determines the decoder profile; profile IDs are not
+    repeated inside every variant.
     """
 
     root = Path(output_dir).expanduser().resolve()
@@ -97,7 +99,6 @@ def finalize_candidate_variant(
         "decoder_config": runtime_contract["decoder_config"],
     }
     variant_metadata = CandidateVariantMetadata(
-        profile=profile_id,
         artifacts=artifacts,
         bindings=bindings,
         tokenizer=tokenizer,
@@ -105,6 +106,7 @@ def finalize_candidate_variant(
 
     metadata_path = root / "metadata.json"
     variants: dict[str, CandidateVariantMetadata] = {}
+    catalog_ref = CatalogReference(id=catalog.catalog_id, sha256=catalog.sha256)
     if metadata_path.is_file():
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
         if existing.get("schema_version") != 3:
@@ -115,9 +117,13 @@ def finalize_candidate_variant(
             raise ValueError("candidate_id differs from existing metadata.json")
         if existing.get("profile_set") != profile_set:
             raise ValueError("profile_set differs from existing metadata.json")
+        existing_catalog = existing.get("catalog")
+        if existing_catalog != {"id": catalog.catalog_id, "sha256": catalog.sha256}:
+            raise ValueError(
+                "candidate catalog pin differs from the checked-out central catalog"
+            )
         for name, value in existing.get("variants", {}).items():
             variants[name] = CandidateVariantMetadata(
-                profile=value["profile"],
                 artifacts={
                     role: ArtifactMetadata(**artifact)
                     for role, artifact in value["artifacts"].items()
@@ -133,6 +139,7 @@ def finalize_candidate_variant(
 
     metadata = CandidateMetadata(
         candidate_id=candidate_id,
+        catalog=catalog_ref,
         profile_set=profile_set,
         variants=variants,
     )

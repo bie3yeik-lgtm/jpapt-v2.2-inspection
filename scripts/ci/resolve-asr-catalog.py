@@ -12,12 +12,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    prefix = sub.add_parser("prefix")
-    prefix.add_argument("key")
-
     profile = sub.add_parser("profile")
     profile.add_argument("profile_id")
-    profile.add_argument("field", choices=["decoder", "artifact_contract", "tokenizer_kind"])
+    profile.add_argument(
+        "field", choices=["decoder", "artifact_contract", "tokenizer_kind"]
+    )
 
     profile_set = sub.add_parser("profile-set")
     profile_set.add_argument("profile_set_id")
@@ -29,7 +28,6 @@ def build_parser() -> argparse.ArgumentParser:
             "decoder",
             "artifact_contract",
             "tokenizer_kind",
-            "candidate_prefix_key",
             "default_variant",
         ],
     )
@@ -42,9 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     catalog = load_repository_catalog(args.repository_root)
-    if args.command == "prefix":
-        print(catalog.prefix(args.key))
-        return 0
     if args.command == "fingerprint":
         print(getattr(catalog, args.field))
         return 0
@@ -54,8 +49,8 @@ def main() -> int:
         return 0
 
     profile_set = catalog.profile_set(args.profile_set_id)
-    if args.field in {"candidate_prefix_key", "default_variant"}:
-        print(getattr(profile_set, args.field))
+    if args.field == "default_variant":
+        print(profile_set.default_variant)
         return 0
     profile_id = profile_set.profile_id_for(args.variant)
     if args.field == "profile_id":

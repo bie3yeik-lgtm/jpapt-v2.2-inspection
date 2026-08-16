@@ -2,34 +2,47 @@
 
 ## 目的
 
-`candidates/<candidate-id>/metadata.json` は、candidate固有のartifact identityとruntime bindingを保存する正本です。
+`candidates/<candidate-id>/metadata.json` はcandidate固有のartifact identityとruntime bindingの正本です。
 
-ただしdecoderの意味そのものはcandidateへ複製しません。
+再利用可能なdecoder semanticsはcandidateへ複製しません。
 
 ```text
-Reusable semantics
+Runtime semantics
     config/asr-catalog.json
 
 Candidate-specific facts
     candidates/<candidate-id>/metadata.json
 ```
 
-詳細な正規化原則は [`json-contract-design.md`](./json-contract-design.md) を参照してください。
+詳細な配置原則は [`json-contract-design.md`](./json-contract-design.md) を参照してください。
 
 ---
 
-## Canonical schema
+## Canonical schema v3
 
-新規candidateは `schema_version = 3` 必須です。
+新規candidateは次の5項目をtop-level requiredとします。
+
+```text
+schema_version
+candidate_id
+catalog
+profile_set
+variants
+```
+
+最小形:
 
 ```json
 {
   "schema_version": 3,
   "candidate_id": "parakeet-candidate-000002",
+  "catalog": {
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+  },
   "profile_set": "parakeet-tdt-ctc-v1",
   "variants": {
     "ctc": {
-      "profile": "ctc-v1",
       "artifacts": {},
       "bindings": {
         "input_kind": "canonical_waveform",
@@ -41,7 +54,6 @@ Candidate-specific facts
       }
     },
     "tdt": {
-      "profile": "tdt-v1",
       "artifacts": {},
       "bindings": {
         "input_kind": "canonical_waveform",
@@ -64,65 +76,95 @@ evaluation/schemas/candidate-metadata.schema.json
 
 ---
 
-## Candidateに書かなくなった値
+## `catalog`
 
-v2では次をcandidateごとに繰り返していました。
+candidateは利用したASR runtime catalog snapshotをpinします。
+
+```json
+"catalog": {
+  "id": "asr-runtime-catalog-v1",
+  "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+}
+```
+
+`CandidateArtifacts`はcheckout中の`config/asr-catalog.json`とこのfingerprintが一致しなければschema-v3 candidateを拒否します。
+
+これにより、同じ`profile_set`名の意味が将来変更されても過去candidateの意味がsilentに変化しません。
+
+---
+
+## profileをvariantごとに書かない理由
+
+次は冗長なので削除しました。
+
+```json
+"ctc": {
+  "profile": "ctc-v1"
+}
+```
+
+profile IDは、
+
+```text
+profile_set = parakeet-tdt-ctc-v1
+variant = ctc
+        ↓
+config/asr-catalog.json
+        ↓
+ctc-v1
+```
+
+と一意に決定できます。
+
+したがってcandidateに必要なのはvariant名だけです。
+
+---
+
+## Candidateに書かない値
+
+以下は中央runtime catalogから導出します。
 
 ```text
 decoder
 artifact_contract
-tokenizer.kind
+profile ID
+tokenizer kind
+required/optional artifact roles
 features
 ```
 
-v3では削除しました。
-
-これらは、
+例えば`parakeet-tdt-ctc-v1 + tdt`から、
 
 ```text
-variants.<name>.profile
-        ↓
-config/asr-catalog.json.decoder_profiles
-```
-
-から導出します。
-
-例えば、
-
-```json
-"profile": "tdt-v1"
-```
-
-だけで、
-
-```text
-decoder             tdt
-artifact contract   tdt-multi-graph-v1
-tokenizer kind      vocabulary
-required roles      encoder/predictor/joint
-multi_graph         true
+profile              tdt-v1
+decoder              tdt
+artifact contract    tdt-multi-graph-v1
+tokenizer kind       vocabulary
+required roles       encoder / predictor / joint
+multi_graph          true
 ```
 
 が決まります。
 
 ---
 
-## Candidateに残す必要がある値
+## Candidateに残す値
 
-次は中央化しません。
+以下は実artifact/exportごとに異なるため中央化しません。
 
 ```text
 artifact path
 artifact SHA-256
 artifact size
 input/output tensor names
-blank/bos/prompt token IDs
-TDT predictor state names/shapes/dtypes
+blank/bos/eos/prompt token IDs
+TDT durations
+predictor state names/shapes/dtypes
 KV-cache input/output names
-processor/tokenizer path
+processor/tokenizer asset path
 ```
 
-これらはexportしたartifactごとに異なるためです。
+`bindings.decoder_config`はdecoder一般のpolicyではなく、そのcandidateを動かすためのmodel/export固有bindingです。
 
 ---
 
@@ -144,16 +186,19 @@ candidates/parakeet-candidate-000002/
     └── joint.onnx
 ```
 
-例:
+完全例:
 
 ```json
 {
   "schema_version": 3,
   "candidate_id": "parakeet-candidate-000002",
+  "catalog": {
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+  },
   "profile_set": "parakeet-tdt-ctc-v1",
   "variants": {
     "ctc": {
-      "profile": "ctc-v1",
       "artifacts": {
         "primary": {
           "path": "ctc/model.onnx",
@@ -179,7 +224,6 @@ candidates/parakeet-candidate-000002/
       }
     },
     "tdt": {
-      "profile": "tdt-v1",
       "artifacts": {
         "encoder": {
           "path": "tdt/encoder.onnx",
@@ -237,7 +281,7 @@ candidates/parakeet-candidate-000002/
 }
 ```
 
-この1ファイルを変更せず、
+このJSONを書き換えずに、
 
 ```text
 runtime_variant=ctc
@@ -270,7 +314,7 @@ runtime_variant=tdt
 }
 ```
 
-この違いは実graph bindingなのでcandidateに残します。
+これは実graphのI/O bindingなのでcandidateに残します。
 
 ---
 
@@ -307,10 +351,13 @@ candidates/whisper-candidate-000003/
 {
   "schema_version": 3,
   "candidate_id": "whisper-candidate-000003",
+  "catalog": {
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+  },
   "profile_set": "whisper-autoregressive-v1",
   "variants": {
     "whisper": {
-      "profile": "whisper-autoregressive-v1",
       "artifacts": {
         "encoder": {
           "path": "encoder.onnx",
@@ -375,13 +422,13 @@ candidates/whisper-candidate-000003/
 }
 ```
 
-`tokenizer.kind = transformers_processor`はprofileから導出されるためcandidateには書きません。
+`transformers_processor`というtokenizer kindやWhisperのfeature要求はprofileから導出します。
 
 ---
 
 ## Runtime選択
 
-Python CLI:
+CLI:
 
 ```bash
 python -m parakeet_onnx.cli.evaluate \
@@ -396,15 +443,13 @@ python -m parakeet_onnx.cli.evaluate \
 ASR_RUNTIME_VARIANT=tdt
 ```
 
-GitHub Actionsでは`runtime_variant` inputを使用します。
-
-選択が省略された場合は、中央catalogのprofile set `default_variant`を使用します。
+GitHub Actionsでは`runtime_variant` inputを使用します。省略時はprofile setの`default_variant`です。
 
 ---
 
 ## Candidate identity
 
-`CandidateArtifacts.bundle_sha256`は**選択されたvariant**の全artifactを、
+`CandidateArtifacts.bundle_sha256`は**選択されたvariant**のartifact集合を、
 
 ```text
 role
@@ -412,24 +457,19 @@ relative path
 artifact SHA-256
 ```
 
-でhashした値です。
+でhashします。
 
-したがって同じcandidate IDでも、
+したがって同じcandidate IDでもCTC/TDTは別runtime artifact identityを持ちます。
 
-```text
-ctc variant bundle SHA
-tdt variant bundle SHA
-```
-
-は別identityです。
-
-run-contextには選択された、
+run-contextのcandidate provenanceには、
 
 ```text
+catalog fingerprint
 profile_set
 variant
-profile
-catalog fingerprint
+resolved profile
+decoder
+artifact contract
 variant bundle SHA
 ```
 
@@ -443,18 +483,18 @@ variant bundle SHA
 bash scripts/hf/hf-push-candidate.sh <candidate-directory>
 ```
 
-manual prefixは受け付けません。
-
-処理順:
+manual prefixは指定しません。
 
 ```text
 metadata schema-v3確認
     ↓
-全variantを中央catalogで解決
+catalog fingerprint確認
+    ↓
+全variantをprofile_setから解決
     ↓
 全variant runtime contract検証
     ↓
-profile_setからcandidate_prefix_keyを取得
+profile_setからallocation prefix key解決
     ↓
 Central Allocatorで採番
     ↓
@@ -465,4 +505,4 @@ candidate_idを書き込み
 Bucketへpublish
 ```
 
-新しいcandidateではschema v1/v2を生成しません。旧形式は既存artifactを読むための互換層です。
+新規candidateはschema v3のみを生成します。schema v1/v2は過去artifact読み取り用です。

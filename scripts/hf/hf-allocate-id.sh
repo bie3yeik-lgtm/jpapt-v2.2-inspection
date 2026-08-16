@@ -24,7 +24,7 @@ fi
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
 
-PREFIX="$(python scripts/ci/resolve-asr-catalog.py prefix "$PREFIX_KEY")" \
+PREFIX="$(python scripts/ci/resolve-allocation-catalog.py prefix "$PREFIX_KEY")" \
   || fail "failed to resolve allocation prefix key: $PREFIX_KEY"
 
 BUCKET="${HF_BUCKET#hf://buckets/}"
@@ -92,7 +92,7 @@ for key in sorted(metadata):
         lines.append(f"- {key}: `{rendered}`")
 lines += [
     "",
-    "prefixはconfig/asr-catalog.jsonで一元管理され、連番はcollection全体の最大suffix + 1で管理されます。",
+    "prefixはconfig/hf-allocation-catalog.jsonで一元管理され、連番はcollection全体の最大suffix + 1で管理されます。",
     "targetとBucketの対応は採番時点のrouting snapshotであり、恒久的なidentityではありません。",
 ]
 Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")

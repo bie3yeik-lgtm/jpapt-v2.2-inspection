@@ -1,15 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "asr-catalog-v1",
-  "id_prefixes": {
-    "candidate.default": "candidate",
-    "candidate.parakeet": "parakeet-candidate",
-    "candidate.whisper": "whisper-candidate",
-    "experiment.cpu_full": "cpu-full-eval",
-    "experiment.cross_platform_parity": "cross-platform-parity",
-    "experiment.rust_eval": "rust-eval",
-    "config.version": "config"
-  },
+  "catalog_id": "asr-runtime-catalog-v1",
   "decoder_profiles": {
     "ctc-v1": {
       "decoder": "ctc",
@@ -54,7 +45,6 @@
   },
   "profile_sets": {
     "parakeet-tdt-ctc-v1": {
-      "candidate_prefix_key": "candidate.parakeet",
       "variants": {
         "ctc": "ctc-v1",
         "tdt": "tdt-v1"
@@ -62,7 +52,6 @@
       "default_variant": "ctc"
     },
     "whisper-autoregressive-v1": {
-      "candidate_prefix_key": "candidate.whisper",
       "variants": {
         "whisper": "whisper-autoregressive-v1"
       },
