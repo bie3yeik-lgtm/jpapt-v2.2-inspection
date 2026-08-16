@@ -1,116 +1,24 @@
-use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::{HfError, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AllocationCatalog {
-    pub path: PathBuf,
-    pub catalog_id: String,
-    pub sha256: String,
-    pub prefixes: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AllocationCatalogDocument {
-    schema_version: u32,
-    catalog_id: String,
-    prefixes: BTreeMap<String, String>,
-}
-
-impl AllocationCatalog {
-    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        let bytes = fs::read(&path).map_err(|source| HfError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let raw: Value = serde_json::from_slice(&bytes)?;
-        let document: AllocationCatalogDocument = serde_json::from_value(raw.clone())?;
-        if document.schema_version != 1 {
-            return Err(contract(
-                "HF allocation catalog must be a schema_version=1 object",
-            ));
-        }
-        let catalog_id = nonempty("catalog_id", document.catalog_id)?;
-        if document.prefixes.is_empty() {
-            return Err(contract("prefixes must be a non-empty object"));
-        }
-        let mut prefixes = BTreeMap::new();
-        for (key, value) in document.prefixes {
-            let key = nonempty("prefix key", key)?;
-            let value = nonempty(&format!("prefixes.{key}"), value)?;
-            validate_prefix(&value)?;
-            prefixes.insert(key, value);
-        }
-        let canonical = canonical_json(&raw)?;
-        let sha256 = format!("{:x}", Sha256::digest(canonical.as_bytes()));
-        Ok(Self {
-            path,
-            catalog_id,
-            sha256,
-            prefixes,
-        })
+pub fn collection_prefix(collection: &str) -> Result<&'static str> {
+    match collection {
+        "candidates" => Ok("candidate"),
+        "experiments" => Ok("experiment"),
+        "config" => Ok("config"),
+        other => Err(contract(format!(
+            "allocation collection must be candidates, experiments, or config; got {other:?}"
+        ))),
     }
-
-    pub fn prefix(&self, key: &str) -> Result<&str> {
-        self.prefixes.get(key).map(String::as_str).ok_or_else(|| {
-            contract(format!(
-                "unknown allocation prefix key {key:?}; available={:?}",
-                self.prefixes.keys().collect::<Vec<_>>()
-            ))
-        })
-    }
-
-    pub fn candidate_prefix_key(&self, profile_set_id: &str) -> String {
-        let key = format!("candidate.{profile_set_id}");
-        if self.prefixes.contains_key(&key) {
-            key
-        } else {
-            "candidate.default".to_owned()
-        }
-    }
-}
-
-pub fn load_repository_allocation_catalog(
-    repository_root: impl AsRef<Path>,
-) -> Result<AllocationCatalog> {
-    AllocationCatalog::load(
-        repository_root
-            .as_ref()
-            .join("config/hf-allocation-catalog.json"),
-    )
 }
 
 pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
     validate_prefix(prefix)?;
-    let mut maximum = 0_u32;
-    for raw in listing.lines() {
-        let value = raw.trim();
-        if value.is_empty() {
-            continue;
-        }
-        let directory = value
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches('/');
-        let Some((_, suffix)) = directory.rsplit_once('-') else {
-            continue;
-        };
-        if suffix.len() != 6 || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
-            continue;
-        }
-        let parsed = suffix
-            .parse::<u32>()
-            .map_err(|error| contract(format!("invalid sequence suffix {suffix:?}: {error}")))?;
-        maximum = maximum.max(parsed);
-    }
+    let maximum = maximum_root_sequence(listing);
     let next = maximum
         .checked_add(1)
         .ok_or_else(|| contract("six-digit HF sequence space is exhausted"))?;
@@ -120,12 +28,119 @@ pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
     Ok(format!("{prefix}-{next:06}"))
 }
 
+fn maximum_root_sequence(listing: &str) -> u32 {
+    listing
+        .lines()
+        .filter_map(|raw| {
+            let root = raw.trim().split('/').next()?.trim_end_matches('/');
+            sequence_suffix(root)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn sequence_suffix(value: &str) -> Option<u32> {
+    let (_, suffix) = value.rsplit_once('-')?;
+    if suffix.len() != 6 || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    suffix.parse().ok()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateLocation {
+    pub id: String,
+    pub relative_path: String,
+    pub legacy: bool,
+}
+
+pub fn latest_candidate_location(
+    listing: &str,
+    runtime_variant: Option<&str>,
+) -> Result<CandidateLocation> {
+    let mut canonical = Vec::<(u32, String)>::new();
+    let mut legacy = Vec::<(u32, String, String)>::new();
+
+    for raw in listing.lines() {
+        let value = raw.trim().trim_start_matches('/');
+        if value.is_empty() {
+            continue;
+        }
+        let parts = value.split('/').collect::<Vec<_>>();
+        let first = parts.first().copied().unwrap_or_default();
+        if let Some(sequence) = candidate_sequence(first) {
+            canonical.push((sequence, first.to_owned()));
+            continue;
+        }
+        if parts.len() >= 2 {
+            let variant = first;
+            let id = parts[1];
+            if let Some(sequence) = candidate_sequence(id) {
+                legacy.push((sequence, variant.to_owned(), id.to_owned()));
+            }
+        }
+    }
+
+    if let Some((_, id)) = canonical.into_iter().max_by_key(|(sequence, _)| *sequence) {
+        return Ok(CandidateLocation {
+            relative_path: id.clone(),
+            id,
+            legacy: false,
+        });
+    }
+
+    let requested_variant = runtime_variant
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let candidates = legacy
+        .into_iter()
+        .filter(|(_, variant, _)| requested_variant.is_none_or(|expected| variant == expected))
+        .collect::<Vec<_>>();
+
+    if candidates.is_empty() {
+        return Err(contract(match requested_variant {
+            Some(variant) => format!(
+                "bucket contains no canonical candidate-* allocation and no legacy {variant}/candidate-* allocation"
+            ),
+            None => "bucket contains no canonical candidate-* allocation; a runtime variant is required to resolve a legacy candidate".to_owned(),
+        }));
+    }
+
+    if requested_variant.is_none() {
+        let variants = candidates
+            .iter()
+            .map(|(_, variant, _)| variant.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if variants.len() > 1 {
+            return Err(contract(format!(
+                "legacy candidate layout is ambiguous across variants {variants:?}; provide runtime variant"
+            )));
+        }
+    }
+
+    let (_, variant, id) = candidates
+        .into_iter()
+        .max_by_key(|(sequence, _, _)| *sequence)
+        .expect("non-empty candidate list");
+    Ok(CandidateLocation {
+        relative_path: format!("{variant}/{id}"),
+        id,
+        legacy: true,
+    })
+}
+
+fn candidate_sequence(value: &str) -> Option<u32> {
+    if !value.starts_with("candidate-") {
+        return None;
+    }
+    sequence_suffix(value)
+}
+
 #[derive(Debug, Clone)]
 pub struct AllocationReadme<'a> {
     pub allocation_id: &'a str,
     pub collection: &'a str,
     pub bucket: &'a str,
-    pub prefix_key: &'a str,
     pub prefix: &'a str,
     pub sequence: &'a str,
     pub allocated_at: &'a str,
@@ -137,11 +152,16 @@ pub fn write_allocation_readme(
     input: &AllocationReadme<'_>,
 ) -> Result<()> {
     validate_prefix(input.prefix)?;
+    let expected_prefix = collection_prefix(input.collection)?;
+    if input.prefix != expected_prefix {
+        return Err(contract(format!(
+            "collection {:?} must use derived prefix {:?}, got {:?}",
+            input.collection, expected_prefix, input.prefix
+        )));
+    }
     for (name, value) in [
         ("allocation_id", input.allocation_id),
-        ("collection", input.collection),
         ("bucket", input.bucket),
-        ("prefix_key", input.prefix_key),
         ("sequence", input.sequence),
         ("allocated_at", input.allocated_at),
     ] {
@@ -161,8 +181,7 @@ pub fn write_allocation_readme(
         String::new(),
         format!("- collection: `{}`", input.collection),
         format!("- bucket: `{}`", input.bucket),
-        format!("- prefix_key: `{}`", input.prefix_key),
-        format!("- resolved_prefix: `{}`", input.prefix),
+        format!("- prefix: `{}`", input.prefix),
         format!("- sequence: `{}`", input.sequence),
         format!("- allocated_at: `{}`", input.allocated_at),
     ];
@@ -181,8 +200,8 @@ pub fn write_allocation_readme(
     }
     lines.extend([
         String::new(),
-        "prefixはconfig/hf-allocation-catalog.jsonで一元管理され、連番はcollection全体の最大suffix + 1で管理されます。".to_owned(),
-        "targetとBucketの対応は採番時点のrouting snapshotであり、恒久的なidentityではありません。".to_owned(),
+        "prefixはcollectionから決定されます。連番はcollection全体の最大6桁suffix + 1です。".to_owned(),
+        "新規allocationはcanonical layoutへだけ書き込み、variant配下の旧candidate layoutは読み取りfallbackに限定されます。".to_owned(),
     ]);
     let path = output.as_ref().to_path_buf();
     fs::write(&path, format!("{}\n", lines.join("\n")))
@@ -205,54 +224,6 @@ fn validate_prefix(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-fn canonical_json(value: &Value) -> Result<String> {
-    fn render(value: &Value, output: &mut String) -> std::result::Result<(), serde_json::Error> {
-        match value {
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-                output.push_str(&serde_json::to_string(value)?);
-            }
-            Value::Array(values) => {
-                output.push('[');
-                for (index, value) in values.iter().enumerate() {
-                    if index != 0 {
-                        output.push(',');
-                    }
-                    render(value, output)?;
-                }
-                output.push(']');
-            }
-            Value::Object(values) => {
-                output.push('{');
-                let mut keys = values.keys().collect::<Vec<_>>();
-                keys.sort();
-                for (index, key) in keys.iter().enumerate() {
-                    if index != 0 {
-                        output.push(',');
-                    }
-                    output.push_str(&serde_json::to_string(key)?);
-                    output.push(':');
-                    render(&values[*key], output)?;
-                }
-                output.push('}');
-            }
-        }
-        Ok(())
-    }
-
-    let mut output = String::new();
-    render(value, &mut output)?;
-    Ok(output)
-}
-
-fn nonempty(name: &str, value: String) -> Result<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        Err(contract(format!("{name} must be a non-empty string")))
-    } else {
-        Ok(value.to_owned())
-    }
-}
-
 fn contract(message: impl Into<String>) -> HfError {
     HfError::Contract(message.into())
 }
@@ -262,16 +233,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collection_prefix_is_derived() {
+        assert_eq!(collection_prefix("candidates").unwrap(), "candidate");
+        assert_eq!(collection_prefix("experiments").unwrap(), "experiment");
+        assert_eq!(collection_prefix("config").unwrap(), "config");
+        assert!(collection_prefix("runs").is_err());
+    }
+
+    #[test]
     fn empty_collection_starts_at_one() {
-        assert_eq!(next_sequence_id("export", "").unwrap(), "export-000001");
+        assert_eq!(next_sequence_id("candidate", "").unwrap(), "candidate-000001");
     }
 
     #[test]
     fn prefixes_share_collection_sequence() {
-        let listing = "whisper-export-000001/README.md\nwhisper-export-000001/encoder.onnx\nctc-export-000004/README.md\ncpu-full-eval-000003/README.md\n";
+        let listing = "old-prefix-000001/README.md\ncandidate-000004/README.md\nexperiment-000003/README.md\n";
         assert_eq!(
-            next_sequence_id("whisper-export", listing).unwrap(),
-            "whisper-export-000005"
+            next_sequence_id("candidate", listing).unwrap(),
+            "candidate-000005"
         );
     }
 
@@ -285,7 +264,34 @@ mod tests {
     }
 
     #[test]
-    fn invalid_prefix_is_rejected() {
-        assert!(next_sequence_id("CPU Full Eval", "").is_err());
+    fn canonical_candidate_wins_over_legacy() {
+        let listing = "ctc/candidate-000009/metadata.json\ncandidate-000003/metadata.json\n";
+        assert_eq!(
+            latest_candidate_location(listing, Some("ctc")).unwrap(),
+            CandidateLocation {
+                id: "candidate-000003".to_owned(),
+                relative_path: "candidate-000003".to_owned(),
+                legacy: false,
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_candidate_is_variant_scoped() {
+        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000004/metadata.json\nctc/candidate-000003/metadata.json\n";
+        assert_eq!(
+            latest_candidate_location(listing, Some("ctc")).unwrap(),
+            CandidateLocation {
+                id: "candidate-000003".to_owned(),
+                relative_path: "ctc/candidate-000003".to_owned(),
+                legacy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn ambiguous_legacy_candidate_requires_variant() {
+        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000002/metadata.json\n";
+        assert!(latest_candidate_location(listing, None).is_err());
     }
 }
