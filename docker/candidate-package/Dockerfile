@@ -14,8 +14,9 @@ LABEL org.opencontainers.image.source="https://github.com/${SOURCE_REPOSITORY}" 
       io.jpapt.source.bucket="${SOURCE_BUCKET}" \
       io.jpapt.candidate.id="${CANDIDATE_ID}" \
       io.jpapt.package.name="${PACKAGE_NAME}" \
-      io.jpapt.runtime.environment="${RUNTIME_ENVIRONMENT}" \
-      io.jpapt.runtime.ort_package="${ORT_PACKAGE}"
+      io.jpapt.runtime.target_environment="${RUNTIME_ENVIRONMENT}" \
+      io.jpapt.runtime.target_ort_package="${ORT_PACKAGE}" \
+      io.jpapt.package.execution_platform="linux"
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -24,9 +25,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /opt/jpapt
 
+# The OCI package itself is Linux. For Linux CUDA it carries onnxruntime-gpu;
+# for CPU/macOS/Windows targets it carries Linux onnxruntime. CoreML and
+# DirectML evidence is produced natively by the corresponding hosted runner,
+# not by pretending a Linux container can execute those providers.
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip && \
-    python -m pip install "huggingface_hub>=1.0,<2" onnx numpy "${ORT_PACKAGE}"
+    if [ "${RUNTIME_ENVIRONMENT}" = "linux-cuda" ]; then IMAGE_ORT_PACKAGE=onnxruntime-gpu; else IMAGE_ORT_PACKAGE=onnxruntime; fi && \
+    python -m pip install "huggingface_hub>=1.0,<2" onnx numpy "${IMAGE_ORT_PACKAGE}"
 
 COPY .ci/candidate/ /opt/jpapt/candidate/
 COPY scripts/ci/generic-candidate-evaluate.py /opt/jpapt/evaluate_candidate.py
