@@ -1,0 +1,92 @@
+name: Public Model E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/public-model-e2e
+    paths:
+      - ".github/workflows/public-model-e2e.yml"
+      - "scripts/ci/e2e-whisper-transformersjs.mjs"
+      - "scripts/ci/e2e-ctc-onnx.py"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-model-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+
+jobs:
+  whisper-onnx-jsut:
+    name: Whisper ONNX + JSUT
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: /dev/null
+      - name: Install pinned Transformers.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/transformersjs
+          cd .ci/transformersjs
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund @huggingface/transformers@4.2.0
+      - name: Run real ONNX Whisper inference
+        shell: bash
+        env:
+          WHISPER_MODEL_ID: onnx-community/whisper-small
+        run: |
+          set -euo pipefail
+          export NODE_PATH="$PWD/.ci/transformersjs/node_modules"
+          ln -sfn "$PWD/.ci/transformersjs/node_modules" node_modules
+          node scripts/ci/e2e-whisper-transformersjs.mjs | tee .ci/whisper-e2e-result.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: whisper-onnx-jsut-result
+          path: .ci/whisper-e2e-result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ctc-onnx-jsut:
+    name: Japanese CTC PyTorch → ONNX → ORT + JSUT
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Sync authoritative Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --extra onnx --extra transformers --extra hf
+      - name: Run real Japanese CTC ONNX parity smoke
+        shell: bash
+        env:
+          CTC_MODEL_ID: TKU410410103/wav2vec2-base-japanese-asr
+        run: |
+          set -euo pipefail
+          uv run python scripts/ci/e2e-ctc-onnx.py
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: japanese-ctc-onnx-jsut-result
+          path: .ci/public-model-e2e/ctc/result.json
+          if-no-files-found: ignore
+          retention-days: 7
