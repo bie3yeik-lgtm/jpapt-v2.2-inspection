@@ -2,8 +2,7 @@ name: Candidate Request Gateway
 
 on:
   repository_dispatch:
-    types:
-      - jpapt.candidate-request
+    types: [jpapt.candidate-request]
   workflow_dispatch:
     inputs:
       source_repository:
@@ -92,12 +91,12 @@ jobs:
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install routing client
+
+      - name: Install routing clients
         run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2" pyyaml
 
       - name: Normalize event inputs
         id: inputs
-        shell: bash
         env:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           I_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
@@ -112,31 +111,11 @@ jobs:
           I_HF_FLAVOR: ${{ inputs.hf_flavor }}
           I_HF_JOBS_IMAGE: ${{ inputs.hf_jobs_image }}
           I_EXECUTE: ${{ inputs.execute }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == repository_dispatch ]]; then
-            printf '%s\n' "$PAYLOAD" > /tmp/request.json
-            execute="$(jq -r '.execute // false' /tmp/request.json)"
-          else
-            jq -n \
-              --arg source_repository "$I_SOURCE_REPOSITORY" \
-              --arg hf_bucket "$I_HF_BUCKET" \
-              --arg candidate_id "$I_CANDIDATE_ID" \
-              --arg package_name "$I_PACKAGE_NAME" \
-              --arg dataset_source "$I_DATASET_SOURCE" \
-              --arg dataset_id "$I_DATASET_ID" \
-              --arg suite "$I_SUITE" \
-              --arg executor "$I_EXECUTOR" \
-              --arg environment "$I_ENVIRONMENT" \
-              --arg hf_flavor "$I_HF_FLAVOR" \
-              --arg hf_jobs_image "$I_HF_JOBS_IMAGE" \
-              '{source_repository:$source_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:$dataset_source,dataset_id:$dataset_id,suite:$suite,executor:$executor,environment:$environment,hf_flavor:$hf_flavor,hf_jobs_image:$hf_jobs_image,dry_run:false}' \
-              > /tmp/request.json
-            execute="${I_EXECUTE:-false}"
-          fi
-          case "$execute" in true|false) ;; *) echo "::error::execute must be boolean"; exit 1;; esac
-          echo "execute=$execute" >> "$GITHUB_OUTPUT"
-          echo "source_repository=$(jq -r '.source_repository // empty' /tmp/request.json)" >> "$GITHUB_OUTPUT"
+        run: >-
+          python scripts/ci/normalize-candidate-request.py
+          --event-name "$GITHUB_EVENT_NAME"
+          --output /tmp/request.json
+          --github-output "$GITHUB_OUTPUT"
 
       - name: Fetch source repository routing config
         shell: bash
@@ -192,13 +171,13 @@ jobs:
           SUITE: ${{ steps.resolve.outputs.suite }}
           EXECUTOR: ${{ steps.resolve.outputs.executor }}
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
-        run: |
-          python scripts/ci/estimate-candidate-runtime.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --suite "$SUITE" \
-            --executor "$EXECUTOR" \
-            --environment "$ENVIRONMENT" \
-            --github-output "$GITHUB_OUTPUT"
+        run: >-
+          python scripts/ci/estimate-candidate-runtime.py
+          --repository "$GITHUB_REPOSITORY"
+          --suite "$SUITE"
+          --executor "$EXECUTOR"
+          --environment "$ENVIRONMENT"
+          --github-output "$GITHUB_OUTPUT"
 
       - name: Write normalized plan
         shell: bash
