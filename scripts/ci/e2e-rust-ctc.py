@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 from pathlib import Path
-
-ZERO_SHA256 = "0" * 64
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -31,8 +30,126 @@ def reject_nulls(value: object, path: str = "$") -> None:
             reject_nulls(item, f"{path}[{index}]")
 
 
-def prepare(contract_path: Path, output: Path) -> None:
+def canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def require_string(source: dict[str, object], key: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"reference result requires non-empty {key!r}")
+    return value
+
+
+def revision_snapshot(
+    contract: dict[str, object],
+    reference: dict[str, object],
+) -> dict[str, object]:
+    catalog = contract.get("catalog")
+    if not isinstance(catalog, dict):
+        raise RuntimeError("candidate contract must contain catalog identity")
+
+    model_id = require_string(reference, "model_id")
+    model_revision = require_string(reference, "model_revision")
+    dataset_id = require_string(reference, "dataset_id")
+    dataset_revision = require_string(reference, "dataset_revision")
+    sample_file = require_string(reference, "sample_file")
+    sample_sha256 = require_string(reference, "sample_sha256")
+    profile_set = require_string(contract, "profile_set")
+
+    runtime_document = {
+        "schema_version": 1,
+        "catalog": {
+            "id": require_string(catalog, "id"),
+            "sha256": require_string(catalog, "sha256"),
+        },
+        "profile_set": profile_set,
+    }
+    reference_document = {
+        "schema_version": 1,
+        "development_artifact": {"repo_id": model_id, "revision": model_revision},
+        "upstream": {"repo_id": model_id, "revision": model_revision},
+        "tokenizer": {"repo_id": model_id, "revision": model_revision},
+        "reference": {
+            "id": "public-model-ctc-reference",
+            "revision": model_revision,
+            "canonical_framework": "transformers",
+        },
+    }
+    evaluation_document = {
+        "schema_version": 1,
+        "schema": {
+            "id": "public-model-e2e-smoke",
+            "revision": "public-model-e2e-v1",
+        },
+        "artifact_contract": "ctc-single-graph-v1",
+    }
+    datasets_document = {
+        "schema_version": 1,
+        "datasets": [
+            {
+                "id": "jsut-basic5000",
+                "repo_id": dataset_id,
+                "revision": dataset_revision,
+                "subset": "default",
+                "split": "sample",
+                "sha256": sample_sha256,
+                "manifest": sample_file,
+            }
+        ],
+    }
+
+    reference_hash = canonical_sha256(reference_document)
+    evaluation_hash = canonical_sha256(evaluation_document)
+    datasets_hash = canonical_sha256(datasets_document)
+    runtime_hash = canonical_sha256(runtime_document)
+    bundle_digest = hashlib.sha256()
+    for document_hash in (
+        reference_hash,
+        evaluation_hash,
+        datasets_hash,
+        runtime_hash,
+    ):
+        bundle_digest.update(document_hash.encode("ascii"))
+
+    return {
+        "config_version": "public-model-e2e-v1",
+        "bundle_sha256": bundle_digest.hexdigest(),
+        "runtime": {
+            "document_sha256": runtime_hash,
+            "catalog": runtime_document["catalog"],
+            "profile_set": profile_set,
+        },
+        "reference": {
+            "document_sha256": reference_hash,
+            "development_artifact": reference_document["development_artifact"],
+            "upstream": reference_document["upstream"],
+            "tokenizer": reference_document["tokenizer"],
+            "reference_id": "public-model-ctc-reference",
+            "reference_revision": model_revision,
+            "canonical_framework": "transformers",
+        },
+        "evaluation_schema": {
+            "document_sha256": evaluation_hash,
+            "schema_id": "public-model-e2e-smoke",
+            "schema_revision": "public-model-e2e-v1",
+        },
+        "datasets": {
+            "document_sha256": datasets_hash,
+            "entries": datasets_document["datasets"],
+        },
+    }
+
+
+def prepare(contract_path: Path, reference_path: Path, output: Path) -> None:
     contract = load_json(contract_path)
+    reference = load_json(reference_path)
     candidate_root = Path(str(contract["candidate_root"]))
     artifacts = contract["artifacts"]
     if not isinstance(artifacts, dict):
@@ -40,20 +157,18 @@ def prepare(contract_path: Path, output: Path) -> None:
     primary = artifacts.get("primary")
     if not isinstance(primary, dict):
         raise RuntimeError("candidate contract must contain primary artifact")
-    catalog = contract.get("catalog")
-    if not isinstance(catalog, dict):
-        raise RuntimeError("candidate contract must contain catalog identity")
     model_path = candidate_root / str(primary["path"])
     if not model_path.is_file():
         raise RuntimeError(f"candidate primary artifact is missing: {model_path}")
 
     candidate_id = str(contract["candidate_id"])
+    model_id = require_string(reference, "model_id")
     context = {
         "schema_version": 2,
         "run_id": "public-model-rust-ctc-e2e",
         "created_at": "2026-08-16T00:00:00Z",
         "config_identity": "public-model-e2e-v1",
-        "model_id": "TKU410410103/wav2vec2-base-japanese-asr",
+        "model_id": model_id,
         "environment_id": "linux",
         "provider_id": "cpu",
         "evaluation_id": "smoke",
@@ -66,7 +181,7 @@ def prepare(contract_path: Path, output: Path) -> None:
         },
         "git": {
             "repository": "bie3yeik-lgtm/jpapt-v2.2-inspection",
-            "commit": nonempty_env("GITHUB_SHA", ZERO_SHA256),
+            "commit": nonempty_env("GITHUB_SHA", "0000000000000000000000000000000000000000"),
             "ref": nonempty_env("GITHUB_REF_NAME", "agent/provider-strict-probes"),
             "dirty": False,
         },
@@ -90,55 +205,7 @@ def prepare(contract_path: Path, output: Path) -> None:
             "provider_ort_name": "CPUExecutionProvider",
             "provider_available": False,
         },
-        "revisions": {
-            "config_version": "unversioned",
-            "bundle_sha256": ZERO_SHA256,
-            "runtime": {
-                "document_sha256": ZERO_SHA256,
-                "catalog": {
-                    "id": str(catalog["id"]),
-                    "sha256": str(catalog["sha256"]),
-                },
-                "profile_set": str(contract["profile_set"]),
-            },
-            "reference": {
-                "document_sha256": ZERO_SHA256,
-                "development_artifact": {
-                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
-                    "revision": "public-e2e",
-                },
-                "upstream": {
-                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
-                    "revision": "public-e2e",
-                },
-                "tokenizer": {
-                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
-                    "revision": "public-e2e",
-                },
-                "reference_id": "public-model-ctc-reference",
-                "reference_revision": "public-e2e",
-                "canonical_framework": "transformers",
-            },
-            "evaluation_schema": {
-                "document_sha256": ZERO_SHA256,
-                "schema_id": "public-model-e2e-smoke",
-                "schema_revision": "public-e2e",
-            },
-            "datasets": {
-                "document_sha256": ZERO_SHA256,
-                "entries": [
-                    {
-                        "id": "jsut-basic5000",
-                        "repo_id": "japanese-asr/ja_asr.jsut_basic5000",
-                        "revision": "public-e2e",
-                        "subset": "default",
-                        "split": "sample",
-                        "sha256": ZERO_SHA256,
-                        "manifest": "sample.flac",
-                    }
-                ],
-            },
-        },
+        "revisions": revision_snapshot(contract, reference),
         "config": {
             "resolved": {
                 "provider": {
@@ -165,6 +232,9 @@ def prepare(contract_path: Path, output: Path) -> None:
         "metadata": {
             "candidate": contract,
             "purpose": "public real-model Rust CTC regression canary",
+            "hf_model_revision": require_string(reference, "model_revision"),
+            "hf_dataset_revision": require_string(reference, "dataset_revision"),
+            "sample_sha256": require_string(reference, "sample_sha256"),
         },
     }
     reject_nulls(context)
@@ -202,6 +272,9 @@ def validate(result_path: Path, samples_path: Path, metrics_path: Path) -> None:
     print(
         json.dumps(
             {
+                "model_revision": reference.get("model_revision"),
+                "dataset_revision": reference.get("dataset_revision"),
+                "sample_sha256": reference.get("sample_sha256"),
                 "rust_transcript": actual_text,
                 "ort_transcript": expected_text,
                 "transcript_parity": True,
@@ -220,6 +293,7 @@ def parser() -> argparse.ArgumentParser:
 
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--contract", type=Path, required=True)
+    prepare_parser.add_argument("--reference", type=Path, required=True)
     prepare_parser.add_argument("--output", type=Path, required=True)
 
     validate_parser = sub.add_parser("validate")
@@ -232,7 +306,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     if args.command == "prepare":
-        prepare(args.contract, args.output)
+        prepare(args.contract, args.reference, args.output)
     else:
         validate(args.reference, args.samples, args.metrics)
     return 0
