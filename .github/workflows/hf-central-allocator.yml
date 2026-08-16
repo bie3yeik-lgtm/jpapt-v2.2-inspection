@@ -48,8 +48,8 @@ jobs:
       HF_ALLOCATOR_INTERNAL: "1"
       HF_ALLOCATION_METADATA_JSON: ${{ inputs.metadata_json }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Hugging Face CLI
@@ -77,7 +77,7 @@ jobs:
             "${{ inputs.request_id }}" "${{ steps.allocate.outputs.id }}" "${HF_BUCKET}" "${{ inputs.collection }}" "${{ inputs.prefix }}" \
             > allocation.json
       - name: Publish allocation response
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hf-allocation-${{ inputs.request_id }}
           path: allocation.json
