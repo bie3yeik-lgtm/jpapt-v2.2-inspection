@@ -16,8 +16,7 @@ set -euo pipefail
 #
 #   .ci/hf/config/revisions/
 #
-# These files are intentionally downloaded before Actions cache restoration
-# when they are used as cache-key inputs.
+# The project loader is the authoritative schema/compatibility validator.
 # -----------------------------------------------------------------------------
 
 SCRIPT_DIR="$(
@@ -99,11 +98,9 @@ log "Destination: $LOCAL_ROOT"
 for filename in "${FILES[@]}"; do
     source_uri="${REMOTE_ROOT}/${filename}"
     destination="${LOCAL_ROOT}/${filename}"
-
-    log "Fetching ${source_uri}"
-
     temporary="${destination}.tmp"
 
+    log "Fetching ${source_uri}"
     rm -f "$temporary"
 
     hf buckets cp \
@@ -120,51 +117,34 @@ import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-
 with path.open("r", encoding="utf-8") as file:
     value = json.load(file)
 
 if not isinstance(value, dict):
-    raise SystemExit(
-        f"JSON root must be an object: {path}"
-    )
-
-schema_version = value.get("schema_version")
-
-if schema_version != 1:
+    raise SystemExit(f"JSON root must be an object: {path}")
+if value.get("schema_version") != 1:
     raise SystemExit(
         f"Expected schema_version=1: {path}; "
-        f"got {schema_version!r}"
+        f"got {value.get('schema_version')!r}"
     )
 PY
 
     mv -f "$temporary" "$destination"
-
     log "Fetched: $filename"
 done
 
 log "Validating revision bundle with project loader..."
 
-if command -v uv >/dev/null 2>&1; then
-    uv run python - "$LOCAL_ROOT" <<'PY'
+python - "$LOCAL_ROOT" <<'PY'
 import sys
 
-from parakeet_onnx.hf.revisions import (
-    load_revision_bundle,
-)
+from parakeet_onnx.hf.revisions import load_revision_bundle
 
-bundle = load_revision_bundle(
-    sys.argv[1]
-)
-
+bundle = load_revision_bundle(sys.argv[1])
 print(
     "[hf-fetch-revisions] "
     f"revision bundle SHA-256: {bundle.sha256}"
 )
 PY
-else
-    log \
-        "uv unavailable; skipped project-level RevisionBundle validation."
-fi
 
 log "Revision-lock fetch completed."
