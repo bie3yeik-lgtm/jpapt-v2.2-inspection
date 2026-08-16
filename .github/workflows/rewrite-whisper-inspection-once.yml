@@ -23,12 +23,14 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           path = Path("python/src/parakeet_onnx/runtime/inspection.py")
           text = path.read_text(encoding="utf-8")
           start = text.index("def _inspect_whisper_decoder(")
           end = text.index("\ndef _infer_blank_id(", start)
-          replacement = '''def _inspect_whisper_decoder(graph: GraphInfo, *, allow_past: bool) -> dict[str, Any]:
+          replacement = dedent('''\
+          def _inspect_whisper_decoder(graph: GraphInfo, *, allow_past: bool) -> dict[str, Any]:
               input_ids = _best_tensor(
                   graph.inputs,
                   ("input_ids", "tokens", "token"),
@@ -112,16 +114,10 @@ jobs:
               if not any(marker in lowered for marker in markers):
                   return False
               return any(marker in lowered for marker in ("key", "value", "cache"))
-          '''
-          # De-indent the embedded source exactly once.
-          lines = replacement.splitlines()
-          normalized = []
-          for line in lines:
-              normalized.append(line[10:] if line.startswith("          ") else line)
-          replacement = "\n".join(normalized).rstrip() + "\n"
+          ''')
           path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+          compile(path.read_text(encoding="utf-8"), str(path), "exec")
           PY
-          cargo_fmt_marker=true
       - name: Commit rewrite
         shell: bash
         run: |
@@ -130,5 +126,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add python/src/parakeet_onnx/runtime/inspection.py
           git diff --cached --check
-          git commit -m "Separate Whisper auxiliary inputs from KV cache"
+          git commit -m "Repair Whisper auxiliary input inspection"
           git push origin HEAD:agent/rust-hf-destructive-optimization
