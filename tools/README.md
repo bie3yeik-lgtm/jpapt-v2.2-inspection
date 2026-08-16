@@ -85,9 +85,9 @@ scripts/ci/
 Examples:
 
 ```text
-scripts/ci/validate-revisions.py
-scripts/ci/validate-result.py
-scripts/ci/make-run-context.py
+scripts/ci/validate-revisions.sh
+scripts/ci/resolve-candidate-artifacts.py
+scripts/ci/prepare-rust-manifest.py
 ```
 
 ---
