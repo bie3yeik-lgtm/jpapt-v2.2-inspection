@@ -139,13 +139,51 @@
     "revisionBundle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["config_version", "bundle_sha256", "reference", "evaluation_schema", "datasets"],
+      "required": ["config_version", "bundle_sha256", "runtime", "reference", "evaluation_schema", "datasets"],
       "properties": {
         "config_version": {"type": ["string", "null"], "pattern": "^config-[0-9]{6}$"},
         "bundle_sha256": {"$ref": "#/$defs/sha256"},
+        "runtime": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/runtimeRevision"}
+          ]
+        },
         "reference": {"$ref": "#/$defs/referenceRevision"},
         "evaluation_schema": {"$ref": "#/$defs/evaluationSchemaRevision"},
         "datasets": {"$ref": "#/$defs/datasetsRevision"}
+      }
+    },
+    "runtimeRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_sha256",
+        "catalog",
+        "profile_set",
+        "variants",
+        "default_variant",
+        "decoders"
+      ],
+      "properties": {
+        "document_sha256": {"$ref": "#/$defs/sha256"},
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "sha256"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "profile_set": {"type": "string", "minLength": 1},
+        "variants": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "default_variant": {"type": "string", "minLength": 1},
+        "decoders": {"$ref": "#/$defs/decoderRevisionSet"}
       }
     },
     "referenceRevision": {
