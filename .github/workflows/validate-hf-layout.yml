@@ -85,7 +85,7 @@ jobs:
           python scripts/dev/verify-python-first.py
           python scripts/dev/doctor.py
           cargo run --quiet --locked -p asr-hf -- validate-targets
-          python scripts/ci/validate-github-action-versions.py
+          cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
           cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint catalog_id
           cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint sha256
           cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id
