@@ -166,7 +166,7 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
 
       - name: Cache model and evaluation assets
-        uses: actions/cache@6
+        uses: actions/cache@v6
         with:
           path: |
             .cache/huggingface
