@@ -1,152 +1,135 @@
 # JSON Contract 正規化設計
 
-## 目的
+## 原則
 
-同じ意味を複数のJSON/TOML/Workflowへコピーしません。値は次の基準で配置します。
+JSONは「人間が決める値」と「コードが観測・生成できる値」を分離します。
 
 ```text
-複数candidate/config/runで再利用する意味・policy
-    -> Git側の中央catalog
+人間が決めるpolicy / selection
+    -> 最小限の入力JSON/TOML
 
-特定snapshot/artifact/exportでしか確定できない事実
-    -> そのsnapshot固有JSON
+file・Git・catalog・runtimeから取得できる値
+    -> コードで生成
 
-実行時に解決した結果
-    -> run-context.jsonへsnapshot
+過去runの再現に必要な事実
+    -> generated snapshotへ保存
 ```
 
-中央化の目的は文字数削減ではなく、同期漏れを構造的に無くすことです。
+同じ意味を複数のJSONへ手入力させません。
 
 ---
 
-## Source of Truthの4層
+## Human-authored
 
-```text
-1. 採番policy
-   config/hf-allocation-catalog.json
+人間が直接触るJSONは可能な限り少なくします。
 
-2. ASR deployment runtime semantics
-   config/asr-catalog.json
-
-3. immutable operational snapshot
-   config/versions/config-NNNNNN/*.json
-   candidates/<candidate-id>/metadata.json
-
-4. execution snapshot
-   runs/<run-id>/run-context.json
-```
-
-### 重要な分離
-
-採番prefixとASR runtime semanticsは別catalogです。
-
-```text
-cpu-full-evalという名前を変更
-    !=
-CTC/TDT runtime contractを変更
-```
-
-両者を同じcatalogへ置くとprefix変更だけでruntime catalog SHAが変わるため分離します。
-
----
-
-# HF allocation catalog
-
-```text
-config/hf-allocation-catalog.json
-```
-
-唯一の責務はsemantic allocation keyから表示prefixを解決することです。
+### Candidate metadata
 
 ```json
 {
-  "schema_version": 1,
-  "catalog_id": "hf-allocation-catalog-v1",
-  "prefixes": {
-    "candidate.default": "candidate",
-    "candidate.parakeet-tdt-ctc-v1": "parakeet-candidate",
-    "candidate.whisper-autoregressive-v1": "whisper-candidate",
-    "experiment.cpu_full": "cpu-full-eval",
-    "experiment.cross_platform_parity": "cross-platform-parity",
-    "experiment.rust_eval": "rust-eval",
-    "config.version": "config"
+  "profile_set": "parakeet-tdt-ctc-v1",
+  "variants": {
+    "ctc": {
+      "artifacts": {
+        "primary": "ctc/model.onnx"
+      },
+      "tokenizer": "tokenizer/vocabulary.json"
+    }
   }
 }
 ```
 
-Workflow/scriptはraw prefixではなくsemantic keyを渡します。
+手書きしない値:
 
 ```text
-experiment.cpu_full
-    -> cpu-full-eval
-    -> cpu-full-eval-000042
+schema_version
+candidate_id
+catalog SHA
+artifact SHA / size
+decoder / profile / artifact contract
+tensor I/O
+token IDs
+state/KV metadata
 ```
 
-中央Allocatorの`allocation.json`はallocation catalog id/SHA、prefix key、resolved prefixをsnapshotします。
+### Evaluation manifest JSONL
+
+1行の最小形:
+
+```json
+{"dataset_id":"jsut-basic5000","count":6,"seed":"smoke-jsut-v1"}
+```
+
+長さ制約が必要な場合だけ追加します。
+
+```json
+{"dataset_id":"jsut-basic5000","count":6,"seed":"smoke-jsut-v1","min_duration_sec":1.0,"max_duration_sec":15.0}
+```
+
+手書きしない値:
+
+```text
+schema_version
+entry id
+selection.strategy = stable_hash
+tags
+selection / filtersの不要な入れ子
+```
+
+entry identityはseedと行位置等からコード側で生成できます。
 
 ---
 
-# ASR runtime catalog
+## Generated / locked JSON
+
+次は再現性のため情報量が多くてもよく、人間が手で維持する対象にはしません。
 
 ```text
-config/asr-catalog.json
+config/versions/config-NNNNNN/reference.json
+config/versions/config-NNNNNN/evaluation-schema.json
+config/versions/config-NNNNNN/datasets-lock.json
+config/versions/config-NNNNNN/runtime.json
+runs/<run-id>/run-context.json
+runs/<run-id>/samples.jsonl
+runs/<run-id>/metrics.json
+benchmarks/**/*.json
+evaluation/expected/*.json
 ```
 
-ここにはcandidate間で再利用するruntime semanticsだけを置きます。
+これらはsource/config/artifactを読み取って生成またはlockすることを基本とします。
+
+---
+
+## Source of Truth
 
 ```text
-decoder
-a​​rtifact contract
-tokenizer kind
-required/optional artifact roles
-runtime feature requirements
-profile set
-variant -> profile mapping
-default variant
-```
+採番policy
+    config/hf-allocation-catalog.json
 
-Parakeet例:
+ASR runtime semantics
+    config/asr-catalog.json
 
-```text
-parakeet-tdt-ctc-v1
-├── ctc -> ctc-v1
-├── tdt -> tdt-v1
-└── default -> ctc
-```
+Target routing / profile set
+    config/hf-targets/*.toml
 
-CTC/TDT切替のためにJSONを書き換えません。
+人間のcandidate artifact選択
+    candidates/<candidate-id>/metadata.json
 
-```text
-ASR_RUNTIME_VARIANT=ctc
-ASR_RUNTIME_VARIANT=tdt
+人間のevaluation sample選択
+    evaluation/manifests/*.jsonl
+
+immutable config snapshot
+    config/versions/config-NNNNNN/*.json
+
+execution snapshot
+    runs/<run-id>/run-context.json
 ```
 
 ---
 
-# Target TOML
+## Canonical config bundle
 
-Targetはdecoder一覧を持ちません。
-
-```toml
-schema_version = 2
-
-[target]
-id = "parakeet-tdt_ctc-0.6b-ja"
-model_id = "parakeet-tdt_ctc-0.6b-ja"
-
-[runtime]
-profile_set = "parakeet-tdt-ctc-v1"
-```
-
-supported/default decoderはprofile setから導出します。
-
-`config/models/*.toml`にdecoder説明が残る場合、それはupstream architectureの能力説明です。deployment runtime選択のSource of Truthではありません。
-
----
-
-# Config Version
-
-Canonical configは4ファイルです。
+3-file legacy bundleは廃止します。
 
 ```text
 config/versions/config-NNNNNN/
@@ -156,30 +139,7 @@ config/versions/config-NNNNNN/
 └── runtime.json
 ```
 
-## reference.json
-
-ここに固定する必然性があるもの:
-
-```text
-development artifact repo/revision
-upstream repo/revision
-tokenizer repo/revision
-canonical reference id/revision/framework
-```
-
-`decoders`は記述しません。
-
-## evaluation-schema.json
-
-評価schema、threshold、評価規則だけを保持します。decoder一覧は記述しません。
-
-## datasets-lock.json
-
-使用datasetのrepo/revision/subset/split等を固定します。
-
-## runtime.json
-
-runtime semanticsをコピーせず、catalog snapshotとprofile setだけを固定します。
+`runtime.json`は必須です。
 
 ```json
 {
@@ -192,198 +152,85 @@ runtime semanticsをコピーせず、catalog snapshotとprofile setだけを固
 }
 ```
 
-`hf-push-config-version.sh`が自動生成するため通常は手書きしません。
+ただしこれはgenerated lockです。人間にcatalog SHAを入力させません。
+
+`reference.json` / `evaluation-schema.json`へdecoder一覧を複製しません。
 
 ---
 
-# Candidate Metadata v3
+## ASR runtime catalog
 
-candidateにはruntime profileの意味を再記述しません。
-
-```json
-{
-  "schema_version": 3,
-  "candidate_id": "parakeet-candidate-000042",
-  "catalog": {
-    "id": "asr-runtime-catalog-v1",
-    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
-  },
-  "profile_set": "parakeet-tdt-ctc-v1",
-  "variants": {
-    "ctc": {
-      "artifacts": {},
-      "bindings": {},
-      "tokenizer": {"path": "tokenizer/vocabulary.json"}
-    },
-    "tdt": {
-      "artifacts": {},
-      "bindings": {},
-      "tokenizer": {"path": "tokenizer/vocabulary.json"}
-    }
-  }
-}
-```
-
-### Candidateに書かない値
+`config/asr-catalog.json`に共有runtime semanticsを集約します。
 
 ```text
-decoder
-artifact_contract
-profile ID
-features
-tokenizer kind
-required artifact roles
-```
-
-これらは次から一意に導出します。
-
-```text
-catalog pin
-+ profile_set
-+ variant名
-```
-
-### Candidateに残す値
-
-中央化できないartifact固有値です。
-
-```text
-artifact path/SHA-256/size
-input/output tensor names
-blank/bos/eos/prompt token IDs
-TDT durations
-predictor state names/shapes/dtypes
-KV-cache tensor names
-processor/tokenizer asset path
-```
-
-これらを中央catalogへ移すと、model/export revisionごとの差を表現できなくなります。
-
----
-
-# run-context.json
-
-run-contextは設定を定義する場所ではなく、実際に解決した結果を保存する場所です。
-
-新規normalized runはschema v2です。
-
-```text
-revisions.runtime
-  document_sha256
-  catalog.id
-  catalog.sha256
-  profile_set
-
-revisions.reference
-  reference/model provenance
-
-revisions.evaluation_schema
-  evaluation schema identity
-```
-
-`reference`/`evaluation_schema`へdecoder listを再複製しません。
-
-一方、実行時に選択された値はcandidate provenanceとしてsnapshotします。
-
-```text
-profile_set
-variant
-resolved profile
 decoder
 artifact contract
-runtime catalog fingerprint
-variant bundle SHA
+tokenizer kind
+required/optional artifact roles
+runtime feature requirements
+profile set
+variant -> profile mapping
+default variant
 ```
 
-ここでdecoderを記録するのはSource of Truthの重複ではなく、過去runを直接読めるようにする実行結果snapshotです。
+candidate側は`profile_set + variant`だけで参照します。
 
 ---
 
-# Evaluator Capability
+## run-context.json
 
-runtime catalogとevaluator capabilityは統合しません。
+run-contextは完全なgenerated execution snapshotです。
 
-```text
-config/asr-catalog.json
-    candidate/runtimeが要求する能力
-
-config/evaluators/*.toml
-    evaluator実装が提供する能力
-```
+人間の編集性より、再現性と監査性を優先します。
 
 ```text
-required capability
-        ↓
-validate-evaluator-capability.py
-        ↑
-provided capability
+host / OS / architecture
+Git commit
+runtime / provider
+config bundle identity
+catalog fingerprint
+selected candidate
+resolved profile / decoder
+artifact hashes
+resolved evaluation configuration
 ```
 
-意味が逆なので別contractです。
+ここにderived情報を保存することは重複ではありません。これはSource of Truthではなく、実行時点のsnapshotです。
+
+schema v2のみをcanonicalとし、run-context v1互換は維持しません。
 
 ---
 
-# HF_TARGETS_JSON
+## Legacy compatibility
 
-`HF_TARGETS_JSON`は現在routingだけを持ちます。
-
-```text
-current target -> HF_BUCKET / HF_MODEL_REPO
-```
+維持しません。
 
 ```text
-現在routing          HF_TARGETS_JSON
-採番policy           hf-allocation-catalog.json
-runtime semantics    asr-catalog.json
-config snapshot      config-NNNNNN
-execution snapshot   run-context.json
+candidate metadata v1/v2        unsupported
+3-file config bundle            unsupported
+run-context schema v1           unsupported
 ```
 
-Bucket割当は将来変更可能です。
+未使用のschemaを温存することで入力形式が複数になる方がリスクが高いためです。
 
 ---
 
-# Legacy Compatibility
+## Field追加の判断基準
 
-過去データは読み取り可能にしますが、新規作成には使いません。
-
-```text
-旧config      reference/evaluationにdecodersを持つ3-file形式
-旧candidate   metadata schema v1/v2
-旧run         run-context schema v1
-```
-
-新規書込み:
+新しいfieldを追加する前に次を確認します。
 
 ```text
-config       4-file + runtime.json
-candidate    metadata schema v3
-run-context  schema v2
+1. 人間しか決められないか？
+   YES -> human-authored contractへ追加候補
+
+2. file / Git / catalog / model config / runtimeから取得できるか？
+   YES -> human-authored contractへ追加しない
+
+3. 過去runの再現に必要か？
+   YES -> generated snapshotへ保存
+
+4. 別のSource of Truthに既に存在するか？
+   YES -> 再入力させず参照・snapshotする
 ```
 
-旧JSONを新しい意味へ黙って上書きしません。
-
----
-
-# 判断表
-
-| 値 | Source of Truth | 中央化理由 / 個別化理由 |
-|---|---|---|
-| candidate/experiment/config prefix | `hf-allocation-catalog.json` | 採番policyとして共有可能 |
-| decoder/profile semantics | `asr-catalog.json` | candidate間で共通 |
-| required artifact roles | `asr-catalog.json` | profile contract |
-| tokenizer kind | `asr-catalog.json` | profile contract |
-| runtime features | `asr-catalog.json` | profile contract |
-| targetのprofile set | target TOML | target固有選択 |
-| configのprofile set | `runtime.json` | immutable config snapshot |
-| artifact path/SHA/size | candidate metadata | artifact固有 |
-| tensor names | candidate metadata | export固有 |
-| token IDs/state/KV binding | candidate metadata | model/export固有 |
-| upstream/reference revision | `reference.json` | provenance固有 |
-| evaluation rule/revision | `evaluation-schema.json` | config固有 |
-| dataset revision | `datasets-lock.json` | config固有 |
-| current config pointer | `config/current.json` | mutable pointer |
-| current Bucket routing | `HF_TARGETS_JSON` | operational routing |
-| 実行時解決結果 | `run-context.json` | immutable execution snapshot |
-
-新しいJSON fieldを追加するときは、まずこの表と同じ基準で「policyか、snapshot固有factか、execution snapshotか」を判定してください。
+目標は「schemaに情報を詰めること」ではなく、**人間が間違えられる入力欄を最小化すること**です。
