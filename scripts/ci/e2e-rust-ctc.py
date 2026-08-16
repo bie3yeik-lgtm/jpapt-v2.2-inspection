@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
 from pathlib import Path
 
 ZERO_SHA256 = "0" * 64
@@ -12,6 +14,21 @@ def load_json(path: Path) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RuntimeError(f"expected JSON object: {path}")
     return value
+
+
+def nonempty_env(name: str, fallback: str) -> str:
+    return os.environ.get(name) or fallback
+
+
+def reject_nulls(value: object, path: str = "$") -> None:
+    if value is None:
+        raise RuntimeError(f"Rust E2E run-context must not contain null: {path}")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            reject_nulls(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            reject_nulls(item, f"{path}[{index}]")
 
 
 def prepare(contract_path: Path, output: Path) -> None:
@@ -27,44 +44,48 @@ def prepare(contract_path: Path, output: Path) -> None:
     if not model_path.is_file():
         raise RuntimeError(f"candidate primary artifact is missing: {model_path}")
 
+    candidate_id = str(contract["candidate_id"])
     context = {
         "schema_version": 2,
         "run_id": "public-model-rust-ctc-e2e",
         "created_at": "2026-08-16T00:00:00Z",
-        "config_identity": {
-            "config_version": "public-model-e2e",
-            "config_bundle_sha256": ZERO_SHA256,
-        },
+        "config_identity": "public-model-e2e-v1",
         "model_id": "TKU410410103/wav2vec2-base-japanese-asr",
         "environment_id": "linux",
         "provider_id": "cpu",
-        "evaluation_id": "public-model-e2e",
+        "evaluation_id": "smoke",
         "artifact": {
             "path": str(model_path.resolve()),
-            "role": "primary",
-            "sha256": primary.get("sha256"),
-            "size_bytes": primary.get("size_bytes"),
+            "sha256": str(primary["sha256"]),
+            "size_bytes": int(primary["size_bytes"]),
+            "candidate_id": candidate_id,
+            "artifact_role": "primary",
         },
         "git": {
             "repository": "bie3yeik-lgtm/jpapt-v2.2-inspection",
-            "commit": ZERO_SHA256,
-            "ref": "agent/public-model-rust-e2e",
+            "commit": nonempty_env("GITHUB_SHA", ZERO_SHA256),
+            "ref": nonempty_env("GITHUB_REF_NAME", "agent/provider-strict-probes"),
             "dirty": False,
         },
         "host": {
             "os": "linux",
-            "architecture": "x86_64",
-            "hostname": None,
-            "python_version": None,
+            "architecture": platform.machine() or "x86_64",
+            "hostname": platform.node() or "github-runner",
+            "python_version": platform.python_version(),
+            "implementation": platform.python_implementation(),
             "is_wsl": False,
+            "github_runner_os": nonempty_env("RUNNER_OS", "linux"),
+            "github_runner_arch": nonempty_env("RUNNER_ARCH", platform.machine() or "x86_64"),
+            "github_run_id": nonempty_env("GITHUB_RUN_ID", "local"),
+            "github_run_attempt": nonempty_env("GITHUB_RUN_ATTEMPT", "1"),
         },
         "runtime": {
             "implementation": "rust",
             "backend": "onnxruntime",
-            "backend_version": None,
+            "backend_version": "resolved-by-rust-runtime",
             "provider_id": "cpu",
             "provider_ort_name": "CPUExecutionProvider",
-            "provider_available": None,
+            "provider_available": False,
         },
         "revisions": {
             "reference": {"document_sha256": ZERO_SHA256},
@@ -101,6 +122,7 @@ def prepare(contract_path: Path, output: Path) -> None:
             "purpose": "public real-model Rust CTC regression canary",
         },
     }
+    reject_nulls(context)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
