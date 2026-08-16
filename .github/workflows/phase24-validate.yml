@@ -1,0 +1,121 @@
+name: Phase24 Validate
+
+on:
+  push:
+    branches: [agent/review-minimal-json-bucket-phase24]
+    paths:
+      - ".github/workflows/phase24-validate.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_BUCKET: gawohok7/jpapt-v2.2-dev-bucket
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/review-minimal-json-bucket-phase24
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Install HF CLI
+        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+      - name: Validate simplified HF policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --locked -p asr-hf --all-targets -- -D warnings
+          cargo test --locked -p asr-hf
+          cargo run --quiet --locked -p asr-hf -- validate-targets
+          cargo run --quiet --locked -p asr-hf -- resolve-target --target parakeet-tdt_ctc-0.6b-ja | grep -q '^HF_BUCKET=gawohok7/jpapt-v2.2-dev-bucket$'
+          cargo run --quiet --locked -p asr-hf -- resolve-target --bucket gawohok7/jpapt-v2.2-dev-bucket | grep -q '^HF_TARGET_ID=parakeet-tdt_ctc-0.6b-ja$'
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix candidates)" == candidate ]]
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix experiments)" == experiment ]]
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix config)" == config ]]
+
+          for script in \
+            scripts/hf/hf-allocate-id.sh \
+            scripts/hf/hf-request-id.sh \
+            scripts/hf/hf-push-candidate.sh \
+            scripts/hf/hf-fetch-candidate.sh \
+            scripts/hf/hf-push-config-version.sh; do
+            bash -n "$script"
+          done
+
+          if git grep -nE 'hf-allocation-catalog|candidate-prefix-key|allocation-fingerprint|--targets-json|HF_TARGETS_JSON|prefix_key' -- \
+              ':!.github/workflows/phase24-audit.yml' ':!.github/workflows/phase24-validate.yml'; then
+            echo 'obsolete HF routing/allocation references remain' >&2
+            exit 1
+          fi
+
+          tmp="$(mktemp -d)"
+          printf '%s\n' \
+            'ctc/candidate-000001/metadata.json' \
+            'tdt/candidate-000004/metadata.json' > "$tmp/legacy.txt"
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$tmp/legacy.txt" --runtime-variant ctc \
+            | tee "$tmp/legacy.out"
+          grep -q '^candidate_id=candidate-000001$' "$tmp/legacy.out"
+          grep -q '^relative_path=ctc/candidate-000001$' "$tmp/legacy.out"
+          grep -q '^legacy=true$' "$tmp/legacy.out"
+
+          printf '%s\n' \
+            'ctc/candidate-000009/metadata.json' \
+            'candidate-000003/metadata.json' > "$tmp/mixed.txt"
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$tmp/mixed.txt" --runtime-variant ctc \
+            | tee "$tmp/mixed.out"
+          grep -q '^candidate_id=candidate-000003$' "$tmp/mixed.out"
+          grep -q '^legacy=false$' "$tmp/mixed.out"
+
+          cargo run --quiet --locked -p asr-hf -- write-allocation-response \
+            --output "$tmp/allocation.json" \
+            --request-id request-1 \
+            --allocation-id candidate-000007 \
+            --bucket example/bucket \
+            --collection candidates
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-response-id "$tmp/allocation.json")" == candidate-000007 ]]
+          python - "$tmp/allocation.json" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1]))
+          assert set(data)=={'schema_version','request_id','id','bucket','collection'}
+          assert data['schema_version']==4
+          PY
+          rm -rf "$tmp"
+
+      - name: Validate live Bucket candidate fallback
+        if: env.HF_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          listing="$(mktemp)"
+          trap 'rm -f "$listing"' EXIT
+          hf buckets list --token "$HF_TOKEN" "hf://buckets/${HF_BUCKET}/candidates" -R -q > "$listing"
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$listing" --runtime-variant ctc \
+            | tee /tmp/live-candidate.out
+          grep -q '^candidate_id=candidate-000001$' /tmp/live-candidate.out
+          grep -q '^relative_path=ctc/candidate-000001$' /tmp/live-candidate.out
+          grep -q '^legacy=true$' /tmp/live-candidate.out
+
+      - name: Commit normalized Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/asr-hf
+          if git diff --cached --quiet; then
+            echo 'already normalized'
+          else
+            git commit -m 'Normalize simplified HF policy'
+            git push origin HEAD:agent/review-minimal-json-bucket-phase24
+          fi
