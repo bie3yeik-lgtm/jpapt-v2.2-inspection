@@ -1,0 +1,34 @@
+name: Phase10 Normalize
+
+on:
+  push:
+    branches: [agent/rust-hf-allocation-envelope-phase10]
+    paths:
+      - .github/workflows/phase10-normalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-hf-allocation-envelope-phase10
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Normalize and validate
+        run: |
+          cargo generate-lockfile
+          cargo fmt --all
+          cargo clippy --locked -p asr-hf --all-targets -- -D warnings
+          cargo test --locked -p asr-hf
+      - name: Commit normalized Rust state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock rust/crates/asr-hf
+          git commit -m "Normalize allocation envelope Rust state"
+          git push origin HEAD:agent/rust-hf-allocation-envelope-phase10
