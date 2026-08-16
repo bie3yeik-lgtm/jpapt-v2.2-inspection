@@ -5,6 +5,8 @@ on:
     branches: [agent/rust-hf-config-publish-phase12]
     paths:
       - .github/workflows/phase12-normalize.yml
+      - rust/crates/asr-contracts/**
+      - scripts/hf/hf-push-config-version.sh
 
 permissions:
   contents: write
