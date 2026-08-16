@@ -24,13 +24,27 @@ BUCKET="${BUCKET%/}"
 [[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
 REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
 
-if [[ -z "${HF_TARGET_ID:-}" && -n "${HF_TARGETS_JSON:-}" ]]; then
+if [[ -n "${HF_TARGETS_JSON:-}" ]]; then
   HF_TARGET_ID="$(python - "$BUCKET" <<'PY'
-import json, os, sys
+import json
+import os
+import sys
+
 bucket=sys.argv[1]
 raw=json.loads(os.environ["HF_TARGETS_JSON"])
-matches=[target for target,value in raw.items() if isinstance(value,dict) and value.get("HF_BUCKET")==bucket]
-if len(matches)==1: print(matches[0])
+if not isinstance(raw,dict):
+    raise SystemExit("HF_TARGETS_JSON root must be an object")
+matches=[
+    target
+    for target,value in raw.items()
+    if isinstance(value,dict) and value.get("HF_BUCKET")==bucket
+]
+if len(matches)!=1:
+    raise SystemExit(
+        f"HF_BUCKET {bucket!r} must match exactly one HF_TARGETS_JSON target; "
+        f"matches={matches!r}"
+    )
+print(matches[0])
 PY
 )"
   export HF_TARGET_ID
@@ -74,8 +88,6 @@ The numeric suffix is machine-managed. Do not manually renumber or reuse it.
 The prefix is descriptive only and does not define an independent sequence.
 EOF
 
-# Keep stdout reserved for the allocated ID so callers can safely use command
-# substitution. HF CLI progress remains intentionally suppressed here.
 hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md" >/dev/null
 
 log "Allocated ${COLLECTION}/${ID}"
