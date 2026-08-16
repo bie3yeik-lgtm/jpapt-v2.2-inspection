@@ -86,8 +86,8 @@ jobs:
           python scripts/dev/doctor.py
           cargo run --quiet --locked -p asr-hf -- validate-targets
           python scripts/ci/validate-github-action-versions.py
-          python scripts/ci/resolve-asr-catalog.py fingerprint catalog_id
-          python scripts/ci/resolve-asr-catalog.py fingerprint sha256
+          cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint catalog_id
+          cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint sha256
           cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id
           cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256
           bash -n scripts/hf/hf-allocate-id.sh
