@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from datasets import Dataset
+import pytest
 
+from parakeet_onnx.evaluation import (
+    ExperimentCapsuleError,
+    read_experiment_capsule,
+    validate_experiment_capsule,
+)
 from parakeet_onnx.evaluation.parquet import (
     EXPERIMENT_CAPSULE_SCHEMA_VERSION,
     _atomic_write_parquet,
@@ -109,12 +115,16 @@ def _benchmark(run_id: str = "run-001") -> dict[str, object]:
     }
 
 
-def test_build_experiment_capsule_rows_is_flat_and_deterministic() -> None:
-    rows = build_experiment_capsule_rows(
+def _rows() -> list[dict[str, object]]:
+    return build_experiment_capsule_rows(
         run_context={"run_id": "run-001", "provider_id": "cpu"},
         samples=[_sample()],
         benchmark=_benchmark(),
     )
+
+
+def test_build_experiment_capsule_rows_is_flat_and_deterministic() -> None:
+    rows = _rows()
 
     assert rows[0]["record_kind"] == "manifest"
     assert rows[1]["record_kind"] == "sample"
@@ -130,29 +140,20 @@ def test_build_experiment_capsule_rows_is_flat_and_deterministic() -> None:
     assert "quality.cer" in metric_names
     assert "samples.total_audio_duration_sec" in metric_names
     assert "provider.execution_proven" not in metric_names
-
     assert [row["ordinal"] for row in rows] == list(range(len(rows)))
 
 
 def test_build_experiment_capsule_rows_rejects_cross_run_sample() -> None:
-    try:
+    with pytest.raises(ValueError, match="sample result run_id"):
         build_experiment_capsule_rows(
             run_context={"run_id": "run-001"},
             samples=[_sample("run-other")],
             benchmark=_benchmark(),
         )
-    except ValueError as exc:
-        assert "sample result run_id" in str(exc)
-    else:  # pragma: no cover - assertion guard
-        raise AssertionError("cross-run sample was accepted")
 
 
 def test_atomic_write_parquet_round_trips_with_datasets(tmp_path) -> None:
-    rows = build_experiment_capsule_rows(
-        run_context={"run_id": "run-001", "provider_id": "cpu"},
-        samples=[_sample()],
-        benchmark=_benchmark(),
-    )
+    rows = _rows()
     path = tmp_path / "run.parquet"
 
     _atomic_write_parquet(path, rows)
@@ -162,3 +163,40 @@ def test_atomic_write_parquet_round_trips_with_datasets(tmp_path) -> None:
     assert restored.num_rows == len(rows)
     assert restored[0]["record_kind"] == "manifest"
     assert restored[1]["sample_id"] == "sample-001"
+
+
+def test_reader_validates_and_exposes_samples_and_metrics(tmp_path) -> None:
+    path = tmp_path / "run.parquet"
+    _atomic_write_parquet(path, _rows())
+
+    capsule = read_experiment_capsule(path)
+
+    assert capsule.run_id == "run-001"
+    assert len(capsule.samples) == 1
+    assert capsule.samples[0]["sample_id"] == "sample-001"
+    assert capsule.metric("quality.cer") == pytest.approx(0.1)
+    assert validate_experiment_capsule(path, expected_run_id="run-001") == 1
+
+
+def test_reader_rejects_expected_run_id_mismatch(tmp_path) -> None:
+    path = tmp_path / "run.parquet"
+    _atomic_write_parquet(path, _rows())
+
+    with pytest.raises(ExperimentCapsuleError, match="expected run_id"):
+        validate_experiment_capsule(path, expected_run_id="run-other")
+
+
+def test_reader_rejects_benchmark_sample_count_mismatch(tmp_path) -> None:
+    benchmark = _benchmark()
+    assert isinstance(benchmark["samples"], dict)
+    benchmark["samples"]["attempted"] = 2
+    rows = build_experiment_capsule_rows(
+        run_context={"run_id": "run-001", "provider_id": "cpu"},
+        samples=[_sample()],
+        benchmark=benchmark,
+    )
+    path = tmp_path / "run.parquet"
+    _atomic_write_parquet(path, rows)
+
+    with pytest.raises(ExperimentCapsuleError, match="samples.attempted"):
+        read_experiment_capsule(path)
