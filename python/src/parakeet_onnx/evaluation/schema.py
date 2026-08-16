@@ -13,6 +13,7 @@ from jsonschema.exceptions import SchemaError
 from parakeet_onnx.config.paths import RepositoryPaths
 from parakeet_onnx.contract_io import parse_run_context
 from parakeet_onnx.contracts import ContractError, RunContext
+from parakeet_onnx.generated_candidate_io import parse_generated_candidate_contract
 
 
 class EvaluationSchemaError(RuntimeError):
@@ -143,11 +144,13 @@ class EvaluationSchemaRegistry:
 
     def validate_run_context(self, instance: Any) -> None:
         self.validate(self.RUN_CONTEXT, instance)
-        if isinstance(instance, RunContext):
-            instance.validate()
-            return
         try:
-            parse_run_context(_normalize_instance(instance))
+            if isinstance(instance, RunContext):
+                instance.validate()
+                context = instance
+            else:
+                context = parse_run_context(_normalize_instance(instance))
+            parse_generated_candidate_contract(context.metadata.get("candidate"))
         except ContractError as exc:
             raise EvaluationSchemaError(
                 f"run-context semantic contract violation: {exc}",
