@@ -287,7 +287,12 @@ fn revision_snapshot(
     let datasets_hash = canonical_sha256(&datasets_document)?;
     let runtime_hash = canonical_sha256(&runtime_document)?;
     let mut bundle = Sha256::new();
-    for hash in [&reference_hash, &evaluation_hash, &datasets_hash, &runtime_hash] {
+    for hash in [
+        &reference_hash,
+        &evaluation_hash,
+        &datasets_hash,
+        &runtime_hash,
+    ] {
         bundle.update(hash.as_bytes());
     }
     let bundle_sha256 = format!("{:x}", bundle.finalize());
