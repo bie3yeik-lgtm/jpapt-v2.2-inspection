@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "catalog_id": "asr-catalog-v1",
+  "id_prefixes": {
+    "candidate.default": "candidate",
+    "candidate.parakeet": "parakeet-candidate",
+    "candidate.whisper": "whisper-candidate",
+    "experiment.cpu_full": "cpu-full-eval",
+    "experiment.cross_platform_parity": "cross-platform-parity",
+    "experiment.rust_eval": "rust-eval",
+    "config.version": "config"
+  },
+  "decoder_profiles": {
+    "ctc-v1": {
+      "decoder": "ctc",
+      "artifact_contract": "ctc-single-graph-v1",
+      "tokenizer_kind": "vocabulary",
+      "required_artifact_roles": ["primary"],
+      "features": {
+        "kv_cache": false,
+        "multi_graph": false,
+        "transformers_processor": false,
+        "external_frontend": false,
+        "timestamps": false
+      }
+    },
+    "tdt-v1": {
+      "decoder": "tdt",
+      "artifact_contract": "tdt-multi-graph-v1",
+      "tokenizer_kind": "vocabulary",
+      "required_artifact_roles": ["encoder", "predictor", "joint"],
+      "features": {
+        "kv_cache": false,
+        "multi_graph": true,
+        "transformers_processor": false,
+        "external_frontend": false,
+        "timestamps": false
+      }
+    },
+    "whisper-autoregressive-v1": {
+      "decoder": "whisper_autoregressive",
+      "artifact_contract": "whisper-autoregressive-v1",
+      "tokenizer_kind": "transformers_processor",
+      "required_artifact_roles": ["encoder", "decoder"],
+      "optional_artifact_roles": ["decoder_with_past"],
+      "features": {
+        "kv_cache": true,
+        "multi_graph": true,
+        "transformers_processor": true,
+        "external_frontend": true,
+        "timestamps": false
+      }
+    }
+  },
+  "profile_sets": {
+    "parakeet-tdt-ctc-v1": {
+      "candidate_prefix_key": "candidate.parakeet",
+      "variants": {
+        "ctc": "ctc-v1",
+        "tdt": "tdt-v1"
+      },
+      "default_variant": "ctc"
+    },
+    "whisper-autoregressive-v1": {
+      "candidate_prefix_key": "candidate.whisper",
+      "variants": {
+        "whisper": "whisper-autoregressive-v1"
+      },
+      "default_variant": "whisper"
+    }
+  }
+}

@@ -55,7 +55,36 @@ def test_bucket_resolves_kotoba_target() -> None:
     assert "EXPECTED_UPSTREAM_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
     assert "EXPECTED_TOKENIZER_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
     assert "EXPECTED_FRAMEWORK=transformers" in result.stdout
+    assert "HF_PROFILE_SET=whisper-autoregressive-v1" in result.stdout
+    assert "ASR_RUNTIME_VARIANT=whisper" in result.stdout
+    assert "EXPECTED_RUNTIME_PROFILE=whisper-autoregressive-v1" in result.stdout
     assert "EXPECTED_DECODER=whisper_autoregressive" in result.stdout
+
+
+def test_parakeet_runtime_variant_switches_without_target_rewrite() -> None:
+    default = _run(
+        "--bucket",
+        "gawohok7/jpapt-v2.2-dev-bucket",
+        "--targets-json",
+        _mapping(),
+    )
+    tdt = _run(
+        "--bucket",
+        "gawohok7/jpapt-v2.2-dev-bucket",
+        "--targets-json",
+        _mapping(),
+        "--runtime-variant",
+        "tdt",
+    )
+    assert default.returncode == 0, default.stderr
+    assert tdt.returncode == 0, tdt.stderr
+    assert "HF_PROFILE_SET=parakeet-tdt-ctc-v1" in default.stdout
+    assert "ASR_RUNTIME_VARIANT=ctc" in default.stdout
+    assert "EXPECTED_RUNTIME_PROFILE=ctc-v1" in default.stdout
+    assert "EXPECTED_DECODER=ctc" in default.stdout
+    assert "ASR_RUNTIME_VARIANT=tdt" in tdt.stdout
+    assert "EXPECTED_RUNTIME_PROFILE=tdt-v1" in tdt.stdout
+    assert "EXPECTED_DECODER=tdt" in tdt.stdout
 
 
 def test_unknown_bucket_is_rejected() -> None:
@@ -65,7 +94,6 @@ def test_unknown_bucket_is_rejected() -> None:
         "--targets-json",
         _mapping(),
     )
-
     assert result.returncode == 1
     assert "is not present in the current HF target mapping" in result.stderr
 
@@ -89,7 +117,6 @@ def test_duplicate_bucket_is_rejected_in_current_snapshot() -> None:
         "--targets-json",
         duplicated,
     )
-
     assert result.returncode == 1
     assert "in the current routing snapshot" in result.stderr
 
@@ -113,7 +140,6 @@ def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
         "--targets-json",
         moved,
     )
-
     assert result.returncode == 0, result.stderr
     assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
     assert "HF_BUCKET=gawohok7/tf-v1-capacity-bucket-b" in result.stdout

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from parakeet_onnx.config import resolve_config
+from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.datasets import (
     DatasetMaterializer,
     DatasetResolver,
@@ -31,12 +32,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parakeet-onnx-evaluate",
         description=(
-            "Metadata-driven Python ONNX ASR evaluator. Decoder/runtime/artifact "
-            "selection is resolved from candidate metadata.json."
+            "Metadata-driven Python ONNX ASR evaluator. Runtime selection is "
+            "resolved from config/asr-catalog.json plus candidate metadata bindings."
         ),
     )
     parser.add_argument("--provider", required=True)
     parser.add_argument("--candidate-dir", type=Path, required=True)
+    parser.add_argument(
+        "--runtime-variant",
+        default=None,
+        help=(
+            "Runtime variant key such as ctc, tdt, or whisper. Defaults to "
+            "ASR_RUNTIME_VARIANT and then the central profile-set default."
+        ),
+    )
     parser.add_argument(
         "--candidate-id",
         default=None,
@@ -49,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Deprecated compatibility assertion. Runtime selection no longer uses "
-            "this path; metadata.json artifacts are authoritative."
+            "this path; candidate metadata artifacts are authoritative."
         ),
     )
     parser.add_argument(
@@ -57,8 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "Deprecated compatibility assertion. Canonical schema-v2 candidates "
-            "declare tokenizer/processor assets in metadata.json."
+            "Deprecated compatibility assertion. Canonical schema-v3 candidates "
+            "declare tokenizer paths per runtime variant."
         ),
     )
     parser.add_argument("--evaluation", default="smoke")
@@ -86,32 +95,58 @@ def main() -> int:
         environment=args.environment,
     )
     revisions = load_revision_bundle(args.revisions)
-    candidate = CandidateArtifacts.load(args.candidate_dir)
+    requested_variant = args.runtime_variant or os.environ.get("ASR_RUNTIME_VARIANT")
+
+    expected_decoder = revisions.reference.decoders.default
+    selected_variant = requested_variant
+    expected_profile_id: str | None = None
+    if revisions.runtime is not None:
+        catalog = load_repository_catalog(config.repository_root)
+        selected_variant, expected_profile_id, expected_decoder = (
+            revisions.runtime.resolve_variant(requested_variant, catalog=catalog)
+        )
+
+    candidate = CandidateArtifacts.load(
+        args.candidate_dir,
+        variant=selected_variant,
+        repository_root=config.repository_root,
+    )
 
     if args.candidate_id is not None and args.candidate_id != candidate.candidate_id:
         raise SystemExit(
             "candidate ID mismatch: "
             f"argument={args.candidate_id!r}, metadata={candidate.candidate_id!r}"
         )
-    expected_decoder = revisions.reference.decoders.default
+    if revisions.runtime is not None:
+        if candidate.profile_set_id != revisions.runtime.profile_set_id:
+            raise SystemExit(
+                "candidate/config profile-set mismatch: "
+                f"candidate={candidate.profile_set_id!r}, "
+                f"config={revisions.runtime.profile_set_id!r}"
+            )
+        if expected_profile_id is not None and candidate.profile_id != expected_profile_id:
+            raise SystemExit(
+                "candidate/config runtime-profile mismatch: "
+                f"candidate={candidate.profile_id!r}, config={expected_profile_id!r}"
+            )
     if candidate.decoder != expected_decoder:
         raise SystemExit(
-            "candidate/reference decoder mismatch: "
-            f"candidate={candidate.decoder!r}, reference={expected_decoder!r}"
+            "candidate/config decoder mismatch after profile resolution: "
+            f"candidate={candidate.decoder!r}, expected={expected_decoder!r}"
         )
     if args.model is not None:
         asserted = args.model.expanduser().resolve()
         artifact_paths = {item.path for item in candidate.artifacts.values()}
         if asserted not in artifact_paths:
             raise SystemExit(
-                "deprecated --model assertion is not one of metadata artifacts: "
+                "deprecated --model assertion is not one of selected variant artifacts: "
                 f"{asserted}"
             )
     if args.vocabulary is not None and candidate.schema_version >= 2:
         asserted_vocab = args.vocabulary.expanduser().resolve()
         if candidate.tokenizer is None or candidate.tokenizer.path != asserted_vocab:
             raise SystemExit(
-                "deprecated --vocabulary assertion does not match metadata tokenizer"
+                "deprecated --vocabulary assertion does not match selected variant tokenizer"
             )
 
     materializer_value = config.environment.get(
@@ -139,7 +174,10 @@ def main() -> int:
         expected_sample_count=config.evaluation.expected_sample_count,
     )
 
-    metadata: dict[str, object] = {"candidate": candidate.provenance_dict()}
+    metadata: dict[str, object] = {
+        "candidate": candidate.provenance_dict(),
+        "runtime_variant": candidate.variant or candidate.decoder,
+    }
     if args.candidate_id:
         metadata["requested_candidate_id"] = args.candidate_id
     experiment_id = args.experiment_id or os.environ.get("EXPERIMENT_ID")
@@ -191,6 +229,8 @@ def main() -> int:
     if experiment_id:
         print(f"experiment_id: {experiment_id}")
     print(f"candidate_id: {candidate.candidate_id}")
+    print(f"runtime_variant: {candidate.variant or candidate.decoder}")
+    print(f"runtime_profile: {candidate.profile_id or 'legacy'}")
     print(f"candidate_bundle_sha256: {candidate.bundle_sha256}")
     print(f"decoder: {candidate.decoder}")
     print(f"acceptance.passed: {benchmark.acceptance.passed}")

@@ -9,17 +9,19 @@ log(){ printf '[hf-request-id] %s\n' "$*" >&2; }
 fail(){ printf '[hf-request-id] ERROR: %s\n' "$*" >&2; exit 1; }
 
 COLLECTION="${1:-}"
-PREFIX="${2:-}"
+PREFIX_KEY="${2:-}"
 [[ "$COLLECTION" == "candidates" || "$COLLECTION" == "experiments" || "$COLLECTION" == "config" ]] \
   || fail "collection must be 'candidates', 'experiments', or 'config'"
-[[ -n "$PREFIX" ]] || fail "prefix is required"
+[[ -n "$PREFIX_KEY" ]] || fail "allocation prefix key is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
 command -v python >/dev/null 2>&1 || fail "python is required"
 
-# Same-repository callers may use github.token. Cross-repository callers must
-# provide HF_ALLOCATOR_GITHUB_TOKEN (or GH_TOKEN) that can dispatch/read Actions
-# in the allocator repository.
+# Validate the semantic key locally before dispatching so typo requests never
+# consume a central sequence number.
+python scripts/ci/resolve-asr-catalog.py prefix "$PREFIX_KEY" >/dev/null \
+  || fail "unknown allocation prefix key: $PREFIX_KEY"
+
 if [[ -z "${GH_TOKEN:-}" && -n "${HF_ALLOCATOR_GITHUB_TOKEN:-}" ]]; then
   export GH_TOKEN="$HF_ALLOCATOR_GITHUB_TOKEN"
 fi
@@ -52,19 +54,20 @@ keys = {
     "candidate_id": "CANDIDATE_ID",
     "evaluation_id": "EVALUATION_ID",
     "provider_id": "PROVIDER_ID",
+    "runtime_variant": "ASR_RUNTIME_VARIANT",
 }
 print(json.dumps({k: os.environ.get(v) for k, v in keys.items() if os.environ.get(v)}, separators=(",", ":")))
 PY
 )"
 
-log "Dispatching ${COLLECTION}/${PREFIX} allocation to ${ALLOCATOR_REPOSITORY}"
+log "Dispatching ${COLLECTION}/${PREFIX_KEY} allocation to ${ALLOCATOR_REPOSITORY}"
 gh workflow run "$ALLOCATOR_WORKFLOW" \
   --repo "$ALLOCATOR_REPOSITORY" \
   --ref "$ALLOCATOR_REF" \
   -f "request_id=${REQUEST_ID}" \
   -f "hf_bucket=${HF_BUCKET#hf://buckets/}" \
   -f "collection=${COLLECTION}" \
-  -f "prefix=${PREFIX}" \
+  -f "prefix_key=${PREFIX_KEY}" \
   -f "metadata_json=${METADATA_JSON}"
 
 RUN_ID=""
