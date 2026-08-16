@@ -363,7 +363,7 @@ CTC例:
 {
   "schema_version": 1,
   "candidate_root": "/work/candidate",
-  "candidate_id": "parakeet-candidate-000124",
+  "candidate_id": "candidate-000124",
   "profile_set": "parakeet-tdt-ctc-v1",
   "variant": "ctc",
   "profile": "ctc-v1",
@@ -437,7 +437,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
     "path": ".ci/hf/candidate/ctc/model.onnx",
     "sha256": "76f97f39bc9290c79b95ae59e8a30f86d25c73fc6d4053903fca01b43dd9ff2f",
     "size_bytes": 625147392,
-    "candidate_id": "parakeet-candidate-000124",
+    "candidate_id": "candidate-000124",
     "artifact_role": "primary"
   },
   "git": {
@@ -540,7 +540,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
     "candidate": {
       "schema_version": 1,
       "candidate_root": "/work/candidate",
-      "candidate_id": "parakeet-candidate-000124",
+      "candidate_id": "candidate-000124",
       "profile_set": "parakeet-tdt-ctc-v1",
       "variant": "ctc",
       "profile": "ctc-v1",
@@ -609,7 +609,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
   "schema_version": 1,
   "run_id": "20260816T120000Z-parakeet-tdt-ctc-0.6b-ja-linux-cpu-full-2b8648cd-a1b2c3d4",
   "candidate": {
-    "candidate_id": "parakeet-candidate-000124",
+    "candidate_id": "candidate-000124",
     "model_id": "parakeet-tdt_ctc-0.6b-ja",
     "artifact_sha256": "2b8648cd6851f205497c0e0fc06f52ce8f52f9cd31f233fc1a2bf46f49d8a133",
     "artifact_size_bytes": 625147392,
@@ -745,7 +745,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
 ```json
 {
   "schema_version": 3,
-  "candidate_id": "parakeet-candidate-000124",
+  "candidate_id": "candidate-000124",
   "runtime_variant": "ctc",
   "validated_run_id": "20260816T120000Z-parakeet-tdt-ctc-0.6b-ja-linux-cpu-full-2b8648cd-a1b2c3d4",
   "model_id": "parakeet-tdt_ctc-0.6b-ja",
@@ -758,7 +758,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
   "source": {
     "type": "hf_bucket_candidate",
     "bucket": "gawohok7/jpapt-v2.2-dev-bucket",
-    "candidate_path": "candidates/parakeet-candidate-000124"
+    "candidate_path": "candidates/candidate-000124"
   },
   "destination": {
     "type": "hf_model_repo",

@@ -197,7 +197,7 @@ benchmark名は用途に応じて `cpu`, `cuda`, `directml`, `coreml`, `parity` 
 
 ```bash
 scripts/hf/hf-promote-candidate.sh \
-  parakeet-candidate-000124 \
+  candidate-000124 \
   results/<run>
 ```
 

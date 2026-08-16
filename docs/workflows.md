@@ -286,7 +286,7 @@ benchmarks/<candidate-id>/cpu/<run-id>.json
 
 ```bash
 scripts/hf/hf-promote-candidate.sh \
-  parakeet-candidate-000124 \
+  candidate-000124 \
   results/<run>
 ```
 
