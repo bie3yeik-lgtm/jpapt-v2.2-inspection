@@ -246,7 +246,7 @@ Whisperでは `canonical_framework` を `transformers` とし、upstream/tokeniz
       "revision": "7e75d6c3b96c2348d4ef43a9e5fce742e4ed0131",
       "subset": "default",
       "split": "test",
-      "sha256": "1f1c26f32ad67114734a7a47619a3669fdc8f9a6aa3e32796bb83d3cf314967",
+      "sha256": "1f1c26f32adf67114734a7a47619a3669fdc8f9a6aa3e32796bb83d3cf314967",
       "manifest": "evaluation/manifests/jsut-basic5000.jsonl"
     }
   ]
@@ -504,7 +504,7 @@ artifact hash/size、binding、blank IDを人が編集しません。
           "revision": "7e75d6c3b96c2348d4ef43a9e5fce742e4ed0131",
           "subset": "default",
           "split": "test",
-          "sha256": "1f1c26f32ad67114734a7a47619a3669fdc8f9a6aa3e32796bb83d3cf314967",
+          "sha256": "1f1c26f32adf67114734a7a47619a3669fdc8f9a6aa3e32796bb83d3cf314967",
           "manifest": "evaluation/manifests/jsut-basic5000.jsonl"
         }
       ]
