@@ -9,6 +9,10 @@ fail() {
   exit 1
 }
 
+warn() {
+  printf '[ghcr-matrix] WARNING: %s\n' "$*" >&2
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"
 }
@@ -31,6 +35,23 @@ matched=0
 mapfile -t dockerfiles < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
 (( ${#dockerfiles[@]} > 0 )) || fail "docker/*/Dockerfile was not found"
 
+mapfile -t repository_targets < <(
+  find config/hf-targets -maxdepth 1 -type f -name '*.toml' -printf '%f\n' \
+    | sed 's/\.toml$//' \
+    | sort
+)
+(( ${#repository_targets[@]} > 0 )) || fail "config/hf-targets contains no target definitions"
+
+# HF_TARGETS_JSON is a checked routing/selection snapshot, not an authority
+# capable of creating a new target. Extra variable entries are ignored until
+# the repository has the corresponding config/hf-targets/<id>.toml contract.
+while IFS= read -r variable_target; do
+  [[ -n "$variable_target" ]] || continue
+  if [[ ! -f "config/hf-targets/${variable_target}.toml" ]]; then
+    warn "HF_TARGETS_JSON contains ${variable_target}, but the repository has no source-controlled target definition; ignoring it"
+  fi
+done < <(printf '%s' "$HF_TARGETS_JSON" | jq -r 'keys[]')
+
 for dockerfile in "${dockerfiles[@]}"; do
   context="$(dirname "$dockerfile")"
   source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
@@ -43,13 +64,16 @@ for dockerfile in "${dockerfiles[@]}"; do
   [[ -n "$package" ]] || fail "$dockerfile must declare LABEL io.jpapt.ghcr.package"
   [[ -n "$role" ]] || fail "$dockerfile must declare LABEL io.jpapt.role"
 
-  while IFS= read -r target_id; do
-    [[ -n "$target_id" ]] || continue
+  for target_id in "${repository_targets[@]}"; do
     if [[ -n "$TARGET_FILTER" && "$target_id" != "$TARGET_FILTER" ]]; then
       continue
     fi
 
-    route="$(printf '%s' "$HF_TARGETS_JSON" | jq -ce --arg id "$target_id" '.[$id]')"
+    route="$(printf '%s' "$HF_TARGETS_JSON" | jq -ce --arg id "$target_id" '.[$id] // empty')"
+    if [[ -z "$route" ]]; then
+      warn "source-controlled target ${target_id} is absent from HF_TARGETS_JSON; excluding it from GHCR evaluation"
+      continue
+    fi
     var_bucket="$(printf '%s' "$route" | jq -er '.HF_BUCKET | strings | select(length > 0)')"
     var_model_repo="$(printf '%s' "$route" | jq -er '.HF_MODEL_REPO | strings | select(length > 0)')"
 
@@ -85,10 +109,10 @@ for dockerfile in "${dockerfiles[@]}"; do
       '{target_id:$target_id,docker_context:$docker_context,dockerfile:$dockerfile,package:$package,image:$image,role:$role,source_repo:$source_repo,framework:$framework,bucket:$bucket,model_repo:$model_repo,runtime_variant:$runtime_variant}')"
     entries="$(jq -c --argjson item "$object" '. + [$item]' <<<"$entries")"
     matched=$((matched + 1))
-  done < <(printf '%s' "$HF_TARGETS_JSON" | jq -r 'keys[]')
+  done
 done
 
-(( matched > 0 )) || fail "no Dockerfile matched any HF_TARGETS_JSON target${TARGET_FILTER:+ (filter=$TARGET_FILTER)}"
+(( matched > 0 )) || fail "no Dockerfile matched a source-controlled HF target present in HF_TARGETS_JSON${TARGET_FILTER:+ (filter=$TARGET_FILTER)}"
 
 matrix="$(jq -c '{include:.}' <<<"$entries")"
 printf '%s\n' "$matrix"
