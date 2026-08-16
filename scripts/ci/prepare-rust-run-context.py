@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from parakeet_onnx.config import resolve_config
@@ -94,8 +95,13 @@ def _normalize_rust_only_optionals(context: dict[str, Any]) -> None:
     revisions = context["revisions"]
     if not isinstance(revisions, dict):
         raise RuntimeError("run-context revisions must be an object")
-    if revisions.get("config_version") is None:
-        revisions["config_version"] = "unversioned"
+    config_version = revisions.get("config_version")
+    if not isinstance(config_version, str) or re.fullmatch(
+        r"config-\d{6}", config_version
+    ) is None:
+        raise RuntimeError(
+            "Rust run-context requires concrete revisions.config_version matching config-NNNNNN"
+        )
     datasets = revisions.get("datasets")
     if isinstance(datasets, dict):
         entries = datasets.get("entries")
@@ -143,6 +149,10 @@ def main() -> int:
         environment=args.environment,
     )
     revisions = load_revision_bundle(args.revisions)
+    if revisions.config_version is None:
+        raise RuntimeError(
+            "Rust run-context requires resolved.json with canonical config-NNNNNN identity"
+        )
     candidate = CandidateArtifacts.load(
         args.candidate_dir,
         variant=args.runtime_variant,
