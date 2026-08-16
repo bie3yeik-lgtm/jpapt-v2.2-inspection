@@ -245,11 +245,16 @@ fn build_run_context_command(
                 revisions_root = Some(PathBuf::from(take_value(&mut args, "--revisions")?))
             }
             "--candidate-contract" => {
-                candidate_contract = Some(PathBuf::from(take_value(&mut args, "--candidate-contract")?))
+                candidate_contract = Some(PathBuf::from(take_value(
+                    &mut args,
+                    "--candidate-contract",
+                )?))
             }
             "--output" => output = Some(PathBuf::from(take_value(&mut args, "--output")?)),
             "--experiment-id" => experiment_id = Some(take_value(&mut args, "--experiment-id")?),
-            "--runtime-variant" => runtime_variant = Some(take_value(&mut args, "--runtime-variant")?),
+            "--runtime-variant" => {
+                runtime_variant = Some(take_value(&mut args, "--runtime-variant")?)
+            }
             "--strict-provider" => strict_provider = true,
             "--optimization-level" => {
                 optimization_level = take_value(&mut args, "--optimization-level")?
@@ -259,7 +264,8 @@ fn build_run_context_command(
     }
 
     let repository_root = repository_root.unwrap_or_else(|| PathBuf::from("."));
-    let candidate_contract = candidate_contract.ok_or_else(|| "--candidate-contract is required".to_owned())?;
+    let candidate_contract =
+        candidate_contract.ok_or_else(|| "--candidate-contract is required".to_owned())?;
     if let Some(expected_variant) = runtime_variant.as_deref() {
         let candidate = read_json(&candidate_contract)?;
         let actual = candidate

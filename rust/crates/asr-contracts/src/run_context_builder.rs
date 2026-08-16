@@ -28,13 +28,14 @@ pub struct RunContextBuildOptions {
 }
 
 pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
-    let repository_root = options
-        .repository_root
-        .canonicalize()
-        .map_err(|source| ContractError::Io {
-            path: options.repository_root.clone(),
-            source,
-        })?;
+    let repository_root =
+        options
+            .repository_root
+            .canonicalize()
+            .map_err(|source| ContractError::Io {
+                path: options.repository_root.clone(),
+                source,
+            })?;
 
     let mut config = resolve_project_config(
         &repository_root,
@@ -67,12 +68,17 @@ pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
     expectations.decoder = Some(decoder.to_owned());
     let (revisions, resolution) = validate_revision_bundle(&options.revisions_root, &expectations)?;
 
-    if resolution.variant != variant || resolution.profile != profile || resolution.decoder != decoder {
+    if resolution.variant != variant
+        || resolution.profile != profile
+        || resolution.decoder != decoder
+    {
         return Err(ContractError::validation(
             "candidate runtime identity does not match resolved revision runtime identity",
         ));
     }
-    if revisions.runtime.catalog.id != catalog_id || revisions.runtime.catalog.sha256 != catalog_sha256 {
+    if revisions.runtime.catalog.id != catalog_id
+        || revisions.runtime.catalog.sha256 != catalog_sha256
+    {
         return Err(ContractError::validation(
             "candidate catalog does not match revision runtime catalog",
         ));
@@ -83,7 +89,9 @@ pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
     let artifact_sha256 = required_string(artifact_value, "/sha256", "artifact.sha256")?;
     let artifact_size = required_u64(artifact_value, "/size_bytes", "artifact.size_bytes")?;
     if artifact_size == 0 {
-        return Err(ContractError::validation("artifact.size_bytes must be positive"));
+        return Err(ContractError::validation(
+            "artifact.size_bytes must be positive",
+        ));
     }
     validate_sha256("artifact.sha256", artifact_sha256)?;
 
@@ -126,8 +134,15 @@ pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
             "optimization_level": options.optimization_level,
         }),
     );
-    if let Some(experiment_id) = options.experiment_id.as_deref().filter(|value| !value.is_empty()) {
-        metadata.insert("experiment_id".into(), Value::String(experiment_id.to_owned()));
+    if let Some(experiment_id) = options
+        .experiment_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        metadata.insert(
+            "experiment_id".into(),
+            Value::String(experiment_id.to_owned()),
+        );
     }
     for (key, variable) in [
         ("hf_target_id", "HF_TARGET_ID"),
@@ -219,7 +234,9 @@ fn primary_artifact(candidate: &Value) -> Result<(String, &Value)> {
         .and_then(Value::as_object)
         .ok_or_else(|| ContractError::validation("candidate artifacts must be an object"))?;
     if artifacts.is_empty() {
-        return Err(ContractError::validation("candidate artifacts must not be empty"));
+        return Err(ContractError::validation(
+            "candidate artifacts must not be empty",
+        ));
     }
     if let Some(value) = artifacts.get("primary") {
         return Ok(("primary".into(), value));

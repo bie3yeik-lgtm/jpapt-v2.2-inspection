@@ -304,9 +304,7 @@ fn string_array(value: &Value, name: &str) -> Result<Vec<String>> {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned)
                 .ok_or_else(|| {
-                    ContractError::validation(format!(
-                        "{name}[{index}] must be a non-empty string"
-                    ))
+                    ContractError::validation(format!("{name}[{index}] must be a non-empty string"))
                 })
         })
         .collect()
