@@ -4,10 +4,7 @@ use std::{
 };
 
 use ort::{
-    session::{
-        builder::GraphOptimizationLevel,
-        Session,
-    },
+    session::{builder::GraphOptimizationLevel, Session},
     value::TensorRef,
 };
 
@@ -92,6 +89,13 @@ impl SessionTuning {
         {
             tuning.allow_cpu_fallback = allow;
         }
+        if value
+            .pointer("/config/resolved/provider/validation/strict_provider_mode")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        {
+            tuning.allow_cpu_fallback = false;
+        }
         Ok(tuning)
     }
 }
@@ -146,15 +150,22 @@ impl OrtCtcSession {
 
         let started = Instant::now();
         let mut builder = Session::builder()?
-            .with_optimization_level(config.tuning.graph_optimization_level)?
-            .with_parallel_execution(config.tuning.parallel_execution)?
-            .with_memory_pattern(config.tuning.memory_pattern)?
-            .with_disable_cpu_fallback(!config.tuning.allow_cpu_fallback)?;
+            .with_optimization_level(config.tuning.graph_optimization_level)
+            .map_err(builder_error)?
+            .with_parallel_execution(config.tuning.parallel_execution)
+            .map_err(builder_error)?
+            .with_memory_pattern(config.tuning.memory_pattern)
+            .map_err(builder_error)?;
+        if !config.tuning.allow_cpu_fallback {
+            builder = builder
+                .with_disable_cpu_fallback()
+                .map_err(builder_error)?;
+        }
         if let Some(threads) = config.tuning.intra_threads {
-            builder = builder.with_intra_threads(threads)?;
+            builder = builder.with_intra_threads(threads).map_err(builder_error)?;
         }
         if let Some(threads) = config.tuning.inter_threads {
-            builder = builder.with_inter_threads(threads)?;
+            builder = builder.with_inter_threads(threads).map_err(builder_error)?;
         }
         builder = providers::configure(builder, config.provider)?;
         let session = builder.commit_from_file(&config.model_path)?;
@@ -248,6 +259,10 @@ impl OrtCtcSession {
             inference_ms: elapsed,
         })
     }
+}
+
+fn builder_error(error: ort::Error<ort::session::builder::SessionBuilder>) -> RuntimeError {
+    RuntimeError::ProviderConfiguration(error.to_string())
 }
 
 fn greedy_ctc_ids(logits: &[f32], shape: &[usize], blank_id: i64) -> Result<Vec<i64>> {
