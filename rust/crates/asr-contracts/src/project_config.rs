@@ -21,17 +21,6 @@ pub struct ResolvedProjectConfig {
     pub resolved: Value,
 }
 
-impl ResolvedProjectConfig {
-    pub fn manifest_path(&self, repository_root: &Path) -> PathBuf {
-        let path = PathBuf::from(&self.manifest);
-        if path.is_absolute() {
-            path
-        } else {
-            repository_root.join(path)
-        }
-    }
-}
-
 pub fn resolve_project_config(
     repository_root: impl AsRef<Path>,
     model_id: &str,
@@ -214,15 +203,14 @@ pub fn apply_runtime_overrides(
         .as_object_mut()
         .ok_or_else(|| ContractError::validation("resolved config root must be an object"))?;
     let provider = object_mut(root, "provider", "resolved.provider")?;
-    let session = object_mut(provider, "session", "resolved.provider.session")?;
-    let validation = object_mut(provider, "validation", "resolved.provider.validation")?;
     if optimization_level != "configured" {
-        session.insert(
+        object_mut(provider, "session", "resolved.provider.session")?.insert(
             "graph_optimization_level".into(),
             Value::String(optimization_level.to_owned()),
         );
     }
     if strict_provider {
+        let validation = object_mut(provider, "validation", "resolved.provider.validation")?;
         validation.insert("strict_provider_mode".into(), Value::Bool(true));
         validation.insert("allow_cpu_fallback".into(), Value::Bool(false));
     }
@@ -304,9 +292,7 @@ fn string_array(value: &Value, name: &str) -> Result<Vec<String>> {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned)
                 .ok_or_else(|| {
-                    ContractError::validation(format!(
-                        "{name}[{index}] must be a non-empty string"
-                    ))
+                    ContractError::validation(format!("{name}[{index}] must be a non-empty string"))
                 })
         })
         .collect()

@@ -225,21 +225,23 @@ jobs:
         run: |
           set -euo pipefail
           ARGS=(
+            build-run-context
+            --repository-root .
+            --model "${HF_TARGET_ID}"
             --provider "${{ matrix.provider }}"
             --evaluation "${{ inputs.evaluation }}"
             --environment "${{ matrix.environment }}"
-            --model-config "${HF_TARGET_ID}"
-            --candidate-dir .ci/candidate
+            --revisions .ci/hf/config/revisions
+            --candidate-contract .ci/candidate-contract.json
             --runtime-variant "${ASR_RUNTIME_VARIANT}"
             --experiment-id "${EXPERIMENT_ID}"
-            --revisions .ci/hf/config/revisions
             --optimization-level "${{ inputs.optimization_level }}"
             --output .ci/run-context.json
           )
           if [[ "${{ inputs.strict_provider }}" == "true" && "${{ matrix.provider }}" != "cpu" ]]; then
             ARGS+=(--strict-provider)
           fi
-          python scripts/ci/prepare-rust-run-context.py "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- "${ARGS[@]}"
 
       - name: Build Rust evaluator
         shell: bash

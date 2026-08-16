@@ -8,13 +8,18 @@ use asr_contracts::{
 };
 use serde_json::{Value, json};
 
+#[path = "../project_config.rs"]
+mod project_config;
 #[path = "../revisions.rs"]
 mod revisions;
+#[path = "../run_context_builder.rs"]
+mod run_context_builder;
 
 use revisions::{RevisionExpectations, validate_revision_bundle};
+use run_context_builder::{RunContextBuildOptions, build_run_context, write_run_context};
 
 fn usage() -> &'static str {
-    "usage:\n  asr-contracts validate-run <run-directory> [--json]\n  asr-contracts validate-run-context <run-context.json>\n  asr-contracts validate-benchmark <metrics.json>\n  asr-contracts validate-sample <result.json>\n  asr-contracts validate-revisions --root <revisions-dir> [--expected-development-repo-id <id>] [--expected-upstream-repo-id <id>] [--expected-tokenizer-repo-id <id>] [--expected-framework <name>] [--expected-profile-set <id>] [--runtime-variant <variant>] [--expected-runtime-profile <id>] [--expected-decoder <decoder>] [--json]\n  asr-contracts resolve-config --current <current.json> --resolved <resolved.json> [--override <config-NNNNNN>]\n  asr-contracts config-version <resolved.json>"
+    "usage:\n  asr-contracts validate-run <run-directory> [--json]\n  asr-contracts validate-run-context <run-context.json>\n  asr-contracts validate-benchmark <metrics.json>\n  asr-contracts validate-sample <result.json>\n  asr-contracts validate-revisions --root <revisions-dir> [--expected-development-repo-id <id>] [--expected-upstream-repo-id <id>] [--expected-tokenizer-repo-id <id>] [--expected-framework <name>] [--expected-profile-set <id>] [--runtime-variant <variant>] [--expected-runtime-profile <id>] [--expected-decoder <decoder>] [--json]\n  asr-contracts resolve-config --current <current.json> --resolved <resolved.json> [--override <config-NNNNNN>]\n  asr-contracts config-version <resolved.json>\n  asr-contracts build-run-context --repository-root <repo> --model <id> --provider <id> --evaluation <id> --environment <id> --revisions <dir> --candidate-contract <json> --output <json> [--runtime-variant <variant>] [--experiment-id <id>] [--strict-provider] [--optimization-level <configured|disable|basic|extended|all>]"
 }
 
 fn read_json(path: &Path) -> std::result::Result<Value, String> {
@@ -211,6 +216,94 @@ fn validate_revisions_command(
     Ok(())
 }
 
+fn build_run_context_command(
+    mut args: impl Iterator<Item = String>,
+) -> std::result::Result<(), String> {
+    let mut repository_root = None;
+    let mut model_id = None;
+    let mut provider_id = None;
+    let mut evaluation_id = None;
+    let mut environment_id = None;
+    let mut revisions_root = None;
+    let mut candidate_contract = None;
+    let mut output = None;
+    let mut experiment_id = None;
+    let mut runtime_variant = None;
+    let mut strict_provider = false;
+    let mut optimization_level = "configured".to_owned();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repository-root" => {
+                repository_root = Some(PathBuf::from(take_value(&mut args, "--repository-root")?))
+            }
+            "--model" => model_id = Some(take_value(&mut args, "--model")?),
+            "--provider" => provider_id = Some(take_value(&mut args, "--provider")?),
+            "--evaluation" => evaluation_id = Some(take_value(&mut args, "--evaluation")?),
+            "--environment" => environment_id = Some(take_value(&mut args, "--environment")?),
+            "--revisions" => {
+                revisions_root = Some(PathBuf::from(take_value(&mut args, "--revisions")?))
+            }
+            "--candidate-contract" => {
+                candidate_contract = Some(PathBuf::from(take_value(
+                    &mut args,
+                    "--candidate-contract",
+                )?))
+            }
+            "--output" => output = Some(PathBuf::from(take_value(&mut args, "--output")?)),
+            "--experiment-id" => experiment_id = Some(take_value(&mut args, "--experiment-id")?),
+            "--runtime-variant" => {
+                runtime_variant = Some(take_value(&mut args, "--runtime-variant")?)
+            }
+            "--strict-provider" => strict_provider = true,
+            "--optimization-level" => {
+                optimization_level = take_value(&mut args, "--optimization-level")?
+            }
+            other => return Err(format!("unsupported argument: {other}\n{}", usage())),
+        }
+    }
+
+    let repository_root = repository_root.unwrap_or_else(|| PathBuf::from("."));
+    let candidate_contract =
+        candidate_contract.ok_or_else(|| "--candidate-contract is required".to_owned())?;
+    if let Some(expected_variant) = runtime_variant.as_deref() {
+        let candidate = read_json(&candidate_contract)?;
+        let actual = candidate
+            .get("variant")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "candidate contract variant must be a string".to_owned())?;
+        if expected_variant != actual {
+            return Err(format!(
+                "candidate contract variant mismatch: expected={expected_variant:?}, actual={actual:?}"
+            ));
+        }
+    }
+    let options = RunContextBuildOptions {
+        repository_root,
+        model_id: model_id.ok_or_else(|| "--model is required".to_owned())?,
+        provider_id: provider_id.ok_or_else(|| "--provider is required".to_owned())?,
+        evaluation_id: evaluation_id.ok_or_else(|| "--evaluation is required".to_owned())?,
+        environment_id: environment_id.ok_or_else(|| "--environment is required".to_owned())?,
+        revisions_root: revisions_root.ok_or_else(|| "--revisions is required".to_owned())?,
+        candidate_contract,
+        strict_provider,
+        optimization_level,
+        experiment_id,
+    };
+    let output = output.ok_or_else(|| "--output is required".to_owned())?;
+    let context = build_run_context(&options).map_err(|error| error.to_string())?;
+    write_run_context(&output, &context).map_err(|error| error.to_string())?;
+    println!("run_context={}", output.display());
+    println!(
+        "run_id={}",
+        context
+            .get("run_id")
+            .and_then(Value::as_str)
+            .expect("validated run context run_id")
+    );
+    Ok(())
+}
+
 fn run() -> std::result::Result<(), String> {
     let mut args = env::args().skip(1);
     let command = args.next().ok_or_else(|| usage().to_owned())?;
@@ -259,6 +352,7 @@ fn run() -> std::result::Result<(), String> {
         "validate-revisions" => validate_revisions_command(args)?,
         "resolve-config" => resolve_config_command(args)?,
         "config-version" => config_version_command(args)?,
+        "build-run-context" => build_run_context_command(args)?,
         other => return Err(format!("unsupported command: {other}\n{}", usage())),
     }
     Ok(())
