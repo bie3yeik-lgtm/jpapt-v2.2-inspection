@@ -1,423 +1,266 @@
-# Evaluation
+# 評価仕様
 
-## Purpose
+## 目的
 
-Evaluation has two different goals and they must not be conflated.
+本リポジトリの評価は、frameworkに依存しない共通評価と、architecture固有のparity確認を分けて扱います。
 
-### ASR quality
+大きく2種類あります。
 
-Compare candidate output against the dataset ground-truth transcription.
+### ASR品質評価
 
-Metrics:
-
-- CER
-- WER
-
-### Conversion/runtime parity
-
-Compare ONNX behavior against the canonical NeMo reference implementation.
-
-Possible checkpoints:
-
-- frontend tensors
-- encoder tensors
-- CTC logits
-- token IDs
-- decoded text
-
-A model can reproduce NeMo perfectly while NeMo itself still makes an ASR
-error against the dataset ground truth.
-
-Therefore:
+Datasetの正解文字列とcandidate出力を比較します。
 
 ```text
-dataset reference text
-    != necessarily
-NeMo output
-
-but a correct conversion aims for
-
-NeMo output
-    == candidate ONNX output
+CER
+WER
 ```
 
-## Evaluation suites
+### Conversion / Runtime parity
 
-### Smoke
-
-Configuration:
+canonical referenceとcandidateを比較します。
 
 ```text
-config/evaluation/smoke.toml
+reference output
+  ↕
+candidate output
 ```
 
-Manifest:
+NeMoでもTransformersでもこの考え方は同じです。比較する中間tensorだけがarchitectureによって変わります。
+
+## Suite
+
+| Suite | Sample数 | 主目的 |
+|---|---:|---|
+| `smoke` | 12 | pipeline健全性、軽量回帰 |
+| `parity` | 48 | reference/candidate parity |
+| `coreml-parity` | 40 | CoreML EP互換性・shape境界 |
+| `full` | 768 | 品質・性能・release gate |
+
+設定:
 
 ```text
-evaluation/manifests/smoke.jsonl
+config/evaluation/*.toml
 ```
 
-Expected sample count:
+manifest:
 
 ```text
-12
+evaluation/manifests/*.jsonl
 ```
 
-Purpose:
+## Dataset selection
 
-- pipeline health
-- deterministic sample resolution
-- tokenizer/decoder regression
-- lightweight end-to-end validation
-
-Git-tracked semantic expectations are stored in:
+manifestと`datasets-lock.json`からdeterministicにsampleを選びます。
 
 ```text
-evaluation/expected/smoke.json
+manifest
+  +
+datasets-lock
+  ↓
+stable-hash selection
+  ↓
+materialization
 ```
 
-### Parity
+同じdataset revision、seed、selection条件なら同じsample集合になります。
 
-Configuration:
+## CanonicalAudio
+
+評価前のaudio contractは全target共通です。
 
 ```text
-config/evaluation/parity.toml
+float32
+mono
+16 kHz
+finite
+C-contiguous
 ```
 
-Manifest:
+ここから先のfrontendはmodel/framework固有です。
+
+## Architecture固有のparity checkpoint
+
+共通ルールは「そのarchitectureで意味のある境界を比較する」です。
+
+### Parakeet CTC
 
 ```text
-evaluation/manifests/parity.jsonl
+frontend
+encoder
+CTC logits
+token IDs
+text
 ```
 
-Expected sample count:
+### Parakeet TDT
 
 ```text
-48
+frontend
+encoder
+predictor/joint
+duration/token sequence
+text
 ```
 
-Purpose:
-
-- frontend parity
-- encoder parity
-- logits parity
-- token/text parity
-- cross-platform correctness
-
-### CoreML parity
-
-Manifest:
+### Whisper
 
 ```text
-evaluation/manifests/coreml-parity.jsonl
+input features
+encoder output
+decoder sequence / logits
+generated token IDs
+text
 ```
 
-Expected sample count:
+現状のONNX evaluatorはCTC中心です。TDT/Whisperの上記checkpointは共通設計上の目標であり、全てが実装済みという意味ではありません。
+
+## ReferenceとDataset正解は別物
+
+次を混同しないでください。
 
 ```text
-40
+dataset ground truth
+  = ASR品質の正解
+
+canonical reference output
+  = conversion parityの正解
 ```
 
-Purpose:
+canonical reference自身がdatasetに対して誤認識する可能性はあります。その場合でも、正しいONNX変換はreferenceと同じ挙動を再現することを目指します。
 
-- CoreML EP shape boundaries
-- short/medium/long input coverage
-- CPU-vs-CoreML correctness comparison
+## Config version
 
-Performance on hosted macOS runners is not considered authoritative for a
-specific local Apple Silicon machine.
-
-### Full
-
-Configuration:
+評価時には必ず1つのconfig versionを固定します。
 
 ```text
-config/evaluation/full.toml
+config-NNNNNN
+  ├── reference.json
+  ├── evaluation-schema.json
+  └── datasets-lock.json
 ```
 
-Manifest:
+runには`revisions.config_version`とbundle hashを保存します。
+
+## Experiment / Run
+
+Experimentは論理的な評価単位です。
 
 ```text
-evaluation/manifests/full.jsonl
+cross-platform-parity-000023
 ```
 
-Expected sample count:
+Runは1つの具体的な実行です。
 
 ```text
-768
+Linux CPU run
+Windows CPU run
+macOS CPU run
+macOS CoreML run
 ```
 
-Purpose:
+cross-platform評価ではこれらが同じexperiment IDを共有します。
 
-- aggregate ASR quality
-- aggregate performance
-- release acceptance
-- promotion gate
-
-The canonical hosted full evaluation is CPU-oriented and does not require
-every EP to process all 768 samples on every commit.
-
-## Deterministic manifest selection
-
-Manifest entries describe selection rules rather than enumerating every row.
-
-Example concept:
-
-```json
-{
-  "schema_version": 1,
-  "id": "smoke-jsut",
-  "dataset_id": "jsut-basic5000",
-  "selection": {
-    "strategy": "stable_hash",
-    "count": 6,
-    "seed": "parakeet-onnx-smoke-jsut-v1"
-  },
-  "filters": {
-    "min_duration_sec": 1.0,
-    "max_duration_sec": 15.0
-  },
-  "tags": [
-    "smoke",
-    "japanese",
-    "clean-speech"
-  ]
-}
-```
-
-Selection hash input:
+## 出力
 
 ```text
-dataset_revision
-+ "\n"
-+ sample_identity
-+ "\n"
-+ seed
-```
-
-Encoding:
-
-```text
-UTF-8
-```
-
-Hash:
-
-```text
-SHA-256
-```
-
-Eligible rows are sorted by ascending digest and the first requested `count`
-rows are selected.
-
-The resolver must fail rather than silently reduce the requested count if too
-few rows pass the filters.
-
-## Sample identity
-
-Stable identity priority:
-
-1. explicit dataset sample ID
-2. stable audio path/file identity
-3. pinned row index
-
-Because the dataset revision and split are locked, row index is an acceptable
-last-resort identity.
-
-## Materialization
-
-Selected samples are materialized before audio processing.
-
-```text
-DatasetRecord
-    ↓
-DatasetMaterializer
-    ↓
-local file
-    ↓
-ResolvedDatasetSample.audio_path
-```
-
-Materialized assets are disposable cache data and normally live under:
-
-```text
-.cache/evaluation/audio/
-```
-
-They are validated with SHA-256.
-
-## Git expected data vs HF reference data
-
-### Git
-
-```text
-evaluation/expected/
-└── smoke.json
-```
-
-Contains lightweight semantic expectations.
-
-### HF Bucket
-
-```text
-reference/
-```
-
-Contains potentially large canonical reference outputs and tensors.
-
-Do not commit large frontend, encoder, logits, `.npy`, audio, or model
-artifacts into Git.
-
-## `smoke.json` lifecycle
-
-Initial state:
-
-```text
-null → uninitialized
-```
-
-Initialization:
-
-```text
-uninitialized → ready
-```
-
-`evaluation/schemas/expected.schema.json` structurally enforces these valid
-states and transition metadata.
-
-A ready file must include:
-
-- pinned model revision
-- tokenizer revision
-- dataset-lock SHA-256
-- manifest SHA-256
-- normalization revision
-- exactly 12 samples
-- generation provenance
-
-JSON Schema cannot prove that a declared previous-file hash actually refers to
-the historical file; that provenance check belongs to a transition validator.
-
-## Evaluation output
-
-Per result directory:
-
-```text
-results/<provider-or-run-name>/
-├── run-context.json
-├── samples.jsonl
-└── metrics.json
+results/<run>/
+  run-context.json
+  samples.jsonl
+  metrics.json
 ```
 
 ### `run-context.json`
 
-Records reproducibility identity.
-
-Validated by:
+再現性情報を保存します。
 
 ```text
-evaluation/schemas/run-context.schema.json
+candidate / artifact SHA
+experiment ID
+config version
+revision identities
+HF routing snapshot
+Git revision
+host
+runtime/provider
+evaluation suite
 ```
 
 ### `samples.jsonl`
 
-One result record per sample.
-
-Validated per line by:
-
-```text
-evaluation/schemas/result.schema.json
-```
+sample単位の結果です。
 
 ### `metrics.json`
 
-Aggregate benchmark/evaluation output.
+aggregate metricとacceptance結果です。
 
-Validated by:
+## Performance metric
 
-```text
-evaluation/schemas/benchmark.schema.json
-```
-
-## Timing metrics
-
-Recommended components:
-
-```text
-audio decode
-resample
-frontend
-encoder/inference
-decoder
-postprocess
-total
-```
-
-Key metric:
+主要指標:
 
 ```text
 RTF = processing_time / audio_duration
 ```
 
-The evaluator should distinguish:
+可能な限り次を分離します。
 
 ```text
-ORT-only RTF
+audio decode
+resample
+frontend
+ORT inference
+decoder
+postprocess
+total
 ```
 
-from:
+Python→Rust化で改善しやすい部分とORT kernel自体の性能を混同しないためです。
+
+## Execution Provider
+
+runにはrequested providerだけでなく、provider availabilityやfallback情報も残す必要があります。
 
 ```text
-end-to-end RTF
+CPU
+CUDA
+DirectML
+CoreML
 ```
 
-because a future Python-to-Rust migration may improve I/O, audio, decoding, and
-metrics overhead without materially changing native ORT inference time.
-
-## Memory
-
-Record where supported:
-
-- peak host RAM
-- optional peak device memory
-
-## Provider behavior
-
-The evaluator should record:
-
-- requested provider
-- actual provider list
-- provider assignment where inspectable
-- CPU fallback
-- provider errors
-
-A successful session creation does not by itself prove that all graph nodes
-executed on the intended EP.
+session生成成功だけでは全nodeが希望EPで実行された証明にはなりません。
 
 ## Acceptance
 
-Acceptance rules belong to the locked HF Bucket document:
+release品質のthresholdはBucket側のversioned `evaluation-schema.json`で管理します。GitにあるJSON Schemaは構造検証用であり、品質thresholdそのものではありません。
+
+## Promotion
+
+原則としてaccepted full runをpromotion gateにします。
 
 ```text
-config/revisions/evaluation-schema.json
+candidate
+  ↓
+full evaluation
+  ↓
+acceptance.passed
+  ↓
+artifact SHA一致確認
+  ↓
+Model Repoへpromotion
 ```
 
-Git JSON Schemas validate the structure of results; they do not define release
-quality thresholds.
+## Python / Rust共通contract
 
-Promotion requires an accepted full run by default.
-
-## Python and Rust parity
-
-Both evaluators should ultimately use the same:
+両実装は次を共有します。
 
 ```text
-manifests
-materialized sample identity
-canonical audio contract
+manifest identity
+materialized sample
+config version
+revision bundle
+candidate identity
+run-context schema
 result schema
 benchmark schema
-run-context contract
 ```
 
-This makes runtime comparison mechanical rather than interpretive.
+framework差分はこれらの外側ではなく、frontend/runtime/decoder adapterへ閉じ込めます。
