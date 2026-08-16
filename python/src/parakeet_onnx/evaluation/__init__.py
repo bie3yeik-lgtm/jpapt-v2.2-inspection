@@ -1,6 +1,13 @@
 """Evaluation contracts and Python-first orchestration."""
 
 from .aggregate import AggregateResult, aggregate_sample_results
+from .capsule_analytics import (
+    CapsuleMetricComparison,
+    CapsuleRunSummary,
+    compare_capsule_metric,
+    summarize_experiment_capsule,
+    summarize_experiment_capsules,
+)
 from .capsule_artifacts import (
     CapsuleArtifact,
     CapsuleArtifactError,
@@ -60,6 +67,8 @@ __all__ = [
     "CapsuleArtifactError",
     "CapsuleDiagnostic",
     "CapsuleDiagnosticError",
+    "CapsuleMetricComparison",
+    "CapsuleRunSummary",
     "CorpusErrorAccumulator",
     "DEFAULT_CAPSULE_ROW_BATCH_SIZE",
     "EmbeddedCapsuleArtifact",
@@ -80,6 +89,7 @@ __all__ = [
     "aggregate_sample_results",
     "capsule_arrow_schema",
     "character_error_rate",
+    "compare_capsule_metric",
     "create_python_evaluator",
     "edit_distance",
     "iter_experiment_capsule_row_batches",
@@ -87,6 +97,8 @@ __all__ = [
     "normalize_text",
     "read_experiment_capsule",
     "run_evaluation",
+    "summarize_experiment_capsule",
+    "summarize_experiment_capsules",
     "validate_benchmark",
     "validate_experiment_capsule",
     "validate_run_context",
