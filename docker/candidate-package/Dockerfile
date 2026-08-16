@@ -25,10 +25,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install "huggingface_hub>=1.0,<2" onnx onnxruntime numpy
 
 COPY .ci/candidate/ /opt/jpapt/candidate/
-COPY python/ /opt/jpapt/python/
+COPY scripts/ci/generic-candidate-evaluate.py /opt/jpapt/evaluate_candidate.py
 
-ENV PYTHONPATH=/opt/jpapt/python/src
-
-# The image is deliberately evaluation-neutral. The workflow supplies the
-# suite/provider/dataset at runtime so one immutable package can be reused.
-ENTRYPOINT ["python", "-m", "parakeet_onnx.cli.evaluate"]
+# Generic contract: smoke/probe require only ONNX; parity consumes .npz files
+# containing input__<tensor> and output__<tensor> arrays.
+ENTRYPOINT ["python", "/opt/jpapt/evaluate_candidate.py"]
