@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::Instant};
+use std::{path::PathBuf, time::Instant};
 
 use asr_audio::{CanonicalAudio, decode_audio};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
@@ -12,6 +12,7 @@ use crate::{
     benchmark::{BenchmarkInput, ProviderTelemetry, SampleAggregate, build_benchmark},
     decoding::ctc::Vocabulary,
     manifest::load_resolved_manifest,
+    run_context::RunContextV2,
     writer::{ensure_dir, write_json, write_jsonl},
 };
 
@@ -19,7 +20,7 @@ use crate::{
 pub struct EvaluateOptions {
     pub provider: ProviderKind,
     pub candidate_contract: PathBuf,
-    pub run_context: PathBuf,
+    pub run_context: RunContextV2,
     pub resolved_manifest: PathBuf,
     pub output: PathBuf,
 }
@@ -32,8 +33,7 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
     let vocabulary_path = candidate.tokenizer_path()?;
     let vocabulary = Vocabulary::load(&vocabulary_path)?;
 
-    let mut run_context: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&options.run_context)?)?;
+    let mut run_context = options.run_context.into_value()?;
     validate_execution_inputs(&run_context, &candidate, options.provider, &model_path)?;
 
     let tuning = SessionTuning::from_run_context(&run_context)?;
@@ -254,15 +254,6 @@ fn validate_execution_inputs(
     provider: ProviderKind,
     model_path: &std::path::Path,
 ) -> Result<()> {
-    if context
-        .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(2)
-    {
-        return Err(EvalError::InvalidInput(
-            "Rust evaluator requires run-context schema_version 2".into(),
-        ));
-    }
     let provider_id = provider.to_string();
     if context
         .get("provider_id")

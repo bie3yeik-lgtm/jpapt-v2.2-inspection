@@ -1,104 +1,197 @@
 # Architecture
 
-## 目的
+## 1. 目的
 
-このrepositoryは、ASRモデルをONNX artifactへ変換し、複数provider / evaluatorで再現可能に評価し、Hugging Face Bucket上でcandidate・run・benchmarkを履歴化するための開発基盤です。
+このrepositoryは、日本語ASRモデルをONNXへ変換・検証し、Execution Providerごとの正確性・性能・provider利用実態を同一contractで比較するための開発基盤です。
 
-framework差分をstorage treeやJSON schemaの分岐として増殖させず、runtime profileとadapterへ閉じ込めます。
+設計上の最重要原則は、**人が意味を推測してJSONへ写経しないこと**です。runtime-criticalな値はcatalog、実artifact、tokenizer/config、revision lockから生成し、一意に決められない場合はfailします。
 
-## Source of truth
+## 2. Source of truth
+
+### Repository側
+
+- `config/asr-catalog.json`
+  - decoder profile
+  - artifact role
+  - tokenizer kind
+  - feature capability
+  - profile set / variant mapping
+- `config/hf-allocation-catalog.json`
+  - candidate / experiment / config versionの採番prefix
+- `config/hf-targets/*.toml`
+  - upstream、framework、profile set、実HF Bucket、Model Repo
+- `config/models/*.toml`
+  - model execution compatibility
+- `config/providers/*.toml`
+  - ORT provider/session条件
+- `config/environments/*.toml`
+  - OS/environment条件
+- `config/evaluation/*.toml`
+  - smoke/parity/full等の評価条件
+- `evaluation/schemas/*.schema.json`
+  - persisted JSON/JSONL artifactsの構造contract
+
+### HF Bucket側
+
+- `config/versions/config-NNNNNN/`
+  - immutable revision-lock bundle
+- `config/current.json`
+  - 現在選択されるconfig versionへのpointer
+- `candidates/<candidate-id>/`
+  - development candidate artifact
+- `runs/<run-id>/`
+  - 完全な評価履歴
+- `benchmarks/<candidate-id>/<benchmark-name>/<run-id>.json`
+  - 軽量なmetrics index
+- `experiments/<experiment-id>/`
+  - 中央Allocator管理のexperiment namespace
+
+### HF Model Repo側
+
+accepted candidateをpromotionした最終成果物を置きます。Bucketは開発・検証用のmutable object storage、Model Repoはversioned release historyとして役割を分離します。
+
+## 3. データライフサイクル
 
 ```text
-Runtime semantics        config/asr-catalog.json
-Allocation naming       config/hf-allocation-catalog.json
-Target identity         config/hf-targets/*.toml
-Evaluator capability    config/evaluators/*.toml
-Provider policy         config/providers/*.toml
-Environment policy      config/environments/*.toml
-Evaluation policy       config/evaluation/*.toml
-Candidate input         candidates/<id>/metadata.json
-Candidate schema        evaluation/schemas/candidate-metadata.schema.json
-Manifest schema         evaluation/schemas/manifest.schema.json
-Run snapshot schema     evaluation/schemas/run-context.schema.json
+upstream HF model
+      |
+      v
+export / finalize
+      |
+      v
+local candidate directory
+  metadata.json            # human-authored minimal intent
+  *.onnx / tokenizer/...   # actual artifacts
+      |
+      | CandidateArtifacts.load()
+      | graph/tokenizer inspection
+      v
+generated candidate contract
+      |
+      +------------------------------+
+      |                              |
+      v                              v
+Python evaluator                 Rust evaluator
+CTC/TDT/Whisper                  CTC
+      |                              |
+      +--------------+---------------+
+                     v
+               run-context.json
+               samples.jsonl
+               metrics.json
+                     |
+                     v
+             HF Bucket runs/<run-id>
+                     |
+             accepted full evaluation
+                     |
+                     v
+          HF Model Repo promotion
 ```
 
-文書はこれらの実装を説明するだけで、意味の正本にはしません。
+## 4. Candidate boundary
 
-## レイヤ
+candidate directoryのhuman-authored contractは `metadata.json` だけです。
 
 ```text
-Target
-  ↓ profile_set
-ASR Runtime Catalog
-  ↓ runtime variant
-Candidate artifacts
-  ↓ strict inspection
-Resolved runtime contract
-  ↓ evaluator/provider selection
-Evaluation run
-  ↓
-run-context + samples + metrics
-  ↓
-benchmark / promotion
+candidate/
+├── metadata.json
+├── ctc/
+│   └── model.onnx
+├── tdt/
+│   ├── encoder.onnx
+│   ├── predictor.onnx
+│   └── joint.onnx
+└── tokenizer/
+    └── vocabulary.json
 ```
 
-### Human-authored layer
+`.candidate-id` はBucketからfetch後にmaterializeされるidentity markerであり、publish前のsource candidateへ置きません。
 
-人間は「選択・policy」だけを書きます。
-
-- target mapping
-- evaluation policy
-- candidateのartifact path
-- manifestのdataset/count/seed/filter
-
-### Machine-observed layer
-
-コードが観測できる値は手書きしません。
+`CandidateArtifacts.load()` は以下を確定します。
 
 - candidate ID
-- SHA-256 / size
-- catalog fingerprint
-- decoder/profile/features
-- ONNX tensor names / dtypes / shapes
-- token IDs
-- TDT durations/state metadata
-- Git / host / provider runtime identity
+- selected variant
+- decoder profile
+- artifact contract
+- artifact SHA-256 / size
+- bundle SHA-256
+- tokenizer kind/path
+- graph I/O binding
+- decoder config
+- feature flags
+- catalog ID/SHA
 
-### Immutable snapshot layer
+これらは `metadata.json` に逆流させません。
 
-再現性のため、実行後は観測値をsnapshotします。
+## 5. Revision boundary
 
-- config version
-- run-context
-- samples
-- metrics
-- benchmark
-- promotion receipt
+config versionは4文書です。
 
-## Decoder architecture
+```text
+config/versions/config-000123/
+├── reference.json
+├── evaluation-schema.json
+├── datasets-lock.json
+└── runtime.json
+```
 
-### CTC
+fetch時にはlocalに次を生成します。
 
-単一ONNX graph。artifact roleは `primary`。
+```text
+.ci/hf/config/
+├── current.json
+├── resolved.json
+└── revisions/
+    ├── reference.json
+    ├── evaluation-schema.json
+    ├── datasets-lock.json
+    └── runtime.json
+```
 
-### TDT
+`resolved.json` によって実行時の `config-NNNNNN` を明示します。revision bundle単体をversionlessに読む経路は現行contractにありません。
 
-複数graph。artifact roleは `encoder`, `predictor`, `joint`。
+## 6. Execution boundary
 
-TDT contractはstrictに解決します。BOS、duration値、state shape等が明示的に得られなければrejectします。
+`run-context.json` はrun開始前にexecution identityをfreezeするimmutable snapshotです。
 
-### Whisper autoregressive
+含まれるもの:
 
-`encoder`, `decoder` と任意の `decoder_with_past`。Transformers processor/configからprompt/eos等を取得します。
+- config/model/environment/provider/evaluation identity
+- candidate primary artifact identity
+- Git identity
+- host identity
+- ORT backend identity
+- full revision snapshot
+- resolved TOML snapshot
+- generated candidate contract
 
-## PythonとRust
+PythonとRustはこのidentityを共有します。Rust用run-contextをPython側で生成しても、Rust runtimeがprovider readinessを実測するまでは「実行証明済み」とは扱いません。
 
-Python ONNX evaluatorはCTC/TDT/Whisperを扱います。Rust ONNX evaluatorの公開capabilityは現在CTCのみです。backend/provider差分より先にdecoder capabilityを明示的にgateします。
+## 7. Provider evidence
 
-## 禁止事項
+providerについて以下を区別します。
 
-- 旧schemaを読めるようにcompat branchを増やす
-- runtime semanticsをcandidate metadataへ複製する
-- ONNX shapeからtoken semanticsを推測する
-- 不明値をplaceholder `1` やblank tokenで埋める
-- provider/frameworkごとにBucket treeを分岐する
+```text
+compiled
+registered
+session_created
+execution_proven
+assignment_proven
+```
+
+`registered` は `execution_proven` を意味しません。CPU fallbackを許可したaccelerator runでは、inference成功だけでaccelerator利用を証明できません。
+
+## 8. Promotion boundary
+
+promotionでは次を再検証します。
+
+- `run-context.json` schema/semantic contract
+- `metrics.json` schema
+- run ID一致
+- candidate ID一致
+- candidate bundle SHA一致
+- acceptance passed
+- 原則 `evaluation_id == "full"`
+
+その後、Bucket candidateを再fetchしてbundle hashを再計算し、Model Repoへuploadします。promotion recordは `runs/<run-id>/promotion.json` に残します。

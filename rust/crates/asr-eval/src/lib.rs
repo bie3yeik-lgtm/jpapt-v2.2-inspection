@@ -7,6 +7,7 @@ pub mod error;
 pub mod evaluator;
 pub mod expected;
 pub mod manifest;
+pub mod run_context;
 pub mod writer;
 
 pub use cli::{Cli, Command};

@@ -1,32 +1,25 @@
-"""
-Run-context generation.
+"""Strict run-context construction.
 
-A RunContext is the immutable identity and environment description of one
-evaluation execution.
-
-It combines:
-
-- Git-managed ResolvedConfig
-- HF Bucket revision locks
-- candidate artifact digest
-- Git commit
-- runtime/provider/platform metadata
-
-The serialized run-context.json is persisted with every evaluation run.
+The Python runtime now uses the same non-null execution contract enforced by
+Rust. Unknown identities are errors, not nullable placeholders.
 """
 
-from .builder import RunContextBuilder, build_run_context
-from .hashing import sha256_file
-from .models import (
+from parakeet_onnx.contracts import (
     ArtifactIdentity,
+    ConfigSnapshot,
+    ContractError,
     GitIdentity,
     HostIdentity,
     RunContext,
     RuntimeIdentity,
 )
+from .builder import RunContextBuilder, build_run_context
+from .hashing import sha256_file
 
 __all__ = [
     "ArtifactIdentity",
+    "ConfigSnapshot",
+    "ContractError",
     "GitIdentity",
     "HostIdentity",
     "RunContext",
