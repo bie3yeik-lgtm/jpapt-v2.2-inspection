@@ -59,7 +59,7 @@ class ManifestFilters(JsonModelMixin):
     def accepts(self, duration_sec: float) -> bool:
         if self.min_duration_sec is not None and duration_sec < self.min_duration_sec:
             return False
-        if self.max_duration_sec is not None and duration_sec > self.max_duration_sec:
+        if self.max_duration_sec is not None and duration_sec >= self.max_duration_sec:
             return False
         return True
 
