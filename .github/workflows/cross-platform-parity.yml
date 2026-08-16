@@ -40,8 +40,8 @@ jobs:
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - id: allocate
@@ -98,7 +98,7 @@ jobs:
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show runner information
         shell: bash
         run: |
@@ -107,7 +107,7 @@ jobs:
           echo "Runner arch: ${{ runner.arch }}"
           echo "Provider: ${{ matrix.provider }}"
           echo "Experiment: ${EXPERIMENT_ID}"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Python project
@@ -156,7 +156,7 @@ jobs:
             --evaluator python-onnx \
             --decoder "${EXPECTED_DECODER}"
       - name: Cache model and evaluation assets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .cache/huggingface
@@ -212,7 +212,7 @@ jobs:
         if: success()
         shell: bash
         run: bash scripts/hf/hf-push-benchmark.sh "results/${{ matrix.result_name }}/metrics.json" "${{ matrix.benchmark_name }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: parity-${{ steps.hf.outputs.target_id }}-${{ matrix.result_name }}-${{ inputs.candidate_id }}
