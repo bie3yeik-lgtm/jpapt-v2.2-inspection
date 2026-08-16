@@ -1,4 +1,6 @@
 name: Repository Dispatch Router
+run-name: >-
+  Dispatch · ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.workflow || inputs.workflow }} · ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || inputs.ref || 'main' }}
 
 on:
   repository_dispatch:
