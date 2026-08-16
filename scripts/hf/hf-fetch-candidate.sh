@@ -36,33 +36,30 @@ command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable."
 
 HF_BUCKET_ID="$(normalize_bucket_id "$HF_BUCKET")"
 REQUESTED_CANDIDATE_ID="${1:-${CANDIDATE_ID:-}}"
-CANDIDATE_RELATIVE_PATH=""
-LEGACY_LAYOUT="false"
+[[ -z "$REQUESTED_CANDIDATE_ID" ]] || validate_candidate_id "$REQUESTED_CANDIDATE_ID"
 
+listing="$(mktemp)"
+trap 'rm -f "$listing"' EXIT
+REMOTE_ROOT="hf://buckets/${HF_BUCKET_ID}/candidates"
+if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q > "$listing"; then
+    fail "failed to list candidate collection: $REMOTE_ROOT"
+fi
+
+ARGS=(resolve-candidate-location --listing "$listing")
 if [[ -n "$REQUESTED_CANDIDATE_ID" ]]; then
-    validate_candidate_id "$REQUESTED_CANDIDATE_ID"
-    CANDIDATE_ID="$REQUESTED_CANDIDATE_ID"
-    CANDIDATE_RELATIVE_PATH="$CANDIDATE_ID"
-else
-    listing="$(mktemp)"
-    trap 'rm -f "$listing"' EXIT
-    REMOTE_ROOT="hf://buckets/${HF_BUCKET_ID}/candidates"
-    if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q > "$listing"; then
-        fail "failed to list candidate collection: $REMOTE_ROOT"
-    fi
-    ARGS=(resolve-candidate-location --listing "$listing")
-    if [[ -n "${ASR_RUNTIME_VARIANT:-}" ]]; then
-        ARGS+=(--runtime-variant "$ASR_RUNTIME_VARIANT")
-    fi
-    SUMMARY="$(cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}")"
-    CANDIDATE_ID="$(printf '%s\n' "$SUMMARY" | sed -n 's/^candidate_id=//p')"
-    CANDIDATE_RELATIVE_PATH="$(printf '%s\n' "$SUMMARY" | sed -n 's/^relative_path=//p')"
-    LEGACY_LAYOUT="$(printf '%s\n' "$SUMMARY" | sed -n 's/^legacy=//p')"
-    validate_candidate_id "$CANDIDATE_ID"
-    [[ -n "$CANDIDATE_RELATIVE_PATH" ]] || fail "candidate resolver returned no relative path"
-    if [[ "$LEGACY_LAYOUT" == "true" ]]; then
-        log "Using read-only legacy candidate fallback: ${CANDIDATE_RELATIVE_PATH}"
-    fi
+    ARGS+=(--candidate-id "$REQUESTED_CANDIDATE_ID")
+fi
+if [[ -n "${ASR_RUNTIME_VARIANT:-}" ]]; then
+    ARGS+=(--runtime-variant "$ASR_RUNTIME_VARIANT")
+fi
+SUMMARY="$(cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}")"
+CANDIDATE_ID="$(printf '%s\n' "$SUMMARY" | sed -n 's/^candidate_id=//p')"
+CANDIDATE_RELATIVE_PATH="$(printf '%s\n' "$SUMMARY" | sed -n 's/^relative_path=//p')"
+LEGACY_LAYOUT="$(printf '%s\n' "$SUMMARY" | sed -n 's/^legacy=//p')"
+validate_candidate_id "$CANDIDATE_ID"
+[[ -n "$CANDIDATE_RELATIVE_PATH" ]] || fail "candidate resolver returned no relative path"
+if [[ "$LEGACY_LAYOUT" == "true" ]]; then
+    log "Using read-only legacy candidate fallback: ${CANDIDATE_RELATIVE_PATH}"
 fi
 
 append_env CANDIDATE_ID "$CANDIDATE_ID"
