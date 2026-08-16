@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow_schema::{DataType, Field, Schema};
 
-pub fn experiment_capsule_v1_schema() -> Arc<Schema> {
+pub fn onnx_capsule_v1_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
         Field::new("schema_version", DataType::Utf8, false),
         Field::new("run_id", DataType::Utf8, false),
@@ -17,6 +17,7 @@ pub fn experiment_capsule_v1_schema() -> Arc<Schema> {
         Field::new("environment_id", DataType::Utf8, false),
         Field::new("evaluation_input_id", DataType::Utf8, false),
         Field::new("git_commit", DataType::Utf8, false),
+        Field::new("runtime_backend", DataType::Utf8, false),
         Field::new("provider_registered", DataType::Boolean, false),
         Field::new("provider_execution_proven", DataType::Boolean, true),
         Field::new("provider_assignment_proven", DataType::Boolean, true),
