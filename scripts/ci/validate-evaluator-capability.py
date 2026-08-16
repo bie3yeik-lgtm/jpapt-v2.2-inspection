@@ -7,13 +7,14 @@ import sys
 import tomllib
 
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
+from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Validate that an evaluator supports the resolved decoder, provider, "
-            "candidate artifact contract, and requested runtime features."
+            "candidate artifact contract, runtime contract, and required features."
         )
     )
     parser.add_argument("--evaluator", required=True)
@@ -41,7 +42,9 @@ def main() -> int:
         capabilities = raw["capabilities"]
         evaluator_id = evaluator["id"]
         supported_decoders = _string_list(capabilities, "supported_decoders")
-        supported_providers = _string_list(capabilities, "supported_providers", required=False)
+        supported_providers = _string_list(
+            capabilities, "supported_providers", required=False
+        )
         supported_contracts = _string_list(
             capabilities, "supported_artifact_contracts", required=False
         )
@@ -64,7 +67,11 @@ def main() -> int:
             f"evaluator={args.evaluator!r}, decoder={args.decoder!r}, "
             f"supported={supported_decoders!r}"
         )
-    if args.provider is not None and supported_providers and args.provider not in supported_providers:
+    if (
+        args.provider is not None
+        and supported_providers
+        and args.provider not in supported_providers
+    ):
         return _error(
             "evaluator provider mismatch: "
             f"evaluator={args.evaluator!r}, provider={args.provider!r}, "
@@ -75,8 +82,9 @@ def main() -> int:
     if args.candidate_dir is not None:
         try:
             candidate = CandidateArtifacts.load(args.candidate_dir)
-        except CandidateMetadataError as exc:
-            return _error(str(exc))
+            validate_candidate_runtime_contract(candidate)
+        except (CandidateMetadataError, KeyError, TypeError, ValueError) as exc:
+            return _error(f"candidate runtime contract is invalid: {exc}")
         if candidate.decoder != args.decoder:
             return _error(
                 "candidate decoder mismatch: "
