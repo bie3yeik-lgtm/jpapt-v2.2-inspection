@@ -25,6 +25,7 @@ class DecoderProfile:
 @dataclass(frozen=True, slots=True)
 class ProfileSet:
     profile_set_id: str
+    candidate_prefix_key: str
     variants: Mapping[str, str]
     default_variant: str
 
@@ -61,7 +62,9 @@ class AsrCatalog:
         catalog_id = _string(raw, "catalog_id")
         prefixes_raw = _mapping(raw, "id_prefixes")
         id_prefixes = {
-            _nonempty_key(key, "id_prefixes"): _string_value(value, f"id_prefixes.{key}")
+            _nonempty_key(key, "id_prefixes"): _string_value(
+                value, f"id_prefixes.{key}"
+            )
             for key, value in prefixes_raw.items()
         }
 
@@ -70,7 +73,9 @@ class AsrCatalog:
         for profile_id, value in profiles_raw.items():
             profile_id = _nonempty_key(profile_id, "decoder_profiles")
             if not isinstance(value, Mapping):
-                raise AsrCatalogError(f"decoder_profiles.{profile_id} must be an object")
+                raise AsrCatalogError(
+                    f"decoder_profiles.{profile_id} must be an object"
+                )
             features_raw = _mapping(value, "features")
             features: dict[str, bool] = {}
             for key, feature_value in features_raw.items():
@@ -84,7 +89,9 @@ class AsrCatalog:
                 decoder=_string(value, "decoder"),
                 artifact_contract=_string(value, "artifact_contract"),
                 tokenizer_kind=_string(value, "tokenizer_kind"),
-                required_artifact_roles=_string_array(value, "required_artifact_roles"),
+                required_artifact_roles=_string_array(
+                    value, "required_artifact_roles"
+                ),
                 optional_artifact_roles=_string_array(
                     value, "optional_artifact_roles", required=False
                 ),
@@ -96,18 +103,29 @@ class AsrCatalog:
         for profile_set_id, value in sets_raw.items():
             profile_set_id = _nonempty_key(profile_set_id, "profile_sets")
             if not isinstance(value, Mapping):
-                raise AsrCatalogError(f"profile_sets.{profile_set_id} must be an object")
+                raise AsrCatalogError(
+                    f"profile_sets.{profile_set_id} must be an object"
+                )
+            candidate_prefix_key = _string(value, "candidate_prefix_key")
+            if candidate_prefix_key not in id_prefixes:
+                raise AsrCatalogError(
+                    f"profile_sets.{profile_set_id}.candidate_prefix_key references "
+                    f"unknown prefix key {candidate_prefix_key!r}"
+                )
             variants_raw = _mapping(value, "variants")
             variants: dict[str, str] = {}
             for variant, profile_id in variants_raw.items():
-                variant = _nonempty_key(variant, f"profile_sets.{profile_set_id}.variants")
+                variant = _nonempty_key(
+                    variant, f"profile_sets.{profile_set_id}.variants"
+                )
                 profile_id = _string_value(
-                    profile_id, f"profile_sets.{profile_set_id}.variants.{variant}"
+                    profile_id,
+                    f"profile_sets.{profile_set_id}.variants.{variant}",
                 )
                 if profile_id not in decoder_profiles:
                     raise AsrCatalogError(
-                        f"profile set {profile_set_id!r} references unknown decoder profile "
-                        f"{profile_id!r}"
+                        f"profile set {profile_set_id!r} references unknown decoder "
+                        f"profile {profile_id!r}"
                     )
                 variants[variant] = profile_id
             default_variant = _string(value, "default_variant")
@@ -118,6 +136,7 @@ class AsrCatalog:
                 )
             profile_sets[profile_set_id] = ProfileSet(
                 profile_set_id=profile_set_id,
+                candidate_prefix_key=candidate_prefix_key,
                 variants=variants,
                 default_variant=default_variant,
             )
@@ -139,7 +158,8 @@ class AsrCatalog:
             return self.id_prefixes[key]
         except KeyError as exc:
             raise AsrCatalogError(
-                f"unknown allocation prefix key {key!r}; available={sorted(self.id_prefixes)}"
+                f"unknown allocation prefix key {key!r}; "
+                f"available={sorted(self.id_prefixes)}"
             ) from exc
 
     def profile_set(self, profile_set_id: str) -> ProfileSet:
@@ -147,7 +167,8 @@ class AsrCatalog:
             return self.profile_sets[profile_set_id]
         except KeyError as exc:
             raise AsrCatalogError(
-                f"unknown profile set {profile_set_id!r}; available={sorted(self.profile_sets)}"
+                f"unknown profile set {profile_set_id!r}; "
+                f"available={sorted(self.profile_sets)}"
             ) from exc
 
     def decoder_profile(self, profile_id: str) -> DecoderProfile:
@@ -155,7 +176,8 @@ class AsrCatalog:
             return self.decoder_profiles[profile_id]
         except KeyError as exc:
             raise AsrCatalogError(
-                f"unknown decoder profile {profile_id!r}; available={sorted(self.decoder_profiles)}"
+                f"unknown decoder profile {profile_id!r}; "
+                f"available={sorted(self.decoder_profiles)}"
             ) from exc
 
 
