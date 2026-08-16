@@ -16,21 +16,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Resolve one Hugging Face ASR development target."
     )
-    selector = parser.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--target")
-    selector.add_argument(
+    parser.add_argument(
+        "--target",
+        help=(
+            "Optional explicit target id. Use this to disambiguate a Bucket "
+            "shared by multiple targets."
+        ),
+    )
+    parser.add_argument(
         "--bucket",
         help=(
-            "Resolve a target whose current HF_BUCKET in --targets-json "
-            "matches this value. Bucket routing is operational and may change."
+            "Current operational HF_BUCKET. Bucket routing may change over time "
+            "for capacity or workflow purposes."
         ),
     )
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     parser.add_argument(
         "--targets-json",
         help=(
-            "Optional JSON object keyed by target id. Each entry may override "
-            "HF_BUCKET and HF_MODEL_REPO from config/hf-targets/*.toml."
+            "Optional JSON object keyed by target id. Each entry supplies the "
+            "current HF_BUCKET and HF_MODEL_REPO routing."
         ),
     )
     parser.add_argument("--github-env", type=Path)
@@ -101,8 +106,7 @@ def _target_id_from_bucket(
     if len(matches) > 1:
         raise HfTargetError(
             f"HF_BUCKET {bucket!r} currently maps to multiple targets: {matches!r}. "
-            "Bucket sharing is allowed, but bucket-only resolution is ambiguous; "
-            "select the target explicitly with --target."
+            "Bucket sharing is allowed; provide --target to disambiguate."
         )
     return matches[0]
 
@@ -111,13 +115,19 @@ def main() -> int:
     args = build_parser().parse_args()
     root = args.repository_root.expanduser().resolve()
 
+    if args.target is None and args.bucket is None:
+        print("ERROR: at least one of --target or --bucket is required", file=sys.stderr)
+        return 2
+
     try:
         mapping = _load_target_mapping(args.targets_json)
-        target_id = (
-            args.target
-            if args.target is not None
-            else _target_id_from_bucket(bucket=args.bucket, mapping=mapping)
-        )
+
+        if args.target is not None:
+            target_id = args.target
+        else:
+            assert args.bucket is not None
+            target_id = _target_id_from_bucket(bucket=args.bucket, mapping=mapping)
+
         target = load_hf_target_by_id(target_id, repository_root=root)
         model = ConfigResolver(root).load_model(target.model_id)
 
@@ -139,6 +149,13 @@ def main() -> int:
         if mapping and not storage_override:
             raise HfTargetError(
                 f"HF target mapping does not contain target {target.id!r}."
+            )
+
+        resolved_bucket = storage_override.get("HF_BUCKET", target.bucket)
+        if args.bucket is not None and resolved_bucket != args.bucket:
+            raise HfTargetError(
+                f"Target {target.id!r} currently routes to HF_BUCKET "
+                f"{resolved_bucket!r}, not requested bucket {args.bucket!r}."
             )
     except (HfTargetError, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
