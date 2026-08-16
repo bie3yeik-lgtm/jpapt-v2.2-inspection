@@ -72,6 +72,14 @@ normalize_bucket_id() {
     printf '%s\n' "$value"
 }
 
+run_project_python() {
+    if command -v uv >/dev/null 2>&1; then
+        uv run python "$@"
+    else
+        python "$@"
+    fi
+}
+
 require_env HF_TOKEN
 require_env HF_BUCKET
 
@@ -135,7 +143,7 @@ done
 
 log "Validating revision bundle with project loader..."
 
-python - "$LOCAL_ROOT" <<'PY'
+run_project_python - "$LOCAL_ROOT" <<'PY'
 import sys
 
 from parakeet_onnx.hf.revisions import load_revision_bundle
