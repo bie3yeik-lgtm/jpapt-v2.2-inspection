@@ -15,6 +15,7 @@ from parakeet_onnx.evaluation.models import (
     RuntimeIdentity,
     SampleResult,
 )
+from parakeet_onnx.evaluation.parquet import ExperimentCapsuleWriter
 from parakeet_onnx.evaluation.writer import BenchmarkWriter, SampleResultWriter
 
 
@@ -109,4 +110,9 @@ def run_evaluation(
         errors=aggregate.errors,
     )
     BenchmarkWriter(inputs.output_dir / "metrics.json").write(benchmark)
+    ExperimentCapsuleWriter(inputs.output_dir / "run.parquet").write(
+        run_context=inputs.run_context,
+        samples=results,
+        benchmark=benchmark,
+    )
     return benchmark
