@@ -51,11 +51,15 @@ jobs:
           if [[ "$EVENT_NAME" == repository_dispatch ]]; then
             workflow="$PAYLOAD_WORKFLOW"
             ref="${PAYLOAD_REF:-main}"
-            inputs_json="${PAYLOAD_INPUTS:-{}}"
+            inputs_json="$PAYLOAD_INPUTS"
           else
             workflow="$MANUAL_WORKFLOW"
             ref="${MANUAL_REF:-main}"
-            inputs_json="${MANUAL_INPUTS:-{}}"
+            inputs_json="$MANUAL_INPUTS"
+          fi
+
+          if [[ -z "$inputs_json" || "$inputs_json" == null ]]; then
+            inputs_json='{}'
           fi
 
           [[ "$workflow" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]] || {
