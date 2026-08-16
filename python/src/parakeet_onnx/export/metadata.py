@@ -8,6 +8,12 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class CatalogReference:
+    id: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactMetadata:
     path: str
     sha256: str
@@ -31,7 +37,6 @@ class TokenizerBinding:
 
 @dataclass(frozen=True, slots=True)
 class CandidateVariantMetadata:
-    profile: str
     artifacts: dict[str, ArtifactMetadata]
     bindings: dict[str, Any]
     tokenizer: TokenizerBinding | None
@@ -40,6 +45,7 @@ class CandidateVariantMetadata:
 @dataclass(frozen=True, slots=True)
 class CandidateMetadata:
     candidate_id: str
+    catalog: CatalogReference
     profile_set: str
     variants: dict[str, CandidateVariantMetadata]
     schema_version: int = 3
@@ -56,12 +62,14 @@ def sha256_file(path: Path) -> str:
 def write_candidate_metadata(path: Path, metadata: CandidateMetadata) -> None:
     if metadata.schema_version != 3:
         raise ValueError("new candidate metadata must use schema_version=3")
+    if not metadata.catalog.id or len(metadata.catalog.sha256) != 64:
+        raise ValueError("candidate metadata must pin a valid ASR catalog reference")
     if not metadata.profile_set:
         raise ValueError("candidate metadata must reference a profile_set")
     if not metadata.variants:
         raise ValueError("candidate metadata must define at least one variant")
     for variant, value in metadata.variants.items():
-        if not variant or not value.profile or not value.artifacts:
+        if not variant or not value.artifacts:
             raise ValueError(f"candidate variant {variant!r} is incomplete")
         for key in ("input_kind", "io", "decoder_config"):
             if key not in value.bindings:
