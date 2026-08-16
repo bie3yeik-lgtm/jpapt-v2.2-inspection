@@ -9,15 +9,12 @@ set -euo pipefail
 #
 #   scripts/hf/hf-push-run.sh <run-directory>
 #
-# Example:
-#
-#   scripts/hf/hf-push-run.sh results/linux-cpu
-#
 # Required files:
 #
 #   run-context.json
 #   metrics.json
 #   samples.jsonl
+#   run.parquet
 #
 # Remote:
 #
@@ -28,88 +25,51 @@ SCRIPT_DIR="$(
     cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
     pwd
 )"
-
-ROOT="$(
-    cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1
-    pwd
-)"
-
+ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
-
 export PARAKEET_ONNX_REPO_ROOT="$ROOT"
 
-log() {
-    printf '[hf-push-run] %s\n' "$*"
-}
-
-fail() {
-    printf '[hf-push-run] ERROR: %s\n' "$*" >&2
-    exit 1
-}
+log() { printf '[hf-push-run] %s\n' "$*"; }
+fail() { printf '[hf-push-run] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_env() {
     local name="$1"
-
-    if [[ -z "${!name:-}" ]]; then
-        fail "Required environment variable is not set: $name"
-    fi
+    [[ -n "${!name:-}" ]] || fail "Required environment variable is not set: $name"
 }
 
 normalize_bucket_id() {
     local value="$1"
-
     value="${value#hf://buckets/}"
     value="${value%/}"
-
-    [[ "$value" == */* ]] \
-        || fail \
-            "HF_BUCKET must use namespace/bucket-name format; got: $value"
-
+    [[ "$value" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format; got: $value"
     printf '%s\n' "$value"
 }
 
 require_env HF_TOKEN
 require_env HF_BUCKET
-
-command -v hf >/dev/null 2>&1 \
-    || fail "hf CLI is unavailable."
-
-command -v python >/dev/null 2>&1 \
-    || fail "python is unavailable."
+command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable."
+command -v python >/dev/null 2>&1 || fail "python is unavailable."
 
 RUN_DIRECTORY="${1:-}"
-
-[[ -n "$RUN_DIRECTORY" ]] \
-    || fail \
-        "Run directory is required. Usage: $0 <run-directory>"
+[[ -n "$RUN_DIRECTORY" ]] || fail "Run directory is required. Usage: $0 <run-directory>"
 
 RUN_DIRECTORY="$(
     python - "$RUN_DIRECTORY" <<'PY'
 import sys
 from pathlib import Path
-
-print(
-    Path(sys.argv[1])
-    .expanduser()
-    .resolve()
-)
+print(Path(sys.argv[1]).expanduser().resolve())
 PY
 )"
-
-[[ -d "$RUN_DIRECTORY" ]] \
-    || fail \
-        "Run directory does not exist: $RUN_DIRECTORY"
+[[ -d "$RUN_DIRECTORY" ]] || fail "Run directory does not exist: $RUN_DIRECTORY"
 
 REQUIRED_FILES=(
     "run-context.json"
     "metrics.json"
     "samples.jsonl"
+    "run.parquet"
 )
-
 for filename in "${REQUIRED_FILES[@]}"; do
-    [[ -s "$RUN_DIRECTORY/$filename" ]] \
-        || fail \
-            "Required run artifact missing or empty: $filename"
+    [[ -s "$RUN_DIRECTORY/$filename" ]] || fail "Required run artifact missing or empty: $filename"
 done
 
 RUN_ID="$(
@@ -117,19 +77,11 @@ RUN_ID="$(
 import json
 import sys
 from pathlib import Path
-
-path = Path(sys.argv[1])
-
-with path.open("r", encoding="utf-8") as file:
+with Path(sys.argv[1]).open("r", encoding="utf-8") as file:
     value = json.load(file)
-
 run_id = value.get("run_id")
-
 if not isinstance(run_id, str) or not run_id:
-    raise SystemExit(
-        "run-context.json has no valid run_id"
-    )
-
+    raise SystemExit("run-context.json has no valid run_id")
 print(run_id)
 PY
 )"
@@ -139,35 +91,24 @@ METRICS_RUN_ID="$(
 import json
 import sys
 from pathlib import Path
-
-with Path(sys.argv[1]).open(
-    "r",
-    encoding="utf-8",
-) as file:
+with Path(sys.argv[1]).open("r", encoding="utf-8") as file:
     value = json.load(file)
-
 run_id = value.get("run_id")
-
 if not isinstance(run_id, str) or not run_id:
-    raise SystemExit(
-        "metrics.json has no valid run_id"
-    )
-
+    raise SystemExit("metrics.json has no valid run_id")
 print(run_id)
 PY
 )"
-
-[[ "$RUN_ID" == "$METRICS_RUN_ID" ]] \
-    || fail \
-        "run-context.json and metrics.json use different run IDs."
+[[ "$RUN_ID" == "$METRICS_RUN_ID" ]] || fail "run-context.json and metrics.json use different run IDs."
 
 if command -v uv >/dev/null 2>&1; then
-    log "Validating output schemas..."
-
+    log "Validating JSON contracts and Parquet capsule..."
     uv run python - \
         "$RUN_DIRECTORY/run-context.json" \
         "$RUN_DIRECTORY/metrics.json" \
         "$RUN_DIRECTORY/samples.jsonl" \
+        "$RUN_DIRECTORY/run.parquet" \
+        "$RUN_ID" \
         <<'PY'
 import json
 import sys
@@ -175,6 +116,7 @@ from pathlib import Path
 
 from parakeet_onnx.evaluation import (
     validate_benchmark,
+    validate_experiment_capsule,
     validate_run_context,
     validate_sample_result,
 )
@@ -182,77 +124,54 @@ from parakeet_onnx.evaluation import (
 run_context_path = Path(sys.argv[1])
 metrics_path = Path(sys.argv[2])
 samples_path = Path(sys.argv[3])
+parquet_path = Path(sys.argv[4])
+run_id = sys.argv[5]
 
-with run_context_path.open(
-    "r",
-    encoding="utf-8",
-) as file:
-    validate_run_context(
-        json.load(file)
-    )
-
-with metrics_path.open(
-    "r",
-    encoding="utf-8",
-) as file:
-    validate_benchmark(
-        json.load(file)
-    )
+with run_context_path.open("r", encoding="utf-8") as file:
+    validate_run_context(json.load(file))
+with metrics_path.open("r", encoding="utf-8") as file:
+    validate_benchmark(json.load(file))
 
 count = 0
-
-with samples_path.open(
-    "r",
-    encoding="utf-8",
-) as file:
-    for line_number, line in enumerate(
-        file,
-        start=1,
-    ):
+with samples_path.open("r", encoding="utf-8") as file:
+    for line_number, line in enumerate(file, start=1):
         line = line.strip()
-
         if not line:
             continue
-
         try:
             value = json.loads(line)
         except json.JSONDecodeError as exc:
+            raise SystemExit(f"samples.jsonl line {line_number}: {exc}") from exc
+        if value.get("run_id") != run_id:
             raise SystemExit(
-                f"samples.jsonl line {line_number}: {exc}"
-            ) from exc
-
-        validate_sample_result(
-            value
-        )
-
+                f"samples.jsonl line {line_number}: run_id does not match {run_id!r}"
+            )
+        validate_sample_result(value)
         count += 1
 
 if count == 0:
-    raise SystemExit(
-        "samples.jsonl contains no sample results"
-    )
+    raise SystemExit("samples.jsonl contains no sample results")
 
-print(
-    f"[hf-push-run] validated {count} sample results"
-)
+parquet_count = validate_experiment_capsule(parquet_path, expected_run_id=run_id)
+if parquet_count != count:
+    raise SystemExit(
+        "samples.jsonl and run.parquet contain different sample counts: "
+        f"jsonl={count}, parquet={parquet_count}"
+    )
+print(f"[hf-push-run] validated {count} JSONL/Parquet sample results")
 PY
 else
-    log \
-        "uv unavailable; skipped project JSON Schema validation."
+    fail "uv is required to validate run.parquet before Hugging Face upload."
 fi
 
 HF_BUCKET_ID="$(normalize_bucket_id "$HF_BUCKET")"
-
 REMOTE="hf://buckets/${HF_BUCKET_ID}/runs/${RUN_ID}"
 
 log "Run ID: $RUN_ID"
 log "Source: $RUN_DIRECTORY"
 log "Destination: $REMOTE"
 
-# Never use --delete here.
-#
-# A run is append-oriented durable history. Updating explicitly regenerated
-# files is allowed, but this wrapper must not remove existing remote data.
+# Never use --delete here. Runs are append-oriented durable history.
 hf buckets sync \
     --token "$HF_TOKEN" \
     "$RUN_DIRECTORY" \
