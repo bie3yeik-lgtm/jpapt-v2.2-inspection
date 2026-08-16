@@ -80,6 +80,10 @@ pub struct NemoOnnxQualityArgs {
     #[arg(long)]
     pub nemo_reference: PathBuf,
     #[arg(long)]
+    pub nemo_validation_report: PathBuf,
+    #[arg(long)]
+    pub nemo_validation_bundle_root: PathBuf,
+    #[arg(long)]
     pub output: PathBuf,
     #[arg(long)]
     pub max_cer_regression: f64,
