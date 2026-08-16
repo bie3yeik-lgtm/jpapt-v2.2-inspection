@@ -114,7 +114,7 @@ def test_decorders_typo_is_rejected(tmp_path: Path) -> None:
     )
     _write(tmp_path, "datasets-lock.json", _datasets())
 
-    with pytest.raises(RevisionError, match="'decoders' must be an object"):
+    with pytest.raises(RevisionError, match="unsupported legacy fields.*decorders"):
         load_revision_bundle(tmp_path)
 
 
@@ -130,5 +130,5 @@ def test_single_decoder_field_is_rejected(tmp_path: Path) -> None:
     )
     _write(tmp_path, "datasets-lock.json", _datasets())
 
-    with pytest.raises(RevisionError, match="'decoders' must be an object"):
+    with pytest.raises(RevisionError, match="unsupported legacy fields.*decoder"):
         load_revision_bundle(tmp_path)
