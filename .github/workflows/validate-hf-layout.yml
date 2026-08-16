@@ -88,8 +88,8 @@ jobs:
           python scripts/ci/validate-github-action-versions.py
           python scripts/ci/resolve-asr-catalog.py fingerprint catalog_id
           python scripts/ci/resolve-asr-catalog.py fingerprint sha256
-          python scripts/ci/resolve-allocation-catalog.py fingerprint catalog_id
-          python scripts/ci/resolve-allocation-catalog.py fingerprint sha256
+          cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id
+          cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256
           bash -n scripts/hf/hf-allocate-id.sh
           bash -n scripts/hf/hf-request-id.sh
           bash -n scripts/hf/hf-update-root-readme.sh
@@ -100,7 +100,6 @@ jobs:
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py \
-            python/tests/unit/test_hf_sequence_id.py \
             python/tests/unit/test_candidate_artifacts.py \
             python/tests/unit/test_manifest.py \
             python/tests/unit/test_asr_catalog_normalization.py \
@@ -111,28 +110,23 @@ jobs:
             python/tests/unit/test_evaluator_capability.py \
             python/tests/unit/test_ort_optimizer_canary.py
 
-      - name: List source-controlled catalogs, profiles, targets and evaluators
+      - name: List source-controlled runtime catalogs, targets and evaluators
         shell: bash
         run: |
           set -euo pipefail
+          echo "HF allocation catalog: $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id) $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256)"
           python - <<'PY'
           from pathlib import Path
-          from parakeet_onnx.config.allocation_catalog import load_repository_allocation_catalog
           from parakeet_onnx.config.catalog import load_repository_catalog
           runtime_catalog=load_repository_catalog(Path.cwd())
-          allocation_catalog=load_repository_allocation_catalog(Path.cwd())
           targets=sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
           evaluators=sorted(path.stem for path in Path("config/evaluators").glob("*.toml"))
           if not targets or not evaluators:
               raise SystemExit("HF targets and evaluator capabilities are required")
           print(f"ASR runtime catalog: {runtime_catalog.catalog_id} {runtime_catalog.sha256}")
-          print(f"HF allocation catalog: {allocation_catalog.catalog_id} {allocation_catalog.sha256}")
           print("Runtime profile sets:")
           for profile_set_id, profile_set in sorted(runtime_catalog.profile_sets.items()):
               print(f"- {profile_set_id}: {dict(profile_set.variants)} default={profile_set.default_variant}")
-          print("Allocation prefixes:")
-          for key, prefix in sorted(allocation_catalog.prefixes.items()):
-              print(f"- {key}: {prefix}")
           print("Configured HF targets:")
           for target in targets: print(f"- {target}")
           print("Configured evaluator capabilities:")
