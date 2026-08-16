@@ -57,10 +57,9 @@ impl SessionTuning {
                 }
             };
         }
-        if let Some(mode) = optional_string(
-            value,
-            "/config/resolved/provider/session/execution_mode",
-        )? {
+        if let Some(mode) =
+            optional_string(value, "/config/resolved/provider/session/execution_mode")?
+        {
             tuning.parallel_execution = match mode {
                 "sequential" => false,
                 "parallel" => true,
