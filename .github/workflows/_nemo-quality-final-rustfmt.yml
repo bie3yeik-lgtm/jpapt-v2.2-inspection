@@ -1,0 +1,39 @@
+name: NeMo Quality Final Rustfmt
+
+on:
+  push:
+    branches:
+      - agent/nemo-onnx-asr-quality
+    paths:
+      - .github/workflows/_nemo-quality-final-rustfmt.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/nemo-onnx-asr-quality
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --locked -p asr-eval --no-default-features --features cpu
+      - name: Commit formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/asr-eval/src/cli.rs rust/crates/asr-eval/src/main.rs rust/crates/asr-eval/src/nemo_quality.rs
+          git diff --cached --quiet && exit 0
+          git commit -m "Apply final rustfmt to NeMo quality"
+          git push origin HEAD:agent/nemo-onnx-asr-quality
