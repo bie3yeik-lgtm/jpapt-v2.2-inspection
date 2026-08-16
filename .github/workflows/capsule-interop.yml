@@ -1,0 +1,80 @@
+name: Capsule Interop
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/capsule-interop.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/crates/asr-capsule/**"
+      - "python/src/parakeet_onnx/evaluation/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/capsule-interop.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/crates/asr-capsule/**"
+      - "python/src/parakeet_onnx/evaluation/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capsule-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-to-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Verify locked environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          uv lock --check
+          uv sync --locked --extra datasets --extra dev
+      - name: Generate capsule with Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/capsule-interop
+          cargo run --locked -p asr-capsule --example write_fixture -- \
+            target/capsule-interop/run.parquet
+      - name: Read and validate with Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          from pathlib import Path
+          from parakeet_onnx.evaluation import (
+              read_experiment_capsule,
+              summarize_experiment_capsule,
+          )
+
+          path = Path("target/capsule-interop/run.parquet")
+          capsule = read_experiment_capsule(path)
+          summary = summarize_experiment_capsule(path)
+
+          assert capsule.run_id == "interop-rust-v1"
+          assert capsule.metric("quality.cer") == 0.125
+          assert len(capsule.diagnostics) == 1
+          assert capsule.diagnostic_metadata("interop-check") == {"producer": "rust"}
+          assert summary.run_id == "interop-rust-v1"
+          assert summary.diagnostic_count == 1
+          assert summary.metric("quality.cer") == 0.125
+          print("Rust -> Python ExperimentCapsuleV1 interop verified")
+          PY
