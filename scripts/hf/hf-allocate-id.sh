@@ -11,11 +11,17 @@ fail() { printf '[hf-allocate-id] ERROR: %s\n' "$*" >&2; exit 1; }
 COLLECTION="${1:-}"
 PREFIX="${2:-}"
 
-[[ "${HF_ALLOCATOR_INTERNAL:-}" == "1" ]] || fail \
-  "direct allocation is disabled; use scripts/hf/hf-request-id.sh so all repositories share the central allocator"
 [[ "$COLLECTION" == "candidates" || "$COLLECTION" == "experiments" || "$COLLECTION" == "config" ]] \
   || fail "collection must be 'candidates', 'experiments', or 'config'"
 [[ -n "$PREFIX" ]] || fail "prefix is required"
+
+# Public compatibility entrypoint: every non-internal request is forwarded to
+# the central allocator workflow. Only the central workflow sets
+# HF_ALLOCATOR_INTERNAL=1 and performs list -> max+1 -> reservation itself.
+if [[ "${HF_ALLOCATOR_INTERNAL:-}" != "1" ]]; then
+  exec bash scripts/hf/hf-request-id.sh "$COLLECTION" "$PREFIX"
+fi
+
 [[ -n "${HF_TOKEN:-}" ]] || fail "HF_TOKEN is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
