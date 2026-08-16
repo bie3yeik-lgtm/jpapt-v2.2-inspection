@@ -67,7 +67,7 @@ config/models/*.toml
 config/asr-catalog.json
 ```
 
-`HF_TARGETS_JSON` retains its historical routing shape:
+`HF_TARGETS_JSON` keeps the existing repository-variable routing shape:
 
 ```json
 {
@@ -78,13 +78,15 @@ config/asr-catalog.json
 }
 ```
 
-The variable is not allowed to silently override source-controlled routing. For every target, the resolver checks that its `HF_BUCKET` and `HF_MODEL_REPO` exactly match `asr-hf resolve-target`. It then matches Dockerfile `source.repo_id` and `source.framework` to the resolved target.
+The variable is not allowed to create a target or silently override source-controlled routing. The resolver first enumerates `config/hf-targets/*.toml`. For each repository-defined target that also exists in `HF_TARGETS_JSON`, it checks that `HF_BUCKET` and `HF_MODEL_REPO` exactly match `asr-hf resolve-target`. It then matches Dockerfile `source.repo_id` and `source.framework` to the resolved target.
+
+An entry present only in `HF_TARGETS_JSON` is ignored with a warning until a corresponding source-controlled target exists. This currently prevents `kotoba-whisper-v2.2` in the variable snapshot from becoming an undeclared runtime target.
 
 Therefore:
 
 ```text
 HF_TARGETS_JSON
-  = selection/routing snapshot checked by CI
+  = checked selection/routing snapshot
 
 config/hf-targets + config/models + asr-catalog
   = canonical repository contract
@@ -92,9 +94,9 @@ config/hf-targets + config/models + asr-catalog
 
 ## 4. Authentication
 
-### Preferred
+GHCR authentication uses only the repository workflow permission and the ephemeral `github.token`.
 
-Packages connected to this repository use the workflow `GITHUB_TOKEN`:
+Read jobs declare:
 
 ```yaml
 permissions:
@@ -102,7 +104,7 @@ permissions:
   packages: read
 ```
 
-Build/publish jobs elevate only their own package permission:
+Build/publish jobs elevate only their own required permissions:
 
 ```yaml
 permissions:
@@ -112,22 +114,16 @@ permissions:
   id-token: write
 ```
 
-### PAT fallback
+`docker/login-action` uses:
 
-If a package is not readable through the repository's `GITHUB_TOKEN`, create an Actions **secret** named:
-
-```text
-GHCR_PAT
+```yaml
+with:
+  registry: ghcr.io
+  username: ${{ github.actor }}
+  password: ${{ github.token }}
 ```
 
-with the minimum required package scope. Workflows use:
-
-```text
-GHCR_PAT if present
-otherwise GITHUB_TOKEN
-```
-
-A PAT must not be stored in a repository variable. In particular, `vars.SUPERSECRET` is intentionally not consumed by these workflows. Repository variables are configuration, not secret storage. If that value is a PAT, migrate it to `secrets.GHCR_PAT` and delete the variable.
+There is no PAT fallback in the canonical workflow. `vars.SUPERSECRET` is not consumed by GHCR CI. Repository variables are treated as configuration rather than credentials.
 
 ## 5. GHCR Build and Publish
 
@@ -141,7 +137,8 @@ Triggers:
 
 - pull request changing `docker/**` or the workflow itself;
 - push to `main` changing `docker/**`;
-- manual dispatch.
+- manual dispatch;
+- external repository dispatch through `repository-dispatch.yml`.
 
 Behavior:
 
@@ -153,7 +150,7 @@ read io.jpapt.ghcr.package label
 Buildx build
     ↓
 PR: build/load only
-main/manual: push GHCR tags
+main/manual: repository-token login + push GHCR tags
     ↓
 resolve image digest
     ↓
@@ -185,15 +182,16 @@ Triggers:
 
 - manual dispatch;
 - weekly scheduled smoke run;
-- successful `GHCR Build and Publish` run on `main`.
+- successful `GHCR Build and Publish` run on `main`;
+- external repository dispatch through `repository-dispatch.yml`.
 
-Manual inputs:
+Manual/repository-dispatch inputs:
 
 ```text
-target          optional; blank = every Dockerfile-matched HF target
+target          optional; blank = every Dockerfile-matched source-controlled target
 candidate_id    optional; blank = latest candidate in the target Bucket
-runtime_variant optional; blank = Docker/target default
-assessment      smoke / parity / full
+runtime_variant optional; blank = target/catalog default
+evaluation      smoke / parity / full
 image_tag       tag to resolve, normally latest
 ```
 
@@ -201,6 +199,8 @@ The actual evaluation flow is:
 
 ```text
 HF_TARGETS_JSON
+      ↓
+repository-defined targets
       ↓
 Dockerfile labels + asr-hf target resolution
       ↓
@@ -212,7 +212,7 @@ resolve/fetch candidate from HF Bucket
       ↓
 central experiment allocation
       ↓
-GHCR login
+repository-token GHCR login
       ↓
 pull <image>:<tag>
       ↓
@@ -233,7 +233,15 @@ HF Bucket runs/<run-id>/
 benchmarks/<candidate>/ghcr-<package>-cpu/<run-id>.json
 ```
 
-The repository is bind-mounted at `/workspace`; the project package is installed with `--no-deps`. The Docker image owns the heavyweight NeMo/PyTorch/CUDA environment, while candidate/config/dataset identity continues to come from the repository and HF revision locks.
+The repository is bind-mounted at `/workspace`. Project source is loaded with:
+
+```text
+PYTHONPATH=/workspace/python/src
+```
+
+The evaluation workflow does not pip-install project dependencies into the pulled image at runtime. This preserves the meaning of the recorded GHCR digest as the dependency/runtime environment identity. The image owns the heavyweight NeMo/PyTorch/CUDA/ORT/HF dependency stack; candidate/config/dataset identity continues to come from repository contracts and pinned HF revision documents.
+
+The container runs with the GitHub runner UID/GID so generated run files remain writable by subsequent host-side validation/upload steps.
 
 ## 7. GHCR Package Audit
 
@@ -246,7 +254,8 @@ Workflow:
 Triggers:
 
 - manual dispatch;
-- weekly schedule.
+- weekly schedule;
+- external repository dispatch through `repository-dispatch.yml`.
 
 Checks:
 
@@ -263,7 +272,39 @@ Checks:
 
 Audit results are retained as GitHub artifacts for 30 days.
 
-## 8. Provider lane separation
+## 8. GHCR Contract Validation
+
+Workflow:
+
+```text
+.github/workflows/ghcr-contracts.yml
+```
+
+This is the fast gate before the heavyweight image build/evaluation lanes. It verifies:
+
+- every participating Dockerfile has required jpapt labels;
+- `docker/<environment>/config.json` source identity matches its Dockerfile labels;
+- Dockerfile source identity can be matched to a source-controlled HF target;
+- the matching `HF_TARGETS_JSON` route agrees with repository routing;
+- repository HF target validation succeeds;
+- GitHub Action version policy succeeds;
+- every workflow is reachable through the repository-dispatch router.
+
+The last invariant is enforced by requiring `workflow_dispatch` on every workflow other than the router, and `repository_dispatch` on `.github/workflows/repository-dispatch.yml`.
+
+## 9. Repository dispatch
+
+Every workflow is externally reachable through:
+
+```text
+event_type = jpapt.workflow
+```
+
+The router accepts the target workflow filename, target ref, and the same input object used by that workflow's `workflow_dispatch` contract. See [repository-dispatch.md](./repository-dispatch.md).
+
+This keeps repository-dispatch parsing centralized rather than duplicating `client_payload` handling across all workflow YAML files.
+
+## 10. Provider lane separation
 
 GHCR Linux containers do not replace native provider lanes.
 
@@ -282,7 +323,7 @@ native macOS
 
 DirectML and CoreML must not be claimed as validated merely because the Linux GHCR image builds or its CPU run passes.
 
-## 9. Current image contract
+## 11. Current image contract
 
 `docker/nemo-speech-26.07.00/Dockerfile` derives from:
 
@@ -290,7 +331,7 @@ DirectML and CoreML must not be claimed as validated merely because the Linux GH
 nvcr.io/nvidia/nemo-speech:26.07.00
 ```
 
-It keeps NVIDIA's NeMo/PyTorch/CUDA ownership intact and adds the repository-side tools needed for reference/evaluation integration. Project ORT/HF identities are pinned:
+It keeps NVIDIA's NeMo/PyTorch/CUDA ownership intact and adds only project-side tools needed for reference/evaluation integration. Project ORT/HF identities are pinned:
 
 ```text
 onnxruntime == 1.28.0
@@ -299,7 +340,7 @@ huggingface_hub == 1.24.0
 
 The image must not bake `HF_TOKEN`, GHCR credentials, candidate IDs, or mutable HF revisions into a layer.
 
-## 10. Operational failure interpretation
+## 12. Operational failure interpretation
 
 ### Matrix discovery fails
 
@@ -308,11 +349,13 @@ Likely causes:
 - malformed/missing `HF_TARGETS_JSON`;
 - variable routing differs from source-controlled target config;
 - Dockerfile missing required labels;
-- no Docker source repo/framework matches the requested target.
+- no Docker source repo/framework matches the requested source-controlled target.
+
+An extra variable-only target is a warning rather than a runtime target.
 
 ### GHCR login/pull fails
 
-First verify that the package grants this repository Actions access. If cross-repository access is required, configure `secrets.GHCR_PAT`; do not use a repository variable for the PAT.
+Verify that the package grants this repository GitHub Actions access and that the job declares the appropriate `packages: read` or `packages: write` permission. GHCR workflows do not fall back to a PAT.
 
 ### Image identity fails
 
@@ -326,7 +369,7 @@ This indicates the environment is structurally valid but the candidate/config/da
 
 The image was not produced by the attested build workflow or predates attestation support. Rebuild/publish the package through the canonical workflow.
 
-## 11. Change policy
+## 13. Change policy
 
 When changing a Docker reference environment:
 
