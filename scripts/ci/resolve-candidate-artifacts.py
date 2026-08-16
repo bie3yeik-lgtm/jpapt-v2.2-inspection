@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import sys
 
-from parakeet_onnx.contracts import reject_nulls
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
@@ -23,16 +22,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _execution_contract(candidate: CandidateArtifacts) -> dict[str, object]:
-    value = candidate.provenance_dict()
-    value["schema_version"] = 1
-    value["candidate_root"] = str(candidate.root)
-    if value.get("tokenizer") is None:
-        value.pop("tokenizer", None)
-    reject_nulls(value)
-    return value
-
-
 def main() -> int:
     args = build_parser().parse_args()
     try:
@@ -42,7 +31,7 @@ def main() -> int:
             repository_root=args.repository_root,
         )
         validate_candidate_runtime_contract(candidate)
-        contract = _execution_contract(candidate)
+        contract = candidate.generated_contract().to_dict()
     except (CandidateMetadataError, KeyError, TypeError, ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
