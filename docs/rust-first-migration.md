@@ -6,151 +6,255 @@
 
 Rust is the canonical implementation for stable, model-independent production/runtime responsibilities. Python remains only at explicit Python-native ML/tooling, dataset acquisition, reference/parity, and compatibility-test boundaries.
 
-The target was never zero Python source files. The target was a Python layer with almost no business rules, validation policy, orchestration state, deterministic bookkeeping, or runtime-critical behavior. The final repository audit confirms that target has been reached.
+The target was not zero Python files. The target was to remove business rules, deterministic bookkeeping, runtime-critical validation policy, provider policy, HF routing/allocation policy, and canonical evaluation orchestration from Python wherever those responsibilities are not inherently Python-native.
 
 ## Canonical architecture
 
 ```text
-                 +-------------------------------------------+
-                 | Python-native / reference boundary        |
-                 | ONNX/PyTorch tooling, HF datasets, E2E    |
-                 +--------------------+----------------------+
-                                      |
-                           versioned file contracts
-                                      |
-                                      v
-+-----------------------------------------------------------------------+
-| Rust canonical core                                                    |
-|                                                                       |
-| asr-contracts  schemas/config/revisions/candidate/run-context/policy   |
-| asr-audio      decode/resample/canonical waveform                      |
-| asr-runtime    ONNX Runtime + provider handling                        |
-| asr-metrics    normalization/CER/WER/telemetry                         |
-| asr-eval       evaluation orchestration                                |
-| asr-capsule    Parquet persistence/read/validate/analytics             |
-| asr-hf         deterministic HF routing/layout/allocation bookkeeping  |
-+-----------------------------------------------------------------------+
-                                      |
-                              thin shell / hf CLI
-                                      |
-                                      v
-                         HF Bucket / Model Repo / CI
+Python-native / reference boundary
+  ONNX/PyTorch/Transformers/NeMo tooling
+  Hugging Face datasets
+  public/reference E2E
+  interoperability tests
+               |
+               | versioned file contracts
+               v
+Rust canonical core
+  asr-contracts
+  asr-hf
+  asr-audio
+  asr-runtime
+  asr-metrics
+  asr-eval
+  asr-capsule
+               |
+               | thin shell + official hf/gh CLI
+               v
+HF Bucket / Model Repo / GitHub Actions / GitHub Releases
 ```
+
+## Rust-owned responsibilities
+
+### `asr-contracts`
+
+- JSON/schema validation
+- revision bundle validation
+- resolved config identity
+- run-context construction/validation
+- evaluator capability policy
+- provider probe context/readiness classification
+- action/workflow policy validation
+- ASR catalog normalization/fingerprint/summary
+- promotion/config publication bookkeeping validation
+
+### `asr-hf`
+
+- HF target routing
+- Bucket reverse lookup
+- runtime variant/profile/decoder resolution
+- allocation collection -> prefix policy
+- canonical/historical sequence scanning
+- candidate location resolution
+- allocation request/response bookkeeping
+- candidate sync-plan validation
+- root README allocator managed block
+
+### `asr-audio`
+
+- canonical audio decode/resample/waveform handling
+
+### `asr-runtime`
+
+- ONNX Runtime
+- provider registration/session/runtime handling
+
+### `asr-metrics`
+
+- text normalization
+- CER/WER
+- runtime/provider telemetry aggregation
+
+### `asr-eval`
+
+- canonical Rust evaluation orchestration
+- current decoder capability: CTC
+
+### `asr-capsule`
+
+- ExperimentCapsuleV1 Parquet persistence
+- validation/read/summary/analytics
+
+## Current HF policy after migration
+
+旧設計のallocation catalog/prefix-keyは廃止済みです。
+
+現在はcollectionから直接prefixを導出します。
+
+```text
+candidates  -> candidate
+experiments -> experiment
+config      -> config
+```
+
+`config/hf-allocation-catalog.json` は存在しません。allocation fingerprintやprefix keyをhuman-authored inputとして復活させないでください。
+
+candidate read/writeも次へ統一されています。
+
+```text
+new write:
+  candidates/candidate-NNNNNN/
+
+historical read-only fallback:
+  candidates/<variant>/candidate-NNNNNN/
+```
+
+HF CLI listingがcollection root付きpathを返す場合もRust resolverが正規化します。
+
+## Minimal target policy
+
+`config/hf-targets/<target-id>.toml` は次の最小情報だけを保持します。
+
+```text
+runtime.profile_set
+storage.bucket
+storage.model_repo
+```
+
+導出される値:
+
+```text
+target ID                <- filename
+model/upstream/framework <- config/models/<target-id>.toml
+runtime profile/decoder  <- config/asr-catalog.json
+candidate ID             <- explicit input or Bucket state
+allocation prefix        <- collection
+```
+
+同じidentityを複数configへ再入力しません。
 
 ## Python retention policy
 
 Python may remain when at least one of the following is true:
 
-1. the upstream library is Python-only or its supported canonical API is Python;
-2. the code is a reference/parity implementation used to prove Rust behavior;
-3. replacing it would add a custom network/protocol implementation with lower reliability than a supported ecosystem tool;
-4. it is test-only fixture/scaffolding around Python-native model tooling.
+1. upstream libraryがPython-only、またはsupported canonical APIがPythonである。
+2. Rust behaviorを検証するreference/parity implementationである。
+3. official supported CLI/libraryを捨ててcustom network/protocol implementationをRustで作る方が信頼性を下げる。
+4. Python-native model tooling用のtest fixture/scaffoldingである。
 
-Python must not own production JSON/schema validation, filesystem/hash policy, deterministic artifact bookkeeping, run-context construction, provider policy, evaluation orchestration, metrics policy, or HF routing/allocation policy.
+Python must not own:
 
-## Completed migration areas
+- stable production JSON/schema policy
+- deterministic filesystem/hash policy
+- canonical run-context construction for Rust operation
+- evaluator capability policy
+- provider readiness classification
+- HF target routing
+- allocation prefix/sequence policy
+- candidate location migration policy
+- benchmark/promotion/config publication bookkeeping policy
 
-### Contracts and persisted results
+## Intentional Python boundaries
 
-Rust owns:
+### `scripts/ci/resolve-candidate-artifacts.py`
 
-- run-context, benchmark, sample-result, and run-directory validation;
-- generated candidate contract validation;
-- revision bundle validation and resolved config handling;
-- Parquet capsule validation/summary and operational upload preflight;
-- promotion/benchmark/config publication validation.
+`CandidateArtifacts` とPython ONNX toolingを使ってactual graph/artifactをinspectionし、versioned generated candidate execution contractを出力します。
 
-Python readers remain only where they provide compatibility/reference coverage, such as the Rust-producer -> Python-reader capsule interoperability test.
+### `scripts/ci/prepare-rust-manifest.py`
 
-### Evaluation/runtime orchestration
+Hugging Face `datasets` acquisition/materialization boundaryです。Rust evaluatorが読めるresolved manifestへ変換します。
 
-Rust owns:
+### Public/reference E2E
 
-- resolved manifest consumption and contract checks;
-- evaluator orchestration and result production;
-- run-context construction;
-- evaluator capability policy;
-- provider strict-mode run-context construction;
-- CoreML/DirectML readiness classification and readiness JSON emission.
+例:
 
-The operational Rust evaluator does not shell out to Python for runtime policy or run-context construction.
+```text
+e2e-provider-ctc.py
+e2e-ctc-onnx.py
+e2e-rust-ctc.py
+public-model-e2e.yml 内のrevision resolution/model preparation
+```
 
-### Hugging Face deterministic policy
+これらはproduction runtime dependencyではなくreference/proof boundaryです。
 
-Rust owns:
+## Shell retention policy
 
-- target/bucket routing;
-- runtime profile/decoder resolution;
-- target/catalog validation and fingerprints;
-- allocation catalog prefixes/fingerprints;
-- deterministic sequence/allocation bookkeeping;
-- repository/config identity policy.
+shellは薄いtransport/orchestration wrapperとして残します。
 
-Network/authentication operations continue to prefer the official `hf` CLI rather than reimplementing Hub protocols in Rust solely to eliminate a thin wrapper.
+許可される代表責務:
 
-### Repository/CI policy
+- env validation
+- path staging
+- official `hf` / `gh` CLI invocation
+- Rust CLI invocation
+- CI glue
 
-Rust owns stable repository policy including:
+stable semantic policyをawk/sed/bashで再実装しません。
 
-- GitHub Actions governed-version validation;
-- catalog normalization/fingerprinting;
-- evaluator capability validation;
-- provider readiness classification.
+## GitHub Actionsとの関係
 
-Dead Python policy entrypoints and stale callers were deleted rather than mechanically ported.
+GitHub ActionsはRust-first architectureの上位orchestration layerです。
 
-## Intentional Python boundaries after final audit
+### 常設CI
 
-The final `scripts/ci/*.py` surface is intentionally limited to five files:
+```text
+Python Unit
+Rust CI
+Validate HF Layout
+Capsule Interop
+```
 
-| File | Classification | Reason retained |
-|---|---|---|
-| `resolve-candidate-artifacts.py` | `python-boundary` | Uses CandidateArtifacts and Python ONNX graph inspection to produce the versioned candidate execution contract consumed by Rust. |
-| `prepare-rust-manifest.py` | `python-boundary` | Uses Hugging Face `datasets` acquisition/materialization; emits a materialized revision-pinned manifest consumed by Rust. |
-| `e2e-provider-ctc.py` | `reference/test` | Builds synthetic ONNX fixtures for provider readiness probes. |
-| `e2e-ctc-onnx.py` | `reference/test` | Public-model/reference ONNX preparation. |
-| `e2e-rust-ctc.py` | `reference/parity` | Cross-checks Rust behavior against the Python/reference path. |
+### Operational/manual
 
-Additional inline Python in workflows is restricted to one of these categories:
+```text
+CPU Full Evaluation
+Cross Platform ONNX Parity
+Rust Cross Platform Evaluation
+Provider Strict Probes
+Public Model E2E
+HF Central Sequence Allocator
+Rust Release
+```
 
-- environment/package setup for Python-native tests;
-- Python unit tests;
-- public-model/reference workflows;
-- Rust/Python interoperability tests;
-- Python-native model/dataset preparation.
-
-The public-model E2E workflow may resolve exact Hub revisions and manipulate models in Python because it is a reference/parity workflow, not a production runtime dependency.
+各workflowの現在のinput/runner/secret/artifactは [github-actions.md](./github-actions.md) を参照してください。
 
 ## Compatibility strategy
 
-The contract between Python-native preparation and production Rust is a versioned file, not a Python object.
+Python-native preparationとRust production coreの境界はversioned fileです。
 
-Required compatibility patterns include:
+必要なpattern:
 
-- Python producer -> Rust consumer;
-- Rust producer -> Python reference consumer;
-- golden JSON/Parquet fixtures read by both;
-- byte/hash equality where deterministic serialization is required;
-- metric/tensor tolerances where exact equality is inappropriate.
+```text
+Python producer -> Rust consumer
+Rust producer -> Python reference consumer
+golden JSON/Parquet fixture -> both readers
+byte/hash equality -> deterministic serialization
+tolerance comparison -> numerical/model output
+```
 
-A Python module can be removed only when no operational script or production workflow needs its Python-native behavior and compatibility coverage exists for the persisted contract.
+`capsule-interop.yml` はRust producer -> Python readerの具体例です。
 
 ## Dependency policy
 
-- Keep Rust dependencies exact where Arrow/Parquet/ORT compatibility is sensitive.
-- Do not add a Python dependency when an existing Rust crate or official CLI handles the responsibility.
-- Production Rust must not shell out to Python.
-- Keep official CLIs for authentication/network operations when replacing them would create a less reliable custom protocol implementation.
-- Do not port Python reference or ML-tooling code merely to reduce the Python file count.
+- Rust ORT/Arrow/Parquetのcompatibility-sensitive dependencyはCargo.lockで固定する。
+- Python runtimeはuv.lockを正本とする。
+- Python ORTは現在 `1.28.0` pin。
+- Rust ORTは現在 `2.0.0-rc.13` pin。
+- official HF CLI/libraryをnetwork/auth boundaryに使用する。
+- 「Python file countを減らす」だけのためにreference/ML toolingをRustへ移植しない。
+- production Rust binaryがPython runtimeをshell-out dependencyとして要求する設計に戻さない。
 
-## Completion audit
+## Completion criteria already reached
 
-The completion audit performed after the provider-readiness migration found:
+現在のproduction/runtime scopeでは次が成立しています。
 
-- no remaining callers of the deleted stable-policy Python entrypoints;
-- no remaining Python run-context generator;
-- no remaining Python evaluator-capability policy;
-- no remaining Python provider-readiness policy;
-- exactly five `scripts/ci/*.py` files, all classified above as Python-native or reference/test boundaries.
+- Rust run-context builder/validatorが存在する。
+- Rust evaluator capability policyが存在する。
+- Rust provider readiness classificationが存在する。
+- Rust HF target resolverがsource-controlled configからderived stateを生成する。
+- allocation catalogを削除しcollection-derived policyへ移行済み。
+- candidate canonical-write / legacy-read-only migration policyがRustにある。
+- benchmark/config/promotionのstable validation/bookkeepingがRustにある。
+- ExperimentCapsuleV1のcanonical producer/validatorがRustにある。
+- Python残存箇所はML/tooling/dataset/reference/compatibility boundaryとして説明可能である。
 
-Future Python additions under operational CI should be reviewed against the retention policy above. Stable model-independent policy belongs in Rust; Python additions should terminate at a versioned file boundary consumed and independently validated by Rust.
+今後stable model-independent policyを追加する場合は、まずRust側へ実装し、Python-native boundaryからversioned fileで接続してください。

@@ -2,7 +2,7 @@
 
 ## 1. 共通原則
 
-Execution Providerの評価では、availability・registration・session creation・successful inference・node assignmentを同一視しません。
+Execution Providerの評価では次の状態を分離します。
 
 ```text
 compiled
@@ -16,76 +16,144 @@ execution_proven
 assignment_proven
 ```
 
-途中まで成功しても、その後段の証明にはなりません。
+途中まで成功しても後段の証明にはなりません。特に「providerを登録できた」「inferenceが成功した」「acceleratorへnodeが割り当てられた」は別の事実です。
 
-## 2. CPU
+## 2. Providerと現行CI
 
-CPUはreference execution providerとして最も直接的に扱えます。
+| provider | 主OS | Rust CI | strict readiness | production/reference evaluation |
+|---|---|---|---|---|
+| CPU | Linux/Windows/macOS | 3 OS | 不要 | CPU Full / Cross Platform / Rust Eval |
+| CUDA | Linux | 標準Rust CI matrix外 | 現行専用probeなし | config/runtime capabilityとして保持 |
+| DirectML | Windows | `windows-directml` | Provider Strict Probes | Rust Eval |
+| CoreML | macOS | `macos-coreml` | Provider Strict Probes | Cross Platform / Rust Eval |
 
-- `CPUExecutionProvider`
-- fallback概念が実質的に不要
-- execution成功をprovider使用の強い証拠として扱える
+`rust-ci.yml` はcompile/check/clippy/unit validationです。real accelerator proofは `provider-strict-probes.yml` や実評価で行います。
 
-ただしbenchmark比較時にはORT version、OS、architecture、thread設定、optimization levelをrun-contextへ固定します。
+## 3. CPU
 
-## 3. CUDA
+CPUはreference execution providerとして最も直接的です。
 
-CUDAではprovider registrationだけでなく、dynamic library環境を含めて実行可能性を確認します。
+```text
+CPUExecutionProvider
+```
 
-主な失敗要因:
+CPU runでも比較再現性のため、run-contextへ次を固定します。
 
-- CUDA runtime不一致
-- cuDNN不一致
-- cuBLAS loader不一致
-- ORT package / CUDA major mismatch
+- OS / architecture
+- ORT version
+- runtime implementation
+- thread/session configuration
+- optimization level
+- candidate/config/dataset identity
+
+## 4. CUDA
+
+CUDAではregistrationだけでなくdynamic library/runtime compatibilityを確認します。
+
+代表的failure:
+
+- CUDA runtime mismatch
+- cuDNN mismatch
+- cuBLAS loader failure
+- ORT/CUDA major incompatibility
 - CPU fallbackによる見かけ上の成功
 
-strict provider runでは可能な限りCPU fallbackを無効化します。
+数値差はprovider failureと混同せず、CER/WER、token parity、numeric parityを別指標にします。
 
-数値比較ではGPU固有のfloating-point差を「provider failure」と混同しません。CER/WER、token parity、numeric parityを別指標で扱います。
+現行standard Rust CI matrixにはCUDA jobはありません。CUDA対応を変更した場合は、Linux GPUを備えた実環境で別途execution proofが必要です。
 
-## 4. DirectML
+## 5. DirectML
 
-DirectMLのhard constraint:
+DirectMLのhard session constraints:
 
 ```text
 execution_mode = sequential
 enable_mem_pattern = false
 ```
 
-理由:
+同じInferenceSessionへのconcurrent Runを前提にしません。
 
-- DirectML EPはparallel execution modeをサポートしない
-- memory pattern optimizationを使用しない
-- 同じInferenceSessionに対するconcurrent `Run` を前提にしない
+DirectMLはWindows環境で評価します。HF JobsはLinux computeなのでDirectML execution proofの代替にはなりません。
 
-runtime guardでもこれに反する設定を拒否します。
+### CIレベル
 
-DirectMLはWindows上で評価します。HF JobsはLinux computeなので、HFはartifact/dataset供給源には使えてもDirectML execution environmentにはなりません。
+`rust-ci.yml`:
 
-CPU fallbackを許したDirectML runでinferenceが成功しても、DirectMLでnodeが実行された証明にはなりません。provider proofが必要なrunではstrict provider modeを使用します。
+```text
+windows-latest
+features = cpu,directml
+cargo check / clippy / test
+```
 
-## 5. CoreML
+これはDirectML featureを含むworkspaceがbuild/test可能であることの確認です。
 
-CoreMLはmacOS / Apple Siliconを主対象とします。
+### Strict readiness
 
-区別する失敗:
+`provider-strict-probes.yml`:
 
-- provider unavailable
-- session registration failure
-- graph shape incompatibility
-- graph compilation failure
-- runtime inference failure
-- zero-dimension tensor
-- numeric/parity failure
+```text
+windows-latest
+synthetic CTC candidate
+strict DirectML evaluator
+stdout/stderr/exit code/resultsを保存
+Rust asr-provider-readinessで分類
+```
 
-「dynamic shapeがある」こと自体と「zero dimensionが実行時に現れた」ことを同一エラーにしません。
+measurement stepは `continue-on-error` ですが、failureを握り潰すためではありません。後段classifierへfailure evidenceを渡すためです。
 
-CoreML対応可否をhuman metadataへ書かず、provider/session/runtime結果から評価します。
+### Production Rust evaluation
 
-## 6. ORT optimization
+`rust-eval.yml` の `windows-directml` matrixで実candidateを評価します。default inputでは `strict_provider=true` なのでCPU fallbackなしproof runになります。
 
-診断時にはoptimization levelを明示的に切り替えられます。
+## 6. CoreML
+
+CoreMLはmacOS / Apple Siliconを主対象にします。
+
+failure categoryを分離します。
+
+```text
+provider unavailable
+session registration failure
+graph shape incompatibility
+graph compilation failure
+runtime inference failure
+zero-dimension tensor
+numeric/parity failure
+```
+
+「dynamic shapeを持つ」ことと「runtimeでzero dimensionが出る」ことは同じfailureではありません。
+
+### CIレベル
+
+`rust-ci.yml`:
+
+```text
+macos-15
+features = cpu,coreml
+cargo check / clippy / test
+```
+
+### Strict readiness
+
+`provider-strict-probes.yml`:
+
+```text
+macos-14
+synthetic CTC candidate
+strict CoreML runtime probe
+Rust readiness classification
+```
+
+### Production/reference evaluation
+
+```text
+Cross Platform ONNX Parity -> macOS CoreML / Python evaluator
+Rust Cross Platform Evaluation -> macOS CoreML / Rust CTC evaluator
+```
+
+## 7. ORT optimization level
+
+Rust evaluationではworkflow input/CLIで明示できます。
 
 ```text
 configured
@@ -95,35 +163,66 @@ extended
 all
 ```
 
-optimizer canaryでは少なくとも `ORT_DISABLE_ALL`, `ORT_ENABLE_BASIC`, `ORT_ENABLE_EXTENDED`, `ORT_ENABLE_ALL` の出力shape・finite・数値近似を比較します。
+`rust-eval.yml` のdefaultは `configured` です。
 
-optimization levelを変えたrunは同じrun identityとして扱わず、run-context metadata/configへ残します。
+optimizer canaryでは最低限次を比較します。
 
-## 7. Tensor sanity
+```text
+ORT_DISABLE_ALL
+ORT_ENABLE_BASIC
+ORT_ENABLE_EXTENDED
+ORT_ENABLE_ALL
+```
 
-providerに依存せず、runtime boundaryで次を拒否します。
+optimization levelを変更したrunはrun-contextへ記録し、異なるexecution conditionとして扱います。
+
+## 8. Strict provider mode
+
+Rust run-context builderへ `--strict-provider` を指定すると、non-CPU providerでCPU fallbackを禁止するproof runを構築します。
+
+```bash
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  build-run-context \
+  ... \
+  --provider directml \
+  --strict-provider
+```
+
+strict modeでsuccessful inferenceが得られればprovider execution evidenceは強くなりますが、node assignment APIで直接計測していなければ `assignment_proven` とは限りません。
+
+## 9. Tensor sanity
+
+providerに依存せずruntime boundaryで拒否する代表条件:
 
 - empty waveform
 - non-finite waveform
 - zero-sized output dimension
 - NaN / Inf logits
-- decoder state shape/dtypeの不整合
-- Whisper cache transitionの不整合
-- TDT duration/token logits dimensionの不整合
+- decoder state shape/dtype mismatch
+- Whisper cache transition mismatch
+- TDT token/duration logits dimension mismatch
 
-accelerator固有のsilent corruptionを「認識精度低下」として後段まで流さないためです。
+accelerator固有failureを「認識精度低下」として後段へ流さないためです。
 
-## 8. Rust provider features
+## 10. Rust provider features
 
-RustのORT EPはcompile-time featureで有効化されます。runtimeでprovider名が指定されても、binary側にfeatureが無ければcompiled=falseとしてfailさせます。
+Rustのprovider supportはcompile-time featureです。
 
-Rust evaluator自体のdecoder capabilityはCTCのみです。providerがCUDA/DirectML/CoreMLであることと、TDT/Whisper decoderが実装済みであることは無関係です。
+代表例:
 
-## 9. Provider telemetry
+```text
+cpu
+cpu,directml
+cpu,coreml
+```
 
-結果へ記録する値は「観測したもの」だけです。
+runtimeでprovider名を指定しても、binaryにfeatureがなければcompiled=falseとしてfailします。
 
-例:
+provider supportとdecoder supportは別です。Rust evaluatorは現在CTCのみなので、CoreML/DirectML featureが有効でもRust TDT/Whisperが使用可能になるわけではありません。
+
+## 11. Provider telemetry
+
+観測した値だけをresultへ記録します。
 
 ```json
 {
@@ -137,4 +236,16 @@ Rust evaluator自体のdecoder capabilityはCTCのみです。providerがCUDA/Di
 }
 ```
 
-node assignmentを計測していない場合は `null` とし、0を捏造しません。
+未計測値を0へ置き換えません。
+
+## 12. GitHub Actionsの選び方
+
+| 確認したいこと | workflow |
+|---|---|
+| provider featureを含めてcompile/testできるか | Rust CI |
+| DirectML/CoreMLでstrict runtimeが成立するか | Provider Strict Probes |
+| Python ONNXのmacOS CoreML parity | Cross Platform ONNX Parity |
+| Rust CTCをDirectML/CoreMLで実candidate評価 | Rust Cross Platform Evaluation |
+| production release gate用CPU品質 | CPU Full Evaluation |
+
+各workflowの詳細は [github-actions.md](./github-actions.md) を参照してください。
