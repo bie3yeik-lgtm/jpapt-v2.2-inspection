@@ -42,7 +42,7 @@ fn run() -> Result<(), String> {
     let mut github_output = None::<PathBuf>;
 
     while let Some(arg) = args.next() {
-        let value = || args.next().ok_or_else(|| format!("{arg} requires a value"));
+        let mut value = || args.next().ok_or_else(|| format!("{arg} requires a value"));
         match arg.as_str() {
             "--inputs-json" => inputs_json = value()?,
             "--config-json" => config_json = value()?,
