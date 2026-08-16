@@ -1,0 +1,42 @@
+name: Phase11 Normalize
+
+on:
+  push:
+    branches: [agent/rust-hf-revision-fetch-phase11]
+    paths:
+      - .github/workflows/phase11-normalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-hf-revision-fetch-phase11
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Normalize and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          bash -n scripts/hf/hf-push-benchmark.sh
+      - name: Commit normalized Rust state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- rust/crates/asr-contracts scripts/hf/hf-push-benchmark.sh; then
+            echo 'No normalization changes.'
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/asr-contracts scripts/hf/hf-push-benchmark.sh
+          git commit -m "Normalize Rust benchmark upload inspector"
+          git push origin HEAD:agent/rust-hf-revision-fetch-phase11
