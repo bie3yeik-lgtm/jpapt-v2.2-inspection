@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}
+  group: cpu-full-${{ inputs.candidate_id }}
   cancel-in-progress: false
 
 env:
@@ -59,6 +59,7 @@ jobs:
           hf --version
 
       - name: Resolve HF Bucket
+        id: hf
         shell: bash
         run: |
           set -euo pipefail
@@ -69,7 +70,8 @@ jobs:
           python scripts/ci/resolve-hf-target.py \
             --bucket "${{ inputs.hf_bucket }}" \
             --targets-json "${HF_TARGETS_JSON}" \
-            --github-env "${GITHUB_ENV}"
+            --github-env "${GITHUB_ENV}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Validate GitHub configuration
         shell: bash
@@ -124,7 +126,7 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-full-${{ inputs.hf_bucket }}-ubuntu-${{ runner.arch }}-${{
+            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
@@ -135,7 +137,7 @@ jobs:
               )
             }}
           restore-keys: |
-            py-full-${{ inputs.hf_bucket }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
@@ -213,7 +215,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}
+          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ inputs.candidate_id }}
           path: |
             results/linux-cpu-full/run-context.json
             results/linux-cpu-full/metrics.json
