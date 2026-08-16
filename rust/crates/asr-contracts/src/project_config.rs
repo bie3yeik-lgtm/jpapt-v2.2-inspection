@@ -21,17 +21,6 @@ pub struct ResolvedProjectConfig {
     pub resolved: Value,
 }
 
-impl ResolvedProjectConfig {
-    pub fn manifest_path(&self, repository_root: &Path) -> PathBuf {
-        let path = PathBuf::from(&self.manifest);
-        if path.is_absolute() {
-            path
-        } else {
-            repository_root.join(path)
-        }
-    }
-}
-
 pub fn resolve_project_config(
     repository_root: impl AsRef<Path>,
     model_id: &str,
@@ -303,9 +292,7 @@ fn string_array(value: &Value, name: &str) -> Result<Vec<String>> {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned)
                 .ok_or_else(|| {
-                    ContractError::validation(format!(
-                        "{name}[{index}] must be a non-empty string"
-                    ))
+                    ContractError::validation(format!("{name}[{index}] must be a non-empty string"))
                 })
         })
         .collect()
