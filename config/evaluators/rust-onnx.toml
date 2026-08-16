@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 [evaluator]
 id = "rust-onnx"
@@ -7,3 +7,15 @@ backend = "onnxruntime"
 
 [capabilities]
 supported_decoders = ["ctc"]
+supported_providers = ["cpu", "cuda", "directml", "coreml"]
+supported_artifact_contracts = [
+  "ctc-single-graph-v0",
+  "ctc-single-graph-v1",
+]
+
+[features]
+kv_cache = false
+multi_graph = false
+transformers_processor = false
+external_frontend = false
+timestamps = false
