@@ -2,18 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parakeet-onnx.local/schemas/candidate-metadata.schema.json",
   "title": "ASR ONNX Candidate Metadata",
-  "description": "Candidate-specific artifact identities and runtime bindings. Reusable decoder semantics live in config/asr-catalog.json.",
+  "description": "Candidate-specific artifact identities and runtime bindings. Reusable decoder semantics live in config/asr-catalog.json and are pinned by catalog identity.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "candidate_id",
+    "catalog",
     "profile_set",
     "variants"
   ],
   "properties": {
     "schema_version": {"type": "integer", "const": 3},
     "candidate_id": {"type": "string", "minLength": 1},
+    "catalog": {"$ref": "#/$defs/catalogReference"},
     "profile_set": {"type": "string", "minLength": 1},
     "variants": {
       "type": "object",
@@ -22,6 +24,15 @@
     }
   },
   "$defs": {
+    "catalogReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
+      }
+    },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
@@ -56,9 +67,8 @@
     "variant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile", "artifacts", "bindings", "tokenizer"],
+      "required": ["artifacts", "bindings", "tokenizer"],
       "properties": {
-        "profile": {"type": "string", "minLength": 1},
         "artifacts": {
           "type": "object",
           "minProperties": 1,
