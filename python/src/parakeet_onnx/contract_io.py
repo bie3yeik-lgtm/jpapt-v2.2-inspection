@@ -22,6 +22,7 @@ from parakeet_onnx.contracts import (
     RuntimeRevisionSnapshot,
     reject_nulls,
 )
+from parakeet_onnx.generated_candidate_io import parse_generated_candidate_contract
 
 
 def _object(value: Any, *, name: str) -> Mapping[str, Any]:
@@ -392,6 +393,7 @@ def parse_run_context(value: Any) -> RunContext:
         metadata=dict(metadata_raw),
     )
     context.validate()
+    parse_generated_candidate_contract(context.metadata.get("candidate"))
     return context
 
 
