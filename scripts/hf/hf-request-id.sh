@@ -7,6 +7,7 @@ cd "$ROOT"
 
 log(){ printf '[hf-request-id] %s\n' "$*" >&2; }
 fail(){ printf '[hf-request-id] ERROR: %s\n' "$*" >&2; exit 1; }
+asr_hf(){ cargo run --quiet --locked -p asr-hf -- "$@"; }
 
 COLLECTION="${1:-}"
 PREFIX_KEY="${2:-}"
@@ -15,7 +16,7 @@ PREFIX_KEY="${2:-}"
 [[ -n "$PREFIX_KEY" ]] || fail "allocation prefix key is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
-command -v python >/dev/null 2>&1 || fail "python is required for the temporary request envelope boundary"
+command -v cargo >/dev/null 2>&1 || fail "cargo is required for the Rust allocation envelope"
 
 # Prefix semantics are validated by the central allocator through the canonical
 # Rust allocation catalog before any sequence number is reserved.
@@ -29,33 +30,20 @@ ALLOCATOR_REPOSITORY="${HF_ALLOCATOR_REPOSITORY:-bie3yeik-lgtm/jpapt-v2.2-inspec
 ALLOCATOR_WORKFLOW="${HF_ALLOCATOR_WORKFLOW:-hf-central-allocator.yml}"
 ALLOCATOR_REF="${HF_ALLOCATOR_REF:-main}"
 
-REQUEST_ID="$(python - <<'PY'
-import os, re, uuid
-base = "-".join(filter(None, [
-    os.environ.get("GITHUB_REPOSITORY", "local").replace("/", "-"),
-    os.environ.get("GITHUB_RUN_ID", "manual"),
-    os.environ.get("GITHUB_RUN_ATTEMPT", "0"),
-    uuid.uuid4().hex[:12],
-]))
-print(re.sub(r"[^A-Za-z0-9_.-]", "-", base)[:180])
-PY
-)"
+REQUEST_ID="$(asr_hf allocation-request-id \
+  --source-repository "${GITHUB_REPOSITORY:-local}" \
+  --run-id "${GITHUB_RUN_ID:-manual}" \
+  --run-attempt "${GITHUB_RUN_ATTEMPT:-0}")"
 
-METADATA_JSON="$(python - <<'PY'
-import json, os
-keys = {
-    "source_repository": "GITHUB_REPOSITORY",
-    "source_run_id": "GITHUB_RUN_ID",
-    "source_run_attempt": "GITHUB_RUN_ATTEMPT",
-    "target_id": "HF_TARGET_ID",
-    "candidate_id": "CANDIDATE_ID",
-    "evaluation_id": "EVALUATION_ID",
-    "provider_id": "PROVIDER_ID",
-    "runtime_variant": "ASR_RUNTIME_VARIANT",
-}
-print(json.dumps({k: os.environ.get(v) for k, v in keys.items() if os.environ.get(v)}, separators=(",", ":")))
-PY
-)"
+METADATA_JSON="$(asr_hf allocation-metadata \
+  --source-repository "${GITHUB_REPOSITORY:-}" \
+  --source-run-id "${GITHUB_RUN_ID:-}" \
+  --source-run-attempt "${GITHUB_RUN_ATTEMPT:-}" \
+  --target-id "${HF_TARGET_ID:-}" \
+  --candidate-id "${CANDIDATE_ID:-}" \
+  --evaluation-id "${EVALUATION_ID:-}" \
+  --provider-id "${PROVIDER_ID:-}" \
+  --runtime-variant "${ASR_RUNTIME_VARIANT:-}")"
 
 log "Dispatching ${COLLECTION}/${PREFIX_KEY} allocation to ${ALLOCATOR_REPOSITORY}"
 gh workflow run "$ALLOCATOR_WORKFLOW" \
@@ -91,15 +79,7 @@ gh run download "$RUN_ID" \
   --name "hf-allocation-${REQUEST_ID}" \
   --dir "$TMP" >/dev/null
 
-ID="$(python - "$TMP/allocation.json" <<'PY'
-import json, sys
-value=json.load(open(sys.argv[1], encoding="utf-8"))
-allocation_id=value.get("id")
-if not isinstance(allocation_id, str) or not allocation_id:
-    raise SystemExit("allocation response does not contain a valid id")
-print(allocation_id)
-PY
-)"
+ID="$(asr_hf allocation-response-id "$TMP/allocation.json")"
 
 log "Allocated ${ID} via run ${RUN_ID}"
 printf '%s\n' "$ID"

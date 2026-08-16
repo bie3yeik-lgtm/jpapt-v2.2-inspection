@@ -1,7 +1,13 @@
+mod allocation_envelope;
+
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 
+use allocation_envelope::{
+    AllocationMetadata, AllocationResponse, allocation_request_id, read_allocation_response_id,
+    write_allocation_response,
+};
 use asr_hf::allocation::{
     AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
 };
@@ -80,6 +86,55 @@ enum Command {
         allocated_at: String,
         #[arg(long, default_value = "{}")]
         metadata_json: String,
+    },
+    AllocationRequestId {
+        #[arg(long)]
+        source_repository: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        run_attempt: Option<String>,
+    },
+    AllocationMetadata {
+        #[arg(long)]
+        source_repository: Option<String>,
+        #[arg(long)]
+        source_run_id: Option<String>,
+        #[arg(long)]
+        source_run_attempt: Option<String>,
+        #[arg(long)]
+        target_id: Option<String>,
+        #[arg(long)]
+        candidate_id: Option<String>,
+        #[arg(long)]
+        evaluation_id: Option<String>,
+        #[arg(long)]
+        provider_id: Option<String>,
+        #[arg(long)]
+        runtime_variant: Option<String>,
+    },
+    WriteAllocationResponse {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        allocation_id: String,
+        #[arg(long)]
+        bucket: String,
+        #[arg(long)]
+        collection: String,
+        #[arg(long)]
+        catalog_id: String,
+        #[arg(long)]
+        catalog_sha256: String,
+        #[arg(long)]
+        prefix_key: String,
+        #[arg(long)]
+        resolved_prefix: String,
+    },
+    AllocationResponseId {
+        path: PathBuf,
     },
 }
 
@@ -221,6 +276,67 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 metadata_json: &metadata_json,
             },
         )?,
+        Command::AllocationRequestId {
+            source_repository,
+            run_id,
+            run_attempt,
+        } => println!(
+            "{}",
+            allocation_request_id(
+                source_repository.as_deref(),
+                run_id.as_deref(),
+                run_attempt.as_deref()
+            )
+        ),
+        Command::AllocationMetadata {
+            source_repository,
+            source_run_id,
+            source_run_attempt,
+            target_id,
+            candidate_id,
+            evaluation_id,
+            provider_id,
+            runtime_variant,
+        } => println!(
+            "{}",
+            AllocationMetadata {
+                source_repository,
+                source_run_id,
+                source_run_attempt,
+                target_id,
+                candidate_id,
+                evaluation_id,
+                provider_id,
+                runtime_variant,
+            }
+            .to_compact_json()?
+        ),
+        Command::WriteAllocationResponse {
+            output,
+            request_id,
+            allocation_id,
+            bucket,
+            collection,
+            catalog_id,
+            catalog_sha256,
+            prefix_key,
+            resolved_prefix,
+        } => write_allocation_response(
+            output,
+            &AllocationResponse {
+                request_id: &request_id,
+                allocation_id: &allocation_id,
+                bucket: &bucket,
+                collection: &collection,
+                catalog_id: &catalog_id,
+                catalog_sha256: &catalog_sha256,
+                prefix_key: &prefix_key,
+                resolved_prefix: &resolved_prefix,
+            },
+        )?,
+        Command::AllocationResponseId { path } => {
+            println!("{}", read_allocation_response_id(path)?);
+        }
     }
     Ok(())
 }
