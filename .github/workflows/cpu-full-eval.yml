@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cpu-full-${{ inputs.candidate_id }}
+  group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}
   cancel-in-progress: false
 
 env:
@@ -30,7 +30,6 @@ env:
   EXPECTED_TOKENIZER_REPO_ID: ""
   EXPECTED_FRAMEWORK: ""
   EXPECTED_DECODER: ""
-  ALLOW_LEGACY_REVISION_METADATA: "false"
   HF_TARGET_ID: ""
 
 jobs:
@@ -98,23 +97,18 @@ jobs:
             results/linux-cpu-full
           echo "HF_HOME=$(pwd)/.cache/huggingface" >> "${GITHUB_ENV}"
 
-      - name: Fetch revision locks
+      - name: Fetch and validate revision locks
         shell: bash
         run: |
           set -euo pipefail
           bash scripts/hf/hf-fetch-revisions.sh
-          args=(
-            --root .ci/hf/config/revisions
-            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
-            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
-            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
-            --expected-framework "${EXPECTED_FRAMEWORK}"
+          python scripts/ci/validate-revisions.py \
+            --root .ci/hf/config/revisions \
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
+            --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
-          )
-          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
-            args+=(--allow-legacy-metadata)
-          fi
-          python scripts/ci/validate-revisions.py "${args[@]}"
 
       - name: Verify Python decoder compatibility
         shell: bash
