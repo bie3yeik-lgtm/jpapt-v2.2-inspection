@@ -1,6 +1,6 @@
 # Documentation
 
-この `docs/` は、`main` の現行実装を運用・開発・検証するための正規ドキュメントです。対象は **Rust-first runtime、Python-native ML boundary、Hugging Face Bucket、GHCR reference environment、Execution Provider、GitHub Actions、release/promotion** です。
+この `docs/` は、`main` の現行実装を運用・開発・検証するための正規ドキュメントです。対象は **Rust-first runtime、Python-native ML boundary、Hugging Face Bucket、GHCR reference environment、Execution Provider、GitHub Actions、repository dispatch、release/promotion** です。
 
 過去schemaや移行途中の互換経路を正当化する資料ではありません。コード・schema・catalog・workflowと本文が矛盾する場合は、実装・source-controlled contract・workflow YAMLを正本とし、docsを修正します。
 
@@ -14,9 +14,10 @@
 6. [providers.md](./providers.md) — CPU/CUDA/DirectML/CoreMLのprovider evidenceと制約
 7. [ghcr-ci.md](./ghcr-ci.md) — Dockerfile→HF target対応、GHCR build/pull/digest/attestation、Bucket評価
 8. [github-actions.md](./github-actions.md) — GitHub Actionsのtrigger、input、runner、secret、artifact、用途
-9. [workflows.md](./workflows.md) — config publish → candidate publish → evaluation → promotion の運用手順
-10. [json-reference.md](./json-reference.md) — 主要JSON/JSONL/Parquet contractの標準形
-11. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
+9. [repository-dispatch.md](./repository-dispatch.md) — 全workflowを外部から起動する共通repository_dispatch contract
+10. [workflows.md](./workflows.md) — config publish → candidate publish → evaluation → promotion の運用手順
+11. [json-reference.md](./json-reference.md) — 主要JSON/JSONL/Parquet contractの標準形
+12. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
 
 ## 現在の実装スタック
 
@@ -32,6 +33,7 @@
 | Dataset acquisition | Python `datasets` boundary |
 | Persistent analytical run format | `ExperimentCapsuleV1` / Parquet (`asr-capsule`) |
 | CI | GitHub Actions |
+| External workflow entrypoint | `repository_dispatch` → `repository-dispatch.yml` → target `workflow_dispatch` |
 | Reference/export environment registry | GitHub Container Registry (GHCR), digest-pinned |
 | Development artifact store | Hugging Face Buckets |
 | Release artifact store | Hugging Face Model Repo + Rust binaryはGitHub Releases |
@@ -64,6 +66,7 @@ Rust evaluatorのdecoder capabilityは現時点で **CTCのみ**です。Python 
 | `config/evaluators/*.toml` | evaluator capability |
 | `evaluation/schemas/*.schema.json` | persisted JSON/JSONL artifact schema |
 | `docker/*/Dockerfile` labels | GHCR package/source framework/source model/reference-environment identity |
+| `.github/workflows/repository-dispatch.yml` | repository-level external dispatch contract |
 
 ## 現在のHF target
 
@@ -86,16 +89,19 @@ HF target TOMLへupstream/frameworkを重複記入しません。target IDはフ
 - fetched configには `.ci/hf/config/resolved.json` が必要。
 - `run-context.json` schema v2のexecution identityに `null` を許さない。
 - GHCR tagは実験identityではない。評価前にRepoDigestへ固定し、`metadata.ghcr.digest`へ記録する。
+- GHCR認証はrepository workflow permission + `github.token`を正規経路とし、PAT fallbackを持たない。
 - `HF_TARGETS_JSON` はGHCR CIでsource-controlled target routingと一致することを検査し、独立したruntime authorityにはしない。
 - provider registration、session creation、successful inference、provider execution proof、node assignment proofを別々に扱う。
 - DirectML/CoreMLをLinux GHCR containerで評価済みと扱わない。
 - accepted `full` runがpromotionの標準条件。
+- 外部workflow起動は `event_type=jpapt.workflow` のrepository dispatch routerへ統一する。
 - GitHub Actionsはruntime semanticsを独自定義せず、Rust CLI / source-controlled config / schemaを呼び出すexecution layerとする。
 
 ## GitHub Actionsの分類
 
 | 分類 | workflow |
 |---|---|
+| repository-level external dispatch | `repository-dispatch.yml` |
 | 常設PR/Push CI | `python-unit.yml`, `rust-ci.yml`, `validate-hf-layout.yml`, `capsule-interop.yml` |
 | GHCR contract/build | `ghcr-contracts.yml`, `ghcr-build-publish.yml` |
 | GHCR evaluation/audit | `ghcr-evaluate.yml`, `ghcr-audit.yml` |
@@ -105,7 +111,7 @@ HF target TOMLへupstream/frameworkを重複記入しません。target IDはフ
 | HF allocation service | `hf-central-allocator.yml` |
 | release | `rust-release.yml` |
 
-詳細は [github-actions.md](./github-actions.md) と [ghcr-ci.md](./ghcr-ci.md) を参照してください。
+詳細は [github-actions.md](./github-actions.md)、[ghcr-ci.md](./ghcr-ci.md)、[repository-dispatch.md](./repository-dispatch.md) を参照してください。
 
 ## 変更時の原則
 
