@@ -131,7 +131,6 @@ jobs:
             --runtime-variant "$variant" \
             --github-env "$GITHUB_ENV" \
             --github-output "$GITHUB_OUTPUT"
-          test "$HF_TARGET_ID" = "${{ matrix.target_id }}" || true
 
       - name: Validate routing snapshot and credentials
         shell: bash
@@ -144,16 +143,18 @@ jobs:
           test "$var_repo" = "$HF_MODEL_REPO"
           echo "Target: $HF_TARGET_ID"
           echo "Bucket: $HF_BUCKET"
-          echo "Candidate: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_id || 'latest' }}"
           echo "Docker context: ${{ matrix.docker_context }}"
           echo "GHCR image: ${{ matrix.image }}"
 
       - name: Prepare local evaluation state
+        id: candidate
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .cache/huggingface .cache/evaluation/audio .ci/hf/config/revisions .ci/ghcr results/ghcr-cpu
-          echo "HF_HOME=$PWD/.cache/huggingface" >> "$GITHUB_ENV"
+          mkdir -p .cache/huggingface .cache/torch .cache/evaluation/audio .home \
+            .ci/hf/config/revisions .ci/ghcr results/ghcr-cpu
+          export HF_HOME="$PWD/.cache/huggingface"
+          echo "HF_HOME=$HF_HOME" >> "$GITHUB_ENV"
           bash scripts/hf/hf-fetch-revisions.sh
           bash scripts/ci/validate-revisions.sh \
             --root .ci/hf/config/revisions \
@@ -172,7 +173,6 @@ jobs:
         id: experiment
         shell: bash
         env:
-          CANDIDATE_ID: ${{ env.CANDIDATE_ID }}
           EVALUATION_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.evaluation || 'smoke' }}
           PROVIDER_ID: cpu
         run: |
@@ -221,8 +221,11 @@ jobs:
           set -euo pipefail
           evaluation="${{ github.event_name == 'workflow_dispatch' && inputs.evaluation || 'smoke' }}"
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" \
             -w /workspace \
+            -e HOME=/workspace/.home \
+            -e PYTHONPATH=/workspace/python/src \
             -e HF_TOKEN \
             -e HF_TARGET_ID \
             -e HF_BUCKET \
@@ -243,7 +246,17 @@ jobs:
             -e GHCR_DOCKER_CONTEXT="${{ matrix.docker_context }}" \
             -e GHCR_IMAGE_ROLE="${{ matrix.role }}" \
             "${{ steps.image.outputs.reference }}" \
-            bash -lc "python -m pip install --no-deps -e /workspace >/dev/null && python -m parakeet_onnx.cli.evaluate --provider cpu --environment linux --evaluation '$evaluation' --model-config '$HF_TARGET_ID' --runtime-variant '$ASR_RUNTIME_VARIANT' --candidate-dir .ci/candidate --candidate-id '$CANDIDATE_ID' --experiment-id '$EXPERIMENT_ID' --revisions .ci/hf/config/revisions --output results/ghcr-cpu"
+            python -m parakeet_onnx.cli.evaluate \
+              --provider cpu \
+              --environment linux \
+              --evaluation "$evaluation" \
+              --model-config "$HF_TARGET_ID" \
+              --runtime-variant "$ASR_RUNTIME_VARIANT" \
+              --candidate-dir .ci/candidate \
+              --candidate-id "$CANDIDATE_ID" \
+              --experiment-id "$EXPERIMENT_ID" \
+              --revisions .ci/hf/config/revisions \
+              --output results/ghcr-cpu
 
       - name: Persist GHCR environment evidence
         if: always()
@@ -289,7 +302,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ghcr-eval-${{ matrix.target_id }}-${{ matrix.package }}-${{ env.CANDIDATE_ID }}
+          name: ghcr-eval-${{ matrix.target_id }}-${{ matrix.package }}-${{ steps.candidate.outputs.candidate_id }}
           path: results/ghcr-cpu
           retention-days: 14
           if-no-files-found: warn
