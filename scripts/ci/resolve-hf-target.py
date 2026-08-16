@@ -21,8 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     selector.add_argument(
         "--bucket",
         help=(
-            "Resolve the target whose HF_BUCKET in --targets-json matches "
-            "this value."
+            "Resolve a target whose current HF_BUCKET in --targets-json "
+            "matches this value. Bucket routing is operational and may change."
         ),
     )
     parser.add_argument("--repository-root", type=Path, default=Path("."))
@@ -54,7 +54,6 @@ def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
         raise HfTargetError("HF target mapping root must be a JSON object.")
 
     result: dict[str, dict[str, str]] = {}
-    seen_buckets: dict[str, str] = {}
     for target_id, entry in raw.items():
         if not isinstance(target_id, str) or not target_id:
             raise HfTargetError("HF target mapping keys must be non-empty strings.")
@@ -73,14 +72,6 @@ def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
                 )
             normalized[key] = value.strip()
 
-        bucket = normalized["HF_BUCKET"]
-        previous = seen_buckets.get(bucket)
-        if previous is not None:
-            raise HfTargetError(
-                f"HF_BUCKET {bucket!r} is assigned to both {previous!r} "
-                f"and {target_id!r}."
-            )
-        seen_buckets[bucket] = target_id
         result[target_id] = normalized
 
     return result
@@ -94,7 +85,7 @@ def _target_id_from_bucket(
     if not mapping:
         raise HfTargetError(
             "--bucket requires --targets-json because Bucket-to-target "
-            "resolution is defined by vars.HF_TARGETS_JSON."
+            "resolution is defined by the current vars.HF_TARGETS_JSON routing."
         )
     matches = [
         target_id
@@ -102,10 +93,16 @@ def _target_id_from_bucket(
         if entry["HF_BUCKET"] == bucket
     ]
     if not matches:
-        available = sorted(entry["HF_BUCKET"] for entry in mapping.values())
+        available = sorted({entry["HF_BUCKET"] for entry in mapping.values()})
         raise HfTargetError(
-            f"HF_BUCKET {bucket!r} is not present in HF target mapping. "
+            f"HF_BUCKET {bucket!r} is not present in the current HF target mapping. "
             f"Available buckets: {available!r}"
+        )
+    if len(matches) > 1:
+        raise HfTargetError(
+            f"HF_BUCKET {bucket!r} currently maps to multiple targets: {matches!r}. "
+            "Bucket sharing is allowed, but bucket-only resolution is ambiguous; "
+            "select the target explicitly with --target."
         )
     return matches[0]
 
@@ -155,7 +152,6 @@ def main() -> int:
         "HF_MODEL_REPO": model_repo,
         "EXPECTED_DEVELOPMENT_REPO_ID": model_repo,
         "EXPECTED_UPSTREAM_REPO_ID": target.upstream_repo_id,
-        # Current target definitions source tokenizers/processors from upstream.
         "EXPECTED_TOKENIZER_REPO_ID": target.upstream_repo_id,
         "EXPECTED_FRAMEWORK": target.canonical_framework,
         "EXPECTED_DECODER": target.default_decoder,
