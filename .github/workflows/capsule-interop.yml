@@ -72,7 +72,8 @@ jobs:
           assert capsule.run_id == "interop-rust-v1"
           assert capsule.metric("quality.cer") == 0.125
           assert len(capsule.diagnostics) == 1
-          assert capsule.diagnostic_metadata("interop-check") == {"producer": "rust"}
+          assert capsule.diagnostics[0]["name"] == "interop-check"
+          assert capsule.diagnostic_metadata(0) == {"producer": "rust"}
           assert summary.run_id == "interop-rust-v1"
           assert summary.diagnostic_count == 1
           assert summary.metric("quality.cer") == 0.125
