@@ -1,0 +1,73 @@
+name: Phase21 Validate
+
+on:
+  push:
+    branches: [agent/rust-provider-probe-context-phase21]
+    paths:
+      - ".github/workflows/phase21-validate.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-provider-probe-context-phase21
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Validate Rust provider probe context builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+
+          tmp="$(mktemp -d)"
+          printf 'synthetic-model' > "$tmp/model.onnx"
+          sha="$(sha256sum "$tmp/model.onnx" | awk '{print $1}')"
+          size="$(wc -c < "$tmp/model.onnx" | tr -d ' ')"
+          cat > "$tmp/candidate-contract.json" <<JSON
+          {
+            "schema_version": 1,
+            "candidate_root": "$tmp",
+            "candidate_id": "candidate-provider-probe",
+            "profile_set": "parakeet-tdt-ctc-v1",
+            "variant": "ctc",
+            "profile": "parakeet-ctc-v1",
+            "decoder": "ctc",
+            "artifact_contract": "ctc-single-graph-v1",
+            "catalog": {"id": "asr-runtime-catalog-v1", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+            "bundle_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "artifacts": {"primary": {"path": "model.onnx", "sha256": "$sha", "size_bytes": $size}},
+            "features": {"kv_cache": false, "multi_graph": false, "transformers_processor": false, "external_frontend": false, "timestamps": false},
+            "runtime_contract": {"decoder": "ctc", "input_kind": "canonical_waveform", "io": {}, "decoder_config": {}}
+          }
+          JSON
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-probe-context -- \
+            --contract "$tmp/candidate-contract.json" \
+            --provider cpu \
+            --output "$tmp/run-context.json"
+          cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+            validate-run-context "$tmp/run-context.json"
+          grep -q '"config_version": "config-000000"' "$tmp/run-context.json"
+          grep -q '"strict_provider_mode": true' "$tmp/run-context.json"
+          grep -q '"implementation": "Rust"' "$tmp/run-context.json"
+          rm -rf "$tmp"
+      - name: Commit normalized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/asr-contracts/src/bin/asr-provider-probe-context.rs
+          if git diff --cached --quiet; then
+            echo 'already normalized'
+          else
+            git commit -m 'Normalize Rust provider probe context builder'
+            git push origin HEAD:agent/rust-provider-probe-context-phase21
+          fi
