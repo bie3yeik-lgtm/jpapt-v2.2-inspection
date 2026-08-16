@@ -9,7 +9,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-const EXPECTED_INITIAL_FILES: usize = 8;
+const EXPECTED_INITIAL_PATHS: [&str; 8] = [
+    "README.md",
+    "benchmarks/README.md",
+    "bucket-manifest.json",
+    "candidates/README.md",
+    "config/README.md",
+    "config/versions/README.md",
+    "experiments/README.md",
+    "runs/README.md",
+];
 
 #[derive(Debug, Clone)]
 pub struct BucketInitOptions {
@@ -59,7 +68,13 @@ struct ModelCardMetadata {
 #[derive(Debug, Clone, Deserialize)]
 struct BucketInfo {
     id: String,
-    total_files: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct BucketListEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -400,6 +415,32 @@ fn fetch_bucket_info(bucket_id: &str) -> Result<BucketInfo> {
     serde_json::from_value(value).context("failed to decode hf buckets info response")
 }
 
+fn decode_bucket_listing(value: Value) -> Result<Vec<BucketListEntry>> {
+    let entries: Vec<BucketListEntry> =
+        serde_json::from_value(value).context("failed to decode recursive bucket listing")?;
+    for entry in &entries {
+        ensure!(
+            entry.kind == "file",
+            "unexpected bucket listing entry type: {:?}",
+            entry.kind
+        );
+        validate_nonempty("bucket file path", &entry.path)?;
+        ensure!(
+            !entry.path.starts_with('/')
+                && !entry.path.contains("..")
+                && !entry.path.contains('\\'),
+            "unsafe bucket file path returned by Hub: {:?}",
+            entry.path
+        );
+    }
+    Ok(entries)
+}
+
+fn list_bucket_files(bucket_id: &str) -> Result<Vec<BucketListEntry>> {
+    let value = json_output(&["buckets", "list", bucket_id, "-R", "--format", "json"])?;
+    decode_bucket_listing(value)
+}
+
 fn require_empty_bucket(bucket_id: &str) -> Result<()> {
     let info = fetch_bucket_info(bucket_id)?;
     ensure!(
@@ -407,10 +448,22 @@ fn require_empty_bucket(bucket_id: &str) -> Result<()> {
         "bucket identity mismatch: requested={bucket_id}, observed={}",
         info.id
     );
+    let files = list_bucket_files(bucket_id)?;
+    let paths: Vec<_> = files.iter().map(|entry| entry.path.as_str()).collect();
     ensure!(
-        info.total_files == 0,
-        "refusing to initialize non-empty bucket {bucket_id}: total_files={}",
-        info.total_files
+        files.is_empty(),
+        "refusing to initialize non-empty bucket {bucket_id}: paths={paths:?}"
+    );
+    Ok(())
+}
+
+fn require_exact_initial_files(bucket_id: &str) -> Result<()> {
+    let files = list_bucket_files(bucket_id)?;
+    let observed: BTreeSet<_> = files.iter().map(|entry| entry.path.as_str()).collect();
+    let expected: BTreeSet<_> = EXPECTED_INITIAL_PATHS.into_iter().collect();
+    ensure!(
+        observed == expected,
+        "post-initialization bucket file set mismatch: expected={expected:?}, observed={observed:?}"
     );
     Ok(())
 }
@@ -482,8 +535,9 @@ fn validate_plan(path: &Path) -> Result<usize> {
         "refusing non-upload sync plan actions: {unsafe_actions:?}"
     );
     ensure!(
-        actions.len() == EXPECTED_INITIAL_FILES,
-        "unexpected initialization file count: expected={EXPECTED_INITIAL_FILES}, planned={}",
+        actions.len() == EXPECTED_INITIAL_PATHS.len(),
+        "unexpected initialization file count: expected={}, planned={}",
+        EXPECTED_INITIAL_PATHS.len(),
         actions.len()
     );
     Ok(actions.len())
@@ -576,12 +630,7 @@ pub fn initialize_bucket(options: BucketInitOptions) -> Result<BucketManifest> {
         );
         let plan_arg = plan.to_string_lossy();
         run_hf(&["buckets", "sync", "--apply", &plan_arg])?;
-        let info = fetch_bucket_info(&options.bucket_id)?;
-        ensure!(
-            info.total_files == EXPECTED_INITIAL_FILES as u64,
-            "post-initialization bucket file count mismatch: expected={EXPECTED_INITIAL_FILES}, observed={}",
-            info.total_files
-        );
+        require_exact_initial_files(&options.bucket_id)?;
         verify_remote_manifest(&options.bucket_id, &bucket_manifest, &temp_root)?;
     }
 
@@ -648,5 +697,17 @@ tags:
         assert!(validate_hub_id("bucket", "gawohok7/ci-test").is_ok());
         assert!(validate_hub_id("bucket", "gawohok7/../ci-test").is_err());
         assert!(validate_hub_id("bucket", "ci-test").is_err());
+    }
+
+    #[test]
+    fn parses_recursive_bucket_listing() {
+        let entries = decode_bucket_listing(json!([
+            {"type": "file", "path": "README.md", "size": 1},
+            {"type": "file", "path": "config/README.md", "size": 2}
+        ]))
+        .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "README.md");
+        assert_eq!(entries[1].path, "config/README.md");
     }
 }
