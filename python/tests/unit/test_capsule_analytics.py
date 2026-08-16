@@ -43,11 +43,15 @@ def test_summarize_and_compare_capsules(tmp_path) -> None:
     assert summaries[0].diagnostic_count == 0
     assert summaries[0].metric("quality.cer") == pytest.approx(0.10)
 
-    cer = compare_capsule_metric(summaries, "quality.cer")
-    rtf = compare_capsule_metric(summaries, "performance.rtf")
+    cer_best = compare_capsule_metric(summaries, "quality.cer").best()
+    rtf_best = compare_capsule_metric(summaries, "performance.rtf").best()
 
-    assert cer.best() == pytest.approx(("run-b", 0.05))
-    assert rtf.best() == pytest.approx(("run-a", 0.30))
+    assert cer_best is not None
+    assert cer_best[0] == "run-b"
+    assert cer_best[1] == pytest.approx(0.05)
+    assert rtf_best is not None
+    assert rtf_best[0] == "run-a"
+    assert rtf_best[1] == pytest.approx(0.30)
 
 
 def test_single_capsule_summary_uses_projection(tmp_path) -> None:
@@ -57,8 +61,11 @@ def test_single_capsule_summary_uses_projection(tmp_path) -> None:
     summary = summarize_experiment_capsule(path)
 
     assert summary.run_id == "run-projected"
-    assert summary.metrics == {
-        "performance.rtf": pytest.approx(0.50),
-        "quality.cer": pytest.approx(0.25),
-        "samples.attempted": pytest.approx(0.0),
+    assert set(summary.metrics) == {
+        "performance.rtf",
+        "quality.cer",
+        "samples.attempted",
     }
+    assert summary.metrics["performance.rtf"] == pytest.approx(0.50)
+    assert summary.metrics["quality.cer"] == pytest.approx(0.25)
+    assert summary.metrics["samples.attempted"] == pytest.approx(0.0)
