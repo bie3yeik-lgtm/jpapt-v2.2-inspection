@@ -123,7 +123,7 @@ pub fn build_benchmark(
         "runtime": {
             "implementation": "rust",
             "backend": "onnxruntime",
-            "backend_version": run_context["runtime"]["backend_version"],
+            "backend_version": asr_runtime::ort_build_info(),
             "environment_id": run_context["environment_id"],
             "provider_id": provider,
             "provider_ort_name": provider_ort,
