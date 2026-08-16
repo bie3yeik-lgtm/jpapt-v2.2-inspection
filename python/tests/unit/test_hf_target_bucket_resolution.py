@@ -95,13 +95,15 @@ def test_shared_bucket_mapping_is_allowed_but_bucket_only_resolution_is_ambiguou
 
     assert result.returncode == 1
     assert "maps to multiple targets" in result.stderr
-    assert "select the target explicitly with --target" in result.stderr
+    assert "provide --target to disambiguate" in result.stderr
 
 
-def test_explicit_target_resolves_even_when_bucket_is_shared() -> None:
+def test_explicit_target_and_shared_bucket_resolve_together() -> None:
     result = _run(
         "--target",
         "kotoba-whisper-v1.0",
+        "--bucket",
+        "gawohok7/shared-bucket",
         "--targets-json",
         _shared_mapping(),
     )
@@ -110,3 +112,44 @@ def test_explicit_target_resolves_even_when_bucket_is_shared() -> None:
     assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
     assert "HF_BUCKET=gawohok7/shared-bucket" in result.stdout
     assert "HF_MODEL_REPO=gawohok7/tf-v1-onnx-dev" in result.stdout
+
+
+def test_explicit_target_rejects_mismatched_requested_bucket() -> None:
+    result = _run(
+        "--target",
+        "kotoba-whisper-v1.0",
+        "--bucket",
+        "gawohok7/jpapt-v2.2-dev-bucket",
+        "--targets-json",
+        _mapping(),
+    )
+
+    assert result.returncode == 1
+    assert "currently routes to HF_BUCKET" in result.stderr
+    assert "not requested bucket" in result.stderr
+
+
+def test_bucket_routing_can_change_between_mapping_snapshots() -> None:
+    moved = json.dumps(
+        {
+            "kotoba-whisper-v1.0": {
+                "HF_BUCKET": "gawohok7/tf-v1-capacity-bucket-b",
+                "HF_MODEL_REPO": "gawohok7/tf-v1-onnx-dev",
+            },
+            "parakeet-tdt_ctc-0.6b-ja": {
+                "HF_BUCKET": "gawohok7/jpapt-v2.2-dev-bucket",
+                "HF_MODEL_REPO": "gawohok7/jpapt-v2.2-dev",
+            },
+        }
+    )
+    result = _run(
+        "--target",
+        "kotoba-whisper-v1.0",
+        "--bucket",
+        "gawohok7/tf-v1-capacity-bucket-b",
+        "--targets-json",
+        moved,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "HF_BUCKET=gawohok7/tf-v1-capacity-bucket-b" in result.stdout
