@@ -59,7 +59,7 @@ def _reject_keys(
     present = [key for key in keys if key in source]
     if present:
         raise RevisionError(
-            f"{document}: unsupported legacy fields are present: {present!r}."
+            f"{document}: unsupported fields are present: {present!r}."
         )
 
 
@@ -101,44 +101,6 @@ def _require_identity(
 
 
 @dataclass(frozen=True, slots=True)
-class DecoderRevisionSet:
-    supported: tuple[str, ...]
-    default: str
-
-    def validate(self, *, document: str) -> None:
-        if self.default not in self.supported:
-            raise RevisionError(
-                f"{document}: default decoder {self.default!r} is not present in "
-                f"supported={list(self.supported)!r}."
-            )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"supported": list(self.supported), "default": self.default}
-
-
-def _parse_legacy_decoders(
-    raw: Mapping[str, Any], *, document: str
-) -> DecoderRevisionSet | None:
-    _reject_keys(raw, ("decoder", "decorders"), document=document)
-    value = raw.get("decoders")
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise RevisionError(f"{document}: 'decoders' must be an object")
-    supported_raw = value.get("supported")
-    if not isinstance(supported_raw, list) or not supported_raw or not all(
-        isinstance(item, str) and item for item in supported_raw
-    ):
-        raise RevisionError(f"{document}: decoders.supported must be a string array")
-    default = value.get("default")
-    if not isinstance(default, str) or not default:
-        raise RevisionError(f"{document}: decoders.default must be a string")
-    result = DecoderRevisionSet(tuple(supported_raw), default)
-    result.validate(document=document)
-    return result
-
-
-@dataclass(frozen=True, slots=True)
 class RevisionDocument:
     name: str
     path: Path
@@ -164,13 +126,13 @@ class RuntimeRevision:
     profile_set_id: str
     variants: Mapping[str, str]
     default_variant: str
-    decoders: DecoderRevisionSet
 
     @classmethod
     def from_document(
         cls, document: RevisionDocument, *, catalog: AsrCatalog
     ) -> "RuntimeRevision":
         raw = document.raw
+        _reject_keys(raw, ("decoder", "decoders", "decorders"), document=document.name)
         catalog_raw = _require_mapping(raw, "catalog", document=document.name)
         catalog_id = _require_string(
             catalog_raw, "id", document=f"{document.name}.catalog"
@@ -185,34 +147,20 @@ class RuntimeRevision:
             )
         if catalog_sha.lower() != catalog.sha256.lower():
             raise RevisionError(
-                "runtime.json catalog SHA-256 does not match the checked-out "
-                "config/asr-catalog.json; reproduce this config with the Git commit "
-                "that contains the locked catalog snapshot"
+                "runtime.json catalog SHA-256 does not match config/asr-catalog.json"
             )
         profile_set_id = _require_string(raw, "profile_set", document=document.name)
         try:
             profile_set = catalog.profile_set(profile_set_id)
         except AsrCatalogError as exc:
             raise RevisionError(str(exc)) from exc
-        variants = dict(profile_set.variants)
-        supported_decoders = tuple(
-            dict.fromkeys(
-                catalog.decoder_profile(profile_id).decoder
-                for profile_id in variants.values()
-            )
-        )
-        default_profile = profile_set.profile_id_for()
-        default_decoder = catalog.decoder_profile(default_profile).decoder
-        decoders = DecoderRevisionSet(supported_decoders, default_decoder)
-        decoders.validate(document=document.name)
         return cls(
             document=document,
             catalog_id=catalog_id,
             catalog_sha256=catalog_sha,
             profile_set_id=profile_set_id,
-            variants=variants,
+            variants=dict(profile_set.variants),
             default_variant=profile_set.default_variant,
-            decoders=decoders,
         )
 
     def resolve_variant(
@@ -241,12 +189,9 @@ class ReferenceRevision:
     reference_id: str
     reference_revision: str
     canonical_framework: str
-    decoders: DecoderRevisionSet
 
     @classmethod
-    def from_document(
-        cls, document: RevisionDocument, *, decoders: DecoderRevisionSet
-    ) -> "ReferenceRevision":
+    def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
         raw = document.raw
         _reject_keys(
             raw,
@@ -258,6 +203,9 @@ class ReferenceRevision:
                 "reference_id",
                 "reference_revision",
                 "canonical_framework",
+                "decoder",
+                "decoders",
+                "decorders",
             ),
             document=document.name,
         )
@@ -290,7 +238,6 @@ class ReferenceRevision:
                 "canonical_framework",
                 document=f"{document.name}.reference",
             ),
-            decoders=decoders,
         )
 
 
@@ -299,14 +246,15 @@ class EvaluationSchemaRevision:
     document: RevisionDocument
     schema_id: str
     schema_revision: str
-    decoders: DecoderRevisionSet
 
     @classmethod
-    def from_document(
-        cls, document: RevisionDocument, *, decoders: DecoderRevisionSet
-    ) -> "EvaluationSchemaRevision":
+    def from_document(cls, document: RevisionDocument) -> "EvaluationSchemaRevision":
         raw = document.raw
-        _reject_keys(raw, ("schema_id", "schema_revision"), document=document.name)
+        _reject_keys(
+            raw,
+            ("schema_id", "schema_revision", "decoder", "decoders", "decorders"),
+            document=document.name,
+        )
         schema = _require_mapping(raw, "schema", document=document.name)
         return cls(
             document=document,
@@ -316,7 +264,6 @@ class EvaluationSchemaRevision:
             schema_revision=_require_string(
                 schema, "revision", document=f"{document.name}.schema"
             ),
-            decoders=decoders,
         )
 
 
@@ -381,42 +328,34 @@ class RevisionBundle:
     reference: ReferenceRevision
     evaluation_schema: EvaluationSchemaRevision
     datasets: DatasetLock
-    runtime: RuntimeRevision | None
+    runtime: RuntimeRevision
     config_version: str | None = None
 
     @property
     def sha256(self) -> str:
         digest = hashlib.sha256()
-        documents = [
+        for document in (
             self.reference.document,
             self.evaluation_schema.document,
             self.datasets.document,
-        ]
-        if self.runtime is not None:
-            documents.append(self.runtime.document)
-        for document in documents:
+            self.runtime.document,
+        ):
             digest.update(document.sha256.encode("ascii"))
         return digest.hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
         reference = self.reference
-        runtime_dict: dict[str, Any] | None = None
-        if self.runtime is not None:
-            runtime_dict = {
+        return {
+            "config_version": self.config_version,
+            "bundle_sha256": self.sha256,
+            "runtime": {
                 "document_sha256": self.runtime.document.sha256,
                 "catalog": {
                     "id": self.runtime.catalog_id,
                     "sha256": self.runtime.catalog_sha256,
                 },
                 "profile_set": self.runtime.profile_set_id,
-                "variants": dict(self.runtime.variants),
-                "default_variant": self.runtime.default_variant,
-                "decoders": self.runtime.decoders.to_dict(),
-            }
-        return {
-            "config_version": self.config_version,
-            "bundle_sha256": self.sha256,
-            "runtime": runtime_dict,
+            },
             "reference": {
                 "document_sha256": reference.document.sha256,
                 "development_artifact": {
@@ -434,13 +373,11 @@ class RevisionBundle:
                 "reference_id": reference.reference_id,
                 "reference_revision": reference.reference_revision,
                 "canonical_framework": reference.canonical_framework,
-                "decoders": reference.decoders.to_dict(),
             },
             "evaluation_schema": {
                 "document_sha256": self.evaluation_schema.document.sha256,
                 "schema_id": self.evaluation_schema.schema_id,
                 "schema_revision": self.evaluation_schema.schema_revision,
-                "decoders": self.evaluation_schema.decoders.to_dict(),
             },
             "datasets": {
                 "document_sha256": self.datasets.document.sha256,
@@ -485,51 +422,27 @@ class RevisionLoader:
         )
 
         runtime_path = self.root / self.RUNTIME_FILE
-        runtime: RuntimeRevision | None = None
-        if runtime_path.is_file():
-            try:
-                catalog = load_repository_catalog(_discover_repository_root(self.root))
-            except AsrCatalogError as exc:
-                raise RevisionError(str(exc)) from exc
-            runtime = RuntimeRevision.from_document(
-                RevisionDocument.load(name=self.RUNTIME_FILE, path=runtime_path),
-                catalog=catalog,
+        if not runtime_path.is_file():
+            raise RevisionError(
+                "runtime.json is required; legacy three-file config bundles are unsupported"
             )
-            decoders = runtime.decoders
-            if "decoders" in reference_document.raw or "decoders" in evaluation_document.raw:
-                raise RevisionError(
-                    "runtime.json is present, so reference.json and "
-                    "evaluation-schema.json must not repeat decoder declarations"
-                )
-        else:
-            reference_decoders = _parse_legacy_decoders(
-                reference_document.raw, document=reference_document.name
+        try:
+            catalog = load_repository_catalog(_discover_repository_root(self.root))
+        except AsrCatalogError as exc:
+            raise RevisionError(str(exc)) from exc
+        runtime = RuntimeRevision.from_document(
+            RevisionDocument.load(name=self.RUNTIME_FILE, path=runtime_path),
+            catalog=catalog,
+        )
+
+        if "decoders" in reference_document.raw or "decoders" in evaluation_document.raw:
+            raise RevisionError(
+                "reference.json and evaluation-schema.json must not repeat decoder declarations"
             )
-            evaluation_decoders = _parse_legacy_decoders(
-                evaluation_document.raw, document=evaluation_document.name
-            )
-            if reference_decoders is None or evaluation_decoders is None:
-                raise RevisionError(
-                    "runtime.json is required for the normalized config contract; "
-                    "legacy configs must keep decoders in both reference/evaluation documents"
-                )
-            if set(reference_decoders.supported) - set(evaluation_decoders.supported):
-                raise RevisionError(
-                    "legacy evaluation-schema.json does not support all reference decoders"
-                )
-            if reference_decoders.default not in evaluation_decoders.supported:
-                raise RevisionError(
-                    "legacy evaluation-schema.json does not support the reference default decoder"
-                )
-            decoders = reference_decoders
 
         return RevisionBundle(
-            reference=ReferenceRevision.from_document(
-                reference_document, decoders=decoders
-            ),
-            evaluation_schema=EvaluationSchemaRevision.from_document(
-                evaluation_document, decoders=decoders
-            ),
+            reference=ReferenceRevision.from_document(reference_document),
+            evaluation_schema=EvaluationSchemaRevision.from_document(evaluation_document),
             datasets=datasets,
             runtime=runtime,
             config_version=_load_config_version(self.root),
