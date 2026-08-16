@@ -31,11 +31,11 @@ permissions:
   contents: read
   actions: write
 
-# This workflow repository is the global serialization point. Every repository
-# that shares an HF Bucket must dispatch allocation requests here instead of
-# running list -> max+1 locally.
+# The allocator repository is the global serialization point. Serialize the
+# whole Bucket rather than one collection because allocation also updates the
+# shared root README.md status block.
 concurrency:
-  group: hf-central-sequence-${{ inputs.hf_bucket }}-${{ inputs.collection }}
+  group: hf-central-sequence-${{ inputs.hf_bucket }}
   cancel-in-progress: false
 
 jobs:
@@ -61,8 +61,20 @@ jobs:
           set -euo pipefail
           ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}" "${{ inputs.prefix }}")"
           echo "id=${ID}" >> "${GITHUB_OUTPUT}"
+      - name: Update Bucket root allocator status
+        shell: bash
+        env:
+          HF_ALLOCATED_ID: ${{ steps.allocate.outputs.id }}
+          HF_ALLOCATED_COLLECTION: ${{ inputs.collection }}
+        run: |
+          set -euo pipefail
+          bash scripts/hf/hf-update-root-readme.sh
+      - name: Write allocation response
+        shell: bash
+        run: |
+          set -euo pipefail
           printf '{"schema_version":1,"request_id":"%s","id":"%s","bucket":"%s","collection":"%s","prefix":"%s"}\n' \
-            "${{ inputs.request_id }}" "${ID}" "${HF_BUCKET}" "${{ inputs.collection }}" "${{ inputs.prefix }}" \
+            "${{ inputs.request_id }}" "${{ steps.allocate.outputs.id }}" "${HF_BUCKET}" "${{ inputs.collection }}" "${{ inputs.prefix }}" \
             > allocation.json
       - name: Publish allocation response
         uses: actions/upload-artifact@v4
