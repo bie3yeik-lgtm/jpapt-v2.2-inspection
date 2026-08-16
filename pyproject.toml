@@ -24,6 +24,9 @@ onnx = [
     "onnx>=1.17",
     "onnxruntime>=1.20",
 ]
+transformers-runtime = [
+    "transformers>=4.39",
+]
 transformers = [
     "torch>=2.4",
     "transformers>=4.39",
