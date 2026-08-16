@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 from parakeet_onnx.contracts import RunContext
 
 from .capsule_artifacts import CapsuleArtifact, iter_artifact_parts
+from .capsule_diagnostics import CapsuleDiagnostic
 from .models import BenchmarkResult, SampleResult
 
 
@@ -201,12 +202,38 @@ def _sample_row(
     return row
 
 
+def _diagnostic_row(
+    diagnostic: CapsuleDiagnostic,
+    *,
+    run_id: str,
+    ordinal: int,
+) -> dict[str, Any]:
+    row = _empty_row(
+        run_id=run_id,
+        record_kind="diagnostic",
+        ordinal=ordinal,
+    )
+    row.update(
+        {
+            "name": diagnostic.name,
+            "category": diagnostic.category,
+            "status": diagnostic.status,
+            "error_code": diagnostic.code,
+            "error_stage": diagnostic.stage,
+            "error_message": diagnostic.message,
+            "metadata_json": _json(dict(diagnostic.metadata)),
+        }
+    )
+    return row
+
+
 def build_experiment_capsule_rows(
     *,
     run_context: Mapping[str, Any],
     samples: Iterable[Mapping[str, Any]],
     benchmark: Mapping[str, Any],
     artifacts: Iterable[CapsuleArtifact] = (),
+    diagnostics: Iterable[CapsuleDiagnostic] = (),
 ) -> list[dict[str, Any]]:
     """Build the deterministic flat row set for one capsule."""
 
@@ -293,6 +320,16 @@ def build_experiment_capsule_rows(
             row.update(part)
             rows.append(row)
             ordinal += 1
+
+    for diagnostic in diagnostics:
+        rows.append(
+            _diagnostic_row(
+                diagnostic,
+                run_id=run_id,
+                ordinal=ordinal,
+            )
+        )
+        ordinal += 1
 
     return rows
 
@@ -415,6 +452,7 @@ class ExperimentCapsuleWriter:
         samples: Iterable[SampleResult],
         benchmark: BenchmarkResult,
         artifacts: Iterable[CapsuleArtifact] = (),
+        diagnostics: Iterable[CapsuleDiagnostic] = (),
     ) -> None:
         sample_values = [sample.to_dict() for sample in samples]
         rows = build_experiment_capsule_rows(
@@ -422,5 +460,6 @@ class ExperimentCapsuleWriter:
             samples=sample_values,
             benchmark=benchmark.to_dict(),
             artifacts=artifacts,
+            diagnostics=diagnostics,
         )
         _atomic_write_parquet(self.path, rows)

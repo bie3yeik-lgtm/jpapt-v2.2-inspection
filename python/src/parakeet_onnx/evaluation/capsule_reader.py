@@ -11,7 +11,10 @@ from typing import Any, Iterable, Mapping
 from .parquet import EXPERIMENT_CAPSULE_SCHEMA_VERSION, _CAPSULE_COLUMNS
 
 
-_ALLOWED_RECORD_KINDS = frozenset({"manifest", "sample", "metric", "artifact"})
+_ALLOWED_RECORD_KINDS = frozenset(
+    {"manifest", "sample", "metric", "artifact", "diagnostic"}
+)
+_ALLOWED_DIAGNOSTIC_STATUSES = frozenset({"info", "warning", "error"})
 
 
 class ExperimentCapsuleError(RuntimeError):
@@ -20,6 +23,22 @@ class ExperimentCapsuleError(RuntimeError):
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _decode_json_object(*, label: str, raw: Any, required: bool) -> dict[str, Any]:
+    if raw is None or raw == "":
+        if required:
+            raise ExperimentCapsuleError(f"{label} is missing")
+        return {}
+    if not isinstance(raw, str):
+        raise ExperimentCapsuleError(f"{label} must be a JSON string")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ExperimentCapsuleError(f"{label} is invalid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ExperimentCapsuleError(f"{label} must decode to an object")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +60,10 @@ class ExperimentCapsule:
     def artifacts(self) -> tuple[Mapping[str, Any], ...]:
         return tuple(row for row in self.rows if row["record_kind"] == "artifact")
 
+    @property
+    def diagnostics(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(row for row in self.rows if row["record_kind"] == "diagnostic")
+
     def metric(self, name: str) -> float | None:
         matches = [row for row in self.metrics if row.get("metric_name") == name]
         if not matches:
@@ -51,18 +74,22 @@ class ExperimentCapsule:
         return None if value is None else float(value)
 
     def manifest_metadata(self) -> dict[str, Any]:
-        raw = self.manifest.get("metadata_json")
-        if not isinstance(raw, str) or not raw:
-            raise ExperimentCapsuleError("manifest metadata_json is missing")
+        return _decode_json_object(
+            label="manifest metadata_json",
+            raw=self.manifest.get("metadata_json"),
+            required=True,
+        )
+
+    def diagnostic_metadata(self, index: int) -> dict[str, Any]:
         try:
-            value = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ExperimentCapsuleError(
-                f"manifest metadata_json is invalid JSON: {exc}"
-            ) from exc
-        if not isinstance(value, dict):
-            raise ExperimentCapsuleError("manifest metadata_json must decode to an object")
-        return value
+            row = self.diagnostics[index]
+        except IndexError as exc:
+            raise ExperimentCapsuleError(f"diagnostic index out of range: {index}") from exc
+        return _decode_json_object(
+            label=f"diagnostic {index} metadata_json",
+            raw=row.get("metadata_json"),
+            required=False,
+        )
 
     def artifact_ids(self) -> tuple[str, ...]:
         return tuple(sorted({str(row["artifact_id"]) for row in self.artifacts}))
@@ -71,15 +98,11 @@ class ExperimentCapsule:
         rows = [row for row in self.artifacts if row.get("artifact_id") == artifact_id]
         if not rows:
             raise ExperimentCapsuleError(f"artifact not found: {artifact_id}")
-        raw = rows[0].get("metadata_json")
-        if not isinstance(raw, str) or not raw:
-            return {}
-        value = json.loads(raw)
-        if not isinstance(value, dict):
-            raise ExperimentCapsuleError(
-                f"artifact {artifact_id!r} metadata_json must decode to an object"
-            )
-        return value
+        return _decode_json_object(
+            label=f"artifact {artifact_id!r} metadata_json",
+            raw=rows[0].get("metadata_json"),
+            required=False,
+        )
 
     def extract_artifact(self, artifact_id: str, output: str | Path) -> Path:
         rows = [row for row in self.artifacts if row.get("artifact_id") == artifact_id]
@@ -186,6 +209,25 @@ def _validate_artifact_rows(rows: list[dict[str, Any]]) -> None:
                 )
 
 
+def _validate_diagnostic_rows(rows: list[dict[str, Any]]) -> None:
+    for index, row in enumerate(rows):
+        _require_nonempty_string(f"diagnostic {index}.name", row.get("name"))
+        _require_nonempty_string(f"diagnostic {index}.category", row.get("category"))
+        status = _require_nonempty_string(
+            f"diagnostic {index}.status",
+            row.get("status"),
+        )
+        if status not in _ALLOWED_DIAGNOSTIC_STATUSES:
+            raise ExperimentCapsuleError(
+                f"diagnostic {index}.status is unsupported: {status!r}"
+            )
+        _decode_json_object(
+            label=f"diagnostic {index} metadata_json",
+            raw=row.get("metadata_json"),
+            required=False,
+        )
+
+
 def _validate_rows(
     path: Path,
     columns: Iterable[str],
@@ -282,6 +324,7 @@ def _validate_rows(
                 )
 
     _validate_artifact_rows([dict(row) for row in capsule.artifacts])
+    _validate_diagnostic_rows([dict(row) for row in capsule.diagnostics])
     return capsule
 
 
