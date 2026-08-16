@@ -14,6 +14,14 @@ from parakeet_onnx.config.catalog import (
     DecoderProfile,
     load_repository_catalog,
 )
+from parakeet_onnx.contracts import (
+    ContractError,
+    GeneratedArtifact,
+    GeneratedCandidateContract,
+    GeneratedCatalog,
+    GeneratedRuntimeContract,
+    GeneratedTokenizer,
+)
 
 from .inspection import CandidateInspectionError, inspect_runtime_contract
 
@@ -35,11 +43,16 @@ class CandidateArtifact:
             raise CandidateMetadataError(
                 f"candidate artifact for role {role!r} does not exist: {path}"
             )
+        size_bytes = path.stat().st_size
+        if size_bytes <= 0:
+            raise CandidateMetadataError(
+                f"candidate artifact for role {role!r} must not be empty: {path}"
+            )
         return cls(
             role=role,
             path=path,
             sha256=_sha256_file(path),
-            size_bytes=path.stat().st_size,
+            size_bytes=size_bytes,
         )
 
     def verify(self) -> None:
@@ -188,6 +201,7 @@ class CandidateArtifacts:
                 raise CandidateMetadataError(
                     f"candidate tokenizer/processor path does not exist: {value.tokenizer.path}"
                 )
+        value.generated_contract().validate()
         return value
 
     def artifact(self, role: str) -> CandidateArtifact:
@@ -220,35 +234,60 @@ class CandidateArtifacts:
             digest.update(f"{role}\0{relative}\0{artifact.sha256}\n".encode("utf-8"))
         return digest.hexdigest()
 
-    def provenance_dict(self) -> dict[str, Any]:
-        return {
-            "candidate_id": self.candidate_id,
-            "profile_set": self.profile_set_id,
-            "variant": self.variant,
-            "profile": self.profile_id,
-            "decoder": self.decoder,
-            "artifact_contract": self.artifact_contract,
-            "catalog": {"id": self.catalog_id, "sha256": self.catalog_sha256},
-            "bundle_sha256": self.bundle_sha256,
-            "artifacts": {
-                role: {
-                    "path": artifact.path.relative_to(self.root).as_posix(),
-                    "sha256": artifact.sha256,
-                    "size_bytes": artifact.size_bytes,
-                }
+    def generated_contract(self) -> GeneratedCandidateContract:
+        io = self.runtime_contract.get("io")
+        decoder_config = self.runtime_contract.get("decoder_config")
+        input_kind = self.runtime_contract.get("input_kind")
+        runtime_decoder = self.runtime_contract.get("decoder")
+        if not isinstance(io, Mapping):
+            raise CandidateMetadataError("runtime contract io must be an object")
+        if not isinstance(decoder_config, Mapping):
+            raise CandidateMetadataError("runtime contract decoder_config must be an object")
+        if not isinstance(input_kind, str) or not input_kind:
+            raise CandidateMetadataError("runtime contract input_kind must be a non-empty string")
+        if not isinstance(runtime_decoder, str) or not runtime_decoder:
+            raise CandidateMetadataError("runtime contract decoder must be a non-empty string")
+
+        contract = GeneratedCandidateContract(
+            schema_version=1,
+            candidate_root=str(self.root),
+            candidate_id=self.candidate_id,
+            profile_set=self.profile_set_id,
+            variant=self.variant,
+            profile=self.profile_id,
+            decoder=self.decoder,
+            artifact_contract=self.artifact_contract,
+            catalog=GeneratedCatalog(id=self.catalog_id, sha256=self.catalog_sha256),
+            bundle_sha256=self.bundle_sha256,
+            artifacts={
+                role: GeneratedArtifact(
+                    path=artifact.path.relative_to(self.root).as_posix(),
+                    sha256=artifact.sha256,
+                    size_bytes=artifact.size_bytes,
+                )
                 for role, artifact in sorted(self.artifacts.items())
             },
-            "tokenizer": (
-                {
-                    "kind": self.tokenizer.kind,
-                    "path": self.tokenizer.path.relative_to(self.root).as_posix(),
-                }
+            tokenizer=(
+                GeneratedTokenizer(
+                    kind=self.tokenizer.kind,
+                    path=self.tokenizer.path.relative_to(self.root).as_posix(),
+                )
                 if self.tokenizer is not None
                 else None
             ),
-            "features": dict(self.features),
-            "runtime_contract": dict(self.runtime_contract),
-        }
+            features=dict(self.features),
+            runtime_contract=GeneratedRuntimeContract(
+                decoder=runtime_decoder,
+                input_kind=input_kind,
+                io=dict(io),
+                decoder_config=dict(decoder_config),
+            ),
+        )
+        try:
+            contract.validate()
+        except ContractError as exc:
+            raise CandidateMetadataError(str(exc)) from exc
+        return contract
 
 
 def _validate_metadata_schema(raw: Mapping[str, Any], repository_root: Path) -> None:
@@ -353,7 +392,10 @@ def _candidate_id(root: Path) -> str:
         value = marker.read_text(encoding="utf-8").strip()
         if value:
             return value
-    return root.name
+    value = root.name.strip()
+    if not value:
+        raise CandidateMetadataError("candidate identity cannot be derived from an empty root name")
+    return value
 
 
 def _required_mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
