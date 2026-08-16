@@ -40,10 +40,10 @@ impl Default for SessionTuning {
 impl SessionTuning {
     pub fn from_run_context(value: &serde_json::Value) -> Result<Self> {
         let mut tuning = Self::default();
-        if let Some(level) = value
-            .pointer("/config/resolved/provider/session/graph_optimization_level")
-            .and_then(serde_json::Value::as_str)
-        {
+        if let Some(level) = optional_string(
+            value,
+            "/config/resolved/provider/session/graph_optimization_level",
+        )? {
             tuning.graph_optimization_level = match level {
                 "disable" | "disabled" | "none" => GraphOptimizationLevel::Disable,
                 "level1" | "basic" => GraphOptimizationLevel::Level1,
@@ -57,10 +57,10 @@ impl SessionTuning {
                 }
             };
         }
-        if let Some(mode) = value
-            .pointer("/config/resolved/provider/session/execution_mode")
-            .and_then(serde_json::Value::as_str)
-        {
+        if let Some(mode) = optional_string(
+            value,
+            "/config/resolved/provider/session/execution_mode",
+        )? {
             tuning.parallel_execution = match mode {
                 "sequential" => false,
                 "parallel" => true,
@@ -71,28 +71,30 @@ impl SessionTuning {
                 }
             };
         }
-        if let Some(enabled) = value
-            .pointer("/config/resolved/provider/session/enable_mem_pattern")
-            .and_then(serde_json::Value::as_bool)
-        {
+        if let Some(enabled) = optional_bool(
+            value,
+            "/config/resolved/provider/session/enable_mem_pattern",
+        )? {
             tuning.memory_pattern = enabled;
         }
-        tuning.intra_threads = positive_usize(
-            value.pointer("/config/resolved/environment/runtime/cpu/intra_op_threads"),
-        );
-        tuning.inter_threads = positive_usize(
-            value.pointer("/config/resolved/environment/runtime/cpu/inter_op_threads"),
-        );
-        if let Some(allow) = value
-            .pointer("/config/resolved/provider/validation/allow_cpu_fallback")
-            .and_then(serde_json::Value::as_bool)
-        {
+        tuning.intra_threads = optional_positive_usize(
+            value,
+            "/config/resolved/environment/runtime/cpu/intra_op_threads",
+        )?;
+        tuning.inter_threads = optional_positive_usize(
+            value,
+            "/config/resolved/environment/runtime/cpu/inter_op_threads",
+        )?;
+        if let Some(allow) = optional_bool(
+            value,
+            "/config/resolved/provider/validation/allow_cpu_fallback",
+        )? {
             tuning.allow_cpu_fallback = allow;
         }
-        if value
-            .pointer("/config/resolved/provider/validation/strict_provider_mode")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true)
+        if optional_bool(
+            value,
+            "/config/resolved/provider/validation/strict_provider_mode",
+        )? == Some(true)
         {
             tuning.allow_cpu_fallback = false;
         }
@@ -100,11 +102,46 @@ impl SessionTuning {
     }
 }
 
-fn positive_usize(value: Option<&serde_json::Value>) -> Option<usize> {
-    value
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value > 0)
+fn optional_string<'a>(value: &'a serde_json::Value, pointer: &str) -> Result<Option<&'a str>> {
+    match value.pointer(pointer) {
+        None => Ok(None),
+        Some(value) => value.as_str().map(Some).ok_or_else(|| {
+            RuntimeError::InvalidMetadata(format!(
+                "run-context {pointer} must be a string when present"
+            ))
+        }),
+    }
+}
+
+fn optional_bool(value: &serde_json::Value, pointer: &str) -> Result<Option<bool>> {
+    match value.pointer(pointer) {
+        None => Ok(None),
+        Some(value) => value.as_bool().map(Some).ok_or_else(|| {
+            RuntimeError::InvalidMetadata(format!(
+                "run-context {pointer} must be a boolean when present"
+            ))
+        }),
+    }
+}
+
+fn optional_positive_usize(value: &serde_json::Value, pointer: &str) -> Result<Option<usize>> {
+    let Some(value) = value.pointer(pointer) else {
+        return Ok(None);
+    };
+    let raw = value.as_u64().ok_or_else(|| {
+        RuntimeError::InvalidMetadata(format!(
+            "run-context {pointer} must be an unsigned integer when present"
+        ))
+    })?;
+    if raw == 0 {
+        return Ok(None);
+    }
+    let converted = usize::try_from(raw).map_err(|_| {
+        RuntimeError::InvalidMetadata(format!(
+            "run-context {pointer} does not fit in usize: {raw}"
+        ))
+    })?;
+    Ok(Some(converted))
 }
 
 #[derive(Debug, Clone)]
@@ -330,4 +367,27 @@ fn greedy_ctc_ids(logits: &[f32], shape: &[usize], blank_id: i64) -> Result<Vec<
         previous = Some(id);
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_mistyped_session_boolean() {
+        let value = serde_json::json!({
+            "config": {"resolved": {"provider": {"session": {"enable_mem_pattern": "false"}}}}
+        });
+        let error = SessionTuning::from_run_context(&value).expect_err("wrong type must fail");
+        assert!(error.to_string().contains("must be a boolean"));
+    }
+
+    #[test]
+    fn rejects_mistyped_thread_count() {
+        let value = serde_json::json!({
+            "config": {"resolved": {"environment": {"runtime": {"cpu": {"intra_op_threads": "4"}}}}}
+        });
+        let error = SessionTuning::from_run_context(&value).expect_err("wrong type must fail");
+        assert!(error.to_string().contains("must be an unsigned integer"));
+    }
 }
