@@ -1,0 +1,166 @@
+name: Phase19 Implement
+
+on:
+  push:
+    branches: [agent/rust-evaluator-policy-phase19]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-evaluator-policy-phase19
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rewrite evaluator policy callers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path('.')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = root / path
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one replacement target, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          old_cpu = '''      - name: Validate evaluator and candidate capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  python scripts/ci/validate-evaluator-capability.py \\
+                    --evaluator python-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider cpu \\
+                    --candidate-dir .ci/candidate
+          '''
+          new_cpu = '''      - name: Resolve candidate execution contract
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  python scripts/ci/resolve-candidate-artifacts.py \\
+                    --candidate-dir .ci/candidate \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --contract-out .ci/candidate-contract.json
+
+              - name: Validate evaluator and candidate capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
+                    --evaluator python-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider cpu \\
+                    --candidate-contract .ci/candidate-contract.json
+          '''
+          replace_once('.github/workflows/cpu-full-eval.yml', old_cpu, new_cpu)
+
+          old_cross = '''      - name: Validate evaluator and candidate capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  python scripts/ci/validate-evaluator-capability.py \\
+                    --evaluator python-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider "${{ matrix.provider }}" \\
+                    --candidate-dir .ci/candidate
+          '''
+          new_cross = '''      - name: Resolve candidate execution contract
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  python scripts/ci/resolve-candidate-artifacts.py \\
+                    --candidate-dir .ci/candidate \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --contract-out .ci/candidate-contract.json
+              - name: Validate evaluator and candidate capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
+                    --evaluator python-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider "${{ matrix.provider }}" \\
+                    --candidate-contract .ci/candidate-contract.json
+          '''
+          replace_once('.github/workflows/cross-platform-parity.yml', old_cross, new_cross)
+
+          old_rust_validate = '''      - name: Validate Rust evaluator capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  python scripts/ci/validate-evaluator-capability.py \\
+                    --evaluator rust-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider "${{ matrix.provider }}" \\
+                    --candidate-dir .ci/candidate
+
+          '''
+          replace_once('.github/workflows/rust-eval.yml', old_rust_validate, '')
+
+          marker = '''      - name: Materialize locked dataset selection
+          '''
+          rust_policy = '''      - name: Validate Rust evaluator capability
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
+                    --evaluator rust-onnx \\
+                    --decoder "${EXPECTED_DECODER}" \\
+                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --provider "${{ matrix.provider }}" \\
+                    --candidate-contract .ci/candidate-contract.json
+
+          '''
+          replace_once('.github/workflows/rust-eval.yml', marker, rust_policy + marker)
+
+          layout = root / '.github/workflows/validate-hf-layout.yml'
+          text = layout.read_text(encoding='utf-8')
+          line = '            python/tests/unit/test_evaluator_capability.py \\\n'
+          if text.count(line) != 1:
+              raise SystemExit('validate-hf-layout.yml: evaluator test list entry not found exactly once')
+          layout.write_text(text.replace(line, '', 1), encoding='utf-8')
+
+          for path in [
+              root / 'scripts/ci/validate-evaluator-capability.py',
+              root / 'python/tests/unit/test_evaluator_capability.py',
+              root / '.github/workflows/phase19-audit.yml',
+          ]:
+              if path.exists():
+                  path.unlink()
+          PY
+
+          cargo fmt --all
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          git grep -n 'validate-evaluator-capability.py' && {
+            echo 'old evaluator validator still referenced' >&2
+            exit 1
+          } || true
+          git grep -n 'test_evaluator_capability.py' && {
+            echo 'deleted evaluator Python test still referenced' >&2
+            exit 1
+          } || true
+      - name: Commit production migration and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/phase19-implement.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Move evaluator capability policy to Rust'
+          git push origin HEAD:agent/rust-evaluator-policy-phase19
