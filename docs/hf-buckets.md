@@ -183,7 +183,7 @@ runtime.json
 
 ## 6. `candidates/`
 
-candidate IDは `config/hf-allocation-catalog.json` に従って中央Allocatorが採番します。
+candidate IDは中央Allocatorがcanonical/historical layout双方の最大6桁suffixを見て `candidate-NNNNNN` を自動採番します。prefix設定JSONは不要です。candidate IDを省略したreadではcanonical `candidates/candidate-NNNNNN` の最新値を優先し、canonicalが存在しない既存Bucketに限って `<variant>/candidate-NNNNNN` をread-only fallbackとして解決します。
 
 現在のprefix:
 

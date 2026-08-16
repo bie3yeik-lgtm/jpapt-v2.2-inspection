@@ -82,33 +82,38 @@
 
 ---
 
-## 2. `config/hf-allocation-catalog.json`
+## 2. HF allocation policy（JSON入力なし）
 
-**分類:** source-controlled
+HF allocationのprefixは設定JSONではなくcollectionからRustで決定します。
 
-**所有者:** repository
+| collection | canonical prefix | canonical path |
+|---|---|---|
+| `candidates` | `candidate` | `candidates/candidate-NNNNNN/` |
+| `experiments` | `experiment` | `experiments/experiment-NNNNNN/` |
+| `config` | `config` | `config/versions/config-NNNNNN/` |
 
-**編集:** ID naming policy変更時のみ
+連番はcanonicalとhistorical layout双方に存在するallocation IDの6桁suffix最大値 + 1です。過去の異なるprefixや`<variant>/candidate-NNNNNN`、`<variant>/exp-NNNNNN`もID再利用防止のためsequence計算に含めますが、新規writeはcanonical prefix/layoutのみです。
 
-```json
-{
-  "schema_version": 1,
-  "catalog_id": "hf-allocation-catalog-v1",
-  "prefixes": {
-    "candidate.default": "candidate",
-    "candidate.parakeet-tdt-ctc-v1": "parakeet-candidate",
-    "candidate.whisper-autoregressive-v1": "whisper-candidate",
-    "experiment.cpu_full": "cpu-full-eval",
-    "experiment.cross_platform_parity": "cross-platform-parity",
-    "experiment.rust_eval": "rust-eval",
-    "config.version": "config"
-  }
-}
+candidate readはcanonical pathを優先します。canonical candidateが存在しないhistorical Bucketに限り、runtime variantを使って `candidates/<variant>/candidate-NNNNNN/` をread-only fallbackとして解決します。exact candidate IDを指定した場合も同じresolverを通るため、workflow間ではcandidate IDだけを受け渡せます。
+
+このpolicyには人間が編集すべきJSON定義はありません。
+
+### HF target定義の最小入力
+
+`config/hf-targets/<target-id>.toml` はroutingに必要な値だけを保持します。target IDはファイル名から、upstream repo / framework / model identityは `config/models/<target-id>.toml` から導出します。
+
+```toml
+schema_version = 3
+
+[runtime]
+profile_set = "parakeet-tdt-ctc-v1"
+
+[storage]
+bucket = "gawohok7/jpapt-v2.2-dev-bucket"
+model_repo = "gawohok7/jpapt-v2.2-dev"
 ```
 
-6桁sequence suffixはここへ書きません。中央AllocatorがBucket全体を走査して採番します。
-
----
+同じidentityを複数ファイルへ再入力しないことがcontractです。workflowは `hf_target` のみを選択し、Bucket / model repo / upstream repo / framework / runtime profile / decoderを自動補完します。candidate IDは省略可能で、対象Bucketから自動解決されます。
 
 ## 3. Candidate `metadata.json`
 
@@ -813,7 +818,6 @@ repository-level catalog変更を行う場合のみ:
 
 ```text
 config/asr-catalog.json
-config/hf-allocation-catalog.json
 ```
 
 次は必ず生成物として扱います。

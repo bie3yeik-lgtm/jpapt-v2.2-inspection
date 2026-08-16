@@ -19,7 +19,7 @@
 - `metadata.json` はcandidateの最小human-authored入力であり、`profile_set` と `variants` を記述する。
 - candidate ID、artifact SHA-256、size、catalog fingerprint、tensor binding、decoder configは生成値であり、人が `metadata.json` に書かない。
 - runtime semanticsのsource of truthは `config/asr-catalog.json`。
-- ID prefixのsource of truthは `config/hf-allocation-catalog.json`。
+- allocation prefixはcollectionから決定します（`candidates -> candidate`, `experiments -> experiment`, `config -> config`）。prefix用JSONは持ちません。
 - config versionは `reference.json` / `evaluation-schema.json` / `datasets-lock.json` / `runtime.json` の4文書で構成する。
 - `runtime.json` は必須。legacy 3-file configは現行execution contractでは扱わない。
 - fetched configには隣接する `resolved.json` が必須で、`config-NNNNNN` identityを確定する。
