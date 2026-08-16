@@ -40,8 +40,8 @@ jobs:
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - id: allocate
@@ -97,8 +97,8 @@ jobs:
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -138,13 +138,32 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
-      - name: Validate evaluator capability
+      - name: Validate Rust evaluator and candidate capability
         shell: bash
         run: |
           set -euo pipefail
           python scripts/ci/validate-evaluator-capability.py \
             --evaluator rust-onnx \
-            --decoder "${EXPECTED_DECODER}"
+            --decoder "${EXPECTED_DECODER}" \
+            --provider "${{ matrix.provider }}" \
+            --candidate-dir .ci/candidate
+
+      - name: Resolve candidate metadata
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/candidate \
+            --github-output "${GITHUB_OUTPUT}"
+          [[ "${{ inputs.candidate_id }}" == "${{ steps.candidate.outputs.candidate_id }}" ]] || {
+            echo "::error::candidate_id input does not match metadata.json"
+            exit 1
+          }
+          [[ "${{ steps.candidate.outputs.tokenizer_kind }}" == "vocabulary" ]] || {
+            echo "::error::Rust CTC evaluator requires tokenizer.kind=vocabulary"
+            exit 1
+          }
 
       - name: Materialize locked dataset selection
         shell: bash
@@ -157,18 +176,6 @@ jobs:
             --model-config "${HF_TARGET_ID}" \
             --revisions .ci/hf/config/revisions \
             --output .ci/resolved-manifest.json
-
-      - name: Locate candidate assets
-        id: assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          MODEL="$(find .ci/candidate -type f -name '*.onnx' -print -quit)"
-          VOCAB="$(find .ci/candidate -type f \( -name 'vocabulary.json' -o -name 'vocab.json' -o -name 'tokens.json' \) -print -quit)"
-          test -n "$MODEL" || { echo "No ONNX model found"; exit 1; }
-          test -n "$VOCAB" || { echo "No vocabulary JSON found"; exit 1; }
-          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
-          echo "vocab=$VOCAB" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -184,11 +191,11 @@ jobs:
           [[ "${{ runner.os }}" == "Windows" ]] && BIN="target/release/asr-eval.exe"
           "$BIN" evaluate \
             --provider "${{ matrix.provider }}" \
-            --model "${{ steps.assets.outputs.model }}" \
+            --model "${{ steps.candidate.outputs.primary_artifact }}" \
             --candidate-dir .ci/candidate \
             --candidate-id "${{ inputs.candidate_id }}" \
             --experiment-id "${EXPERIMENT_ID}" \
-            --vocabulary "${{ steps.assets.outputs.vocab }}" \
+            --vocabulary "${{ steps.candidate.outputs.tokenizer_path }}" \
             --resolved-manifest .ci/resolved-manifest.json \
             --evaluation "${{ inputs.evaluation }}" \
             --model-id "${HF_TARGET_ID}" \
@@ -203,7 +210,7 @@ jobs:
             python scripts/ci/validate-result.py "results/${{ matrix.name }}"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rust-eval-${{ steps.hf.outputs.target_id }}-${{ matrix.name }}-${{ inputs.candidate_id }}
