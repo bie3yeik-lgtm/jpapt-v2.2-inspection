@@ -1,0 +1,136 @@
+name: Initialize HF Bucket
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket_id:
+        description: "Target HF Bucket in namespace/name form"
+        required: true
+        type: string
+      model_repo:
+        description: "Source model repository in namespace/name form"
+        required: true
+        type: string
+      model_revision:
+        description: "Source model revision to resolve and pin"
+        required: true
+        default: "main"
+        type: string
+      expected_task:
+        description: "Expected Model Card pipeline/task"
+        required: true
+        type: string
+      expected_library:
+        description: "Expected Model Card library"
+        required: true
+        type: string
+      expected_language:
+        description: "Expected single Model Card language"
+        required: true
+        type: string
+      expected_license:
+        description: "Expected Model Card license"
+        required: true
+        type: string
+      expected_architecture:
+        description: "Expected model config.model_type"
+        required: true
+        type: string
+      profile_set:
+        description: "Repository ASR runtime profile set"
+        required: true
+        type: string
+      confirmation:
+        description: "Must exactly equal <bucket_id>:<model_repo>"
+        required: true
+        type: string
+  # One-shot branch-only integration probe. Removed after gawohok7/ci-test succeeds.
+  push:
+    branches: [agent/hf-bucket-init]
+    paths:
+      - ".github/workflows/hf-bucket-init.yml"
+      - "rust/crates/asr-eval/src/bucket_init.rs"
+      - "rust/crates/asr-eval/src/cli.rs"
+      - "rust/crates/asr-eval/src/lib.rs"
+      - "rust/crates/asr-eval/src/main.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/crates/asr-eval/Cargo.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-bucket-init-${{ github.event_name == 'push' && 'gawohok7-ci-test' || inputs.bucket_id }}
+  cancel-in-progress: false
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      BUCKET_ID: ${{ github.event_name == 'push' && 'gawohok7/ci-test' || inputs.bucket_id }}
+      MODEL_REPO: ${{ github.event_name == 'push' && 'kotoba-tech/kotoba-whisper-v2.0' || inputs.model_repo }}
+      MODEL_REVISION: ${{ github.event_name == 'push' && 'main' || inputs.model_revision }}
+      EXPECTED_TASK: ${{ github.event_name == 'push' && 'automatic-speech-recognition' || inputs.expected_task }}
+      EXPECTED_LIBRARY: ${{ github.event_name == 'push' && 'transformers' || inputs.expected_library }}
+      EXPECTED_LANGUAGE: ${{ github.event_name == 'push' && 'ja' || inputs.expected_language }}
+      EXPECTED_LICENSE: ${{ github.event_name == 'push' && 'apache-2.0' || inputs.expected_license }}
+      EXPECTED_ARCHITECTURE: ${{ github.event_name == 'push' && 'whisper' || inputs.expected_architecture }}
+      PROFILE_SET: ${{ github.event_name == 'push' && 'whisper-autoregressive-v1' || inputs.profile_set }}
+      CONFIRMATION: ${{ github.event_name == 'push' && 'gawohok7/ci-test:kotoba-tech/kotoba-whisper-v2.0' || inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Hugging Face CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "huggingface_hub==1.24.0"
+          hf version
+          test -n "${HF_TOKEN:-}" || { echo "HF_TOKEN secret is required"; exit 1; }
+
+      - name: Verify Rust lock and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          cargo fmt --all -- --check
+
+      - name: Run Rust unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p asr-eval --no-default-features --features cpu
+
+      - name: Build release CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p asr-eval --no-default-features --features cpu
+
+      - name: Conservatively initialize Bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/asr-eval bucket-init \
+            --bucket-id "$BUCKET_ID" \
+            --model-repo "$MODEL_REPO" \
+            --model-revision "$MODEL_REVISION" \
+            --expected-task "$EXPECTED_TASK" \
+            --expected-library "$EXPECTED_LIBRARY" \
+            --expected-language "$EXPECTED_LANGUAGE" \
+            --expected-license "$EXPECTED_LICENSE" \
+            --expected-architecture "$EXPECTED_ARCHITECTURE" \
+            --profile-set "$PROFILE_SET" \
+            --confirmation "$CONFIRMATION" \
+            --apply
