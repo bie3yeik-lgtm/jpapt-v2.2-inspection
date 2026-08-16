@@ -49,6 +49,9 @@ def main() -> int:
     if not isinstance(artifacts, dict) or not isinstance(artifacts.get("primary"), dict):
         raise RuntimeError("candidate contract must contain primary artifact")
     primary = artifacts["primary"]
+    catalog = contract.get("catalog")
+    if not isinstance(catalog, dict):
+        raise RuntimeError("candidate contract must contain catalog identity")
     candidate_root = Path(str(contract["candidate_root"]))
     model_path = candidate_root / str(primary["path"])
     if not model_path.is_file():
@@ -99,11 +102,43 @@ def main() -> int:
             "provider_available": False,
         },
         "revisions": {
-            "reference": {"document_sha256": ZERO_SHA256},
-            "evaluation_schema": {"document_sha256": ZERO_SHA256},
-            "datasets": {"document_sha256": ZERO_SHA256},
-            "runtime": {"document_sha256": ZERO_SHA256},
+            "config_version": "unversioned",
             "bundle_sha256": ZERO_SHA256,
+            "runtime": {
+                "document_sha256": ZERO_SHA256,
+                "catalog": {
+                    "id": str(catalog["id"]),
+                    "sha256": str(catalog["sha256"]),
+                },
+                "profile_set": str(contract["profile_set"]),
+            },
+            "reference": {
+                "document_sha256": ZERO_SHA256,
+                "development_artifact": {
+                    "repo_id": "generated/provider-probe",
+                    "revision": "synthetic-v1",
+                },
+                "upstream": {
+                    "repo_id": "generated/provider-probe",
+                    "revision": "synthetic-v1",
+                },
+                "tokenizer": {
+                    "repo_id": "generated/provider-probe-tokenizer",
+                    "revision": "synthetic-v1",
+                },
+                "reference_id": "provider-probe-reference",
+                "reference_revision": "synthetic-v1",
+                "canonical_framework": "generated",
+            },
+            "evaluation_schema": {
+                "document_sha256": ZERO_SHA256,
+                "schema_id": "provider-probe-smoke",
+                "schema_revision": "synthetic-v1",
+            },
+            "datasets": {
+                "document_sha256": ZERO_SHA256,
+                "entries": [],
+            },
         },
         "config": {
             "resolved": {
