@@ -62,18 +62,36 @@ struct SyncPlanRecord {
 
 fn validate_hub_id(name: &str, value: &str) -> Result<()> {
     ensure!(!value.trim().is_empty(), "{name} must not be empty");
-    ensure!(value == value.trim(), "{name} must not contain surrounding whitespace");
-    ensure!(value.matches('/').count() == 1, "{name} must use namespace/name form: {value}");
-    ensure!(!value.contains("..") && !value.contains('\\'), "unsafe {name}: {value}");
+    ensure!(
+        value == value.trim(),
+        "{name} must not contain surrounding whitespace"
+    );
+    ensure!(
+        value.matches('/').count() == 1,
+        "{name} must use namespace/name form: {value}"
+    );
+    ensure!(
+        !value.contains("..") && !value.contains('\\'),
+        "unsafe {name}: {value}"
+    );
     let mut parts = value.split('/');
-    ensure!(parts.next().is_some_and(|part| !part.is_empty()), "invalid {name}: {value}");
-    ensure!(parts.next().is_some_and(|part| !part.is_empty()), "invalid {name}: {value}");
+    ensure!(
+        parts.next().is_some_and(|part| !part.is_empty()),
+        "invalid {name}: {value}"
+    );
+    ensure!(
+        parts.next().is_some_and(|part| !part.is_empty()),
+        "invalid {name}: {value}"
+    );
     Ok(())
 }
 
 fn validate_nonempty(name: &str, value: &str) -> Result<()> {
     ensure!(!value.trim().is_empty(), "{name} must not be empty");
-    ensure!(value == value.trim(), "{name} must not contain surrounding whitespace");
+    ensure!(
+        value == value.trim(),
+        "{name} must not contain surrounding whitespace"
+    );
     Ok(())
 }
 
@@ -96,8 +114,12 @@ fn run_hf(args: &[&str]) -> Result<Output> {
 
 fn json_output(args: &[&str]) -> Result<Value> {
     let output = run_hf(args)?;
-    serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("hf command did not return valid JSON: hf {}", args.join(" ")))
+    serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "hf command did not return valid JSON: hf {}",
+            args.join(" ")
+        )
+    })
 }
 
 fn exact_string(value: &Value, key: &str, context: &str) -> Result<String> {
@@ -133,8 +155,12 @@ fn card_language(value: &Value) -> Result<String> {
             .as_str()
             .filter(|language| !language.trim().is_empty())
             .map(ToOwned::to_owned)
-            .context("model manifest cardData.language must contain exactly one non-empty language"),
-        _ => bail!("model manifest cardData.language must be one string or a single-element string array"),
+            .context(
+                "model manifest cardData.language must contain exactly one non-empty language",
+            ),
+        _ => bail!(
+            "model manifest cardData.language must be one string or a single-element string array"
+        ),
     }
 }
 
@@ -162,7 +188,10 @@ fn parse_model_manifest(value: &Value, revision_requested: &str) -> Result<Model
     };
     ensure!(
         manifest.revision_resolved.len() >= 40
-            && manifest.revision_resolved.chars().all(|c| c.is_ascii_hexdigit()),
+            && manifest
+                .revision_resolved
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()),
         "model manifest sha is not an immutable hexadecimal revision: {}",
         manifest.revision_resolved
     );
@@ -186,11 +215,31 @@ fn fetch_model_manifest(repo: &str, revision: &str) -> Result<ModelManifest> {
 
 fn validate_model_manifest(manifest: &ModelManifest, options: &BucketInitOptions) -> Result<()> {
     let checks = [
-        ("repo_id", manifest.repo_id.as_str(), options.model_repo.as_str()),
-        ("task", manifest.task.as_str(), options.expected_task.as_str()),
-        ("library", manifest.library.as_str(), options.expected_library.as_str()),
-        ("language", manifest.language.as_str(), options.expected_language.as_str()),
-        ("license", manifest.license.as_str(), options.expected_license.as_str()),
+        (
+            "repo_id",
+            manifest.repo_id.as_str(),
+            options.model_repo.as_str(),
+        ),
+        (
+            "task",
+            manifest.task.as_str(),
+            options.expected_task.as_str(),
+        ),
+        (
+            "library",
+            manifest.library.as_str(),
+            options.expected_library.as_str(),
+        ),
+        (
+            "language",
+            manifest.language.as_str(),
+            options.expected_language.as_str(),
+        ),
+        (
+            "license",
+            manifest.license.as_str(),
+            options.expected_license.as_str(),
+        ),
         (
             "architecture",
             manifest.architecture.as_str(),
@@ -213,7 +262,11 @@ fn fetch_bucket_info(bucket_id: &str) -> Result<BucketInfo> {
 
 fn require_empty_bucket(bucket_id: &str) -> Result<()> {
     let info = fetch_bucket_info(bucket_id)?;
-    ensure!(info.id == bucket_id, "bucket identity mismatch: requested={bucket_id}, observed={}", info.id);
+    ensure!(
+        info.id == bucket_id,
+        "bucket identity mismatch: requested={bucket_id}, observed={}",
+        info.id
+    );
     ensure!(
         info.total_files == 0,
         "refusing to initialize non-empty bucket {bucket_id}: total_files={}",
@@ -224,7 +277,8 @@ fn require_empty_bucket(bucket_id: &str) -> Result<()> {
 
 fn write_text(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
 }
@@ -244,7 +298,10 @@ fn initialize_staging(root: &Path, manifest: &BucketManifest) -> Result<()> {
     )?;
     for (path, title) in [
         ("config/README.md", "Configuration"),
-        ("config/versions/README.md", "Immutable configuration versions"),
+        (
+            "config/versions/README.md",
+            "Immutable configuration versions",
+        ),
         ("candidates/README.md", "Write-once candidate prefixes"),
         ("experiments/README.md", "Experiment allocation records"),
         ("runs/README.md", "Evaluation runs"),
@@ -252,14 +309,17 @@ fn initialize_staging(root: &Path, manifest: &BucketManifest) -> Result<()> {
     ] {
         write_text(
             &root.join(path),
-            &format!("# {title}\n\nManaged by repository workflows. Do not manually allocate numeric IDs or overwrite immutable prefixes.\n"),
+            &format!(
+                "# {title}\n\nManaged by repository workflows. Do not manually allocate numeric IDs or overwrite immutable prefixes.\n"
+            ),
         )?;
     }
     Ok(())
 }
 
 fn validate_plan(path: &Path) -> Result<usize> {
-    let text = fs::read_to_string(path).with_context(|| format!("failed to read sync plan {}", path.display()))?;
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read sync plan {}", path.display()))?;
     let mut actions = Vec::new();
     for (line_number, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -277,7 +337,10 @@ fn validate_plan(path: &Path) -> Result<usize> {
         .filter(|action| action.as_str() != "upload")
         .cloned()
         .collect();
-    ensure!(unsafe_actions.is_empty(), "refusing non-upload sync plan actions: {unsafe_actions:?}");
+    ensure!(
+        unsafe_actions.is_empty(),
+        "refusing non-upload sync plan actions: {unsafe_actions:?}"
+    );
     ensure!(
         actions.len() == EXPECTED_INITIAL_FILES,
         "unexpected initialization file count: expected={EXPECTED_INITIAL_FILES}, planned={}",
@@ -294,7 +357,11 @@ fn create_plan(staging: &Path, bucket_id: &str, plan: &Path) -> Result<usize> {
     validate_plan(Path::new(plan.as_ref()))
 }
 
-fn verify_remote_manifest(bucket_id: &str, expected: &BucketManifest, temp_root: &Path) -> Result<()> {
+fn verify_remote_manifest(
+    bucket_id: &str,
+    expected: &BucketManifest,
+    temp_root: &Path,
+) -> Result<()> {
     let destination = temp_root.join("remote-bucket-manifest.json");
     let remote = format!("hf://buckets/{bucket_id}/bucket-manifest.json");
     let destination_arg = destination.to_string_lossy();
@@ -318,7 +385,10 @@ pub fn initialize_bucket(options: BucketInitOptions) -> Result<BucketManifest> {
         ("expected_library", options.expected_library.as_str()),
         ("expected_language", options.expected_language.as_str()),
         ("expected_license", options.expected_license.as_str()),
-        ("expected_architecture", options.expected_architecture.as_str()),
+        (
+            "expected_architecture",
+            options.expected_architecture.as_str(),
+        ),
         ("profile_set", options.profile_set.as_str()),
     ] {
         validate_nonempty(name, value)?;
@@ -328,7 +398,10 @@ pub fn initialize_bucket(options: BucketInitOptions) -> Result<BucketManifest> {
         options.confirmation == expected_confirmation,
         "confirmation mismatch; expected exactly {expected_confirmation:?}"
     );
-    ensure!(std::env::var_os("HF_TOKEN").is_some(), "HF_TOKEN is required");
+    ensure!(
+        std::env::var_os("HF_TOKEN").is_some(),
+        "HF_TOKEN is required"
+    );
 
     require_empty_bucket(&options.bucket_id)?;
     let model_manifest = fetch_model_manifest(&options.model_repo, &options.model_revision)?;
@@ -354,7 +427,8 @@ pub fn initialize_bucket(options: BucketInitOptions) -> Result<BucketManifest> {
 
     if options.apply {
         require_empty_bucket(&options.bucket_id)?;
-        let revalidated = fetch_model_manifest(&options.model_repo, &model_manifest.revision_resolved)?;
+        let revalidated =
+            fetch_model_manifest(&options.model_repo, &model_manifest.revision_resolved)?;
         validate_model_manifest(&revalidated, &options)?;
         ensure!(
             revalidated.revision_resolved == model_manifest.revision_resolved,
