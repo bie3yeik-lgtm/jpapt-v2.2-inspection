@@ -1,11 +1,18 @@
-# ONNX Runtime Execution Providers
+# ONNX Runtime Execution Provider
 
-## Purpose
+## 位置づけ
 
-Execution Providers (EPs) describe where and how ONNX Runtime executes the
-same deployment model.
+Execution Provider（EP）は、同じONNX artifactをどのbackendで実行するかを表します。NeMo/Transformersの違いとは独立した概念です。
 
-The project currently models:
+```text
+Target / Model
+  ×
+ONNX artifact
+  ×
+Execution Provider
+```
+
+現在の主要provider:
 
 ```text
 CPUExecutionProvider
@@ -14,138 +21,126 @@ DmlExecutionProvider
 CoreMLExecutionProvider
 ```
 
-Provider configuration lives under:
-
-```text
-config/providers/
-├── cpu.toml
-├── cuda.toml
-├── directml.toml
-└── coreml.toml
-```
-
-Provider configuration must not be mixed into model configuration.
+設定は`config/providers/`に置きます。
 
 ## CPU
 
-Configuration:
+用途:
+
+- portable baseline
+- cross-platform correctness
+- hosted CIの基準
+- 他EPとの比較基準
+
+対応OS:
 
 ```text
-config/providers/cpu.toml
+Linux
+Windows
+macOS
 ```
 
-Role:
-
-- canonical portable ONNX baseline
-- cross-platform correctness
-- hosted CI baseline
-- fallback reference for other EPs
-
-Platforms:
-
-- Linux
-- Windows
-- macOS
-
-CPU is the primary baseline because it is available on all supported systems
-and avoids hardware-specific graph partitioning.
+CPUは最も安定した基準ですが、CPUで通ることはCUDA/DirectML/CoreMLで通ることを保証しません。
 
 ## CUDA
 
-Configuration:
+用途:
 
-```text
-config/providers/cuda.toml
-```
-
-Platforms:
-
-- Linux
-- Windows
-
-Role:
-
-- GPU performance
+- NVIDIA GPU performance
 - CUDA-specific compatibility
-- deployment benchmarking
+- production GPU benchmark
 
-CPU fallback may be enabled, but fallback must be reported.
-
-A session that includes CUDA in the provider list does not prove the complete
-graph executed on CUDA.
-
-## DirectML
-
-Configuration:
+主な対象:
 
 ```text
-config/providers/directml.toml
-```
-
-Platform:
-
-```text
+Linux
 Windows
 ```
 
-Provider name:
+CPU fallbackを許容する場合でも、fallback発生をrun metadataに残す必要があります。
+
+## DirectML
+
+Provider名:
 
 ```text
 DmlExecutionProvider
 ```
 
-Role:
+主な対象:
 
-- native Windows GPU execution
-- hardware-agnostic Windows GPU path
+```text
+Windows
+```
 
-Standard hosted Windows GitHub runners are not considered authoritative
-DirectML GPU performance machines.
+用途:
 
-Hosted Windows tests may still verify configuration or CPU behavior.
+- Windows native GPU path
+- vendor非依存のWindows GPU実行
+
+標準GitHub hosted Windows runnerはDirectML GPU性能のauthoritative benchmark環境とはみなしません。
 
 ## CoreML
 
-Configuration:
-
-```text
-config/providers/coreml.toml
-```
-
-Platform:
-
-```text
-macOS
-```
-
-Provider name:
+Provider名:
 
 ```text
 CoreMLExecutionProvider
 ```
 
-The project uses ONNX Runtime CoreML EP only.
+対象:
 
-It does not use:
+```text
+macOS
+```
 
-- MLX
-- native `.mlpackage` deployment as the project runtime
-- separate Core ML model conversion as the canonical artifact
+本プロジェクトではONNX Runtime CoreML EPを使用します。MLXや`.mlpackage`をcanonical deployment artifactにはしません。
 
-The canonical deployment artifact remains ONNX.
+## Frameworkとの関係
+
+providerはframework非依存です。
+
+```text
+Parakeet ONNX + CPU
+Parakeet ONNX + CUDA
+Parakeet ONNX + DirectML
+Parakeet ONNX + CoreML
+
+Whisper ONNX + CPU
+Whisper ONNX + CUDA
+Whisper ONNX + DirectML
+Whisper ONNX + CoreML
+```
+
+ただし実際に特定EPで動くかどうかは、exportされたgraph、dynamic shape、operator support、runtime実装に依存します。
+
+## Environmentとの違い
+
+Provider:
+
+> ORTのどのbackendを要求するか
+
+Environment:
+
+> どのOS・cache・resource policyで実行するか
+
+したがって、たとえば`coreml.toml`と`macos.toml`は別責務です。
+
+```text
+config/providers/coreml.toml
+config/environments/macos.toml
+```
 
 ## CoreML parity
 
-The dedicated manifest:
+CoreML用には専用suiteを持ちます。
 
 ```text
+config/evaluation/coreml-parity.toml
 evaluation/manifests/coreml-parity.jsonl
 ```
 
-contains duration bands intended to expose shape/compile/provider boundary
-issues.
-
-CoreML failures should be classified separately where possible, for example:
+想定する失敗分類:
 
 ```text
 provider unavailable
@@ -157,136 +152,48 @@ unexpected CPU fallback
 numerical parity failure
 ```
 
-Do not collapse all of these into a generic "CoreML failed".
+すべてを単一の「CoreML失敗」にまとめないことが重要です。
 
-## Provider vs environment
+## Benchmark directory
 
-Provider answers:
-
-> Which ORT backend should execute the graph?
-
-Environment answers:
-
-> What operating system, cache, resource, and concurrency policy applies?
-
-Therefore:
+Bucketではframework名ではなくenvironment/providerで分類します。
 
 ```text
-config/providers/coreml.toml
+benchmarks/<candidate-id>/
+  linux-cpu/
+  linux-cuda/
+  windows-cpu/
+  windows-cuda/
+  windows-directml/
+  macos-cpu/
+  macos-coreml/
 ```
 
-is distinct from:
+実際に実行していない組み合わせのdirectoryを事前に作る必要はありません。
+
+## 比較条件
+
+EP同士の性能・精度を比較するときは次を固定します。
 
 ```text
-config/environments/macos.toml
-```
-
-Likewise CUDA configuration is not inherently a Windows or Linux environment
-definition.
-
-## Provider fallback
-
-When CPU fallback is permitted, results must distinguish:
-
-```text
-requested provider
-available providers
-actual graph assignment
-fallback occurrence
-```
-
-Fallback can make a run appear successful while invalidating the intended
-performance measurement.
-
-## Performance authority
-
-### Hosted Ubuntu
-
-Suitable for:
-
-- CPU canonical full evaluation
-- general Linux correctness
-
-Not automatically authoritative for a user's deployment GPU.
-
-### Hosted Windows
-
-Suitable for:
-
-- native Windows correctness
-- CPU checks
-
-Not authoritative DirectML GPU benchmarking by default.
-
-### Hosted macOS
-
-Suitable for:
-
-- CPU/CoreML compatibility and parity
-
-Not authoritative performance for a specific local Apple Silicon machine.
-
-### Local Apple Silicon
-
-Suitable for:
-
-- machine-specific CPU/CoreML comparison
-- authoritative local performance measurements
-
-The result's host identity must remain part of benchmark provenance.
-
-## Configuration checks
-
-Before evaluation the resolver should verify:
-
-1. the model declares the provider as supported
-2. the environment maps to that provider
-3. the provider supports the current OS
-4. the requested evaluation suite supports the environment
-5. the ONNX Runtime installation actually exposes the provider
-
-## ORT session layer
-
-Expected Python location:
-
-```text
-python/src/parakeet_onnx/runtime/
-├── session.py
-├── providers.py
-└── tensors.py
-```
-
-Expected Rust location:
-
-```text
-rust/crates/asr-runtime/
-```
-
-Both implementations should expose equivalent logical provider identities even
-when provider-option APIs differ.
-
-## Benchmark comparison
-
-When comparing EPs, keep constant:
-
-```text
-same ONNX artifact
+same candidate ID
 same artifact SHA-256
+same config version
 same sample set
 same decoder
-same batch size
-same evaluation revision
+same batch policy
 ```
 
-Then compare:
+比較する代表値:
 
 ```text
 end-to-end RTF
 ORT-only RTF
-memory
-quality
-fallback
+peak RAM / device memory
+CER / WER
+fallback有無
 ```
 
-Otherwise the provider comparison is confounded by different model or
-evaluation inputs.
+## 現在の制約
+
+Target routingとrevision validationはframework-neutralですが、現在のPython/Rust ONNX evaluatorはCTC中心です。そのため、Whisper targetがCPU/CUDA/CoreML等を宣言していても、Whisper autoregressive runtimeが実装されるまでは同じ評価workflowを完全には実行できません。これはproviderの制約ではなくdecoder/runtime実装の制約です。
