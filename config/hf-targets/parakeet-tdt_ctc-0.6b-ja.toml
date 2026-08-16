@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 [target]
 id = "parakeet-tdt_ctc-0.6b-ja"
@@ -10,9 +10,8 @@ repo_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
 [reference]
 canonical_framework = "nemo"
 
-[decoders]
-supported = ["ctc", "tdt"]
-default = "ctc"
+[runtime]
+profile_set = "parakeet-tdt-ctc-v1"
 
 [storage]
 bucket = "gawohok7/jpapt-v2.2-dev-bucket"
