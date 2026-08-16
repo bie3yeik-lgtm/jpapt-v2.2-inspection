@@ -9,6 +9,7 @@ on:
       - "config/models/**"
       - "config/asr-catalog.json"
       - "rust/crates/asr-hf/**"
+      - "rust/crates/asr-contracts/**"
       - "scripts/ci/resolve-ghcr-matrix.sh"
       - ".github/workflows/**"
   push:
@@ -19,6 +20,7 @@ on:
       - "config/models/**"
       - "config/asr-catalog.json"
       - "rust/crates/asr-hf/**"
+      - "rust/crates/asr-contracts/**"
       - "scripts/ci/resolve-ghcr-matrix.sh"
       - ".github/workflows/**"
 
@@ -69,29 +71,20 @@ jobs:
           cargo run --quiet --locked -p asr-hf -- validate-targets
           cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
 
-      - name: Validate repository-dispatch coverage
+      - name: Validate repository-dispatch contracts with Rust
         shell: bash
         run: |
           set -euo pipefail
-          router=.github/workflows/repository-dispatch.yml
-          [[ -f "$router" ]] || { echo "::error::repository dispatch router is required"; exit 1; }
-          grep -qE '^[[:space:]]{2}repository_dispatch:' "$router" || {
-            echo "::error::$router must expose repository_dispatch"; exit 1;
-          }
-
-          missing=0
-          while IFS= read -r workflow; do
-            [[ "$workflow" == "$router" ]] && continue
-            if ! grep -qE '^[[:space:]]{2}workflow_dispatch:' "$workflow"; then
-              echo "::error::$workflow must expose workflow_dispatch for repository-dispatch routing"
-              missing=1
-            fi
-          done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print | sort)
-          (( missing == 0 )) || exit 1
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- validate
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- list \
+            | tee .ci/ghcr-contracts/workflows.tsv
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- \
+            resolve --workflow ghcr-evaluate --ref main --inputs-json '{}' \
+            > .ci/ghcr-contracts/dispatch-smoke.json
 
       - uses: actions/upload-artifact@v7
         with:
           name: ghcr-contract-matrix
-          path: .ci/ghcr-contracts/matrix.json
+          path: .ci/ghcr-contracts
           retention-days: 7
           if-no-files-found: error
