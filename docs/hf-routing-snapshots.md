@@ -1,198 +1,164 @@
-# Hugging Face Routing Snapshots
+# Hugging Face Routing Snapshot
 
-This document defines the temporal semantics of `HF_TARGETS_JSON`.
+## 目的
 
-## Current-state rule
+`HF_TARGETS_JSON`はmodel identity registryではなく、**現在時点のstorage routing**を表します。この点を過去runの再現性と混同しないための仕様を定義します。
 
-`HF_TARGETS_JSON` is a **current operational routing snapshot**, not a permanent
-model identity registry.
+## 現在snapshotのルール
 
-Within one snapshot:
+1つの`HF_TARGETS_JSON`内では次を必須とします。
 
-- every target key is unique;
-- every `HF_BUCKET` value is unique;
-- every target has one current `HF_BUCKET` and one current `HF_MODEL_REPO`;
-- therefore a Bucket can be reverse-resolved to exactly one target at execution
-  time.
+- target keyは一意
+- `HF_BUCKET`は一意
+- 各targetは1つの`HF_BUCKET`と`HF_MODEL_REPO`を持つ
+- Bucketからtargetを一意に逆引きできる
 
-Example current snapshot:
+例:
 
 ```json
 {
   "model-a": {
-    "HF_BUCKET": "example/bucket-a",
-    "HF_MODEL_REPO": "example/model-a-dev"
+    "HF_BUCKET": "owner/bucket-a",
+    "HF_MODEL_REPO": "owner/model-a"
   },
   "model-b": {
-    "HF_BUCKET": "example/bucket-b",
-    "HF_MODEL_REPO": "example/model-b-dev"
+    "HF_BUCKET": "owner/bucket-b",
+    "HF_MODEL_REPO": "owner/model-b"
   }
 }
 ```
 
-A snapshot that assigns `example/bucket-a` to both targets is invalid.
+同一snapshotで2 targetが同じ`HF_BUCKET`を持つ構成は無効です。
 
-## Historical reassignment is allowed
+## 過去との対応変更は許容する
 
-The uniqueness rule applies only **inside the same snapshot**.
-
-Assignments may change later because of storage capacity, lifecycle, project
-organization, migration, or operational policy.
-
-For example, this is valid over time:
+一意性は**同じsnapshot内**の制約です。将来、容量・用途・migrationの都合でroutingを変更できます。
 
 ```text
-Snapshot T1
+時点T1
 model-a -> bucket-a
 model-b -> bucket-b
 
-Snapshot T2
+時点T2
 model-a -> bucket-c
 model-b -> bucket-a
 ```
 
-`bucket-a` is unique in each snapshot even though its associated target changed
-between T1 and T2.
+これは有効です。Bucketはtargetの恒久identityではありません。
 
-A target may likewise move from `bucket-a` to `bucket-c` without changing the
-target's logical identity.
+## `reference.json`にBucketを書かない理由
 
-## Why Bucket is not stored in `reference.json`
-
-`reference.json` records model provenance:
+`reference.json`はmodel provenanceを固定します。
 
 ```text
 development_artifact
 upstream
 tokenizer
-reference implementation
+reference
 decoder contract
 ```
 
-`HF_BUCKET` is an operational storage location, not a model provenance identity.
-Embedding it in `reference.json` would incorrectly make a mutable routing choice
-part of the immutable model contract.
-
-Therefore:
+一方、`HF_BUCKET`は運用上の保存場所です。
 
 ```text
-reference.json
-  = model/config provenance
-
-HF_TARGETS_JSON
-  = current routing
-
-run-context.json
-  = execution-time routing snapshot
+reference.json   = provenance
+HF_TARGETS_JSON  = current routing
+run-context.json = execution-time routing snapshot
 ```
 
-## Execution-time snapshot
+## Runに保存するrouting snapshot
 
-Because the current Repository Variable may change after a run, every evaluation
-records the routing actually used at execution time:
-
-```text
-run-context.json.metadata.hf_target_id
-run-context.json.metadata.hf_bucket
-run-context.json.metadata.hf_model_repo
-```
-
-Python and Rust evaluators both capture these values from the resolved workflow
-environment.
-
-The allocation README written under `candidates/` or `experiments/` also records
-the Bucket and target seen at allocation time. That relationship is explicitly a
-snapshot, not a permanent association.
-
-## Reproducing an old run
-
-Do not use the current `HF_TARGETS_JSON` to infer where an old run lived.
-
-Use the run itself:
+過去runは現在のRepository Variableから推測しません。実行時点で次をrun metadataへ保存します。
 
 ```text
+metadata.hf_target_id
 metadata.hf_bucket
-  -> historical Bucket used for the run
-
-revisions.config_version
-  -> immutable configuration set inside that Bucket
-
-artifact.candidate_id
-  -> exact candidate artifact selected
-
-metadata.experiment_id
-  -> logical experiment grouping
+metadata.hf_model_repo
 ```
 
-Reproduction flow:
+加えて:
+
+```text
+revisions.config_version
+artifact.candidate_id
+metadata.experiment_id
+```
+
+を使えば、当時の実行対象を特定できます。
+
+## 過去runの再現
+
+再現時の参照順:
+
+```text
+run-context.metadata.hf_bucket
+  ↓
+当時のBucket
+
+run-context.revisions.config_version
+  ↓
+当時のversioned config
+
+run-context.artifact.candidate_id
+  ↓
+当時のcandidate
+```
+
+例:
 
 ```bash
-export HF_BUCKET="<run-context.metadata.hf_bucket>"
-export HF_CONFIG_VERSION="<run-context.revisions.config_version>"
+export HF_BUCKET="<historical-bucket>"
+export HF_CONFIG_VERSION="config-000023"
 
 bash scripts/hf/hf-fetch-revisions.sh
-bash scripts/hf/hf-fetch-candidate.sh "<run-context.artifact.candidate_id>"
+bash scripts/hf/hf-fetch-candidate.sh "<candidate-id>"
 ```
 
-Then compare the stored artifact SHA-256 and revision bundle SHA-256 before
-accepting the reproduction.
+その後artifact SHA-256とrevision bundle hashを比較します。
 
-## Current resolver behavior
+## Resolverの責務
 
-`scripts/ci/resolve-hf-target.py` validates the supplied `HF_TARGETS_JSON` as one
-snapshot.
+`scripts/ci/resolve-hf-target.py`は現在snapshotだけを検証します。
 
-It rejects:
+検出するもの:
 
-- malformed target entries;
-- missing `HF_BUCKET` or `HF_MODEL_REPO`;
-- duplicate `HF_BUCKET` values in the same snapshot;
-- Bucket values not present in the current snapshot.
-
-It does **not** compare the current mapping with an older mapping and does not
-reject a target because its Bucket changed historically.
-
-This means changing a Repository Variable from:
-
-```json
-"model-a": {"HF_BUCKET": "example/bucket-a", ...}
+```text
+malformed JSON
+missing HF_BUCKET
+missing HF_MODEL_REPO
+duplicate HF_BUCKET in current snapshot
+unknown bucket
 ```
 
-to:
+検出しないもの:
 
-```json
-"model-a": {"HF_BUCKET": "example/bucket-c", ...}
+```text
+過去snapshotとのBucket変更
+過去に別targetが使っていたBucketの再利用
 ```
 
-is a valid routing update.
+これらは正常なrouting変更です。
 
-## Sequential ID implications
+## 自動採番への影響
 
-Candidate and experiment numeric sequences are scoped to a Bucket collection:
+Candidate/Experimentの連番は物理Bucket内のcollectionを走査して決めます。
 
 ```text
 <bucket>/candidates/
 <bucket>/experiments/
 ```
 
-If a target moves to another Bucket, new allocations continue from the maximum
-sequence already present in the **destination Bucket collection**, not from the
-old target's previous Bucket.
+Targetが別Bucketへ移った場合、移動先Bucketに存在する最大suffix+1から続行します。Target専用の恒久counterではありません。
 
-This is intentional. The sequence identifies an object within the physical
-Bucket lifecycle; it is not a globally unique target counter.
+## 運用上の不変条件
 
-Historical objects remain addressable by the Bucket snapshot recorded in their
-run/allocation metadata.
+```text
+現在snapshot内のHF_BUCKETは一意
+routingは将来変更可能
+Bucketをmodel identityとして扱わない
+reference.jsonへHF_BUCKETを書かない
+runへ実行時routingを保存する
+過去runは現在routingから推測しない
+```
 
-## Operational invariants
-
-1. `HF_BUCKET` values are unique within the current `HF_TARGETS_JSON` snapshot.
-2. Bucket assignments may change between snapshots.
-3. Bucket identity is never treated as permanent target identity.
-4. `reference.json` does not contain `HF_BUCKET`.
-5. every run records the actual Bucket used at execution time.
-6. historical reproduction uses the run's stored Bucket, not the current
-   Repository Variable.
-7. sequential IDs continue from the destination Bucket's existing maximum after
-   a routing move.
+この分離により、storage再編とmodel provenanceを独立して変更できます。

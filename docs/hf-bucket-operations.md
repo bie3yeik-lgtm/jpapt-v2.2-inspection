@@ -1,53 +1,43 @@
-# Reusable Hugging Face Bucket Operations
+# Hugging Face Bucket共通運用仕様
 
-This document defines the reusable Bucket lifecycle used by this repository. It
-is intentionally framework-neutral so the same design can be copied to other
-model-development repositories.
+## 目的
 
-## 1. Design goals
+この文書は、本リポジトリで採用するHF Bucket運用を他のmodel開発Repositoryにも移植できる形で定義します。NeMo/Transformers、CTC/TDT/Whisperなどのmodel差分には依存しません。
 
-The Bucket is mutable development/evaluation object storage. The Hugging Face
-Model Repo is the promoted artifact repository. Git is the source of truth for
-code, schemas, target definitions, and workflow logic.
+## 1. 保存先の役割
 
-The design has five explicit goals:
+```text
+GitHub Repository
+  source / config / schema / workflow / docs
 
-1. configuration changes are versioned and reproducible;
-2. candidate and experiment identifiers are machine allocated;
-3. human-readable prefixes describe purpose but never own a sequence;
-4. evaluation runs remain immutable, globally unique execution records;
-5. GitHub Actions can select a target from `HF_TARGETS_JSON` without encoding
-   Bucket names in source code.
+HF Bucket
+  mutable development / experiment / evaluation history
 
-## 2. Canonical Bucket tree
+HF Model Repo
+  validated development/release artifact
+```
+
+Bucketをcanonical model identityにはしません。
+
+## 2. Canonical tree
 
 ```text
 hf://buckets/<namespace>/<bucket>/
 ├── config/
 │   ├── current.json
 │   └── versions/
-│       ├── config-000001/
-│       │   ├── reference.json
-│       │   ├── evaluation-schema.json
-│       │   └── datasets-lock.json
-│       ├── config-000002/
-│       │   ├── reference.json
-│       │   ├── evaluation-schema.json
-│       │   └── datasets-lock.json
-│       └── ...
+│       └── config-NNNNNN/
+│           ├── reference.json
+│           ├── evaluation-schema.json
+│           └── datasets-lock.json
 ├── experiments/
-│   ├── <prefix>-000001/
-│   │   └── README.md
-│   ├── <prefix>-000002/
-│   │   └── README.md
-│   └── ...
+│   └── <prefix>-NNNNNN/
+│       └── README.md
 ├── candidates/
-│   ├── <prefix>-000001/
-│   │   ├── README.md
-│   │   ├── metadata.json
-│   │   └── <model artifacts>
-│   ├── <prefix>-000002/
-│   └── ...
+│   └── <prefix>-NNNNNN/
+│       ├── README.md
+│       ├── metadata.json
+│       └── <artifacts>
 ├── reference/
 │   ├── manifests/
 │   ├── outputs/
@@ -55,74 +45,68 @@ hf://buckets/<namespace>/<bucket>/
 │   └── metadata/
 ├── runs/
 │   └── <run-id>/
-│       ├── run-context.json
-│       ├── samples.jsonl
-│       ├── metrics.json
-│       └── promotion.json
 ├── benchmarks/
 │   └── <candidate-id>/
 │       └── <environment-provider>/
-│           └── <run-id>.json
 ├── scripts/
 └── tmp/
 ```
 
-The tree is framework-neutral. NeMo, Transformers, CTC, TDT, Whisper
-autoregressive decoding, CPU, CUDA, DirectML, and CoreML are metadata/runtime
-properties rather than top-level storage categories.
+Framework/decoder/provider名はtop-level treeを分岐させず、metadataで保持します。
 
-## 3. Target routing with GitHub Repository Variables
+## 3. Routing
 
-GitHub Actions uses one Repository Variable:
+GitHub ActionsではRepository Variableを使います。
 
 ```text
 HF_TARGETS_JSON
 ```
 
-Example:
+例:
 
 ```json
 {
   "model-a": {
-    "HF_BUCKET": "example/model-a-dev-bucket",
-    "HF_MODEL_REPO": "example/model-a-dev"
+    "HF_BUCKET": "owner/bucket-a",
+    "HF_MODEL_REPO": "owner/model-a"
   },
   "model-b": {
-    "HF_BUCKET": "example/model-b-dev-bucket",
-    "HF_MODEL_REPO": "example/model-b-dev"
+    "HF_BUCKET": "owner/bucket-b",
+    "HF_MODEL_REPO": "owner/model-b"
   }
 }
 ```
 
-Rules:
-
-- target IDs are stable logical target names;
-- every `HF_BUCKET` must be unique inside the map;
-- `HF_MODEL_REPO` identifies the development/promoted artifact repo;
-- Bucket routing is operational state and is not duplicated into
-  `reference.json`;
-- model/framework/decoder semantics remain source-controlled target config.
-
-The required secret is:
+### 現在snapshotのルール
 
 ```text
-HF_TOKEN
+target IDは一意
+HF_BUCKETは一意
+各targetにHF_BUCKET/HF_MODEL_REPOが1つ
 ```
 
-## 4. Versioned configuration
+### 時系列のルール
 
-### 4.1 Why `config/current.json` exists
+Bucket割当は将来変更できます。
 
-Buckets are mutable object storage. Overwriting
-`config/revisions/reference.json` would lose the simple path from an old run to
-the exact three revision documents that governed it.
+```text
+T1: model-a -> bucket-a
+T2: model-a -> bucket-c
+```
 
-The canonical design therefore stores immutable configuration sets under
-`config/versions/` and keeps only a small mutable pointer in `current.json`.
+これは正常です。過去runはrun-contextに保存された当時のroutingを使います。
 
-### 4.2 `current.json`
+## 4. Versioned Config
 
-Minimum form:
+`config/revisions/`を上書きしません。
+
+```text
+config/current.json
+  ↓
+config/versions/config-NNNNNN/
+```
+
+`current.json`:
 
 ```json
 {
@@ -131,213 +115,130 @@ Minimum form:
 }
 ```
 
-The active version must match:
+各versionはimmutableです。
 
 ```text
-config-[0-9]{6}
+reference.json
+evaluation-schema.json
+datasets-lock.json
 ```
 
-### 4.3 Version directory
+どれかを変更する場合は新versionを発行します。
 
-```text
-config/versions/config-000002/
-├── reference.json
-├── evaluation-schema.json
-└── datasets-lock.json
-```
+## 5. Config versionのpublish
 
-A published `config-NNNNNN` directory is immutable. To change any of the three
-documents, create a new configuration version and then update `current.json`.
-Do not mutate an older version in place.
-
-### 4.4 Fetch selection
-
-`scripts/hf/hf-fetch-revisions.sh` performs:
-
-```text
-HF_BUCKET
-  ↓
-config/current.json
-  ↓
-config_version
-  ↓
-config/versions/<config_version>/
-  ↓
-reference.json + evaluation-schema.json + datasets-lock.json
-  ↓
-.ci/hf/config/revisions/
-  ↓
-strict RevisionBundle validation
-```
-
-For normal execution, `current.json` is authoritative.
-
-For reproduction of an old run, set:
+推奨script:
 
 ```bash
-HF_CONFIG_VERSION=config-000123
+bash scripts/hf/hf-push-config-version.sh <local-config-dir>
 ```
 
-The override selects that immutable version while still recording which version
-was selected.
+処理順:
 
-Local staging contains:
+```text
+local 3 JSONをstrict validation
+  ↓
+次のconfig-NNNNNNを決定
+  ↓
+version directoryへupload
+  ↓
+全file成功確認
+  ↓
+最後にconfig/current.json更新
+```
+
+`current.json`を先に変更して、不完全なversionを指さないことが重要です。
+
+## 6. Configの取得
+
+通常:
+
+```bash
+bash scripts/hf/hf-fetch-revisions.sh
+```
+
+過去version:
+
+```bash
+HF_CONFIG_VERSION=config-000023 \
+  bash scripts/hf/hf-fetch-revisions.sh
+```
+
+ローカル解決結果:
 
 ```text
 .ci/hf/config/
-├── current.json
-├── resolved.json
-└── revisions/
-    ├── reference.json
-    ├── evaluation-schema.json
-    └── datasets-lock.json
+  resolved.json
+  revisions/
 ```
 
-`resolved.json` records at least:
+Runには`config_version`とrevision bundle hashを保存します。
 
-```json
-{
-  "schema_version": 1,
-  "config_version": "config-000123",
-  "current_version": "config-000200",
-  "selection_source": "override"
-}
-```
+## 7. Candidate / Experiment自動採番
 
-The selected `config_version` is serialized into `run-context.json.revisions`.
-
-## 5. Strict `reference.json` identity model
-
-`reference.json` has four separate responsibilities:
-
-```json
-{
-  "schema_version": 1,
-  "development_artifact": {
-    "repo_id": "example/development-model-repo",
-    "revision": "<MODEL_REPO_COMMIT>"
-  },
-  "upstream": {
-    "repo_id": "vendor/upstream-model",
-    "revision": "<UPSTREAM_COMMIT>"
-  },
-  "tokenizer": {
-    "repo_id": "vendor/tokenizer-or-processor",
-    "revision": "<TOKENIZER_COMMIT>"
-  },
-  "reference": {
-    "id": "framework-reference-v1",
-    "revision": "<REFERENCE_IMPLEMENTATION_REVISION>",
-    "canonical_framework": "transformers"
-  },
-  "decoders": {
-    "supported": ["whisper_autoregressive"],
-    "default": "whisper_autoregressive"
-  }
-}
-```
-
-Meanings:
-
-- `development_artifact`: promoted/development HF Model Repo snapshot;
-- `upstream`: source checkpoint used for conversion/reference;
-- `tokenizer`: tokenizer/processor source, independently pinned;
-- `reference`: implementation that produces the canonical expected result.
-
-No Bucket ID is stored in `reference.json`.
-
-## 6. Machine-managed sequential IDs
-
-### 6.1 ID shape
-
-Candidates and experiments use:
+形式:
 
 ```text
 <prefix>-NNNNNN
 ```
 
-Examples:
+数値suffixはprefixごとではなくcollection全体で管理します。
 
-```text
-kotoba-whisper-v1.0-candidate-000002
-cpu-full-eval-000003
-cross-platform-parity-000004
-rust-eval-000005
-```
-
-The six-digit suffix is the identity sequence. The prefix is descriptive only.
-
-### 6.2 One sequence per collection
-
-The allocator does **not** maintain a separate counter for each prefix.
-
-Given:
+例:
 
 ```text
 experiments/
-├── cpu-full-eval-000002/
-├── graph-optimization-000003/
-└── cross-platform-parity-000007/
+  cpu-full-eval-000002
+  graph-optimization-000003
+  rust-eval-000007
 ```
 
-allocating prefix `cpu-full-eval` produces:
+次にどのprefixを使ってもsuffixは`000008`です。
+
+### 採番アルゴリズム
 
 ```text
-cpu-full-eval-000008
+collectionをrecursive list
+  ↓
+path先頭componentの末尾6桁を抽出
+  ↓
+最大値を取得
+  ↓
++1
+  ↓
+<prefix>-NNNNNN
 ```
 
-This rule prevents two semantically different prefixes from accidentally
-reusing the same numeric identity.
+`000001`が構造例として存在すれば最初の実運用値は`000002`になります。
 
-### 6.3 `000001` as an example/reserved directory
+## 8. READMEによる予約
 
-If a structure example already exists as:
+Object storageには空directoryがないため、採番直後に次を作ります。
 
 ```text
-something-000001/README.md
+<allocated-id>/README.md
 ```
 
-the allocator sees `000001`, therefore the first real allocation is `000002`.
-No special-case code is required.
-
-### 6.4 Allocation algorithm
-
-`scripts/hf/hf-allocate-id.sh`:
-
-1. recursively lists all objects below `candidates/` or `experiments/`;
-2. reads the first path component for each object;
-3. extracts every trailing six-digit suffix;
-4. finds the maximum suffix irrespective of prefix;
-5. adds one;
-6. writes `<allocated-id>/README.md` immediately;
-7. returns the allocated ID.
-
-The helper implementing the deterministic numeric rule is:
+READMEには少なくとも次を記録します。
 
 ```text
-scripts/ci/next-hf-sequence-id.py
+collection
+bucket
+prefix
+sequence
+allocated_at
+target_id
+candidate_id
+evaluation_id
+provider_id
+GitHub run metadata
 ```
 
-### 6.5 Why README is created immediately
+これにより番号の意味を人間が確認でき、pathも実体化されます。
 
-Object storage has no durable empty directory. Writing `README.md` serves two
-purposes:
+## 9. Race condition
 
-- it reserves/materializes the allocated path;
-- it explains why the directory exists and who/what allocated it.
-
-README metadata includes the collection, prefix, sequence, allocation time,
-target, candidate, evaluation, provider, and GitHub run identifiers when
-available.
-
-The numeric suffix must never be manually reused or renumbered.
-
-## 7. Concurrency and race avoidance
-
-A pure `list → max + 1 → write` algorithm is not safe when two allocators run at
-the same time.
-
-GitHub Actions therefore isolates allocation in a short job with:
+単純な`list → max+1 → write`は同時実行に弱いため、GitHub Actionsではallocator jobだけをBucket単位で直列化します。
 
 ```yaml
 concurrency:
@@ -345,255 +246,141 @@ concurrency:
   cancel-in-progress: false
 ```
 
-Only the allocator job is serialized. The expensive evaluation jobs remain
-parallel.
+他Repositoryへ移植するときも、同じBucket/collectionへ採番するworkflow間で同じconcurrency naming policyを使ってください。
 
-When this design is copied to another repository, every workflow that allocates
-from the same Bucket collection must use the **same concurrency-group naming
-convention**. Otherwise independent workflows can race.
+## 10. Candidate lifecycle
 
-For local/manual publishing, avoid running multiple allocation commands against
-the same Bucket simultaneously. A future server-side atomic allocator can
-replace this restriction without changing the ID format.
+ローカルexportでは正式番号を持たなくても構いません。
 
-## 8. Candidate lifecycle
+```text
+candidate_id = unallocated
+```
 
-### 8.1 Candidate creation
-
-A candidate is an artifact selected for evaluation. The human does not choose
-the numeric ID.
-
-Publish with:
+Bucket publish時:
 
 ```bash
-HF_TOKEN=... \
-HF_BUCKET=example/model-dev-bucket \
-HF_TARGET_ID=model-a \
-bash scripts/hf/hf-push-candidate.sh ./local-candidate
+bash scripts/hf/hf-push-candidate.sh ./local-candidate [prefix]
 ```
 
-Default prefix is derived from the target:
+処理:
 
 ```text
-model-a-candidate-NNNNNN
+ID自動採番
+README予約
+metadata.jsonのcandidate_id更新
+artifact upload
 ```
 
-An explicit descriptive prefix may be supplied when a workflow has a stable
-semantic purpose:
+既存candidateを評価するときはcandidate IDを明示指定します。これは採番ではなくartifact selectionです。
 
-```bash
-bash scripts/hf/hf-push-candidate.sh ./local-candidate encoder-only
-```
+## 11. Experiment lifecycle
 
-The script:
-
-1. allocates the next candidate ID;
-2. creates the remote README reservation;
-3. updates local `metadata.json.candidate_id` when present;
-4. syncs the artifact directory without deleting the reservation README.
-
-### 8.2 Candidate selection for evaluation
-
-Evaluation workflows still receive `candidate_id` as an input. This is not
-manual ID allocation; it explicitly identifies **which existing immutable
-candidate is being evaluated**.
-
-Automatically evaluating "the newest candidate" would make a rerun select a
-different artifact and would break reproducibility, so selection remains
-explicit.
-
-## 9. Experiment lifecycle
-
-Experiments are automatically allocated when an evaluation workflow starts.
-Current prefixes include:
+Experimentは1つ以上のrunを束ねる論理単位です。
 
 ```text
-cpu-full-eval
-cross-platform-parity
-rust-eval
+cpu-full-eval-NNNNNN
+cross-platform-parity-NNNNNN
+rust-eval-NNNNNN
 ```
 
-One logical cross-platform workflow receives one experiment ID. Matrix jobs for
-Linux, Windows, macOS, CPU, CoreML, etc. share that experiment ID so the
-experiment groups multiple execution runs of the same evaluation intent.
+Cross-platform matrixでは全jobが同じexperiment IDを共有します。
 
-Python and Rust evaluators write the experiment identifier to:
+## 12. Run lifecycle
+
+Run IDは連番にしません。1 concrete executionを一意に識別します。
+
+Runに保存すべき情報:
 
 ```text
-run-context.json.metadata.experiment_id
+candidate ID / artifact SHA-256
+experiment ID
+config version
+revision bundle
+HF routing snapshot
+Git revision
+host / architecture
+runtime / provider
+evaluation suite
 ```
 
-`run_id` remains independently generated and globally unique.
-
-## 10. Runs and benchmarks
-
-### Runs
-
-Runs are execution records rather than manually numbered project entities.
-They use time/model/environment/provider/artifact identity rather than the
-six-digit collection sequence.
-
-```text
-runs/<run-id>/
-```
-
-A run records:
-
-- candidate ID;
-- experiment ID;
-- config version;
-- revision bundle hash;
-- upstream/tokenizer/development artifact identities;
-- runtime/provider/environment;
-- artifact SHA-256;
-- GitHub run metadata.
-
-### Benchmarks
-
-Benchmarks are organized by candidate and execution environment/provider:
+## 13. Benchmark lifecycle
 
 ```text
 benchmarks/<candidate-id>/
-├── linux-cpu/
-├── linux-cuda/
-├── windows-cpu/
-├── windows-cuda/
-├── windows-directml/
-├── macos-cpu/
-└── macos-coreml/
+  linux-cpu/
+  linux-cuda/
+  windows-cpu/
+  windows-cuda/
+  windows-directml/
+  macos-cpu/
+  macos-coreml/
 ```
 
-Framework names are not needed in this level because candidate/run metadata
-already identifies the target and decoder.
+Framework名ではなく実行環境を分類軸にします。
 
-## 11. GitHub Actions responsibilities
+## 14. `reference.json`
 
-### Validate HF Layout
+共通provenance:
 
-PR/push:
-
-- validates repository-owned schemas, target configs, and synthetic fixtures;
-- does not require the mutable remote Bucket to be valid.
-
-Manual `workflow_dispatch`:
-
-- resolves the selected Bucket from `HF_TARGETS_JSON`;
-- reads `config/current.json`;
-- fetches the selected `config/versions/config-NNNNNN` set;
-- validates the strict revision bundle against the selected target;
-- validates required Bucket directories, including `experiments/`.
-
-### CPU Full Evaluation
-
-- user selects an existing candidate;
-- allocator job creates `cpu-full-eval-NNNNNN`;
-- evaluation reads the current config version;
-- result records experiment/config identities.
-
-### Cross Platform ONNX Parity
-
-- one `cross-platform-parity-NNNNNN` experiment ID is allocated;
-- all matrix jobs share it;
-- each job still receives its own run ID and benchmark environment/provider.
-
-### Rust Cross Platform Evaluation
-
-- one `rust-eval-NNNNNN` experiment ID is allocated;
-- all Rust matrix jobs share it;
-- Rust serializes the same strict revision identities/config version as Python.
-
-## 12. Reproducing an old evaluation
-
-Given a previous `run-context.json`:
-
-1. read `artifact.candidate_id`;
-2. read `metadata.experiment_id`;
-3. read `revisions.config_version`;
-4. set `HF_CONFIG_VERSION` to that version;
-5. fetch the exact candidate ID;
-6. execute the same provider/environment/evaluation config;
-7. compare artifact and revision bundle hashes before accepting the rerun.
-
-Example:
-
-```bash
-export HF_CONFIG_VERSION=config-000023
-bash scripts/hf/hf-fetch-revisions.sh
-bash scripts/hf/hf-fetch-candidate.sh model-a-candidate-000041
+```text
+development_artifact  HF Model Repo snapshot
+upstream              source model snapshot
+tokenizer             tokenizer/processor snapshot
+reference             canonical implementation
+decoders              decoder contract
 ```
 
-## 13. Migrating this design to another repository
+`HF_BUCKET`は書きません。
 
-Copy/adapt these components:
+## 15. 過去runの再現
+
+現在の`HF_TARGETS_JSON`を過去runへ適用しません。
+
+参照するもの:
+
+```text
+run-context.metadata.hf_bucket
+run-context.revisions.config_version
+run-context.artifact.candidate_id
+run-context.metadata.experiment_id
+```
+
+その後artifact SHAとrevision bundle hashを照合します。
+
+## 16. 他Repositoryへ移植する最低構成
 
 ```text
 scripts/ci/next-hf-sequence-id.py
 scripts/hf/hf-allocate-id.sh
 scripts/hf/hf-push-candidate.sh
+scripts/hf/hf-push-config-version.sh
 scripts/hf/hf-fetch-revisions.sh
 scripts/hf/hf-fetch-candidate.sh
 scripts/ci/validate-revisions.py
 ```
 
-Also reproduce:
+Repository settings:
 
 ```text
-HF_TOKEN secret
-HF_TARGETS_JSON repository variable
-config/current.json
-config/versions/config-NNNNNN/
+Secret: HF_TOKEN
+Variable: HF_TARGETS_JSON
 ```
 
-Recommended source-controlled concepts:
+## 17. 不変条件
 
 ```text
-config/hf-targets/
-evaluation/schemas/
-unit tests for revision loading
-unit tests for ID allocation
+既存config-NNNNNNを上書きしない
+candidate/experiment suffixを再利用しない
+prefixは説明用でcounterを所有しない
+採番直後にREADMEを作る
+過去candidateを明示的に再評価できる
+通常実行はcurrent.jsonに従う
+過去再現はHF_CONFIG_VERSIONで固定できる
+reference.jsonへHF_BUCKETを書かない
+runとexperimentを別identityにする
+通常PR CIをmutable remote Bucketに依存させない
+現在HF_TARGETS_JSON内のHF_BUCKETは一意
+routingの歴史的変更を許容する
 ```
 
-When copying GitHub workflows, preserve the shared allocator concurrency group
-for every workflow that allocates IDs in the same collection.
-
-## 14. Operational invariants
-
-The following are hard rules:
-
-1. never overwrite an existing `config-NNNNNN` version;
-2. never reuse a candidate/experiment numeric suffix;
-3. prefixes may change; numeric allocation still scans the entire collection;
-4. immediately materialize an allocation with README.md;
-5. evaluation may select an old candidate explicitly;
-6. normal execution follows `config/current.json`;
-7. reproducibility may override with `HF_CONFIG_VERSION`;
-8. `reference.json` never contains `HF_BUCKET`;
-9. `development_artifact.repo_id` must match the selected target's
-   `HF_MODEL_REPO`;
-10. run identity and experiment identity are separate concepts;
-11. no destructive Bucket sync is used for append-oriented history;
-12. external Bucket state must not make ordinary PR source tests nondeterministic.
-
-## 15. Identity summary
-
-```text
-Target ID
-  └─ what logical model target is selected
-
-Config version: config-NNNNNN
-  └─ which immutable revision document set governs the run
-
-Candidate ID: <prefix>-NNNNNN
-  └─ which model artifact set is evaluated
-
-Experiment ID: <prefix>-NNNNNN
-  └─ which logical evaluation/experiment groups one or more runs
-
-Run ID
-  └─ one concrete execution on one runtime/provider/environment
-
-Benchmark path
-  └─ comparable summary of one run for one candidate/environment/provider
-```
-
-Keeping these identities separate is the core of the design.
+この運用により、frameworkが増えてもstorage lifecycleを変更せずに拡張できます。

@@ -1,111 +1,169 @@
-# Multi-framework ASR targets
+# マルチFramework ASR設計
 
-This repository supports multiple canonical ASR frameworks while sharing the
-evaluation dataset, provider, result-schema, and Hugging Face Bucket lifecycle.
+## この文書の目的
 
-For the complete reusable Bucket operating model, see
-`docs/hf-bucket-operations.md`.
+本リポジトリではNeMoとTransformersを同じASR開発基盤へ載せます。この文書では**共通部分と差分だけ**を整理します。Bucket、run、candidate、config versionなどの運用構造はframeworkによって変えません。
 
-## Target/storage mapping
+## 共通Target model
 
-Static model semantics live in `config/hf-targets/*.toml`. GitHub Actions
-storage routing is controlled by Repository Variable `HF_TARGETS_JSON`.
-
-```json
-{
-  "kotoba-whisper-v1.0": {
-    "HF_BUCKET": "gawohok7/tf-v1-onnx-dev-bucket",
-    "HF_MODEL_REPO": "gawohok7/tf-v1-onnx-dev"
-  },
-  "parakeet-tdt_ctc-0.6b-ja": {
-    "HF_BUCKET": "gawohok7/jpapt-v2.2-dev-bucket",
-    "HF_MODEL_REPO": "gawohok7/jpapt-v2.2-dev"
-  }
-}
-```
-
-`HF_BUCKET` values must be unique. `resolve-hf-target.py` resolves target IDs to
-storage and can reverse-resolve a Bucket to its target.
-
-## Manual Bucket selection
-
-These workflows accept `hf_bucket`:
+Targetは次を組み合わせた論理単位です。
 
 ```text
-Validate HF Layout
-CPU Full Evaluation
-Cross Platform ONNX Parity
-Rust Cross Platform Evaluation
+model semantics
+canonical framework
+upstream model
+tokenizer / processor
+decoder contract
+HF storage routing
 ```
 
-The input is a string because GitHub Actions cannot dynamically construct
-`workflow_dispatch` choice options from a Repository Variable. The value is
-validated against `HF_TARGETS_JSON` before remote access.
-
-The resolver exports:
+静的設定:
 
 ```text
-HF_TARGET_ID
-HF_BUCKET
-HF_MODEL_REPO
-EXPECTED_DEVELOPMENT_REPO_ID
-EXPECTED_UPSTREAM_REPO_ID
-EXPECTED_TOKENIZER_REPO_ID
-EXPECTED_FRAMEWORK
-EXPECTED_DECODER
+config/models/<model-id>.toml
+config/hf-targets/<target-id>.toml
 ```
 
-There is no legacy revision mode.
-
-## Versioned revision documents
-
-Every initialized target Bucket uses:
+実行時storage routing:
 
 ```text
-config/
-├── current.json
-└── versions/
-    └── config-NNNNNN/
-        ├── reference.json
-        ├── evaluation-schema.json
-        └── datasets-lock.json
+vars.HF_TARGETS_JSON
 ```
 
-`config/current.json` identifies the active immutable configuration set.
-`hf-fetch-revisions.sh` follows that pointer, stages the three documents under
-`.ci/hf/config/revisions/`, writes `.ci/hf/config/resolved.json`, and runs the
-strict `RevisionBundle` loader.
+## 現在の代表target
 
-Historical reproduction can override the pointer with:
+| Target | Framework | Upstream | Default decoder |
+|---|---|---|---|
+| `parakeet-tdt_ctc-0.6b-ja` | NeMo | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `ctc` |
+| `kotoba-whisper-v1.0` | Transformers | `kotoba-tech/kotoba-whisper-v1.0` | `whisper_autoregressive` |
 
-```bash
-HF_CONFIG_VERSION=config-000123
+## 共通するもの
+
+次はNeMo/Transformersで同じです。
+
+```text
+HF Bucket lifecycle
+config/current.json + config/versions/
+reference.json identity model
+datasets-lock
+evaluation manifests
+CanonicalAudio
+candidate / experiment / run IDs
+run-context schema
+Execution Provider model
+benchmark layout
+promotion lifecycle
 ```
 
-The selected version is stored in `run-context.json.revisions.config_version`.
+## 違うもの
+
+差分は主に以下です。
+
+| 領域 | NeMo / Parakeet | Transformers / Whisper |
+|---|---|---|
+| canonical loader | NeMo | Transformers |
+| processor | NeMo model/frontend | `AutoProcessor`等 |
+| decoder | CTC / TDT | autoregressive Whisper decoder |
+| export graph | 1 graph中心の場合あり | encoder/decoder/decoder-with-past等の複数graphになり得る |
+| reference adapter | NeMo adapter | Transformers adapter |
+| 現在のRust runtime | CTC対応 | 未対応 |
+
+## CanonicalAudioまでを共通化する理由
+
+```text
+audio asset
+  ↓
+float32 / mono / 16kHz
+  ↓
+CanonicalAudio
+```
+
+ここまではframework共通です。model固有feature extractionをこの前に混ぜると、dataset/audio問題とmodel問題を分離できなくなるためです。
+
+## NeMo / Parakeet
+
+代表的な処理:
+
+```text
+CanonicalAudio
+  ↓
+NeMo frontend
+  ↓
+FastConformer encoder
+  ↓
+CTC head または TDT path
+  ↓
+decoder
+```
+
+### CTC
+
+現在のPython/Rust ONNX evaluatorの主要実装対象です。
+
+```text
+logits
+  ↓
+argmax / collapse / blank removal
+  ↓
+text
+```
+
+### TDT
+
+predictor/joint/duration-aware decodingが必要です。Target contract上は表現できますが、Rust production pathはまだCTCと同等には実装されていません。
+
+## Transformers / Whisper
+
+代表的な処理:
+
+```text
+CanonicalAudio
+  ↓
+processor / feature extraction
+  ↓
+encoder
+  ↓
+autoregressive decoder
+  ↓
+generated token IDs
+  ↓
+processor/tokenizer decode
+```
+
+Reference adapterではmodel repoとtokenizer/processor repoを独立して固定できる設計です。
+
+Whisper ONNX candidateは複数graphを持てます。
+
+```text
+encoder.onnx
+decoder.onnx
+decoder_with_past.onnx
+```
+
+ファイル名そのものをcontractにせず、candidate metadataでartifact roleを記述するのが基本方針です。
 
 ## `reference.json`
 
-All targets separate the source/provenance identities:
+全frameworkで同じ形を使います。
 
 ```json
 {
   "schema_version": 1,
   "development_artifact": {
-    "repo_id": "gawohok7/tf-v1-onnx-dev",
-    "revision": "<DEVELOPMENT_ARTIFACT_COMMIT_SHA>"
+    "repo_id": "owner/dev-model-repo",
+    "revision": "<sha>"
   },
   "upstream": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<UPSTREAM_MODEL_COMMIT_SHA>"
+    "repo_id": "vendor/upstream-model",
+    "revision": "<sha>"
   },
   "tokenizer": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<TOKENIZER_OR_PROCESSOR_COMMIT_SHA>"
+    "repo_id": "vendor/tokenizer-or-processor",
+    "revision": "<sha>"
   },
   "reference": {
-    "id": "transformers-reference-v1",
-    "revision": "<REFERENCE_IMPLEMENTATION_REVISION>",
+    "id": "framework-reference-v1",
+    "revision": "<implementation-revision>",
     "canonical_framework": "transformers"
   },
   "decoders": {
@@ -115,130 +173,55 @@ All targets separate the source/provenance identities:
 }
 ```
 
-Meanings:
+NeMoだから別schema、Transformersだから別schema、とはしません。
 
-| Field | Meaning |
-|---|---|
-| `development_artifact` | Exact HF Model Repo snapshot containing the development/promoted deployment artifact. |
-| `upstream` | Canonical source checkpoint used to generate/reference the artifact. |
-| `tokenizer` | Exact tokenizer/processor source and revision. |
-| `reference` | Canonical framework implementation used to produce expected results. |
+## Storage routing
 
-The Bucket ID itself is not duplicated into `reference.json`.
-
-Legacy `model`, root/model `tokenizer_revision`, singular `decoder`, and
-`decorders` forms are rejected.
-
-## `evaluation-schema.json`
-
-Canonical form:
+`HF_TARGETS_JSON`は現在時点のroutingです。
 
 ```json
 {
-  "schema_version": 1,
-  "schema": {
-    "id": "asr-evaluation-v1",
-    "revision": "<SCHEMA_REVISION>"
+  "target-a": {
+    "HF_BUCKET": "owner/bucket-a",
+    "HF_MODEL_REPO": "owner/model-a"
   },
-  "decoders": {
-    "supported": ["ctc", "tdt", "whisper_autoregressive"],
-    "default": "ctc"
+  "target-b": {
+    "HF_BUCKET": "owner/bucket-b",
+    "HF_MODEL_REPO": "owner/model-b"
   }
 }
 ```
 
-Decoder entries may be strings or structured objects; the loader normalizes
-them to decoder IDs before compatibility validation.
+同一snapshot内では`HF_BUCKET`は一意です。ただし将来targetが別Bucketへ移動することは許容します。過去runはrun-contextのrouting snapshotから再現します。
 
-## Revision validation
+## 評価workflowの現状
 
-After staging the selected config version:
+`Validate HF Layout`はどちらのframeworkでも使用できます。
 
-```bash
-python scripts/ci/validate-revisions.py \
-  --root .ci/hf/config/revisions \
-  --expected-development-repo-id gawohok7/tf-v1-onnx-dev \
-  --expected-upstream-repo-id kotoba-tech/kotoba-whisper-v1.0 \
-  --expected-tokenizer-repo-id kotoba-tech/kotoba-whisper-v1.0 \
-  --expected-framework transformers \
-  --expected-decoder whisper_autoregressive
-```
+評価workflowはtarget解決とrevision検証までは共通ですが、現状のPython/Rust evaluatorはCTC中心です。そのためWhisper targetは、decoder compatibility checkで明示的に停止します。
 
-The loader validates shape and decoder compatibility; the CLI verifies target
-identity.
-
-## Validate HF Layout flow
-
-PR/push validation intentionally stays repository-local:
+これは「Transformersをサポートしていない」という意味ではありません。
 
 ```text
-pull_request / push
-  -> source-controlled target/schema/script validation
-  -> synthetic strict revision fixtures
-  -> sequence allocator unit tests
+Target/config/reference/storage contract  対応済み
+Transformers reference adapter             対応済み
+Whisper ONNX autoregressive evaluator       未完成
 ```
 
-Manual validation checks the real selected Bucket:
+という実装段階の違いです。
+
+## 新しいframeworkを追加する場合
+
+最低限必要なもの:
 
 ```text
-workflow_dispatch
-  -> resolve HF_BUCKET
-  -> fetch config/current.json
-  -> resolve config/versions/config-NNNNNN
-  -> strict RevisionBundle validation
-  -> target identity validation
-  -> required Bucket layout validation
+1. config/models/<id>.toml
+2. config/hf-targets/<id>.toml
+3. canonical reference adapter
+4. export adapter
+5. candidate runtime contract
+6. decoder implementation
+7. target固有parity checkpoint
 ```
 
-Required lifecycle collections include `experiments/`, `candidates/`, `runs/`,
-`benchmarks/`, `reference/`, `scripts/`, and `tmp/`.
-
-## Candidate and experiment identities
-
-New candidate and experiment IDs are machine allocated as:
-
-```text
-<prefix>-NNNNNN
-```
-
-The numeric suffix is one sequence per collection, independent of prefix.
-
-Candidate export may remain locally `unallocated`; `hf-push-candidate.sh`
-assigns the durable Bucket candidate ID and updates `metadata.json` on publish.
-
-Evaluation workflow inputs still select an existing `candidate_id` explicitly
-for reproducibility.
-
-Experiment prefixes currently include:
-
-```text
-cpu-full-eval
-cross-platform-parity
-rust-eval
-```
-
-A cross-platform matrix shares one experiment ID while every concrete runtime
-execution gets its own run ID.
-
-## Evaluation behavior by target
-
-The selected Bucket resolves `HF_TARGET_ID`, which is passed into the target
-model configuration path. This prevents storage selection from silently using a
-different model configuration.
-
-The current Python and Rust ONNX evaluators remain CTC-only. Transformers
-Whisper targets can be selected and revision-validated, but evaluation stops at
-an explicit decoder compatibility error until Whisper autoregressive runtime
-support is implemented.
-
-## Dataset policy
-
-Current targets use the shared evaluation dataset policy. Switching storage
-targets does not silently switch the evaluation corpus.
-
-## Current target summary
-
-| Target | Canonical upstream | Framework | Default decoder | HF Model Repo | HF Bucket |
-|---|---|---|---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja` | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `nemo` | `ctc` | `gawohok7/jpapt-v2.2-dev` | `gawohok7/jpapt-v2.2-dev-bucket` |
-| `kotoba-whisper-v1.0` | `kotoba-tech/kotoba-whisper-v1.0` | `transformers` | `whisper_autoregressive` | `gawohok7/tf-v1-onnx-dev` | `gawohok7/tf-v1-onnx-dev-bucket` |
+Bucket treeやrun schemaをframeworkごとに増やす必要はありません。
