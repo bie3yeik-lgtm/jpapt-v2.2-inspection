@@ -29,7 +29,11 @@ fn canonical(path: &Path) -> Result<(serde_json::Value, String)> {
         )));
     }
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
-    if value.get("schema_version").and_then(serde_json::Value::as_u64) != Some(1) {
+    if value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
         return Err(EvalError::InvalidInput(format!(
             "{}: schema_version must equal 1",
             path.display()
@@ -100,7 +104,11 @@ pub fn load_revision_bundle(root: impl AsRef<Path>) -> Result<RevisionBundleData
     let resolved = root.parent().unwrap_or(root).join("resolved.json");
     let config_version = if resolved.is_file() {
         let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&resolved)?)?;
-        if value.get("schema_version").and_then(serde_json::Value::as_u64) != Some(1) {
+        if value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+        {
             return Err(EvalError::InvalidInput(format!(
                 "{}: schema_version must equal 1",
                 resolved.display()

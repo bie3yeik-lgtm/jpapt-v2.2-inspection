@@ -1,18 +1,18 @@
 use std::{fs, path::PathBuf, time::Instant};
 
-use asr_audio::{decode_audio, CanonicalAudio};
+use asr_audio::{CanonicalAudio, decode_audio};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
 use asr_runtime::{
-    metadata::model_metadata::GeneratedCandidateContract, OrtCtcSession, ProviderKind,
-    SessionConfig, SessionTuning,
+    OrtCtcSession, ProviderKind, SessionConfig, SessionTuning,
+    metadata::model_metadata::GeneratedCandidateContract,
 };
 
 use crate::{
-    benchmark::{build_benchmark, ProviderTelemetry, SampleAggregate},
+    EvalError, Result,
+    benchmark::{ProviderTelemetry, SampleAggregate, build_benchmark},
     decoding::ctc::Vocabulary,
     manifest::load_resolved_manifest,
     writer::{ensure_dir, write_json, write_jsonl},
-    EvalError, Result,
 };
 
 #[derive(Debug, Clone)]
@@ -253,23 +253,47 @@ fn validate_execution_inputs(
     provider: ProviderKind,
     model_path: &std::path::Path,
 ) -> Result<()> {
-    if context.get("schema_version").and_then(serde_json::Value::as_u64) != Some(2) {
+    if context
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(2)
+    {
         return Err(EvalError::InvalidInput(
             "Rust evaluator requires run-context schema_version 2".into(),
         ));
     }
     let provider_id = provider.to_string();
-    if context.get("provider_id").and_then(serde_json::Value::as_str) != Some(provider_id.as_str()) {
+    if context
+        .get("provider_id")
+        .and_then(serde_json::Value::as_str)
+        != Some(provider_id.as_str())
+    {
         return Err(EvalError::InvalidInput(
             "run-context provider_id does not match requested provider".into(),
         ));
     }
     let provenance = &context["metadata"]["candidate"];
     for (name, actual, expected) in [
-        ("candidate_id", provenance["candidate_id"].as_str(), Some(candidate.candidate_id.as_str())),
-        ("variant", provenance["variant"].as_str(), Some(candidate.variant.as_str())),
-        ("profile", provenance["profile"].as_str(), Some(candidate.profile.as_str())),
-        ("bundle_sha256", provenance["bundle_sha256"].as_str(), Some(candidate.bundle_sha256.as_str())),
+        (
+            "candidate_id",
+            provenance["candidate_id"].as_str(),
+            Some(candidate.candidate_id.as_str()),
+        ),
+        (
+            "variant",
+            provenance["variant"].as_str(),
+            Some(candidate.variant.as_str()),
+        ),
+        (
+            "profile",
+            provenance["profile"].as_str(),
+            Some(candidate.profile.as_str()),
+        ),
+        (
+            "bundle_sha256",
+            provenance["bundle_sha256"].as_str(),
+            Some(candidate.bundle_sha256.as_str()),
+        ),
     ] {
         if actual != expected {
             return Err(EvalError::InvalidInput(format!(
@@ -329,7 +353,11 @@ fn finalized_provider_telemetry(
     }
 }
 
-fn sample_provider(provider: ProviderKind, strict_provider: bool, success: bool) -> serde_json::Value {
+fn sample_provider(
+    provider: ProviderKind,
+    strict_provider: bool,
+    success: bool,
+) -> serde_json::Value {
     let proven = provider == ProviderKind::Cpu || strict_provider;
     serde_json::json!({
         "requested": provider.to_string(),

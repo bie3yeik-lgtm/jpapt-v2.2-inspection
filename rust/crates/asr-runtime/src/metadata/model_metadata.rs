@@ -144,9 +144,7 @@ impl GeneratedCandidateContract {
 
     pub fn tokenizer_path(&self) -> Result<PathBuf> {
         let tokenizer = self.tokenizer.as_ref().ok_or_else(|| {
-            RuntimeError::InvalidMetadata(
-                "generated candidate contract has no tokenizer".into(),
-            )
+            RuntimeError::InvalidMetadata("generated candidate contract has no tokenizer".into())
         })?;
         if tokenizer.kind != "vocabulary" {
             return Err(RuntimeError::UnsupportedContract(format!(
@@ -181,12 +179,13 @@ impl GeneratedCandidateContract {
                 )
             })?;
         let primary_input = required_json_string(primary.get("input"), "io.primary.input")?;
-        let logits_output = required_json_string(
-            primary.get("logits_output"),
-            "io.primary.logits_output",
-        )?;
+        let logits_output =
+            required_json_string(primary.get("logits_output"), "io.primary.logits_output")?;
         let length_input = match primary.get("length_input") {
-            Some(value) => Some(required_json_string(Some(value), "io.primary.length_input")?),
+            Some(value) => Some(required_json_string(
+                Some(value),
+                "io.primary.length_input",
+            )?),
             None => None,
         };
         let blank_id = self
@@ -250,9 +249,7 @@ impl GeneratedCandidateContract {
     fn verify_bundle_sha256(&self) -> Result<()> {
         let mut digest = Sha256::new();
         for (role, artifact) in &self.artifacts {
-            digest.update(
-                format!("{role}\0{}\0{}\n", artifact.path, artifact.sha256).as_bytes(),
-            );
+            digest.update(format!("{role}\0{}\0{}\n", artifact.path, artifact.sha256).as_bytes());
         }
         let actual = format!("{:x}", digest.finalize());
         if !actual.eq_ignore_ascii_case(&self.bundle_sha256) {
@@ -312,12 +309,10 @@ fn validate_sha256(name: &str, value: &str) -> Result<()> {
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).map_err(|error| {
-        RuntimeError::InvalidMetadata(format!("{}: {error}", path.display()))
-    })?;
+    let mut file = fs::File::open(path)
+        .map_err(|error| RuntimeError::InvalidMetadata(format!("{}: {error}", path.display())))?;
     let mut digest = Sha256::new();
-    std::io::copy(&mut file, &mut digest).map_err(|error| {
-        RuntimeError::InvalidMetadata(format!("{}: {error}", path.display()))
-    })?;
+    std::io::copy(&mut file, &mut digest)
+        .map_err(|error| RuntimeError::InvalidMetadata(format!("{}: {error}", path.display())))?;
     Ok(format!("{:x}", digest.finalize()))
 }

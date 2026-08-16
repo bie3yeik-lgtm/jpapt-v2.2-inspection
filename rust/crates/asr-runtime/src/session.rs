@@ -4,14 +4,14 @@ use std::{
 };
 
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
+    session::{Session, builder::GraphOptimizationLevel},
     value::TensorRef,
 };
 
 use crate::{
+    Result, RuntimeError,
     metadata::model_metadata::CtcRuntimeContract,
     providers::{self, ProviderKind},
-    Result, RuntimeError,
 };
 
 #[derive(Debug, Clone)]
@@ -53,7 +53,7 @@ impl SessionTuning {
                 other => {
                     return Err(RuntimeError::InvalidMetadata(format!(
                         "unsupported graph_optimization_level {other:?}"
-                    )))
+                    )));
                 }
             };
         }
@@ -67,7 +67,7 @@ impl SessionTuning {
                 other => {
                     return Err(RuntimeError::InvalidMetadata(format!(
                         "unsupported execution_mode {other:?}"
-                    )))
+                    )));
                 }
             };
         }
@@ -157,9 +157,7 @@ impl OrtCtcSession {
             .with_memory_pattern(config.tuning.memory_pattern)
             .map_err(builder_error)?;
         if !config.tuning.allow_cpu_fallback {
-            builder = builder
-                .with_disable_cpu_fallback()
-                .map_err(builder_error)?;
+            builder = builder.with_disable_cpu_fallback().map_err(builder_error)?;
         }
         if let Some(threads) = config.tuning.intra_threads {
             builder = builder.with_intra_threads(threads).map_err(builder_error)?;
@@ -286,7 +284,7 @@ fn greedy_ctc_ids(logits: &[f32], shape: &[usize], blank_id: i64) -> Result<Vec<
         _ => {
             return Err(RuntimeError::UnsupportedContract(format!(
                 "CTC logits must have [T,V] or [1,T,V] shape, got {shape:?}"
-            )))
+            )));
         }
     };
     if vocab == 0 || logits.len() != time.saturating_mul(vocab) {

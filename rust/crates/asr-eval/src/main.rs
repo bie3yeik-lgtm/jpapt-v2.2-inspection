@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use asr_eval::evaluator::{evaluate, EvaluateOptions};
+use asr_eval::evaluator::{EvaluateOptions, evaluate};
 use asr_eval::{Cli, Command};
 use asr_runtime::ProviderKind;
 use clap::Parser;

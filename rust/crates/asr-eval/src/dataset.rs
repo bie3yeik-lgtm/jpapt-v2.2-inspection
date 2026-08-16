@@ -16,7 +16,8 @@ pub struct ResolvedSample {
     pub duration_sec: f64,
     pub sample_rate_hz: Option<u32>,
     pub transcription: String,
-    #[serde(default)] pub tags: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub audio_path: Option<String>,
     pub audio_sha256: Option<String>,
 }
@@ -32,9 +33,24 @@ pub struct ResolvedManifest {
 
 impl ResolvedManifest {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 { return Err(format!("unsupported schema_version {}", self.schema_version)); }
-        if self.samples.len() != self.resolved_sample_count || self.samples.len() != self.expected_sample_count { return Err("resolved/expected sample counts disagree".into()); }
-        if self.samples.iter().any(|s| s.audio_path.as_deref().is_none_or(str::is_empty)) { return Err("every Rust evaluation sample must have materialized audio_path".into()); }
+        if self.schema_version != 1 {
+            return Err(format!(
+                "unsupported schema_version {}",
+                self.schema_version
+            ));
+        }
+        if self.samples.len() != self.resolved_sample_count
+            || self.samples.len() != self.expected_sample_count
+        {
+            return Err("resolved/expected sample counts disagree".into());
+        }
+        if self
+            .samples
+            .iter()
+            .any(|s| s.audio_path.as_deref().is_none_or(str::is_empty))
+        {
+            return Err("every Rust evaluation sample must have materialized audio_path".into());
+        }
         Ok(())
     }
 }

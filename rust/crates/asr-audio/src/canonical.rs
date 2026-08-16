@@ -1,7 +1,7 @@
 use crate::{
+    DecodedAudio,
     error::{AudioError, Result},
     resample_bandlimited,
-    DecodedAudio,
 };
 
 pub const TARGET_SAMPLE_RATE_HZ: u32 = 16_000;
@@ -43,11 +43,8 @@ impl CanonicalAudio {
             }
         }
 
-        let mut waveform = resample_bandlimited(
-            &mono,
-            decoded.sample_rate_hz,
-            TARGET_SAMPLE_RATE_HZ,
-        )?;
+        let mut waveform =
+            resample_bandlimited(&mono, decoded.sample_rate_hz, TARGET_SAMPLE_RATE_HZ)?;
         for sample in &mut waveform {
             if !sample.is_finite() {
                 return Err(AudioError::Unsupported(

@@ -2,13 +2,8 @@ use std::{fs::File, io::ErrorKind, path::Path};
 
 use symphonia::{
     core::{
-        audio::SampleBuffer,
-        codecs::DecoderOptions,
-        errors::Error as SymphoniaError,
-        formats::FormatOptions,
-        io::MediaSourceStream,
-        meta::MetadataOptions,
-        probe::Hint,
+        audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
+        formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
     },
     default::{get_codecs, get_probe},
 };
@@ -77,7 +72,9 @@ pub fn decode_audio(path: impl AsRef<Path>) -> Result<DecodedAudio> {
     loop {
         let packet = match format.next_packet() {
             Ok(packet) => packet,
-            Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => break,
+            Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                break;
+            }
             Err(SymphoniaError::ResetRequired) => {
                 return Err(AudioError::Decode {
                     path: path.to_path_buf(),
@@ -111,7 +108,9 @@ pub fn decode_audio(path: impl AsRef<Path>) -> Result<DecodedAudio> {
         sample_rate_hz = spec.rate;
         let channel_count = spec.channels.count();
         if channel_count == 0 {
-            return Err(AudioError::Unsupported("decoded audio has zero channels".into()));
+            return Err(AudioError::Unsupported(
+                "decoded audio has zero channels".into(),
+            ));
         }
         if channels.is_empty() {
             channels = (0..channel_count).map(|_| Vec::new()).collect();

@@ -6,11 +6,7 @@ const TAPS: usize = 16;
 const PHASES: usize = 1024;
 const CUTOFF_MARGIN: f64 = 0.94;
 
-pub fn resample_bandlimited(
-    input: &[f32],
-    input_rate: u32,
-    output_rate: u32,
-) -> Result<Vec<f32>> {
+pub fn resample_bandlimited(input: &[f32], input_rate: u32, output_rate: u32) -> Result<Vec<f32>> {
     if input_rate == 0 {
         return Err(AudioError::InvalidSampleRate(input_rate));
     }
@@ -27,9 +23,7 @@ pub fn resample_bandlimited(
     let output_len = ((input.len() as u128 * output_rate as u128)
         .saturating_add(input_rate as u128 - 1)
         / input_rate as u128) as usize;
-    let cutoff = (output_rate as f64 / input_rate as f64)
-        .min(1.0)
-        * CUTOFF_MARGIN;
+    let cutoff = (output_rate as f64 / input_rate as f64).min(1.0) * CUTOFF_MARGIN;
     let kernels = build_polyphase_kernels(cutoff);
     let source_per_output = input_rate as f64 / output_rate as f64;
     let mut output = Vec::with_capacity(output_len);
@@ -68,9 +62,8 @@ fn build_polyphase_kernels(cutoff: f64) -> Vec<[f32; TAPS]> {
                 (PI * cutoff * x).sin() / (PI * x)
             };
             let position = tap as f64 / (TAPS - 1) as f64;
-            let window = 0.42
-                - 0.5 * (2.0 * PI * position).cos()
-                + 0.08 * (4.0 * PI * position).cos();
+            let window =
+                0.42 - 0.5 * (2.0 * PI * position).cos() + 0.08 * (4.0 * PI * position).cos();
             let value = sinc * window;
             *coefficient = value as f32;
             sum += value;
