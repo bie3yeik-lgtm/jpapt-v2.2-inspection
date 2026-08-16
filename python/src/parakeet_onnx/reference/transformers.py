@@ -22,11 +22,8 @@ class TransformersSpeechSeq2SeqReference:
     """
     Pinned Transformers speech-seq2seq reference.
 
-    This adapter deliberately uses AutoProcessor + AutoModelForSpeechSeq2Seq
-    instead of Whisper-specific concrete classes so future compatible
-    Transformers ASR models can reuse the same boundary.
-
-    The exact model and processor revision must be supplied by reference.json.
+    The model and processor/tokenizer identities are independent because the
+    canonical reference contract pins them separately in reference.json.
     """
 
     def __init__(
@@ -48,19 +45,22 @@ class TransformersSpeechSeq2SeqReference:
     def from_pretrained(
         cls,
         *,
-        repo_id: str,
-        revision: str,
-        tokenizer_revision: str | None = None,
+        model_repo_id: str,
+        model_revision: str,
+        tokenizer_repo_id: str,
+        tokenizer_revision: str,
         device: str = "cpu",
         language: str = "ja",
         task: str = "transcribe",
     ) -> "TransformersSpeechSeq2SeqReference":
-        if not repo_id:
-            raise TransformersReferenceError("repo_id must not be empty.")
-        if not revision:
-            raise TransformersReferenceError(
-                "A pinned Transformers model revision is required."
-            )
+        for name, value in (
+            ("model_repo_id", model_repo_id),
+            ("model_revision", model_revision),
+            ("tokenizer_repo_id", tokenizer_repo_id),
+            ("tokenizer_revision", tokenizer_revision),
+        ):
+            if not value:
+                raise TransformersReferenceError(f"{name} must not be empty.")
 
         try:
             from transformers import (
@@ -73,16 +73,14 @@ class TransformersSpeechSeq2SeqReference:
                 "'transformers' dependencies."
             ) from exc
 
-        processor_revision = tokenizer_revision or revision
-
         try:
             processor = AutoProcessor.from_pretrained(
-                repo_id,
-                revision=processor_revision,
+                tokenizer_repo_id,
+                revision=tokenizer_revision,
             )
             model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                repo_id,
-                revision=revision,
+                model_repo_id,
+                revision=model_revision,
             )
             model = model.to(device)
             model.eval()
