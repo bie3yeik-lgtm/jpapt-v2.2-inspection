@@ -33,7 +33,33 @@ HF_TARGETS_JSON
 }
 ```
 
-`HF_BUCKET` はtargetごとに一意でなければなりません。
+### `HF_TARGETS_JSON` は現在routingのsnapshot
+
+`HF_TARGETS_JSON` は恒久的な target→Bucket identity ではなく、**現在どのtargetをどのBucketへrouteするか**を表す運用snapshotです。
+
+同一snapshot内では `HF_BUCKET` は必ず一意です。したがって現在の値だけを見れば、`hf_bucket` からtargetを一意に逆引きできます。
+
+一方で、容量・用途・運用変更により、後日のsnapshotでは同じtargetの `HF_BUCKET` を別Bucketへ変更して構いません。過去に別targetが利用していたBucketを後から再利用することも、現在snapshot内で重複しない限り許容されます。
+
+```text
+2026-08 snapshot
+model-a -> bucket-a
+model-b -> bucket-b
+
+2026-10 snapshot
+model-a -> bucket-c
+model-b -> bucket-a
+```
+
+このため、過去runの再現に「現在の `HF_TARGETS_JSON`」を使って過去Bucketを推測してはいけません。Python/Rust evaluatorは実行時点のroutingを次にsnapshot保存します。
+
+```text
+run-context.json.metadata.hf_target_id
+run-context.json.metadata.hf_bucket
+run-context.json.metadata.hf_model_repo
+```
+
+`HF_TARGETS_JSON` は現在routing、`run-context.json` は過去実行時routingの記録、という責務分離です。
 
 ## HF Bucketを選択するworkflow
 
@@ -46,11 +72,11 @@ Cross Platform ONNX Parity
 Rust Cross Platform Evaluation
 ```
 
-GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できないため、`hf_bucket`は文字列入力です。実行時に`HF_TARGETS_JSON`と照合し、不明なBucketは拒否します。
+GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できないため、`hf_bucket`は文字列入力です。実行時にその時点の`HF_TARGETS_JSON`と照合し、不明なBucketまたは同一snapshot内の重複Bucketを拒否します。
 
 ```text
 hf_bucket
-  -> vars.HF_TARGETS_JSON
+  -> current vars.HF_TARGETS_JSON
   -> target id
   -> HF_MODEL_REPO
   -> framework / decoder / model config
@@ -77,9 +103,10 @@ config/versions/config-NNNNNN/
 }
 ```
 
-過去runを再現する場合は環境変数で明示できます。
+過去runを再現する場合は、まず `run-context.json.metadata.hf_bucket` で当時のBucketを特定し、そのうえで `run-context.json.revisions.config_version` を使用します。
 
 ```text
+HF_BUCKET=<run時点のBucket>
 HF_CONFIG_VERSION=config-000002
 ```
 
@@ -101,7 +128,7 @@ pull_request / push
 
 ```text
 workflow_dispatch
-  -> hf_bucket解決
+  -> current HF_TARGETS_JSONからhf_bucket解決
   -> config/current.json取得
   -> config/versions/<config_version>/取得
   -> strict RevisionBundle validation
@@ -142,7 +169,7 @@ experiments/
 
 次に`cpu-full-eval`を発行しても `cpu-full-eval-000008` です。
 
-採番直後に `README.md` を作成してパスをmaterializeし、prefix・sequence・target・candidate・GitHub run等を記録します。
+採番直後に `README.md` を作成してパスをmaterializeし、prefix・sequence・**採番時点のtarget/Bucket routing**・candidate・GitHub run等を記録します。このREADMEのtarget/Bucket対応も恒久mappingではなくallocation-time snapshotです。
 
 ### concurrency
 
@@ -183,6 +210,7 @@ candidate_id
 
 ```text
 allocate-experiment
+  -> current HF_TARGETS_JSONの一意性確認
   -> cpu-full-eval-NNNNNN
   -> README reservation
 
@@ -192,6 +220,7 @@ Linux CPU evaluation
   -> candidate取得
   -> evaluation
   -> run-context.metadata.experiment_id
+  -> run-context.metadata.hf_bucket / hf_target_id / hf_model_repo
   -> runs / benchmarks
 ```
 
@@ -211,7 +240,7 @@ evaluation = smoke | parity | coreml-parity
 cross-platform-parity-000023
 ```
 
-Linux CPU / Windows CPU / macOS CPU / macOS CoreML matrixは同じexperiment IDを共有し、それぞれ独立したrun IDを持ちます。
+Linux CPU / Windows CPU / macOS CPU / macOS CoreML matrixは同じexperiment IDを共有し、それぞれ独立したrun IDとexecution-time routing snapshotを持ちます。
 
 ## Rust Cross Platform Evaluation
 
@@ -229,7 +258,7 @@ evaluation = smoke | parity | coreml-parity | full
 rust-eval-000024
 ```
 
-Rust evaluatorも `config_version` とstrict revision identityをrun-contextへ記録し、`--experiment-id`でexperimentを関連付けます。
+Rust evaluatorも `config_version`、strict revision identity、実行時点のHF routing snapshotをrun-contextへ記録し、`--experiment-id`でexperimentを関連付けます。
 
 ## reference.json
 
@@ -243,7 +272,24 @@ reference
 decoders
 ```
 
-Bucket名は`reference.json`には記録せず、routingは`HF_TARGETS_JSON`のみで管理します。
+Bucket名は`reference.json`には記録しません。Bucketはmutableなrouting先であり、model provenance identityではないためです。
+
+## 過去runの再現
+
+過去runについては次の順で復元します。
+
+```text
+run-context.json.metadata.hf_bucket
+  -> 当時のBucket
+
+run-context.json.revisions.config_version
+  -> 当時のimmutable config set
+
+run-context.json.artifact.candidate_id
+  -> 当時のcandidate
+```
+
+現在の `HF_TARGETS_JSON` が当時と異なっていても、この3情報から過去実行を特定できます。
 
 ## Rust CI / Release
 
