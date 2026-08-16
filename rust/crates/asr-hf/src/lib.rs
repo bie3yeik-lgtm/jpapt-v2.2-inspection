@@ -87,6 +87,7 @@ pub struct ResolveTargetOptions {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TargetDocument {
     schema_version: u32,
     runtime: RuntimeIdentity,
@@ -94,11 +95,13 @@ struct TargetDocument {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeIdentity {
     profile_set: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StorageIdentity {
     bucket: String,
     model_repo: String,
