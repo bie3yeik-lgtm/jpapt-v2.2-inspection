@@ -24,7 +24,13 @@ from .metrics import (
     word_error_rate,
 )
 from .models import *
-from .parquet import EXPERIMENT_CAPSULE_SCHEMA_VERSION, ExperimentCapsuleWriter
+from .parquet import (
+    DEFAULT_CAPSULE_ROW_BATCH_SIZE,
+    EXPERIMENT_CAPSULE_SCHEMA_VERSION,
+    ExperimentCapsuleWriter,
+    iter_experiment_capsule_row_batches,
+    iter_experiment_capsule_rows,
+)
 from .pipeline import PythonAsrEvaluator, PythonCtcEvaluator
 from .runner import EvaluationRunInputs, run_evaluation
 from .schema import (
@@ -44,6 +50,7 @@ __all__ = [
     "CapsuleDiagnostic",
     "CapsuleDiagnosticError",
     "CorpusErrorAccumulator",
+    "DEFAULT_CAPSULE_ROW_BATCH_SIZE",
     "EmbeddedCapsuleArtifact",
     "EXPERIMENT_CAPSULE_SCHEMA_VERSION",
     "EvaluationRunInputs",
@@ -62,6 +69,8 @@ __all__ = [
     "character_error_rate",
     "create_python_evaluator",
     "edit_distance",
+    "iter_experiment_capsule_row_batches",
+    "iter_experiment_capsule_rows",
     "normalize_text",
     "read_experiment_capsule",
     "run_evaluation",
