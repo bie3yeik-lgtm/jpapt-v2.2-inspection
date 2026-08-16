@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}
@@ -23,15 +24,14 @@ concurrency:
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
+  GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
+  HF_ALLOCATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
 
 jobs:
   allocate-experiment:
     name: Allocate experiment ID
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    concurrency:
-      group: hf-experiment-id-${{ inputs.hf_bucket }}
-      cancel-in-progress: false
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
     steps:
@@ -39,9 +39,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Hugging Face CLI
-        run: python -m pip install --upgrade huggingface_hub
-      - name: Allocate ID
+      - name: Allocate ID through central allocator
         id: allocate
         shell: bash
         env:
@@ -144,14 +142,13 @@ jobs:
             --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
 
-      - name: Verify Python decoder compatibility
+      - name: Validate evaluator capability
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${EXPECTED_DECODER}" != "ctc" ]]; then
-            echo "::error::Python ONNX evaluator currently supports CTC candidates only. Resolved target '${HF_TARGET_ID}' requires decoder '${EXPECTED_DECODER}'."
-            exit 1
-          fi
+          python scripts/ci/validate-evaluator-capability.py \
+            --evaluator python-onnx \
+            --decoder "${EXPECTED_DECODER}"
 
       - name: Cache model and evaluation assets
         uses: actions/cache@v4
