@@ -22,10 +22,7 @@ mod tests {
     use super::*;
 
     fn test_path() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "jpapt-asr-capsule-{}.parquet",
-            Uuid::new_v4()
-        ))
+        std::env::temp_dir().join(format!("jpapt-asr-capsule-{}.parquet", Uuid::new_v4()))
     }
 
     #[test]
