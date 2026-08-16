@@ -1,12 +1,16 @@
 use std::fs;
+use std::io::{self, Read};
 use std::path::PathBuf;
 
+use asr_hf::allocation::{
+    AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
+};
 use asr_hf::{ResolveTargetOptions, TargetSelector, append_github_file, resolve_target};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "asr-hf")]
-#[command(about = "Deterministic Hugging Face target and layout policy for jpapt")]
+#[command(about = "Deterministic Hugging Face target, layout and allocation policy for jpapt")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -35,6 +39,47 @@ enum Command {
     ValidateTargets {
         #[arg(long, default_value = ".")]
         repository_root: PathBuf,
+    },
+    AllocationPrefix {
+        key: String,
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+    },
+    CandidatePrefixKey {
+        profile_set_id: String,
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+    },
+    AllocationFingerprint {
+        field: String,
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+    },
+    NextSequenceId {
+        #[arg(long)]
+        prefix: String,
+        #[arg(long, default_value = "-")]
+        listing: String,
+    },
+    WriteAllocationReadme {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        allocation_id: String,
+        #[arg(long)]
+        collection: String,
+        #[arg(long)]
+        bucket: String,
+        #[arg(long)]
+        prefix_key: String,
+        #[arg(long)]
+        prefix: String,
+        #[arg(long)]
+        sequence: String,
+        #[arg(long)]
+        allocated_at: String,
+        #[arg(long, default_value = "{}")]
+        metadata_json: String,
     },
 }
 
@@ -119,6 +164,63 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+        Command::AllocationPrefix {
+            key,
+            repository_root,
+        } => {
+            let catalog = load_repository_allocation_catalog(repository_root)?;
+            println!("{}", catalog.prefix(&key)?);
+        }
+        Command::CandidatePrefixKey {
+            profile_set_id,
+            repository_root,
+        } => {
+            let catalog = load_repository_allocation_catalog(repository_root)?;
+            println!("{}", catalog.candidate_prefix_key(&profile_set_id));
+        }
+        Command::AllocationFingerprint {
+            field,
+            repository_root,
+        } => {
+            let catalog = load_repository_allocation_catalog(repository_root)?;
+            match field.as_str() {
+                "catalog_id" => println!("{}", catalog.catalog_id),
+                "sha256" => println!("{}", catalog.sha256),
+                _ => return Err("field must be 'catalog_id' or 'sha256'".into()),
+            }
+        }
+        Command::NextSequenceId { prefix, listing } => {
+            let mut content = String::new();
+            if listing == "-" {
+                io::stdin().read_to_string(&mut content)?;
+            } else {
+                content = fs::read_to_string(listing)?;
+            }
+            println!("{}", next_sequence_id(&prefix, &content)?);
+        }
+        Command::WriteAllocationReadme {
+            output,
+            allocation_id,
+            collection,
+            bucket,
+            prefix_key,
+            prefix,
+            sequence,
+            allocated_at,
+            metadata_json,
+        } => write_allocation_readme(
+            output,
+            &AllocationReadme {
+                allocation_id: &allocation_id,
+                collection: &collection,
+                bucket: &bucket,
+                prefix_key: &prefix_key,
+                prefix: &prefix,
+                sequence: &sequence,
+                allocated_at: &allocated_at,
+                metadata_json: &metadata_json,
+            },
+        )?,
     }
     Ok(())
 }
