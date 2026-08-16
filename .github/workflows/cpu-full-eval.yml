@@ -23,21 +23,53 @@ concurrency:
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
-  HF_BUCKET: ""
-  HF_MODEL_REPO: ""
-  EXPECTED_DEVELOPMENT_REPO_ID: ""
-  EXPECTED_UPSTREAM_REPO_ID: ""
-  EXPECTED_TOKENIZER_REPO_ID: ""
-  EXPECTED_FRAMEWORK: ""
-  EXPECTED_DECODER: ""
-  HF_TARGET_ID: ""
-  EXPERIMENT_ID: ""
 
 jobs:
+  allocate-experiment:
+    name: Allocate experiment ID
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: hf-experiment-id-${{ inputs.hf_bucket }}
+      cancel-in-progress: false
+    outputs:
+      experiment_id: ${{ steps.allocate.outputs.experiment_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hugging Face CLI
+        run: python -m pip install --upgrade huggingface_hub
+      - name: Allocate ID
+        id: allocate
+        shell: bash
+        env:
+          HF_BUCKET: ${{ inputs.hf_bucket }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          EVALUATION_ID: full
+          PROVIDER_ID: cpu
+        run: |
+          set -euo pipefail
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments cpu-full-eval)"
+          echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
+          echo "Experiment: ${ID}"
+
   evaluate:
     name: Linux CPU Full Evaluation
+    needs: allocate-experiment
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      HF_BUCKET: ""
+      HF_MODEL_REPO: ""
+      EXPECTED_DEVELOPMENT_REPO_ID: ""
+      EXPECTED_UPSTREAM_REPO_ID: ""
+      EXPECTED_TOKENIZER_REPO_ID: ""
+      EXPECTED_FRAMEWORK: ""
+      EXPECTED_DECODER: ""
+      HF_TARGET_ID: ""
+      EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
       - name: Checkout repository
@@ -83,17 +115,6 @@ jobs:
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
-
-      - name: Allocate experiment ID
-        shell: bash
-        env:
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          EVALUATION_ID: full
-          PROVIDER_ID: cpu
-        run: |
-          set -euo pipefail
-          EXPERIMENT_ID="$(bash scripts/hf/hf-allocate-id.sh experiments cpu-full-eval)"
-          echo "EXPERIMENT_ID=${EXPERIMENT_ID}" >> "${GITHUB_ENV}"
           echo "Experiment: ${EXPERIMENT_ID}"
 
       - name: Prepare directories
@@ -182,9 +203,7 @@ jobs:
 
       - name: Verify Python-first package
         shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/dev/verify-python-first.py
+        run: python scripts/dev/verify-python-first.py
 
       - name: Evaluate full suite with Python
         shell: bash
