@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           ln -sfn "$PWD/.ci/transformersjs/node_modules" node_modules
           node scripts/ci/e2e-whisper-transformersjs.mjs | tee .ci/whisper-e2e-result.json
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: whisper-onnx-jsut-result
@@ -135,7 +135,7 @@ jobs:
             --reference .ci/public-model-e2e/ctc/result.json \
             --samples .ci/public-model-e2e/ctc/rust-results/samples.jsonl \
             --metrics .ci/public-model-e2e/ctc/rust-results/metrics.json
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: japanese-ctc-onnx-rust-jsut-result
