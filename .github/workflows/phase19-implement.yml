@@ -21,29 +21,20 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           root = Path('.')
+          matrix_provider = '$' + '{{ matrix.provider }}'
 
-          def replace_once(path: str, old: str, new: str) -> None:
+          def replace_regex(path: str, pattern: str, replacement: str) -> None:
               p = root / path
               text = p.read_text(encoding='utf-8')
-              count = text.count(old)
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
               if count != 1:
                   raise SystemExit(f'{path}: expected exactly one replacement target, got {count}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+              p.write_text(updated, encoding='utf-8')
 
-          old_cpu = '''      - name: Validate evaluator and candidate capability
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  python scripts/ci/validate-evaluator-capability.py \\
-                    --evaluator python-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
-                    --provider cpu \\
-                    --candidate-dir .ci/candidate
-          '''
-          new_cpu = '''      - name: Resolve candidate execution contract
+          cpu_replacement = '''      - name: Resolve candidate execution contract
                 shell: bash
                 run: |
                   set -euo pipefail
@@ -62,27 +53,21 @@ jobs:
                     --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
                     --provider cpu \\
                     --candidate-contract .ci/candidate-contract.json
-          '''
-          replace_once('.github/workflows/cpu-full-eval.yml', old_cpu, new_cpu)
 
-          old_cross = '''      - name: Validate evaluator and candidate capability
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  python scripts/ci/validate-evaluator-capability.py \\
-                    --evaluator python-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
-                    --provider "${{ matrix.provider }}" \\
-                    --candidate-dir .ci/candidate
           '''
-          new_cross = '''      - name: Resolve candidate execution contract
+          replace_regex(
+              '.github/workflows/cpu-full-eval.yml',
+              r'^      - name: Validate evaluator and candidate capability\n.*?(?=^      - name: Fetch reference assets\n)',
+              cpu_replacement,
+          )
+
+          cross_replacement = f'''      - name: Resolve candidate execution contract
                 shell: bash
                 run: |
                   set -euo pipefail
                   python scripts/ci/resolve-candidate-artifacts.py \\
                     --candidate-dir .ci/candidate \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
                     --contract-out .ci/candidate-contract.json
               - name: Validate evaluator and candidate capability
                 shell: bash
@@ -90,49 +75,53 @@ jobs:
                   set -euo pipefail
                   cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
                     --evaluator python-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
-                    --provider "${{ matrix.provider }}" \\
+                    --decoder "${{EXPECTED_DECODER}}" \\
+                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
+                    --provider "{matrix_provider}" \\
                     --candidate-contract .ci/candidate-contract.json
           '''
-          replace_once('.github/workflows/cross-platform-parity.yml', old_cross, new_cross)
+          replace_regex(
+              '.github/workflows/cross-platform-parity.yml',
+              r'^      - name: Validate evaluator and candidate capability\n.*?(?=^      - name: Fetch reference assets\n)',
+              cross_replacement,
+          )
 
-          old_rust_validate = '''      - name: Validate Rust evaluator capability
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  python scripts/ci/validate-evaluator-capability.py \\
-                    --evaluator rust-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
-                    --provider "${{ matrix.provider }}" \\
-                    --candidate-dir .ci/candidate
+          replace_regex(
+              '.github/workflows/rust-eval.yml',
+              r'^      - name: Validate Rust evaluator capability\n.*?(?=^      - name: Generate strict candidate execution contract\n)',
+              '',
+          )
 
-          '''
-          replace_once('.github/workflows/rust-eval.yml', old_rust_validate, '')
-
-          marker = '''      - name: Materialize locked dataset selection
-          '''
-          rust_policy = '''      - name: Validate Rust evaluator capability
+          rust_policy = f'''      - name: Validate Rust evaluator capability
                 shell: bash
                 run: |
                   set -euo pipefail
                   cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
                     --evaluator rust-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
-                    --provider "${{ matrix.provider }}" \\
+                    --decoder "${{EXPECTED_DECODER}}" \\
+                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
+                    --provider "{matrix_provider}" \\
                     --candidate-contract .ci/candidate-contract.json
 
           '''
-          replace_once('.github/workflows/rust-eval.yml', marker, rust_policy + marker)
+          replace_regex(
+              '.github/workflows/rust-eval.yml',
+              r'(?=^      - name: Materialize locked dataset selection\n)',
+              rust_policy,
+          )
 
           layout = root / '.github/workflows/validate-hf-layout.yml'
           text = layout.read_text(encoding='utf-8')
-          line = '            python/tests/unit/test_evaluator_capability.py \\\n'
-          if text.count(line) != 1:
+          text, count = re.subn(
+              r'^\s*python/tests/unit/test_evaluator_capability\.py \\\n',
+              '',
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
               raise SystemExit('validate-hf-layout.yml: evaluator test list entry not found exactly once')
-          layout.write_text(text.replace(line, '', 1), encoding='utf-8')
+          layout.write_text(text, encoding='utf-8')
 
           for path in [
               root / 'scripts/ci/validate-evaluator-capability.py',
@@ -146,14 +135,14 @@ jobs:
           cargo fmt --all
           cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
           cargo test --locked -p asr-contracts
-          git grep -n 'validate-evaluator-capability.py' && {
+          if git grep -n 'validate-evaluator-capability.py' -- ':!.github/workflows/phase19-implement.yml'; then
             echo 'old evaluator validator still referenced' >&2
             exit 1
-          } || true
-          git grep -n 'test_evaluator_capability.py' && {
+          fi
+          if git grep -n 'test_evaluator_capability.py' -- ':!.github/workflows/phase19-implement.yml'; then
             echo 'deleted evaluator Python test still referenced' >&2
             exit 1
-          } || true
+          fi
       - name: Commit production migration and remove helper workflow
         shell: bash
         run: |
