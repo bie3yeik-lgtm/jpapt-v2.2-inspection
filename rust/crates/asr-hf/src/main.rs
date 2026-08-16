@@ -9,7 +9,8 @@ use allocation_envelope::{
     write_allocation_response,
 };
 use asr_hf::allocation::{
-    AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
+    AllocationReadme, collection_prefix, latest_candidate_location, next_sequence_id,
+    write_allocation_readme,
 };
 use asr_hf::{ResolveTargetOptions, TargetSelector, append_github_file, resolve_target};
 use clap::{Parser, Subcommand};
@@ -34,8 +35,6 @@ enum Command {
         #[arg(long, default_value = ".")]
         repository_root: PathBuf,
         #[arg(long)]
-        targets_json: Option<String>,
-        #[arg(long)]
         github_env: Option<PathBuf>,
         #[arg(long)]
         github_output: Option<PathBuf>,
@@ -47,25 +46,21 @@ enum Command {
         repository_root: PathBuf,
     },
     AllocationPrefix {
-        key: String,
-        #[arg(long, default_value = ".")]
-        repository_root: PathBuf,
-    },
-    CandidatePrefixKey {
-        profile_set_id: String,
-        #[arg(long, default_value = ".")]
-        repository_root: PathBuf,
-    },
-    AllocationFingerprint {
-        field: String,
-        #[arg(long, default_value = ".")]
-        repository_root: PathBuf,
+        collection: String,
     },
     NextSequenceId {
         #[arg(long)]
         prefix: String,
         #[arg(long, default_value = "-")]
         listing: String,
+    },
+    ResolveCandidateLocation {
+        #[arg(long, default_value = "-")]
+        listing: String,
+        #[arg(long)]
+        runtime_variant: Option<String>,
+        #[arg(long)]
+        github_output: Option<PathBuf>,
     },
     WriteAllocationReadme {
         #[arg(long)]
@@ -76,8 +71,6 @@ enum Command {
         collection: String,
         #[arg(long)]
         bucket: String,
-        #[arg(long)]
-        prefix_key: String,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -124,14 +117,6 @@ enum Command {
         bucket: String,
         #[arg(long)]
         collection: String,
-        #[arg(long)]
-        catalog_id: String,
-        #[arg(long)]
-        catalog_sha256: String,
-        #[arg(long)]
-        prefix_key: String,
-        #[arg(long)]
-        resolved_prefix: String,
     },
     AllocationResponseId {
         path: PathBuf,
@@ -152,7 +137,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             bucket,
             runtime_variant,
             repository_root,
-            targets_json,
             github_env,
             github_output,
             shell,
@@ -166,7 +150,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 repository_root,
                 selector,
                 runtime_variant,
-                targets_json,
             })?;
             if let Some(path) = github_env {
                 append_github_file(&path, &resolved.environment_values())?;
@@ -207,7 +190,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     repository_root: root.clone(),
                     selector: TargetSelector::Id(target_id.to_owned()),
                     runtime_variant: None,
-                    targets_json: None,
                 })?;
                 println!(
                     "OK {}: {} -> profile_set={} -> {} / {}",
@@ -219,46 +201,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        Command::AllocationPrefix {
-            key,
-            repository_root,
-        } => {
-            let catalog = load_repository_allocation_catalog(repository_root)?;
-            println!("{}", catalog.prefix(&key)?);
-        }
-        Command::CandidatePrefixKey {
-            profile_set_id,
-            repository_root,
-        } => {
-            let catalog = load_repository_allocation_catalog(repository_root)?;
-            println!("{}", catalog.candidate_prefix_key(&profile_set_id));
-        }
-        Command::AllocationFingerprint {
-            field,
-            repository_root,
-        } => {
-            let catalog = load_repository_allocation_catalog(repository_root)?;
-            match field.as_str() {
-                "catalog_id" => println!("{}", catalog.catalog_id),
-                "sha256" => println!("{}", catalog.sha256),
-                _ => return Err("field must be 'catalog_id' or 'sha256'".into()),
-            }
+        Command::AllocationPrefix { collection } => {
+            println!("{}", collection_prefix(&collection)?);
         }
         Command::NextSequenceId { prefix, listing } => {
-            let mut content = String::new();
-            if listing == "-" {
-                io::stdin().read_to_string(&mut content)?;
-            } else {
-                content = fs::read_to_string(listing)?;
-            }
+            let content = read_listing(&listing)?;
             println!("{}", next_sequence_id(&prefix, &content)?);
+        }
+        Command::ResolveCandidateLocation {
+            listing,
+            runtime_variant,
+            github_output,
+        } => {
+            let content = read_listing(&listing)?;
+            let resolved = latest_candidate_location(&content, runtime_variant.as_deref())?;
+            let legacy = if resolved.legacy { "true" } else { "false" };
+            let values = [
+                ("candidate_id", resolved.id.as_str()),
+                ("relative_path", resolved.relative_path.as_str()),
+                ("legacy", legacy),
+            ];
+            if let Some(path) = github_output {
+                append_github_file(&path, &values)?;
+            }
+            for (key, value) in values {
+                println!("{key}={value}");
+            }
         }
         Command::WriteAllocationReadme {
             output,
             allocation_id,
             collection,
             bucket,
-            prefix_key,
             prefix,
             sequence,
             allocated_at,
@@ -269,7 +243,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 allocation_id: &allocation_id,
                 collection: &collection,
                 bucket: &bucket,
-                prefix_key: &prefix_key,
                 prefix: &prefix,
                 sequence: &sequence,
                 allocated_at: &allocated_at,
@@ -317,10 +290,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             allocation_id,
             bucket,
             collection,
-            catalog_id,
-            catalog_sha256,
-            prefix_key,
-            resolved_prefix,
         } => write_allocation_response(
             output,
             &AllocationResponse {
@@ -328,10 +297,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 allocation_id: &allocation_id,
                 bucket: &bucket,
                 collection: &collection,
-                catalog_id: &catalog_id,
-                catalog_sha256: &catalog_sha256,
-                prefix_key: &prefix_key,
-                resolved_prefix: &resolved_prefix,
             },
         )?,
         Command::AllocationResponseId { path } => {
@@ -339,6 +304,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn read_listing(listing: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if listing == "-" {
+        let mut content = String::new();
+        io::stdin().read_to_string(&mut content)?;
+        Ok(content)
+    } else {
+        Ok(fs::read_to_string(listing)?)
+    }
 }
 
 fn shell_quote(value: &str) -> String {
