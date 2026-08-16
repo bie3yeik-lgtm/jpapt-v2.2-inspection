@@ -2,103 +2,132 @@
 
 ## 目的
 
-このrepositoryは、ASRモデルをONNX artifactへ変換し、複数provider / evaluatorで再現可能に評価し、Hugging Face Bucket上でcandidate・run・benchmarkを履歴化するための開発基盤です。
+このrepositoryはASRモデルを単にONNXへ変換するためのコード置場ではない。source model、dataset、変換環境、runtime artifact、evaluation result、provider evidenceを再現可能なidentity chainとして固定し、変換前後の品質とruntime成立性を別々に検証するためのinspection repositoryである。
 
-framework差分をstorage treeやJSON schemaの分岐として増殖させず、runtime profileとadapterへ閉じ込めます。
-
-## Source of truth
+対象となる主モデルは`nvidia/parakeet-tdt_ctc-0.6b-ja`である。Model Cardから固定する静的契約は次のとおり。
 
 ```text
-Runtime semantics        config/asr-catalog.json
-Allocation naming       config/hf-allocation-catalog.json
-Target identity         config/hf-targets/*.toml
-Evaluator capability    config/evaluators/*.toml
-Provider policy         config/providers/*.toml
-Environment policy      config/environments/*.toml
-Evaluation policy       config/evaluation/*.toml
-Candidate input         candidates/<id>/metadata.json
-Candidate schema        evaluation/schemas/candidate-metadata.schema.json
-Manifest schema         evaluation/schemas/manifest.schema.json
-Run snapshot schema     evaluation/schemas/run-context.schema.json
+repo       nvidia/parakeet-tdt_ctc-0.6b-ja
+library    nemo
+language   ja
+license    cc-by-4.0
+dataset    reazon-research/reazonspeech
+architecture hybrid FastConformer TDT-CTC
+default decoder TDT
+CTC decoder supported
+sample rate 16 kHz
+tokenizer SentencePiece
+vocabulary 3072
+TDT frame advance <= 4
 ```
 
-文書はこれらの実装を説明するだけで、意味の正本にはしません。
+`n_mels`、dither、normalize、xscaling、CTC blank ID、TDT duration vocabulary、tensor name/shapeはModel Cardから推測せず、exact checkpoint evidenceから解決する。
 
-## レイヤ
+## 3つの実行領域
+
+### 1. Python / NeMo environment
+
+Pythonはsource frameworkに依存する処理を担当する。
+
+- Hugging Face revisionのimmutable SHA解決
+- `.nemo` downloadとSHA256計算
+- dataset materialization
+- NeMo model restore
+- CTC decoderへの切替
+- NeMo transcript evidence生成
+- NeMo→ONNX export adapter
+- frontend/reference fixture生成
+- JSON Schema structural validation
+
+PythonがASR品質のauthorityになることはない。Pythonの`character_error_rate`等はdiagnostic用途に残っていても、NeMo↔ONNX acceptanceには使わない。
+
+### 2. Rust release CLI `asr-eval`
+
+Rustはruntime/acceptance authorityである。
 
 ```text
-Target
-  ↓ profile_set
-ASR Runtime Catalog
-  ↓ runtime variant
-Candidate artifacts
-  ↓ strict inspection
-Resolved runtime contract
-  ↓ evaluator/provider selection
-Evaluation run
-  ↓
-run-context + samples + metrics
-  ↓
-benchmark / promotion
+asr-eval evaluate
+asr-eval bucket-init
+asr-eval nemo-onnx-validate
+asr-eval nemo-onnx-quality
 ```
 
-### Human-authored layer
+`nemo-onnx-quality`は既存`evaluate`を内部利用し、同じresolved manifestに対して生成ONNXを実行する。その後NeMo reference transcriptとONNX transcriptの両方を同じRust `asr_metrics`へ通す。
 
-人間は「選択・policy」だけを書きます。
+### 3. Hugging Face Bucket
 
-- target mapping
-- evaluation policy
-- candidateのartifact path
-- manifestのdataset/count/seed/filter
+BucketはModel Repoの代替ではない。開発中のconfig snapshot、candidate、run、benchmark、experiment/evidenceを保存する。
 
-### Machine-observed layer
+Model Repoは配布対象、Bucketは開発・検証証拠の保存先という責務分離を維持する。
 
-コードが観測できる値は手書きしません。
+## NeMo→ONNX identity chain
 
-- candidate ID
-- SHA-256 / size
-- catalog fingerprint
-- decoder/profile/features
-- ONNX tensor names / dtypes / shapes
-- token IDs
-- TDT durations/state metadata
-- Git / host / provider runtime identity
+```text
+HF model repo + requested revision
+        ↓ resolve
+immutable model commit
+        ↓ download
+.nemo file + SHA256
+        ├───────────────┐
+        ↓               ↓
+NeMo reference       ONNX export
+transcripts          artifacts + fixtures
+        ↓               ↓
+reference evidence   nemo-onnx-validation.json
+        └──────┬────────┘
+               ↓ exact source identity equality
+        asr-eval nemo-onnx-quality
+               ↓
+        same resolved manifest
+               ↓
+        Rust CER/WER + regression
+```
 
-### Immutable snapshot layer
+品質比較開始前に少なくとも以下が一致しなければならない。
 
-再現性のため、実行後は観測値をsnapshotします。
+- repo ID
+- immutable revision
+- `.nemo` filename
+- `.nemo` SHA256
 
-- config version
-- run-context
-- samples
-- metrics
-- benchmark
-- promotion receipt
+sample単位では次も一致させる。
 
-## Decoder architecture
+- sample ID
+- audio SHA256
+- ground-truth text
 
-### CTC
+## CTCとTDTの分離
 
-単一ONNX graph。artifact roleは `primary`。
+CTCは最初のcanonical runtime/quality gateである。TDTはexport artifactとstate semanticsを先に検証する。
 
-### TDT
+```text
+CTC:
+source → frontend → export → ORT CPU → reference parity → ASR quality
 
-複数graph。artifact roleは `encoder`, `predictor`, `joint`。
+TDT:
+source → export → predictor state → joint → single step → state trace
+                                                ↓
+                              Rust TDT runtime未成立なら品質測定しない
+```
 
-TDT contractはstrictに解決します。BOS、duration値、state shape等が明示的に得られなければrejectします。
+TDT export validationがPASSしても、RustでTDT文字起こしが実装済みという意味ではない。
 
-### Whisper autoregressive
+## Runtime candidateとの境界
 
-`encoder`, `decoder` と任意の `decoder_with_past`。Transformers processor/configからprompt/eos等を取得します。
+NeMo validation bundleはpre-candidate evidenceである。validationを通る前に正式candidate IDを発行しない。
 
-## PythonとRust
+```text
+HF Job export/reference
+  ↓
+temporary validation bundle
+  ↓
+Rust validation + quality gate
+  ↓
+central allocator
+  ↓
+candidate ID
+  ↓
+normal evaluation / benchmark / promotion
+```
 
-Python ONNX evaluatorはCTC/TDT/Whisperを扱います。Rust ONNX evaluatorの公開capabilityは現在CTCのみです。backend/provider差分より先にdecoder capabilityを明示的にgateします。
-
-## 禁止事項
-
-- 旧schemaを読めるようにcompat branchを増やす
-- runtime semanticsをcandidate metadataへ複製する
-- ONNX shapeからtoken semanticsを推測する
-- 不明値をplaceholder `1` やblank tokenで埋める
-- provider/frameworkごとにBucket treeを分岐する
+この順序により、失敗exportをcandidate namespaceへ混入させない。
