@@ -1,8 +1,18 @@
-# Development
+# 開発ガイド
 
-## Supported environments
+## 基本方針
 
-The repository is designed for:
+本リポジトリはNeMo専用でもTransformers専用でもありません。開発時はまずtargetを選び、そのtargetが要求するcanonical framework、decoder、export/runtime adapterを使います。
+
+```text
+Target選択
+  ↓
+config version取得
+  ↓
+reference / export / evaluation
+```
+
+## 対応環境
 
 ```text
 Linux / WSL2
@@ -10,431 +20,184 @@ Windows
 macOS Apple Silicon
 ```
 
-The environments have different responsibilities rather than pretending to be
-identical.
+環境ごとの主な役割は次です。
 
-## Recommended role split
+| 環境 | 主な用途 |
+|---|---|
+| Linux / WSL2 | canonical reference、Docker、CPU、CUDA、export |
+| Windows | ONNX Runtime CPU/CUDA/DirectML、Rust native |
+| macOS Apple Silicon | ONNX Runtime CPU/CoreML EP、Apple Silicon検証 |
 
-### Linux / WSL2
+macOSではMLXを主runtimeとして使用せず、ONNX Runtime CoreML EPを使います。
 
-Primary responsibilities:
+## セットアップ
 
-- canonical NeMo development
-- Docker reference/export workflows
-- Python reference generation
-- general CPU correctness
-- CUDA when available
-
-### Windows
-
-Primary responsibilities:
-
-- native ONNX Runtime
-- CPU
-- CUDA
-- DirectML
-- future Rust deployment
-
-### macOS Apple Silicon
-
-Primary responsibilities:
-
-- ONNX Runtime CPU
-- CoreML Execution Provider
-- local Apple Silicon CPU/CoreML comparison
-
-The project does not use MLX or native Core ML model conversion as its main
-deployment path.
-
-## Bootstrap
-
-Unix-like systems:
+Unix系:
 
 ```bash
 scripts/dev/setup.sh
 ```
 
-Native Windows:
+Windows:
 
 ```powershell
 scripts/dev/setup.ps1
 ```
 
-Both scripts:
-
-- locate repository root
-- trust/install mise tools
-- create disposable cache/runtime directories
-- synchronize the Python environment
-- run the development doctor
-
-## Environment doctor
-
-Run:
+Pythonはuv/mise管理環境を使い、global packageへ依存しないでください。
 
 ```bash
 mise exec -- uv run python scripts/dev/doctor.py
 ```
 
-The doctor checks:
+## 開発対象の選び方
 
-- repository layout
-- Python
-- required packages
-- TOML configuration
-- JSON Schemas
-- manifests
-- smoke expected state
-- cache directories
-- revision staging
-- ONNX Runtime providers
-- Git state
-
-Warnings are not fatal; failed required checks produce a non-zero exit code.
-
-## Cache locations
-
-Logical defaults:
+modelの意味は`config/models/`、HF targetの意味は`config/hf-targets/`にあります。
 
 ```text
-.cache/
-├── models/
-├── evaluation/
-│   └── audio/
-└── huggingface/
+config/models/
+  parakeet-tdt_ctc-0.6b-ja.toml
+  kotoba-whisper-v1.0.toml
+  ...
 
-.ci/
-results/
-tmp/
+config/hf-targets/
+  parakeet-tdt_ctc-0.6b-ja.toml
+  kotoba-whisper-v1.0.toml
 ```
 
-Environment configuration lives in:
+GitHub Actionsのstorage routingは`HF_TARGETS_JSON`から解決します。
+
+## Revision config取得
+
+Bucketはversioned configを使います。
 
 ```text
-config/environments/
-├── linux.toml
-├── windows.toml
-└── macos.toml
+config/current.json
+  ↓
+config/versions/config-NNNNNN/
 ```
 
-The materialized audio cache should be configured as:
-
-```toml
-[path]
-materialized_audio_cache = ".cache/evaluation/audio"
-```
-
-## Python workflow
-
-The initial implementation is Python-first.
-
-Main source root:
-
-```text
-python/src/parakeet_onnx/
-```
-
-Major packages:
-
-```text
-config/
-hf/
-run_context/
-datasets/
-audio/
-reference/
-export/
-runtime/
-decoding/
-evaluation/
-cli/
-```
-
-Use the locked uv environment:
+通常:
 
 ```bash
-mise exec -- uv run python ...
+bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-Avoid depending on global Python packages.
-
-## NeMo workflow
-
-Heavy NeMo/reference/export work is isolated in:
-
-```text
-docker/Dockerfile.nemo
-```
-
-Build:
+過去versionを再現:
 
 ```bash
-docker build \
-  -f docker/Dockerfile.nemo \
-  -t parakeet-onnx-nemo:26.02 \
-  .
+HF_CONFIG_VERSION=config-000023 \
+  bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-Typical GPU run:
-
-```bash
-docker run \
-  --rm \
-  -it \
-  --gpus all \
-  --shm-size=8g \
-  -e HF_TOKEN \
-  -e HF_BUCKET \
-  -e HF_MODEL_REPO \
-  -v "$PWD:/workspace" \
-  -v parakeet-hf-cache:/workspace/.cache/huggingface \
-  parakeet-onnx-nemo:26.02
-```
-
-Do not bake secrets into the image.
-
-## Fetch locked revisions
-
-Before canonical reference/export work:
-
-```bash
-scripts/hf/hf-fetch-revisions.sh
-```
-
-Result:
+ローカルには次へ展開されます。
 
 ```text
-.ci/hf/config/revisions/
-├── reference.json
-├── evaluation-schema.json
-└── datasets-lock.json
+.ci/hf/config/
+  resolved.json
+  revisions/
+    reference.json
+    evaluation-schema.json
+    datasets-lock.json
 ```
 
-Do not replace these with floating revisions.
+## DatasetとAudio
 
-## Dataset flow
+全targetでdataset解決とaudio materializationは共通です。
 
 ```text
-manifest
-    +
-datasets-lock
-    ↓
+manifest + datasets-lock
+  ↓
 DatasetResolver
-    ↓
-deterministic sample set
-    ↓
+  ↓
 DatasetMaterializer
-    ↓
+  ↓
 ResolvedDatasetSample.audio_path
+  ↓
+CanonicalAudio(float32/mono/16kHz)
 ```
 
-`audio_path` is guaranteed to be a normal local file.
+model-specific frontendはCanonicalAudio以降に限定します。
 
-Generic audio processing then produces:
+## Canonical reference
+
+Reference実装はtargetに応じて変わります。
+
+- NeMo target: NeMo adapter
+- Transformers target: Transformers adapter
+
+重要なのはframework名ではなく、`reference.json`で固定されたupstream/tokenizer/reference revisionを使うことです。
+
+## Export
+
+export結果はまずローカルの一時領域へ作成します。
 
 ```text
-CanonicalAudio
-float32 / mono / 16 kHz
+tmp/export/<work-dir>/
 ```
 
-## Export workflow
-
-Conceptual command once the CLI is complete:
+ローカルexport時点では正式candidate IDを人間が決めません。正式IDはBucketへpublishするときに自動採番します。
 
 ```bash
-uv run parakeet-onnx export ...
+bash scripts/hf/hf-push-candidate.sh ./tmp/export/work
 ```
 
-Local export staging:
+採番形式:
 
 ```text
-tmp/export/<candidate-id>/
+<prefix>-NNNNNN
 ```
 
-Then upload or stage it as an HF Bucket candidate.
+数値suffixは`candidates/`全体の既存最大値+1です。
 
-Do not release directly from the exporter.
+## Evaluation
 
-## Evaluation workflow
-
-Conceptual form:
+既存candidateを評価するときだけ`candidate_id`を明示します。これは採番ではなく、再現性のためのartifact選択です。
 
 ```bash
-uv run parakeet-onnx evaluate \
+bash scripts/hf/hf-fetch-candidate.sh <candidate-id>
+```
+
+Python evaluator概念例:
+
+```bash
+python -m parakeet_onnx.cli.evaluate \
+  --model-config <target-id> \
+  --candidate-id <candidate-id> \
   --provider cpu \
-  --candidate .ci/candidate \
-  --manifest evaluation/manifests/parity.jsonl \
-  --output results/linux-cpu
+  --evaluation smoke \
+  --output results/run
 ```
 
-Expected output:
+現状のPython/Rust evaluatorはCTC中心であり、Whisper autoregressive candidateの実評価は未実装です。revision/layout/referenceの共通化とは区別してください。
+
+## ExperimentとRun
+
+評価workflow開始時にexperiment IDを自動発行します。
 
 ```text
-results/linux-cpu/
-├── run-context.json
-├── samples.jsonl
-└── metrics.json
+cpu-full-eval-NNNNNN
+cross-platform-parity-NNNNNN
+rust-eval-NNNNNN
 ```
 
-## HF workflow
+1 experimentは複数runをまとめられます。cross-platform matrixでは全jobが同じexperiment IDを共有し、各実行は別run IDを持ちます。
 
-Fetch candidate:
+## Rust開発
 
-```bash
-scripts/hf/hf-fetch-candidate.sh <candidate-id>
-```
-
-Fetch reference:
-
-```bash
-scripts/hf/hf-fetch-reference.sh
-```
-
-Upload run:
-
-```bash
-scripts/hf/hf-push-run.sh results/<run>
-```
-
-Upload benchmark:
-
-```bash
-scripts/hf/hf-push-benchmark.sh \
-  results/<run>/metrics.json \
-  <benchmark-name>
-```
-
-Promote accepted model:
-
-```bash
-scripts/hf/hf-promote-model.sh \
-  <candidate-id> \
-  results/<accepted-full-run>
-```
-
-Dry-run promotion:
-
-```bash
-HF_PROMOTION_DRY_RUN=1 \
-scripts/hf/hf-promote-model.sh \
-  <candidate-id> \
-  results/<accepted-full-run>
-```
-
-## GitHub Actions
-
-Expected workflows:
+RustはHF datasetsやframework loaderを全面移植せず、Python側で解決済みのmanifest/configを受け取ってruntime/evaluationを実行します。
 
 ```text
-.github/workflows/
-├── validate-hf-layout.yml
-├── cross-platform-parity.yml
-└── cpu-full-eval.yml
+Python preparation
+  ↓
+resolved manifest / revision bundle / candidate
+  ↓
+Rust runtime + decoder + metrics
 ```
 
-Hosted runners are used.
+## キャッシュと生成物
 
-No self-hosted runner is required by the project design.
-
-### Cross-platform parity
-
-Expected matrix:
-
-```text
-ubuntu-latest   CPU
-windows-latest  CPU
-macos-15        CPU
-macos-15        CoreML
-```
-
-Hosted macOS CoreML is primarily correctness/parity, not authoritative
-performance for a particular local Mac.
-
-### Full evaluation
-
-Canonical hosted full suite:
-
-```text
-Ubuntu CPU
-768 samples
-```
-
-This provides a predictable release gate without requiring specialized hosted
-GPU hardware.
-
-## Rust development
-
-Planned crates:
-
-```text
-rust/crates/
-├── asr-runtime/
-├── asr-audio/
-├── asr-metrics/
-└── asr-eval/
-```
-
-Rust is introduced after Python contracts are stable.
-
-The goal is not to duplicate every Python/HF feature.
-
-Initial Rust evaluator input should use already resolved/materialized samples
-and the shared JSON contracts.
-
-Primary Rust migration targets:
-
-- audio decode/resample
-- standalone frontend where appropriate
-- ORT runtime
-- CTC/TDT decoding
-- CER/WER and timing
-- production evaluation/runtime
-
-## Python vs Rust benchmarking
-
-When comparing implementations use:
-
-```text
-same ONNX artifact
-same artifact SHA-256
-same EP
-same sample set
-same batch size
-same decoder
-same machine where possible
-```
-
-Compare separately:
-
-- ORT-only inference time
-- total end-to-end time
-- non-ORT overhead
-- peak RAM
-
-Moving from Python to Rust does not imply that native ORT kernel execution
-itself becomes substantially faster.
-
-## Tools
-
-`tools/` is reserved for optional developer diagnostics.
-
-Examples of future candidates:
-
-```text
-inspect_onnx.py
-inspect_ort.py
-inspect_audio.py
-inspect_manifest.py
-compare_tensors.py
-compare_runs.py
-```
-
-Official runtime/evaluation logic must remain in the Python/Rust packages, not
-leak into ad-hoc tools.
-
-## Git hygiene
-
-Do not commit:
+Gitへcommitしない代表例:
 
 ```text
 .cache/
@@ -443,33 +206,25 @@ results/
 tmp/
 target/
 .venv/
-
 *.onnx
 *.nemo
+*.wav
 *.npy
 *.npz
-*.wav
-*.flac
 ```
 
-The repository should remain source/configuration oriented.
-
-## Recommended development order
+## 推奨作業順
 
 ```text
-1. configuration and revision locking
-2. deterministic dataset resolution
-3. audio materialization/canonicalization
-4. NeMo reference path
-5. CTC ONNX export
-6. ORT CPU parity
-7. cross-platform EP parity
-8. full evaluation
-9. release promotion
-10. Rust runtime migration
-11. TDT deployment path
+1. target/config versionを固定
+2. dataset/audioを解決
+3. canonical referenceを生成
+4. export
+5. candidateを自動採番してpublish
+6. smoke/parity/full評価
+7. provider差分を確認
+8. acceptance確認
+9. Model Repoへpromotion
 ```
 
-This sequence keeps the simplest CTC path as the first deployment baseline and
-avoids mixing reference, provider, and language-porting problems at the same
-time.
+framework固有の手順は`docs/multi-framework-asr.md`と`docs/onnx-export.md`を参照してください。
