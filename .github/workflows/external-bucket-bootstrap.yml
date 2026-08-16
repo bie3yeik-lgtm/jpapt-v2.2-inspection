@@ -1,0 +1,192 @@
+name: External Repository Bucket Bootstrap
+run-name: >-
+  Bucket bootstrap · ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.repository || inputs.repository }}
+
+on:
+  repository_dispatch:
+    types: [jpapt.bucket-bootstrap]
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Source GitHub repository (owner/name). This is the only required entry point."
+        required: true
+        type: string
+      hf_namespace:
+        description: "Optional HF namespace. Blank = HF_DEFAULT_NAMESPACE or authenticated HF user."
+        required: false
+        default: ""
+        type: string
+      private_bucket:
+        description: "Create the bucket private"
+        required: false
+        default: true
+        type: boolean
+      write_repo_config:
+        description: "Write .jpapt/hf-bucket.yml back to the source repository"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bucket-bootstrap-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.repository || inputs.repository }}
+  cancel-in-progress: false
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install clients
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2"
+          gh --version
+          hf --version
+
+      - name: Normalize repository and infer defaults
+        id: resolve
+        shell: bash
+        env:
+          DISPATCH_REPO: ${{ github.event.client_payload.repository }}
+          MANUAL_REPO: ${{ inputs.repository }}
+          DISPATCH_NAMESPACE: ${{ github.event.client_payload.hf_namespace }}
+          MANUAL_NAMESPACE: ${{ inputs.hf_namespace }}
+        run: |
+          set -euo pipefail
+          repo="${DISPATCH_REPO:-${MANUAL_REPO:-}}"
+          [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::repository must be owner/name"; exit 1; }
+          [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN is required"; exit 1; }
+
+          owner="${repo%%/*}"
+          name="${repo##*/}"
+          meta="$(GH_TOKEN="${SOURCE_REPO_TOKEN:-${GITHUB_TOKEN:-}}" gh api "/repos/$repo")"
+          default_branch="$(jq -r '.default_branch // "main"' <<<"$meta")"
+          visibility="$(jq -r '.visibility // "private"' <<<"$meta")"
+          language="$(jq -r '.language // "unknown"' <<<"$meta")"
+
+          namespace="${DISPATCH_NAMESPACE:-${MANUAL_NAMESPACE:-${HF_DEFAULT_NAMESPACE:-}}}"
+          if [[ -z "$namespace" ]]; then
+            namespace="$(hf auth whoami --token "$HF_TOKEN" 2>/dev/null | sed -n 's/^user: //p' | head -n1 || true)"
+          fi
+          [[ -n "$namespace" ]] || { echo "::error::Unable to infer HF namespace; set HF_DEFAULT_NAMESPACE or hf_namespace"; exit 1; }
+
+          bucket_name="${name}-bucket"
+          bucket="${namespace}/${bucket_name}"
+
+          echo "repository=$repo" >> "$GITHUB_OUTPUT"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+          echo "visibility=$visibility" >> "$GITHUB_OUTPUT"
+          echo "language=$language" >> "$GITHUB_OUTPUT"
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+
+      - name: Create or reuse HF Bucket
+        shell: bash
+        env:
+          BUCKET: ${{ steps.resolve.outputs.bucket }}
+          PRIVATE_MANUAL: ${{ inputs.private_bucket }}
+          PRIVATE_DISPATCH: ${{ github.event.client_payload.private_bucket }}
+        run: |
+          set -euo pipefail
+          private="${PRIVATE_DISPATCH:-${PRIVATE_MANUAL:-true}}"
+          args=(buckets create "$BUCKET" --exist-ok --token "$HF_TOKEN")
+          [[ "$private" == "true" ]] && args+=(--private)
+          hf "${args[@]}"
+
+      - name: Materialize self-describing bucket root
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ steps.resolve.outputs.repository }}
+          BUCKET: ${{ steps.resolve.outputs.bucket }}
+          DEFAULT_BRANCH: ${{ steps.resolve.outputs.default_branch }}
+          VISIBILITY: ${{ steps.resolve.outputs.visibility }}
+          LANGUAGE: ${{ steps.resolve.outputs.language }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/bootstrap
+          jq -n \
+            --arg schema_version "1" \
+            --arg source_repository "$SOURCE_REPO" \
+            --arg bucket "$BUCKET" \
+            --arg default_branch "$DEFAULT_BRANCH" \
+            --arg visibility "$VISIBILITY" \
+            --arg language "$LANGUAGE" \
+            --arg created_by "$GITHUB_REPOSITORY" \
+            '{schema_version:($schema_version|tonumber),source_repository:$source_repository,hf_bucket:$bucket,default_branch:$default_branch,visibility:$visibility,language:$language,created_by:$created_by,collections:{candidates:"candidates/",datasets:"datasets/",config:"config/",runs:"runs/",experiments:"experiments/"},defaults:{candidate:"latest",evaluation:"smoke",dataset_source:"bucket"}}' \
+            > .ci/bootstrap/bucket.json
+          hf buckets cp --token "$HF_TOKEN" .ci/bootstrap/bucket.json "hf://buckets/$BUCKET/bucket.json"
+
+      - name: Generate source repository YAML
+        id: config
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ steps.resolve.outputs.repository }}
+          BUCKET: ${{ steps.resolve.outputs.bucket }}
+          DEFAULT_BRANCH: ${{ steps.resolve.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/bootstrap
+          cat > .ci/bootstrap/hf-bucket.yml <<EOF
+          schema_version: 1
+          source_repository: ${SOURCE_REPO}
+          source_ref: ${DEFAULT_BRANCH}
+          hf_bucket: ${BUCKET}
+          candidate:
+            collection: candidates
+            default: latest
+          datasets:
+            default_source: bucket
+            bucket_prefix: datasets
+            repository_dataset: ""
+          evaluation:
+            default_suite: smoke
+            suites: [smoke, parity, probe]
+          package:
+            registry: ghcr.io
+            default_name: ${{ steps.resolve.outputs.name }}
+          EOF
+          cat .ci/bootstrap/hf-bucket.yml
+
+      - name: Write config back to arbitrary source repository
+        if: ${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.write_repo_config != false) || (github.event_name == 'workflow_dispatch' && inputs.write_repo_config) }}
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ steps.resolve.outputs.repository }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo "::error::SOURCE_REPO_TOKEN is required to write into arbitrary source repositories"; exit 1; }
+          path='.jpapt/hf-bucket.yml'
+          content="$(base64 -w0 .ci/bootstrap/hf-bucket.yml)"
+          sha="$(GH_TOKEN="$SOURCE_REPO_TOKEN" gh api "/repos/$SOURCE_REPO/contents/$path" --jq .sha 2>/dev/null || true)"
+          body="$(jq -n --arg message 'ci: initialize jpapt HF bucket routing' --arg content "$content" --arg sha "$sha" 'if $sha == "" then {message:$message,content:$content} else {message:$message,content:$content,sha:$sha} end')"
+          GH_TOKEN="$SOURCE_REPO_TOKEN" gh api --method PUT "/repos/$SOURCE_REPO/contents/$path" --input - <<<"$body"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '## HF Bucket bootstrap'
+            echo
+            echo '- Source repository: `${{ steps.resolve.outputs.repository }}`'
+            echo '- Bucket: `hf://buckets/${{ steps.resolve.outputs.bucket }}`'
+            echo '- Repository config: `.jpapt/hf-bucket.yml`'
+            echo '- Missing repository metadata is normalized to safe defaults; later runs may override any field.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bucket-bootstrap-${{ steps.resolve.outputs.name }}
+          path: .ci/bootstrap
+          retention-days: 14
