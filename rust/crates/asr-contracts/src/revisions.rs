@@ -238,7 +238,7 @@ fn load_config_version(root: &Path) -> Result<String> {
         object,
         "resolved.json",
         &["schema_version", "config_version"],
-        &[],
+        &["current_version", "selection_source"],
     )?;
     if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
         return Err(ContractError::validation(
@@ -250,6 +250,20 @@ fn load_config_version(root: &Path) -> Result<String> {
     if !valid_config_version(value) {
         return Err(ContractError::validation(format!(
             "resolved.json: config_version must match config-NNNNNN; got {value:?}"
+        )));
+    }
+    if let Some(current_version) = optional_string(object, "current_version", "resolved.json")?
+        && !valid_config_version(current_version)
+    {
+        return Err(ContractError::validation(format!(
+            "resolved.json: current_version must match config-NNNNNN; got {current_version:?}"
+        )));
+    }
+    if let Some(selection_source) = optional_string(object, "selection_source", "resolved.json")?
+        && !matches!(selection_source, "current" | "override")
+    {
+        return Err(ContractError::validation(format!(
+            "resolved.json: selection_source must be current or override; got {selection_source:?}"
         )));
     }
     Ok(value.to_owned())
