@@ -12,46 +12,12 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_BUCKET: gawohok7/jpapt-v2.2-dev-bucket
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install HF CLI
-        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
-      - name: Audit source configuration and generated identities
+      - name: Audit potentially redundant model configuration fields
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== source JSON/TOML files ==='
-          find config evaluation -type f \( -name '*.json' -o -name '*.toml' \) | sort
-          echo '=== explicit ids / hashes / revisions in source config ==='
-          git grep -nE '(^|["[:space:]])(id|model_id|catalog_id|schema_version|profile_set|repo_id|revision|sha256|bucket|model_repo)["[:space:]]*[=:]' -- config evaluation || true
-          echo '=== repeated literal identity values ==='
-          python - <<'PY'
-          import json, pathlib, tomllib, collections
-          vals=collections.defaultdict(list)
-          for p in pathlib.Path('config').rglob('*'):
-              if p.suffix not in {'.json','.toml'}: continue
-              try:
-                  data=json.loads(p.read_text()) if p.suffix=='.json' else tomllib.loads(p.read_text())
-              except Exception: continue
-              def walk(v,path=''):
-                  if isinstance(v,dict):
-                      for k,x in v.items(): walk(x,f'{path}.{k}' if path else k)
-                  elif isinstance(v,list):
-                      for i,x in enumerate(v): walk(x,f'{path}[{i}]')
-                  elif isinstance(v,str) and len(v)>=4:
-                      vals[v].append(f'{p}:{path}')
-              walk(data)
-          for v, locs in sorted(vals.items(), key=lambda kv:(-len(kv[1]),kv[0])):
-              if len(locs)>=2:
-                  print(len(locs),repr(v),*locs,sep='\t')
-          PY
-          echo '=== potentially duplicated model policy consumers ==='
           for term in \
             'storage.hf_target' \
             'candidate_prefix' \
@@ -59,28 +25,27 @@ jobs:
             'run_prefix' \
             'benchmark_prefix' \
             'temporary_prefix' \
+            'candidate_storage' \
+            'release_storage' \
+            'run_storage' \
+            'benchmark_storage' \
+            'store_model_in_git' \
+            'store_audio_in_git' \
+            'store_large_tensors_in_git' \
             'smoke_config' \
             'parity_config' \
             'full_config' \
+            'manifest_root' \
+            'reference_revision' \
+            'evaluation_schema_revision' \
+            'datasets_lock_revision' \
             'provider_configuration_root' \
-            'supported_providers' \
-            'execution.platforms' \
-            'expected_components'; do
+            'expected_components' \
+            'evaluation.metrics' \
+            'tolerance_source' \
+            'canonical_reference_format'; do
             echo "--- ${term}"
-            git grep -nF "$term" -- ':!config/models/*.toml' ':!docs/**' || true
+            git grep -nF "$term" -- ':!config/models/*.toml' ':!docs/**' ':!.github/workflows/phase24-audit.yml' || true
           done
-          echo '=== direct config model table consumers ==='
-          git grep -nE 'storage.*hf_target|hf_target.*storage|candidate_prefix|reference_prefix|run_prefix|benchmark_prefix|temporary_prefix|smoke_config|parity_config|full_config|provider_configuration_root|supported_providers|execution.*platforms|expected_components' -- \
-            python rust scripts .github || true
-      - name: Audit current bucket layout
-        if: env.HF_TOKEN != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="hf://buckets/${HF_BUCKET}"
-          echo '=== bucket root listing ==='
-          hf buckets list --token "$HF_TOKEN" "$root" -R -q | head -n 500 || true
-          echo '=== metadata/json/readme objects ==='
-          hf buckets list --token "$HF_TOKEN" "$root" -R -q \
-            | grep -E '(^|/)(README\.md|[^/]+\.json)$' \
-            | head -n 300 || true
+          echo '=== required model accessors ==='
+          git grep -nE 'model\.(id|family|architecture|language|upstream_repo_id|supported_providers|providers_for_environment)|execution\.supported_providers|execution\.platforms' -- python rust || true
