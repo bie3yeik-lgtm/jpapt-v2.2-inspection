@@ -137,7 +137,7 @@ jobs:
               'strict_rejected_cpu_assigned_nodes',
           }:
               raise SystemExit('CoreML readiness failed for an unclassified reason')
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coreml-strict-provider-probe
@@ -223,7 +223,7 @@ jobs:
               result['execution_proven'] = provider.get('execution_proven') is True
           (root / 'directml-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result, indent=2))
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: directml-strict-readiness-probe
