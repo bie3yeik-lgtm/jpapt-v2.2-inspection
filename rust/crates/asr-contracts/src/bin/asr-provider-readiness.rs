@@ -22,9 +22,7 @@ fn run() -> Result<(), String> {
         match arg.as_str() {
             "--provider" => provider = Some(take_value(&mut args, "--provider")?),
             "--root" => root = Some(PathBuf::from(take_value(&mut args, "--root")?)),
-            "--step-outcome" => {
-                step_outcome = Some(take_value(&mut args, "--step-outcome")?)
-            }
+            "--step-outcome" => step_outcome = Some(take_value(&mut args, "--step-outcome")?),
             "--exit-code" => exit_code = take_value(&mut args, "--exit-code")?,
             other => return Err(format!("unsupported argument {other:?}\n{}", usage())),
         }
@@ -50,7 +48,11 @@ fn run() -> Result<(), String> {
             "directml-readiness.json",
             false,
         ),
-        other => return Err(format!("unsupported provider {other:?}; expected coreml or directml")),
+        other => {
+            return Err(format!(
+                "unsupported provider {other:?}; expected coreml or directml"
+            ));
+        }
     };
 
     let output = root.join(output_name);
@@ -92,7 +94,8 @@ fn read_optional_json(path: &Path) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let value = serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    let value =
+        serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(Some(value))
 }
 
@@ -198,7 +201,8 @@ mod tests {
 
     #[test]
     fn coreml_cpu_assignment_rejection_is_classified() {
-        let stderr = "nodes assigned to the default CPU EP; fallback to CPU EP has been explicitly disabled";
+        let stderr =
+            "nodes assigned to the default CPU EP; fallback to CPU EP has been explicitly disabled";
         let result = classify_coreml(None, stderr, "failure", "1");
         assert_eq!(result["execution_proven"], false);
         assert_eq!(
