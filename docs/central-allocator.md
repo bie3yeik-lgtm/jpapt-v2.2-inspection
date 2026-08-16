@@ -2,31 +2,61 @@
 
 ## 目的
 
-`candidate_id`、`experiment_id`、`config_version` の連番は、人間が決める識別子ではありません。複数Repositoryが同じHugging Face Bucketを利用しても重複しないよう、本リポジトリの `HF Central Sequence Allocator` workflowを唯一の採番実行点として使用します。
+`candidate_id`、`experiment_id`、`config_version` の数値suffixは人間が決めません。複数Repositoryから同じBucketを利用しても重複しないよう、本Repositoryの `HF Central Sequence Allocator` を唯一の採番実行点とします。
 
 ```text
 Repo A ─┐
-Repo B ─┼─> HF Central Sequence Allocator
-Repo C ─┘              |
-                       v
-                Hugging Face Bucket
+Repo B ─┼─> HF Central Sequence Allocator -> HF Bucket
+Repo C ─┘
 ```
 
-各Repositoryは採番そのものを行わず、中央Allocatorへ要求を送ります。
+---
+
+## Allocation policyのSource of Truth
+
+prefix文字列はASR runtime catalogではなく、専用の次のcatalogへ集約します。
+
+```text
+config/hf-allocation-catalog.json
+```
+
+例:
+
+```json
+{
+  "schema_version": 1,
+  "catalog_id": "hf-allocation-catalog-v1",
+  "prefixes": {
+    "candidate.default": "candidate",
+    "candidate.parakeet-tdt-ctc-v1": "parakeet-candidate",
+    "candidate.whisper-autoregressive-v1": "whisper-candidate",
+    "experiment.cpu_full": "cpu-full-eval",
+    "experiment.cross_platform_parity": "cross-platform-parity",
+    "experiment.rust_eval": "rust-eval",
+    "config.version": "config"
+  }
+}
+```
+
+workflow/scriptは表示prefixではなくsemantic keyを渡します。
+
+```text
+experiment.cpu_full -> cpu-full-eval -> cpu-full-eval-000042
+```
+
+`config/asr-catalog.json` はASR runtime semantics専用であり、採番prefixを置きません。
+
+---
 
 ## 対象collection
 
-中央Allocatorは次の3種類を管理します。
-
 ```text
-candidates   <prefix>-NNNNNN
-experiments  <prefix>-NNNNNN
+candidates   <resolved-prefix>-NNNNNN
+experiments  <resolved-prefix>-NNNNNN
 config       config-NNNNNN
 ```
 
 数値suffixはprefixごとではなくcollection全体で共有します。
-
-例:
 
 ```text
 experiments/
@@ -35,27 +65,31 @@ experiments/
   rust-eval-000009/
 ```
 
-次にどのprefixを使っても数値部分は `000010` です。
+次の採番はprefixに関係なく`000010`です。
+
+---
 
 ## 採番アルゴリズム
 
-中央workflowは次を行います。
-
 ```text
-1. 対象Bucketのcollectionを再帰list
-2. 6桁suffixを持つ既存IDを抽出
-3. 最大suffixを取得
-4. +1
-5. README.mdを書いて予約
-6. BucketルートREADME.mdのAllocator状態を更新
-7. allocation.jsonをGitHub Actions artifactとして返却
+1. 対象Bucket collectionを再帰list
+2. 既存6桁suffixを抽出
+3. 最大suffix + 1
+4. allocation catalogからprefixを解決
+5. ID直下README.mdを書いて予約
+6. Bucket root READMEのallocator statusを更新
+7. allocation.jsonを返却
 ```
 
-`000001` が構造例として存在すれば、最初の実運用IDは自然に `000002` になります。
+`000001`が構造例として存在すれば最初の実運用IDは`000002`です。
+
+予約後にpublishが失敗しても番号は再利用しません。
+
+---
 
 ## 排他制御
 
-中央workflowのconcurrencyは **Bucket単位** です。
+中央workflowのconcurrencyはBucket単位です。
 
 ```yaml
 concurrency:
@@ -63,81 +97,129 @@ concurrency:
   cancel-in-progress: false
 ```
 
-collection単位ではなくBucket全体を直列化する理由は、採番後にBucketルートの共通 `README.md` を更新するためです。
+Bucket全体を直列化する理由は、各collectionの採番に加えてBucket root `README.md`も共有更新するためです。
 
-これにより、異なるRepositoryから同じBucketへ同時に要求が来ても、次の処理は同時実行されません。
-
-```text
-list -> max + 1 -> reservation -> root README update
-```
+---
 
 ## 呼出経路
 
-通常の入口は:
+通常入口:
 
 ```text
 scripts/hf/hf-request-id.sh
 ```
 
-互換入口として:
+互換入口:
 
 ```text
 scripts/hf/hf-allocate-id.sh
 ```
 
-も残しますが、`HF_ALLOCATOR_INTERNAL=1` がない通常実行では自動的に `hf-request-id.sh` へ転送されます。
+通常実行の`hf-allocate-id.sh`は中央workflowへ転送します。`list -> max+1`を直接実行できるのは`HF_ALLOCATOR_INTERNAL=1`を設定した中央workflowだけです。
 
-低レベルの `list -> max+1` を直接実行できるのは中央workflowだけです。
+---
 
-## 認証
+## allocation.json
 
-### このRepository内のActions
+中央Allocatorの返却contractはschema v3です。
 
-workflowでは次を使用します。
-
-```yaml
-GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
+```json
+{
+  "schema_version": 3,
+  "request_id": "...",
+  "id": "cpu-full-eval-000042",
+  "bucket": "namespace/bucket",
+  "collection": "experiments",
+  "allocation_catalog": {
+    "id": "hf-allocation-catalog-v1",
+    "sha256": "<ALLOCATION_CATALOG_SHA256>"
+  },
+  "prefix_key": "experiment.cpu_full",
+  "resolved_prefix": "cpu-full-eval"
+}
 ```
 
-同一Repositoryであれば通常は `github.token` で中央workflowをdispatchできます。
+これによりprefix名称が将来変更されても、採番時にどのpolicy snapshotを使用したか追跡できます。
 
-### 他Repositoryから利用する場合
+`allocation.json`はActions間の応答contractであり、Bucketの長期保存正本ではありません。ID直下READMEとBucket root READMEが永続的な人間向け履歴です。
 
-呼出元Repositoryに次のSecretを用意します。
+---
+
+## Candidate prefix解決
+
+Candidate側はmanual prefixを持ちません。
 
 ```text
-HF_ALLOCATOR_GITHUB_TOKEN
+metadata.profile_set
+    ↓
+hf-allocation-catalog.json
+    ↓
+candidate.<profile_set>
+    ↓
+resolved prefix
 ```
 
-このtokenには少なくとも中央Allocator Repositoryに対するActions workflow dispatch/readとartifact readに必要な権限を付与します。
-
-呼出先は必要に応じて次で変更できます。
+例:
 
 ```text
-HF_ALLOCATOR_REPOSITORY
-HF_ALLOCATOR_WORKFLOW
-HF_ALLOCATOR_REF
+parakeet-tdt-ctc-v1
+    -> candidate.parakeet-tdt-ctc-v1
+    -> parakeet-candidate
 ```
 
-既定値:
+未登録profile setは`candidate.default`へfallbackします。
+
+---
+
+## Experiment prefix解決
+
+workflowは以下のsemantic keyを使用します。
 
 ```text
-HF_ALLOCATOR_REPOSITORY=bie3yeik-lgtm/jpapt-v2.2-inspection
-HF_ALLOCATOR_WORKFLOW=hf-central-allocator.yml
-HF_ALLOCATOR_REF=main
+CPU Full                 experiment.cpu_full
+Cross Platform Parity    experiment.cross_platform_parity
+Rust Evaluation          experiment.rust_eval
 ```
 
-## BucketルートREADME
+`cpu-full-eval`等のraw文字列をworkflowへ複製しません。
 
-採番のたびに:
+---
+
+## Config version
+
+config versionは常に、
+
+```text
+config.version -> config -> config-NNNNNN
+```
+
+として中央Allocatorから取得します。
+
+`hf-push-config-version.sh`は、
+
+```text
+local config validation
+    ↓
+central allocation
+    ↓
+4 JSON upload
+    ↓
+全upload成功後のみ current.json更新
+```
+
+の順で処理します。
+
+---
+
+## Bucket root README
+
+採番のたびに、
 
 ```text
 hf://buckets/<namespace>/<bucket>/README.md
 ```
 
-の管理ブロックを更新します。
-
-管理対象は次のmarker内だけです。
+のmarker内だけを更新します。
 
 ```html
 <!-- hf-central-allocator:start -->
@@ -145,63 +227,57 @@ hf://buckets/<namespace>/<bucket>/README.md
 <!-- hf-central-allocator:end -->
 ```
 
-marker外の人間が書いた説明は維持されます。
-
-自動表示例:
+表示内容:
 
 ```text
-Central Allocator 状態
-
-最終更新: ...
-直近の採番: experiments/cpu-full-eval-000010
-candidates 現在番号: 000008 (...-000008)
-experiments 現在番号: 000010 (...-000010)
-config 現在番号: 000004 (config-000004)
+last allocation
+candidates current maximum
+experiments current maximum
+config current maximum
+updated timestamp
 ```
 
-ここで示す番号は「最後に成功したartifact publish番号」ではなく **Allocatorが予約済みの最大番号** です。採番後のpublishが失敗しても、その番号は再利用しません。
+marker外の説明は保持します。
 
-## Candidate publish
+ここでの番号はpublish済み最大番号ではなく**予約済み最大番号**です。
+
+---
+
+## 認証
+
+同一Repository:
+
+```yaml
+GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
+```
+
+他Repositoryから利用する場合は、呼出元に`HF_ALLOCATOR_GITHUB_TOKEN`を設定します。中央Repositoryのworkflow dispatch/readおよびartifact readに必要な権限を与えます。
+
+呼出先は次でoverrideできます。
 
 ```text
-hf-push-candidate.sh
-  -> central allocatorへcandidate ID要求
-  -> candidates/<id>/README.md予約
-  -> local metadata.jsonへcandidate_id反映
-  -> candidate artifact sync
+HF_ALLOCATOR_REPOSITORY
+HF_ALLOCATOR_WORKFLOW
+HF_ALLOCATOR_REF
 ```
 
-## Config publish
+既定:
 
 ```text
-hf-push-config-version.sh
-  -> revision bundleをlocal strict validation
-  -> central allocatorへconfig version要求
-  -> config/versions/config-NNNNNN/README.md予約
-  -> 3 revision JSONをupload
-  -> 全upload成功後にconfig/current.json更新
+HF_ALLOCATOR_REPOSITORY=bie3yeik-lgtm/jpapt-v2.2-inspection
+HF_ALLOCATOR_WORKFLOW=hf-central-allocator.yml
+HF_ALLOCATOR_REF=main
 ```
 
-採番だけ成功してpublishが失敗した場合、空番ではなく予約済み履歴として残します。`current.json` は未完成versionを指しません。
+---
 
-## Experiment allocation
-
-`CPU Full Evaluation`、`Cross Platform ONNX Parity`、`Rust Cross Platform Evaluation` は実験開始時に中央Allocatorへ要求します。
-
-```text
-cpu-full-eval-NNNNNN
-cross-platform-parity-NNNNNN
-rust-eval-NNNNNN
-```
-
-matrix評価では1つのexperiment IDを共有し、各実行は別々のrun IDを持ちます。
-
-## 運用上の不変条件
+## 不変条件
 
 1. 数値suffixを人間が決めない。
 2. 予約済み番号を再利用しない。
-3. prefixを変更しても同一collectionの連番は共有する。
+3. prefixが変わってもcollection全体の連番を継続する。
 4. 複数Repositoryからの採番は必ず中央Allocatorを通す。
-5. BucketルートREADMEのmanaged blockは手動編集しない。
-6. `config/current.json` のversion番号も中央Allocatorで発行する。
-7. Bucket routingが将来変わっても、採番はその時点の物理Bucket内の既存最大値から継続する。
+5. raw prefixをworkflow/scriptへ複製しない。
+6. prefix policyは`hf-allocation-catalog.json`だけで管理する。
+7. ASR runtime semanticsは`asr-catalog.json`へ分離する。
+8. Bucket routingが変わっても、その時点の物理Bucketの最大suffixから継続する。

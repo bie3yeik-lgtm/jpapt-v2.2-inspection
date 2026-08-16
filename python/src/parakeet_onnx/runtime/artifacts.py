@@ -6,6 +6,13 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from parakeet_onnx.config.catalog import (
+    AsrCatalog,
+    AsrCatalogError,
+    DecoderProfile,
+    load_repository_catalog,
+)
+
 
 class CandidateMetadataError(RuntimeError):
     pass
@@ -52,6 +59,14 @@ class CandidateTokenizer:
 
 @dataclass(frozen=True, slots=True)
 class CandidateArtifacts:
+    """One resolved runtime variant of a candidate bundle.
+
+    Schema-v3 metadata can contain multiple variants (for example CTC and TDT).
+    Reusable decoder semantics are resolved from a pinned central catalog.
+    Candidate JSON stores only artifact identities and model/export-specific
+    bindings; `profile_set + variant` determines the decoder profile.
+    """
+
     root: Path
     metadata_path: Path
     schema_version: int
@@ -62,13 +77,21 @@ class CandidateArtifacts:
     runtime_contract: Mapping[str, Any]
     tokenizer: CandidateTokenizer | None
     features: Mapping[str, bool]
+    profile_set_id: str | None = None
+    variant: str | None = None
+    profile_id: str | None = None
+    catalog_id: str | None = None
+    catalog_sha256: str | None = None
 
     @classmethod
     def load(
         cls,
         candidate_dir: str | Path,
         *,
+        variant: str | None = None,
         verify_artifacts: bool = True,
+        repository_root: str | Path | None = None,
+        catalog: AsrCatalog | None = None,
     ) -> "CandidateArtifacts":
         root = Path(candidate_dir).expanduser().resolve()
         metadata_path = root / "metadata.json"
@@ -85,10 +108,38 @@ class CandidateArtifacts:
             raise CandidateMetadataError("candidate metadata root must be an object")
 
         schema_version = raw.get("schema_version")
-        if schema_version == 2:
+        if schema_version == 3:
+            if catalog is None:
+                repo_root = (
+                    Path(repository_root).expanduser().resolve()
+                    if repository_root is not None
+                    else _discover_repository_root(root)
+                )
+                try:
+                    catalog = load_repository_catalog(repo_root)
+                except AsrCatalogError as exc:
+                    raise CandidateMetadataError(str(exc)) from exc
+            value = cls._load_v3(
+                root=root,
+                metadata_path=metadata_path,
+                raw=raw,
+                catalog=catalog,
+                variant=variant,
+            )
+        elif schema_version == 2:
             value = cls._load_v2(root=root, metadata_path=metadata_path, raw=raw)
+            if variant is not None and variant not in {value.decoder, "default"}:
+                raise CandidateMetadataError(
+                    "schema-v2 candidate has a single runtime only; "
+                    f"requested variant={variant!r}, decoder={value.decoder!r}"
+                )
         elif schema_version == 1:
             value = cls._load_v1_compat(root=root, metadata_path=metadata_path, raw=raw)
+            if variant is not None and variant not in {value.decoder, "default"}:
+                raise CandidateMetadataError(
+                    "schema-v1 candidate has a single runtime only; "
+                    f"requested variant={variant!r}, decoder={value.decoder!r}"
+                )
         else:
             raise CandidateMetadataError(
                 f"unsupported candidate metadata schema_version: {schema_version!r}"
@@ -104,6 +155,112 @@ class CandidateArtifacts:
         return value
 
     @classmethod
+    def _load_v3(
+        cls,
+        *,
+        root: Path,
+        metadata_path: Path,
+        raw: Mapping[str, Any],
+        catalog: AsrCatalog,
+        variant: str | None,
+    ) -> "CandidateArtifacts":
+        candidate_id = _required_string(raw, "candidate_id")
+        catalog_ref = _required_mapping(raw, "catalog")
+        catalog_id = _required_string(catalog_ref, "id")
+        catalog_sha256 = _required_string(catalog_ref, "sha256")
+        if catalog_id != catalog.catalog_id:
+            raise CandidateMetadataError(
+                f"candidate catalog id mismatch: metadata={catalog_id!r}, "
+                f"repository={catalog.catalog_id!r}"
+            )
+        if catalog_sha256.lower() != catalog.sha256.lower():
+            raise CandidateMetadataError(
+                "candidate catalog SHA-256 does not match the checked-out "
+                "config/asr-catalog.json; use the repository revision that contains "
+                "the pinned catalog snapshot"
+            )
+
+        profile_set_id = _required_string(raw, "profile_set")
+        try:
+            profile_set = catalog.profile_set(profile_set_id)
+        except AsrCatalogError as exc:
+            raise CandidateMetadataError(str(exc)) from exc
+
+        variants_raw = raw.get("variants")
+        if not isinstance(variants_raw, Mapping) or not variants_raw:
+            raise CandidateMetadataError("variants must be a non-empty object")
+        unknown_variants = sorted(set(variants_raw) - set(profile_set.variants))
+        if unknown_variants:
+            raise CandidateMetadataError(
+                f"candidate contains variants not defined by profile set "
+                f"{profile_set_id!r}: {unknown_variants}"
+            )
+
+        selected_variant = variant or profile_set.default_variant
+        if selected_variant not in profile_set.variants:
+            raise CandidateMetadataError(
+                f"variant {selected_variant!r} is not defined by profile set "
+                f"{profile_set_id!r}; available={sorted(profile_set.variants)}"
+            )
+        variant_raw = variants_raw.get(selected_variant)
+        if not isinstance(variant_raw, Mapping):
+            raise CandidateMetadataError(
+                f"candidate does not provide selected variant {selected_variant!r}; "
+                f"available={sorted(str(key) for key in variants_raw)}"
+            )
+
+        profile_id = profile_set.profile_id_for(selected_variant)
+        try:
+            profile = catalog.decoder_profile(profile_id)
+        except AsrCatalogError as exc:
+            raise CandidateMetadataError(str(exc)) from exc
+
+        artifacts = _load_artifacts(root, variant_raw.get("artifacts"))
+        _validate_artifact_roles(profile, artifacts)
+
+        bindings = variant_raw.get("bindings")
+        if not isinstance(bindings, Mapping):
+            raise CandidateMetadataError(
+                f"variants.{selected_variant}.bindings must be an object"
+            )
+        runtime_contract = {
+            "decoder": profile.decoder,
+            "input_kind": _required_string(bindings, "input_kind"),
+            "io": _required_mapping(bindings, "io"),
+            "decoder_config": _required_mapping(bindings, "decoder_config"),
+        }
+
+        tokenizer: CandidateTokenizer | None = None
+        tokenizer_binding = variant_raw.get("tokenizer")
+        if tokenizer_binding is not None:
+            if not isinstance(tokenizer_binding, Mapping):
+                raise CandidateMetadataError(
+                    f"variants.{selected_variant}.tokenizer must be an object"
+                )
+            tokenizer = CandidateTokenizer(
+                kind=profile.tokenizer_kind,
+                path=_under_root(root, _required_string(tokenizer_binding, "path")),
+            )
+
+        return cls(
+            root=root,
+            metadata_path=metadata_path,
+            schema_version=3,
+            candidate_id=candidate_id,
+            decoder=profile.decoder,
+            artifact_contract=profile.artifact_contract,
+            artifacts=artifacts,
+            runtime_contract=runtime_contract,
+            tokenizer=tokenizer,
+            features=dict(profile.features),
+            profile_set_id=profile_set_id,
+            variant=selected_variant,
+            profile_id=profile_id,
+            catalog_id=catalog.catalog_id,
+            catalog_sha256=catalog.sha256,
+        )
+
+    @classmethod
     def _load_v2(
         cls,
         *,
@@ -114,38 +271,7 @@ class CandidateArtifacts:
         candidate_id = _required_string(raw, "candidate_id")
         decoder = _required_string(raw, "decoder")
         artifact_contract = _required_string(raw, "artifact_contract")
-
-        artifact_raw = raw.get("artifacts")
-        if not isinstance(artifact_raw, dict) or not artifact_raw:
-            raise CandidateMetadataError("artifacts must be a non-empty object")
-        artifacts: dict[str, CandidateArtifact] = {}
-        for role, entry in artifact_raw.items():
-            if not isinstance(role, str) or not role:
-                raise CandidateMetadataError("artifact roles must be non-empty strings")
-            if not isinstance(entry, dict):
-                raise CandidateMetadataError(f"artifact {role!r} must be an object")
-            relative = _required_string(entry, "path")
-            sha256 = _optional_string(entry, "sha256")
-            if sha256 is not None and len(sha256) != 64:
-                raise CandidateMetadataError(
-                    f"artifact {role!r}.sha256 must be a 64-character digest"
-                )
-            size_value = entry.get("size_bytes")
-            size_bytes: int | None
-            if size_value is None:
-                size_bytes = None
-            elif isinstance(size_value, int) and size_value >= 0:
-                size_bytes = size_value
-            else:
-                raise CandidateMetadataError(
-                    f"artifact {role!r}.size_bytes must be a non-negative integer"
-                )
-            artifacts[role] = CandidateArtifact(
-                role=role,
-                path=_under_root(root, relative),
-                sha256=sha256,
-                size_bytes=size_bytes,
-            )
+        artifacts = _load_artifacts(root, raw.get("artifacts"))
 
         runtime = raw.get("runtime_contract")
         if not isinstance(runtime, dict):
@@ -197,12 +323,6 @@ class CandidateArtifacts:
         metadata_path: Path,
         raw: Mapping[str, Any],
     ) -> "CandidateArtifacts":
-        """Read the pre-registry CTC shape so existing candidates remain inspectable.
-
-        New candidate writers must emit schema_version=2. The compatibility shape is
-        normalized immediately, so runtime/evaluator code never branches on it.
-        """
-
         candidate_id = _required_string(raw, "candidate_id")
         decoder = str(raw.get("decoder", "ctc"))
         primary = _required_string(raw, "primary_artifact")
@@ -234,7 +354,9 @@ class CandidateArtifacts:
             schema_version=1,
             candidate_id=candidate_id,
             decoder=decoder,
-            artifact_contract="ctc-single-graph-v0" if decoder == "ctc" else f"{decoder}-legacy-v0",
+            artifact_contract=(
+                "ctc-single-graph-v0" if decoder == "ctc" else f"{decoder}-legacy-v0"
+            ),
             artifacts={
                 "primary": CandidateArtifact(
                     role="primary",
@@ -282,8 +404,16 @@ class CandidateArtifacts:
     def provenance_dict(self) -> dict[str, Any]:
         return {
             "candidate_id": self.candidate_id,
+            "profile_set": self.profile_set_id,
+            "variant": self.variant,
+            "profile": self.profile_id,
             "decoder": self.decoder,
             "artifact_contract": self.artifact_contract,
+            "catalog": (
+                {"id": self.catalog_id, "sha256": self.catalog_sha256}
+                if self.catalog_id is not None
+                else None
+            ),
             "bundle_sha256": self.bundle_sha256,
             "artifacts": {
                 role: {
@@ -295,6 +425,63 @@ class CandidateArtifacts:
             },
             "features": dict(self.features),
         }
+
+
+def _load_artifacts(root: Path, raw: object) -> dict[str, CandidateArtifact]:
+    if not isinstance(raw, Mapping) or not raw:
+        raise CandidateMetadataError("artifacts must be a non-empty object")
+    artifacts: dict[str, CandidateArtifact] = {}
+    for role, entry in raw.items():
+        if not isinstance(role, str) or not role:
+            raise CandidateMetadataError("artifact roles must be non-empty strings")
+        if not isinstance(entry, Mapping):
+            raise CandidateMetadataError(f"artifact {role!r} must be an object")
+        relative = _required_string(entry, "path")
+        sha256 = _optional_string(entry, "sha256")
+        if sha256 is not None and len(sha256) != 64:
+            raise CandidateMetadataError(
+                f"artifact {role!r}.sha256 must be a 64-character digest"
+            )
+        size_value = entry.get("size_bytes")
+        size_bytes: int | None
+        if size_value is None:
+            size_bytes = None
+        elif isinstance(size_value, int) and size_value >= 0:
+            size_bytes = size_value
+        else:
+            raise CandidateMetadataError(
+                f"artifact {role!r}.size_bytes must be a non-negative integer"
+            )
+        artifacts[role] = CandidateArtifact(
+            role=role,
+            path=_under_root(root, relative),
+            sha256=sha256,
+            size_bytes=size_bytes,
+        )
+    return artifacts
+
+
+def _validate_artifact_roles(
+    profile: DecoderProfile, artifacts: Mapping[str, CandidateArtifact]
+) -> None:
+    missing = sorted(set(profile.required_artifact_roles) - set(artifacts))
+    if missing:
+        raise CandidateMetadataError(
+            f"decoder profile {profile.profile_id!r} is missing required artifact roles: {missing}"
+        )
+    allowed = set(profile.required_artifact_roles) | set(profile.optional_artifact_roles)
+    unexpected = sorted(set(artifacts) - allowed)
+    if unexpected:
+        raise CandidateMetadataError(
+            f"decoder profile {profile.profile_id!r} has unexpected artifact roles: {unexpected}"
+        )
+
+
+def _required_mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    item = value.get(key)
+    if not isinstance(item, Mapping):
+        raise CandidateMetadataError(f"{key} must be an object")
+    return item
 
 
 def _required_string(value: Mapping[str, Any], key: str) -> str:
@@ -322,3 +509,16 @@ def _under_root(root: Path, relative: str) -> Path:
             f"candidate metadata path escapes candidate root: {relative!r}"
         ) from exc
     return path
+
+
+def _discover_repository_root(start: Path) -> Path:
+    for parent in (start, *start.parents):
+        if (parent / "config" / "asr-catalog.json").is_file():
+            return parent
+    cwd = Path.cwd().resolve()
+    for parent in (cwd, *cwd.parents):
+        if (parent / "config" / "asr-catalog.json").is_file():
+            return parent
+    raise CandidateMetadataError(
+        "could not locate config/asr-catalog.json; pass repository_root explicitly"
+    )

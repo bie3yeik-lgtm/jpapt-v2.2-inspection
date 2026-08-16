@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .finalize import finalize_candidate, load_runtime_contract
+from .finalize import finalize_candidate_variant, load_runtime_contract
 
 
 def export_tdt_candidate(
@@ -11,8 +11,10 @@ def export_tdt_candidate(
     candidate_id: str,
     runtime_contract_path: Path | None = None,
     tokenizer_path: str = "vocabulary.json",
+    profile_set: str = "parakeet-tdt-ctc-v1",
+    variant: str = "tdt",
 ) -> tuple[Path, Path, Path]:
-    """Finalize encoder/predictor/joint TDT graphs as one candidate bundle."""
+    """Finalize encoder/predictor/joint TDT graphs as one candidate variant."""
 
     root = Path(output_dir).expanduser().resolve()
     paths = (
@@ -32,28 +34,18 @@ def export_tdt_candidate(
         else root / "runtime-contract.json"
     )
     runtime_contract = load_runtime_contract(contract_path)
-    if runtime_contract.get("decoder") != "tdt":
-        raise RuntimeError("TDT finalizer requires runtime contract decoder='tdt'")
 
-    finalize_candidate(
+    finalize_candidate_variant(
         output_dir=root,
         candidate_id=candidate_id,
-        decoder="tdt",
-        artifact_contract="tdt-multi-graph-v1",
+        profile_set=profile_set,
+        variant=variant,
         artifact_roles={
             "encoder": "encoder.onnx",
             "predictor": "predictor.onnx",
             "joint": "joint.onnx",
         },
         runtime_contract=runtime_contract,
-        tokenizer_kind="vocabulary",
         tokenizer_path=tokenizer_path,
-        features={
-            "kv_cache": False,
-            "multi_graph": True,
-            "transformers_processor": False,
-            "external_frontend": runtime_contract.get("input_kind") == "features",
-            "timestamps": False,
-        },
     )
     return paths

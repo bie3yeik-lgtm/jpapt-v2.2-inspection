@@ -8,6 +8,11 @@ on:
         required: true
         default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
+      runtime_variant:
+        description: "Runtime variant from target profile set (blank = catalog default)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -17,6 +22,7 @@ on:
       - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
+      - "docs/**"
   push:
     branches: [main]
     paths:
@@ -27,12 +33,13 @@ on:
       - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
+      - "docs/**"
 
 permissions:
   contents: read
 
 concurrency:
-  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || 'local' }}
+  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || 'local' }}-${{ inputs.runtime_variant || 'default' }}
   cancel-in-progress: true
 
 env:
@@ -66,40 +73,55 @@ jobs:
           python scripts/dev/doctor.py
           python scripts/ci/validate-hf-targets.py
           python scripts/ci/validate-github-action-versions.py
+          python scripts/ci/resolve-asr-catalog.py fingerprint catalog_id
+          python scripts/ci/resolve-asr-catalog.py fingerprint sha256
+          python scripts/ci/resolve-allocation-catalog.py fingerprint catalog_id
+          python scripts/ci/resolve-allocation-catalog.py fingerprint sha256
           bash -n scripts/hf/hf-allocate-id.sh
           bash -n scripts/hf/hf-request-id.sh
           bash -n scripts/hf/hf-update-root-readme.sh
           bash -n scripts/hf/hf-push-candidate.sh
           bash -n scripts/hf/hf-push-config-version.sh
+          bash -n scripts/hf/hf-promote-candidate.sh
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py \
             python/tests/unit/test_hf_target_bucket_resolution.py \
             python/tests/unit/test_hf_sequence_id.py \
             python/tests/unit/test_candidate_artifacts.py \
+            python/tests/unit/test_asr_catalog_normalization.py \
+            python/tests/unit/test_catalog_normalization.py \
             python/tests/unit/test_tdt_decoder.py \
             python/tests/unit/test_whisper_runtime_contract.py \
             python/tests/unit/test_runtime_registry.py \
             python/tests/unit/test_evaluator_capability.py
 
-      - name: List source-controlled HF targets and evaluators
+      - name: List source-controlled catalogs, profiles, targets and evaluators
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          targets = sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
-          evaluators = sorted(path.stem for path in Path("config/evaluators").glob("*.toml"))
-          if not targets:
-              raise SystemExit("No config/hf-targets/*.toml files were found.")
-          if not evaluators:
-              raise SystemExit("No config/evaluators/*.toml files were found.")
+          from parakeet_onnx.config.allocation_catalog import load_repository_allocation_catalog
+          from parakeet_onnx.config.catalog import load_repository_catalog
+          runtime_catalog=load_repository_catalog(Path.cwd())
+          allocation_catalog=load_repository_allocation_catalog(Path.cwd())
+          targets=sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
+          evaluators=sorted(path.stem for path in Path("config/evaluators").glob("*.toml"))
+          if not targets or not evaluators:
+              raise SystemExit("HF targets and evaluator capabilities are required")
+          print(f"ASR runtime catalog: {runtime_catalog.catalog_id} {runtime_catalog.sha256}")
+          print(f"HF allocation catalog: {allocation_catalog.catalog_id} {allocation_catalog.sha256}")
+          print("Runtime profile sets:")
+          for profile_set_id, profile_set in sorted(runtime_catalog.profile_sets.items()):
+              print(f"- {profile_set_id}: {dict(profile_set.variants)} default={profile_set.default_variant}")
+          print("Allocation prefixes:")
+          for key, prefix in sorted(allocation_catalog.prefixes.items()):
+              print(f"- {key}: {prefix}")
           print("Configured HF targets:")
-          for target in targets:
-              print(f"- {target}")
+          for target in targets: print(f"- {target}")
           print("Configured evaluator capabilities:")
-          for evaluator in evaluators:
-              print(f"- {evaluator}")
+          for evaluator in evaluators: print(f"- {evaluator}")
           PY
 
   validate-selected:
@@ -115,6 +137,9 @@ jobs:
       EXPECTED_UPSTREAM_REPO_ID: ""
       EXPECTED_TOKENIZER_REPO_ID: ""
       EXPECTED_FRAMEWORK: ""
+      HF_PROFILE_SET: ""
+      ASR_RUNTIME_VARIANT: ""
+      EXPECTED_RUNTIME_PROFILE: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
     steps:
@@ -132,7 +157,7 @@ jobs:
           python -m pip install --upgrade huggingface_hub
           hf --version
 
-      - name: Resolve selected HF Bucket
+      - name: Resolve selected HF Bucket and runtime variant
         shell: bash
         run: |
           set -euo pipefail
@@ -140,10 +165,15 @@ jobs:
             echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
             exit 1
           }
-          python scripts/ci/resolve-hf-target.py \
-            --bucket "${{ inputs.hf_bucket }}" \
-            --targets-json "${HF_TARGETS_JSON}" \
+          ARGS=(
+            --bucket "${{ inputs.hf_bucket }}"
+            --targets-json "${HF_TARGETS_JSON}"
             --github-env "${GITHUB_ENV}"
+          )
+          if [[ -n "${{ inputs.runtime_variant }}" ]]; then
+            ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
+          fi
+          python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
 
       - name: Validate GitHub HF configuration
         shell: bash
@@ -155,6 +185,9 @@ jobs:
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
+          echo "Profile set: ${HF_PROFILE_SET}"
+          echo "Runtime variant: ${ASR_RUNTIME_VARIANT}"
+          echo "Runtime profile: ${EXPECTED_RUNTIME_PROFILE}"
 
       - name: Fetch and validate current revision configuration
         shell: bash
@@ -169,6 +202,9 @@ jobs:
             --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
             --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
             --expected-framework "${EXPECTED_FRAMEWORK}" \
+            --expected-profile-set "${HF_PROFILE_SET}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --expected-runtime-profile "${EXPECTED_RUNTIME_PROFILE}" \
             --expected-decoder "${EXPECTED_DECODER}"
 
       - name: Validate required HF Bucket layout
@@ -178,7 +214,7 @@ jobs:
           BUCKET="hf://buckets/${HF_BUCKET}"
           hf buckets list "${BUCKET}/config/current.json" >/dev/null
           CONFIG_VERSION="$(python -c 'import json; print(json.load(open(".ci/hf/config/resolved.json"))["config_version"])')"
-          for file in reference.json evaluation-schema.json datasets-lock.json; do
+          for file in reference.json evaluation-schema.json datasets-lock.json runtime.json; do
             hf buckets list "${BUCKET}/config/versions/${CONFIG_VERSION}/${file}" >/dev/null
           done
           for dir in benchmarks runs candidates experiments reference scripts tmp; do

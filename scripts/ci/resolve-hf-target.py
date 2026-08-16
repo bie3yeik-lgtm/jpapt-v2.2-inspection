@@ -8,6 +8,7 @@ import shlex
 import sys
 from typing import Any
 
+from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.config.resolver import ConfigResolver
 from parakeet_onnx.hf.targets import HfTargetError, load_hf_target_by_id
 
@@ -24,6 +25,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Resolve the target whose HF_BUCKET matches in the current "
             "--targets-json routing snapshot. Bucket assignments may change "
             "between snapshots."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-variant",
+        help=(
+            "Optional runtime variant key from the target profile set, e.g. ctc or "
+            "tdt. Omit to use the central profile-set default."
         ),
     )
     parser.add_argument("--repository-root", type=Path, default=Path("."))
@@ -44,14 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
     if raw_json is None or not raw_json.strip():
         return {}
-
     try:
         raw: Any = json.loads(raw_json)
     except json.JSONDecodeError as exc:
-        raise HfTargetError(
-            f"HF target mapping is not valid JSON: {exc}"
-        ) from exc
-
+        raise HfTargetError(f"HF target mapping is not valid JSON: {exc}") from exc
     if not isinstance(raw, dict):
         raise HfTargetError("HF target mapping root must be a JSON object.")
 
@@ -64,39 +68,33 @@ def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
             raise HfTargetError(
                 f"HF target mapping entry {target_id!r} must be a JSON object."
             )
-
         normalized: dict[str, str] = {}
         for key in ("HF_BUCKET", "HF_MODEL_REPO"):
             value = entry.get(key)
             if not isinstance(value, str) or not value.strip():
                 raise HfTargetError(
-                    f"HF target mapping entry {target_id!r}.{key} "
-                    "must be a non-empty string."
+                    f"HF target mapping entry {target_id!r}.{key} must be a non-empty string."
                 )
             normalized[key] = value.strip()
-
         bucket = normalized["HF_BUCKET"]
         previous = seen_buckets.get(bucket)
         if previous is not None:
             raise HfTargetError(
-                f"HF_BUCKET {bucket!r} is assigned to both {previous!r} "
-                f"and {target_id!r} in the current routing snapshot."
+                f"HF_BUCKET {bucket!r} is assigned to both {previous!r} and "
+                f"{target_id!r} in the current routing snapshot."
             )
         seen_buckets[bucket] = target_id
         result[target_id] = normalized
-
     return result
 
 
 def _target_id_from_bucket(
-    *,
-    bucket: str,
-    mapping: dict[str, dict[str, str]],
+    *, bucket: str, mapping: dict[str, dict[str, str]]
 ) -> str:
     if not mapping:
         raise HfTargetError(
-            "--bucket requires --targets-json because Bucket-to-target "
-            "resolution is defined by the current vars.HF_TARGETS_JSON routing."
+            "--bucket requires --targets-json because Bucket-to-target resolution "
+            "is defined by the current vars.HF_TARGETS_JSON routing."
         )
     matches = [
         target_id
@@ -125,21 +123,23 @@ def main() -> int:
         )
         target = load_hf_target_by_id(target_id, repository_root=root)
         model = ConfigResolver(root).load_model(target.model_id)
+        catalog = load_repository_catalog(root)
+        profile_set = catalog.profile_set(target.profile_set_id)
+        runtime_variant = args.runtime_variant or profile_set.default_variant
+        runtime_profile = profile_set.profile_id_for(runtime_variant)
+        decoder_profile = catalog.decoder_profile(runtime_profile)
 
         if model.upstream_repo_id != target.upstream_repo_id:
             raise HfTargetError(
                 "HF target upstream repo does not match model config: "
-                f"target={target.upstream_repo_id!r}, "
-                f"model={model.upstream_repo_id!r}"
+                f"target={target.upstream_repo_id!r}, model={model.upstream_repo_id!r}"
             )
         framework = model.get("model.framework")
         if framework != target.canonical_framework:
             raise HfTargetError(
                 "HF target canonical framework does not match model config: "
-                f"target={target.canonical_framework!r}, "
-                f"model={framework!r}"
+                f"target={target.canonical_framework!r}, model={framework!r}"
             )
-
         storage_override = mapping.get(target.id, {})
         if mapping and not storage_override:
             raise HfTargetError(
@@ -159,7 +159,10 @@ def main() -> int:
         "EXPECTED_UPSTREAM_REPO_ID": target.upstream_repo_id,
         "EXPECTED_TOKENIZER_REPO_ID": target.upstream_repo_id,
         "EXPECTED_FRAMEWORK": target.canonical_framework,
-        "EXPECTED_DECODER": target.default_decoder,
+        "HF_PROFILE_SET": target.profile_set_id,
+        "ASR_RUNTIME_VARIANT": runtime_variant,
+        "EXPECTED_RUNTIME_PROFILE": runtime_profile,
+        "EXPECTED_DECODER": decoder_profile.decoder,
         "HF_TARGET_ID": target.id,
     }
 
@@ -173,7 +176,10 @@ def main() -> int:
             "target_id": target.id,
             "hf_bucket": bucket,
             "hf_model_repo": model_repo,
-            "decoder": target.default_decoder,
+            "profile_set": target.profile_set_id,
+            "runtime_variant": runtime_variant,
+            "runtime_profile": runtime_profile,
+            "decoder": decoder_profile.decoder,
             "framework": target.canonical_framework,
         }
         with args.github_output.open("a", encoding="utf-8") as file:

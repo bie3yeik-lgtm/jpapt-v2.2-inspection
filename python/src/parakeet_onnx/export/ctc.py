@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .finalize import finalize_candidate, load_runtime_contract
+from .finalize import finalize_candidate_variant, load_runtime_contract
 
 
 def export_ctc_candidate(
@@ -11,13 +11,10 @@ def export_ctc_candidate(
     candidate_id: str,
     runtime_contract_path: Path | None = None,
     tokenizer_path: str = "vocabulary.json",
+    profile_set: str = "parakeet-tdt-ctc-v1",
+    variant: str = "ctc",
 ) -> Path:
-    """Finalize an already-exported CTC ONNX graph as a canonical candidate.
-
-    The framework-specific exporter must place `model.onnx` and a runtime
-    contract JSON in the staging directory. The finalizer never guesses tensor
-    names or blank IDs: those are part of the candidate runtime contract.
-    """
+    """Finalize an already-exported CTC graph as one candidate variant."""
 
     root = Path(output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -37,24 +34,14 @@ def export_ctc_candidate(
             "blank_id are never guessed."
         )
     runtime_contract = load_runtime_contract(contract_path)
-    if runtime_contract.get("decoder") != "ctc":
-        raise RuntimeError("CTC finalizer requires runtime contract decoder='ctc'")
 
-    finalize_candidate(
+    finalize_candidate_variant(
         output_dir=root,
         candidate_id=candidate_id,
-        decoder="ctc",
-        artifact_contract="ctc-single-graph-v1",
+        profile_set=profile_set,
+        variant=variant,
         artifact_roles={"primary": model_path.name},
         runtime_contract=runtime_contract,
-        tokenizer_kind="vocabulary",
         tokenizer_path=tokenizer_path,
-        features={
-            "kv_cache": False,
-            "multi_graph": False,
-            "transformers_processor": False,
-            "external_frontend": runtime_contract.get("input_kind") == "features",
-            "timestamps": False,
-        },
     )
     return model_path

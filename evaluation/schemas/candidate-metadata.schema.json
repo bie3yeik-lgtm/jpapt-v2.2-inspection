@@ -2,43 +2,37 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parakeet-onnx.local/schemas/candidate-metadata.schema.json",
   "title": "ASR ONNX Candidate Metadata",
+  "description": "Candidate-specific artifact identities and runtime bindings. Reusable decoder semantics live in config/asr-catalog.json and are pinned by catalog identity.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "candidate_id",
-    "decoder",
-    "artifact_contract",
-    "artifacts",
-    "runtime_contract",
-    "features"
+    "catalog",
+    "profile_set",
+    "variants"
   ],
   "properties": {
-    "schema_version": {"type": "integer", "const": 2},
+    "schema_version": {"type": "integer", "const": 3},
     "candidate_id": {"type": "string", "minLength": 1},
-    "decoder": {
-      "type": "string",
-      "enum": ["ctc", "tdt", "whisper_autoregressive"]
-    },
-    "artifact_contract": {"type": "string", "minLength": 1},
-    "artifacts": {
+    "catalog": {"$ref": "#/$defs/catalogReference"},
+    "profile_set": {"type": "string", "minLength": 1},
+    "variants": {
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": {"$ref": "#/$defs/artifact"}
-    },
-    "runtime_contract": {"$ref": "#/$defs/runtimeContract"},
-    "tokenizer": {
-      "oneOf": [
-        {"type": "null"},
-        {"$ref": "#/$defs/tokenizer"}
-      ]
-    },
-    "features": {
-      "type": "object",
-      "additionalProperties": {"type": "boolean"}
+      "additionalProperties": {"$ref": "#/$defs/variant"}
     }
   },
   "$defs": {
+    "catalogReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
+      }
+    },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
@@ -49,34 +43,45 @@
         "size_bytes": {"type": "integer", "minimum": 0}
       }
     },
-    "tokenizer": {
+    "tokenizerBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "path"],
+      "required": ["path"],
       "properties": {
-        "kind": {
-          "type": "string",
-          "enum": ["vocabulary", "transformers_processor"]
-        },
         "path": {"type": "string", "minLength": 1}
       }
     },
-    "runtimeContract": {
+    "bindings": {
       "type": "object",
-      "required": ["decoder", "input_kind", "io", "decoder_config"],
+      "additionalProperties": false,
+      "required": ["input_kind", "io", "decoder_config"],
       "properties": {
-        "decoder": {
-          "type": "string",
-          "enum": ["ctc", "tdt", "whisper_autoregressive"]
-        },
         "input_kind": {
           "type": "string",
           "enum": ["canonical_waveform", "features"]
         },
         "io": {"type": "object"},
         "decoder_config": {"type": "object"}
-      },
-      "additionalProperties": true
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts", "bindings", "tokenizer"],
+      "properties": {
+        "artifacts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/artifact"}
+        },
+        "bindings": {"$ref": "#/$defs/bindings"},
+        "tokenizer": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/tokenizerBinding"}
+          ]
+        }
+      }
     }
   }
 }

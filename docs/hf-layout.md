@@ -2,15 +2,17 @@
 
 ## 目的
 
-Hugging Face Bucketはmodel開発・評価中に増えるmutableな履歴を保存する場所です。検証済みartifactを公開するHF Model Repoとは役割を分けます。
+Hugging Face Bucketはmodel開発・実験・評価履歴を保存します。検証済みartifactを公開するHF Model Repoとは役割を分けます。
 
 ```text
-HF Bucket      = 開発・実験・評価履歴
-HF Model Repo  = promotion済みartifact
-GitHub         = source/config/schema/workflow
+HF Bucket      開発・実験・評価履歴
+HF Model Repo  promotion済みartifact
+GitHub         source/schema/workflow/catalog
 ```
 
-この構造はNeMo/Transformers共通です。
+NeMo/Transformers、CTC/TDT/WhisperでBucket top-level treeは変えません。
+
+---
 
 ## Canonical tree
 
@@ -24,15 +26,16 @@ hf://buckets/<namespace>/<bucket>/
 │           ├── README.md
 │           ├── reference.json
 │           ├── evaluation-schema.json
-│           └── datasets-lock.json
+│           ├── datasets-lock.json
+│           └── runtime.json
 ├── experiments/
-│   └── <prefix>-NNNNNN/
+│   └── <allocator-prefix>-NNNNNN/
 │       └── README.md
 ├── candidates/
-│   └── <prefix>-NNNNNN/
+│   └── <allocator-prefix>-NNNNNN/
 │       ├── README.md
 │       ├── metadata.json
-│       └── <artifacts>
+│       └── <variant artifacts>
 ├── reference/
 │   ├── manifests/
 │   ├── outputs/
@@ -52,13 +55,56 @@ hf://buckets/<namespace>/<bucket>/
 └── tmp/
 ```
 
-`ctc/`、`tdt/`、`whisper/`、`nemo/`、`transformers/`をtop-level分類にはしません。これらはmetadata/configで表現します。
+framework/decoderをBucket rootのdirectory分類にしません。
 
-## ルート`README.md`
+---
 
-BucketルートのREADMEは人間向け説明と中央Allocatorの状態表示を兼ねます。
+# Git側の2つの中央catalog
 
-Allocatorが管理するのは次のmarker内だけです。
+## Allocation catalog
+
+```text
+config/hf-allocation-catalog.json
+```
+
+管理対象:
+
+```text
+candidate prefix
+experiment prefix
+config prefix
+```
+
+## ASR runtime catalog
+
+```text
+config/asr-catalog.json
+```
+
+管理対象:
+
+```text
+decoder profile
+artifact contract
+required/optional artifact roles
+tokenizer kind
+runtime features
+profile set / runtime variant
+```
+
+採番名を変更してもruntime catalog SHAが変化しないよう、2つは分離します。
+
+詳細は [`json-contract-design.md`](./json-contract-design.md) を参照してください。
+
+---
+
+# Bucket root README
+
+```text
+hf://buckets/<namespace>/<bucket>/README.md
+```
+
+中央Allocatorは次のmarker内だけを更新します。
 
 ```html
 <!-- hf-central-allocator:start -->
@@ -66,101 +112,211 @@ Allocatorが管理するのは次のmarker内だけです。
 <!-- hf-central-allocator:end -->
 ```
 
-ここには:
+記録内容:
 
 ```text
-直近採番
-candidates最大番号
-experiments最大番号
-config最大番号
-最終更新時刻
+last allocation
+candidates reserved maximum
+experiments reserved maximum
+config reserved maximum
+updated timestamp
 ```
 
-が自動記録されます。marker外の説明は保持されます。
+marker外の人間向け説明は保持します。
 
-## `config/`
+---
 
-### `current.json`
+# config/
 
-現在使用するimmutable config versionへのpointerです。
+## current.json
+
+現在利用するimmutable config versionへのmutable pointerです。
 
 ```json
 {
   "schema_version": 1,
-  "config_version": "config-000002"
+  "config_version": "config-000002",
+  "bundle_sha256": "<BUNDLE_SHA256>",
+  "updated_at": "..."
 }
 ```
 
-### `versions/config-NNNNNN/`
+## versions/config-NNNNNN/
+
+新規configは4 JSONです。
 
 ```text
-README.md               中央Allocatorによる番号予約・provenance
-reference.json          model/reference identity
- evaluation-schema.json 評価rule identity
- datasets-lock.json      dataset revision lock
+reference.json          model/reference/tokenizer provenance
+evaluation-schema.json  evaluation rule/schema
+datasets-lock.json       dataset provenance
+runtime.json             runtime catalog snapshot + profile_set
 ```
 
-canonical revision bundleは3 JSONで、READMEは採番履歴です。
+### runtime.json
 
-公開済みversionは上書きしません。どれか1つでも変更したら中央Allocatorで新しい`config-NNNNNN`を発行します。
+```json
+{
+  "schema_version": 1,
+  "catalog": {
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+  },
+  "profile_set": "parakeet-tdt-ctc-v1"
+}
+```
 
-通常実行は`current.json`を参照し、再現時は`HF_CONFIG_VERSION`で過去versionを直接指定できます。
+`reference.json`と`evaluation-schema.json`にはdecoder一覧を記述しません。
 
-## `reference.json`
+CTC/TDTはprofile setから導出し、実行時に`runtime_variant`で選択します。
 
-共通identity:
+旧3-file configは過去履歴の読み取り互換のみです。
+
+---
+
+# candidates/
+
+新規candidateは`metadata.json schema_version=3`です。
+
+## Parakeet CTC + TDT
 
 ```text
-development_artifact
-upstream
-tokenizer
-reference
-decoders
+candidates/parakeet-candidate-000002/
+├── README.md
+├── metadata.json
+├── tokenizer/
+│   └── vocabulary.json
+├── ctc/
+│   └── model.onnx
+└── tdt/
+    ├── encoder.onnx
+    ├── predictor.onnx
+    └── joint.onnx
 ```
 
-Bucket名は記録しません。Bucketはrouting情報です。
+metadataは、
 
-## `experiments/`
+```text
+catalog fingerprint
+profile_set
+variants.ctc artifact/binding
+variants.tdt artifact/binding
+```
 
-論理的な試行・評価単位です。
+だけを保持します。
+
+以下は書きません。
+
+```text
+variants.ctc.profile
+variants.tdt.profile
+decoder
+artifact_contract
+features
+tokenizer kind
+```
+
+これらは`profile_set + variant`からASR runtime catalogで導出します。
+
+## Whisper
+
+```text
+candidates/whisper-candidate-000003/
+├── README.md
+├── metadata.json
+├── encoder.onnx
+├── decoder.onnx
+├── decoder_with_past.onnx
+└── tokenizer/
+```
+
+詳細は [`candidate-metadata.md`](./candidate-metadata.md) を参照してください。
+
+---
+
+# experiments/
+
+論理的な試行単位です。
 
 ```text
 cpu-full-eval-000002
 cross-platform-parity-000003
-graph-optimization-000004
+rust-eval-000004
 ```
 
-prefixは説明用、6桁suffixは中央Allocatorが管理します。
-
-## `candidates/`
-
-正式評価対象になったartifactを保存します。
-
-### 単一graph例
+workflowはraw prefixを持ちません。
 
 ```text
-candidates/parakeet-ctc-candidate-000002/
-  README.md
-  metadata.json
-  model.onnx
-  vocabulary.json
+experiment.cpu_full
+    ↓ hf-allocation-catalog.json
+cpu-full-eval
 ```
 
-### 複数graph例
+---
+
+# runs/
+
+1回の具体的executionで、連番にはしません。
+
+新規`run-context.json`はschema v2です。
 
 ```text
-candidates/whisper-candidate-000003/
-  README.md
-  metadata.json
-  encoder.onnx
-  decoder.onnx
-  decoder_with_past.onnx
-  tokenizer/
+revisions.runtime
+  runtime.json SHA
+  ASR runtime catalog id/SHA
+  profile_set
+
+metadata.candidate
+  selected variant
+  resolved profile
+  decoder
+  artifact contract
+  selected variant bundle SHA
+
+metadata
+  experiment ID
+  HF routing snapshot
 ```
 
-frameworkによってtreeの階層を変えず、artifact roleを`metadata.json`で識別します。
+`revisions.reference`と`revisions.evaluation_schema`へdecoder listを再複製しません。
 
-## 自動採番
+---
+
+# benchmarks/
+
+framework/decoderではなく実行環境/provider軸で保存します。
+
+```text
+benchmarks/<candidate-id>/
+├── linux-cpu/
+├── linux-cuda/
+├── windows-cpu/
+├── windows-cuda/
+├── windows-directml/
+├── macos-cpu/
+└── macos-coreml/
+```
+
+実行していないdirectoryは不要です。
+
+---
+
+# reference/
+
+canonical frameworkから生成した比較用assetです。
+
+```text
+reference/
+├── manifests/
+├── outputs/
+├── tensors/
+└── metadata/
+```
+
+NeMo/Transformersでroot構造を分けません。
+
+---
+
+# 採番
 
 対象:
 
@@ -170,95 +326,40 @@ experiments
 config/versions
 ```
 
-形式:
-
-```text
-<prefix>-NNNNNN
-config-NNNNNN
-```
-
-採番はprefixごとではなくcollection全体で行います。
+数値suffixはcollection全体で共有します。
 
 ```text
 最大既存suffix + 1
 ```
 
-複数Repositoryが同じBucketを扱う場合も、本Repositoryの中央Allocatorを唯一の採番点とします。各Repositoryが独自に`max+1`を計算してはいけません。
-
-`000001`を構造例として置いている場合、最初の実運用IDは`000002`になります。
-
-採番後すぐ各ID直下へ`README.md`を作成し番号を予約します。後続publishが失敗してもその番号は再利用しません。
+prefixは`config/hf-allocation-catalog.json`から解決します。
 
 詳細は [`central-allocator.md`](./central-allocator.md) を参照してください。
 
-## `reference/`
+---
 
-canonical frameworkから生成した比較用assetを保存します。
+# Routing
 
 ```text
-manifests/
-outputs/
-tensors/
-metadata/
+現在のtarget -> Bucket/Model Repo    HF_TARGETS_JSON
+採番policy                           hf-allocation-catalog.json
+runtime semantics                   asr-catalog.json
+config snapshot                     config-NNNNNN
+execution snapshot                  run-context.json
 ```
 
-大容量tensorやaudioをGitへ入れず、必要なreference artifactをBucketへ置きます。
+同一`HF_TARGETS_JSON` snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更でtargetのBucket割当を変更できます。
 
-## `runs/`
+---
 
-1回の具体的なexecutionです。連番にはしません。
-
-```text
-runs/<run-id>/
-```
-
-`run-context.json`にはcandidate、experiment、config version、HF routing snapshot、provider、host、Git revision等を保存します。
-
-## `benchmarks/`
-
-frameworkではなく実行環境で分類します。
+# Model Repoとの関係
 
 ```text
-benchmarks/<candidate-id>/
-  linux-cpu/
-  linux-cuda/
-  windows-cpu/
-  windows-cuda/
-  windows-directml/
-  macos-cpu/
-  macos-coreml/
-```
-
-実行していないdirectoryを作る必要はありません。
-
-## `scripts/`と`tmp/`
-
-`tmp/`は破棄可能です。`scripts/`はBucket側に履歴として必要な補助materialを置くための領域であり、source codeの正本はGitです。
-
-## Model Repoとの関係
-
-```text
-Candidate
-  ↓
-Evaluation
-  ↓
+Candidate variant
+  ↓ Evaluation
 Acceptance
-  ↓
-Promotion
-  ↓
+  ↓ Promotion
 HF Model Repo
 ```
 
-`development_artifact.repo_id`はModel Repoを指し、Bucketを指しません。
-
-## Routing
-
-現在のBucket割当は`HF_TARGETS_JSON`で管理します。同一snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更でtargetのBucketを変更できます。過去runは当時のBucketをrun-contextに保存します。
-
-関連文書:
-
-```text
-docs/central-allocator.md
-docs/hf-bucket-operations.md
-docs/hf-routing-snapshots.md
-```
+promotionではrun-contextに保存されたselected variant bundle identityを再検証します。

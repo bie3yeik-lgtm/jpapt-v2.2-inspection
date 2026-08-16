@@ -2,7 +2,7 @@
 
 ## 目的
 
-本リポジトリでは、過去にworkflow修正時にAction versionが古い値へ巻き戻る問題が発生したため、主要な公式Actionのversionを**開発規約かつCI contract**として固定します。
+本リポジトリでは、workflow修正時にAction versionが意図せず変更されることを防ぐため、主要な公式Actionのversionを**開発規約かつCI contract**として固定します。
 
 以下が正しい値です。
 
@@ -10,27 +10,31 @@
 - uses: actions/checkout@v7
 - uses: actions/setup-python@v7
 - uses: actions/upload-artifact@v7
-- uses: actions/cache@6
+- uses: actions/cache@v6
+- uses: actions/cache/restore@v6
+- uses: actions/cache/save@v6
 ```
 
-これらを`@v4`、`@v5`等へ戻してはいけません。
+`actions/cache/restore` と `actions/cache/save` は必須利用ではありませんが、使用する場合は必ず `@v6` とします。
 
 ## 適用範囲
 
-`.github/workflows/*.yml`に存在する以下のActionすべてが対象です。
+`.github/workflows/*.yml`に存在する以下のActionが対象です。
 
-| Action | 必須version |
-|---|---|
-| `actions/checkout` | `v7` |
-| `actions/setup-python` | `v7` |
-| `actions/upload-artifact` | `v7` |
-| `actions/cache` | `6` |
+| Action | 固定version | 利用必須 |
+|---|---:|---:|
+| `actions/checkout` | `v7` | yes |
+| `actions/setup-python` | `v7` | yes |
+| `actions/upload-artifact` | `v7` | yes |
+| `actions/cache` | `v6` | yes |
+| `actions/cache/restore` | `v6` | no |
+| `actions/cache/save` | `v6` | no |
 
-その他のAction（例: `dtolnay/rust-toolchain`, `actions/download-artifact`）は、この文書のversion固定対象とは別に管理します。
+その他のAction（例: `dtolnay/rust-toolchain`, `actions/download-artifact`）は、この固定ポリシーとは別に管理します。
 
 ## CIによる強制
 
-人間向け文書だけでは巻き戻りを防げないため、次のscriptをsource-controlled contractとして実行します。
+次のscriptをsource-controlled contractとして実行します。
 
 ```text
 scripts/ci/validate-github-action-versions.py
@@ -38,34 +42,43 @@ scripts/ci/validate-github-action-versions.py
 
 `Validate HF Layout`のPR/push jobで全workflowを走査し、対象Actionが指定version以外なら失敗します。
 
-例:
+例えば、
 
 ```text
-actions/checkout@v4
+actions/checkout@v6
 ```
 
 が追加されると、CIは次の種類のエラーとして拒否します。
 
 ```text
 ERROR: .github/workflows/example.yml:<line>:
-actions/checkout@v4 is forbidden; required=actions/checkout@v7
+actions/checkout@v6 is forbidden; required=actions/checkout@v7
 ```
 
-## 開発時のルール
-
-workflowを新規作成・編集する場合は、既存workflowをコピーした後でもAction versionを必ずこの文書と照合してください。
-
-AI/Coding Agentへworkflow変更を依頼する場合も、次を不変条件として扱います。
+同様に、
 
 ```text
-DO NOT downgrade or rewrite:
+actions/cache@6
+actions/cache@v5
+actions/cache/restore@v5
+actions/cache/save@v5
+```
+
+も拒否されます。
+
+## 開発時の不変条件
+
+```text
+DO NOT downgrade, upgrade, or rewrite:
   actions/checkout@v7
   actions/setup-python@v7
   actions/upload-artifact@v7
-  actions/cache@6
+  actions/cache@v6
+  actions/cache/restore@v6   # when used
+  actions/cache/save@v6      # when used
 ```
 
-Actionを追加・削除した結果、この固定ポリシー自体を変更する必要が生じた場合は、workflowだけを先に変更せず、次を同一PRで更新します。
+Action version policyそのものを変更する必要がある場合は、workflowだけを先に変更せず、次を同一PRで更新します。
 
 ```text
 docs/github-actions-version-policy.md

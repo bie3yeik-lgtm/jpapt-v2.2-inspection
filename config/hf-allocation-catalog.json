@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "catalog_id": "hf-allocation-catalog-v1",
+  "prefixes": {
+    "candidate.default": "candidate",
+    "candidate.parakeet-tdt-ctc-v1": "parakeet-candidate",
+    "candidate.whisper-autoregressive-v1": "whisper-candidate",
+    "experiment.cpu_full": "cpu-full-eval",
+    "experiment.cross_platform_parity": "cross-platform-parity",
+    "experiment.rust_eval": "rust-eval",
+    "config.version": "config"
+  }
+}

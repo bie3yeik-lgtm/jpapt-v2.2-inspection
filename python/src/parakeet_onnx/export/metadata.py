@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogReference:
+    id: str
+    sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,21 +31,24 @@ class ArtifactMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class TokenizerMetadata:
-    kind: str
+class TokenizerBinding:
     path: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateVariantMetadata:
+    artifacts: dict[str, ArtifactMetadata]
+    bindings: dict[str, Any]
+    tokenizer: TokenizerBinding | None
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateMetadata:
     candidate_id: str
-    decoder: str
-    artifact_contract: str
-    artifacts: dict[str, ArtifactMetadata]
-    runtime_contract: dict[str, Any]
-    tokenizer: TokenizerMetadata | None = None
-    features: dict[str, bool] = field(default_factory=dict)
-    schema_version: int = 2
+    catalog: CatalogReference
+    profile_set: str
+    variants: dict[str, CandidateVariantMetadata]
+    schema_version: int = 3
 
 
 def sha256_file(path: Path) -> str:
@@ -50,25 +59,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_candidate_metadata(
-    path: Path,
-    metadata: CandidateMetadata,
-) -> None:
-    if metadata.schema_version != 2:
-        raise ValueError("new candidate metadata must use schema_version=2")
-    if metadata.runtime_contract.get("decoder") != metadata.decoder:
-        raise ValueError("runtime_contract.decoder must match candidate decoder")
-    if not metadata.artifacts:
-        raise ValueError("candidate metadata must define at least one artifact")
+def write_candidate_metadata(path: Path, metadata: CandidateMetadata) -> None:
+    if metadata.schema_version != 3:
+        raise ValueError("new candidate metadata must use schema_version=3")
+    if not metadata.catalog.id or len(metadata.catalog.sha256) != 64:
+        raise ValueError("candidate metadata must pin a valid ASR catalog reference")
+    if not metadata.profile_set:
+        raise ValueError("candidate metadata must reference a profile_set")
+    if not metadata.variants:
+        raise ValueError("candidate metadata must define at least one variant")
+    for variant, value in metadata.variants.items():
+        if not variant or not value.artifacts:
+            raise ValueError(f"candidate variant {variant!r} is incomplete")
+        for key in ("input_kind", "io", "decoder_config"):
+            if key not in value.bindings:
+                raise ValueError(
+                    f"candidate variant {variant!r} bindings are missing {key!r}"
+                )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
-            asdict(metadata),
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
+        json.dumps(asdict(metadata), ensure_ascii=False, indent=2, sort_keys=True)
         + "\n",
         encoding="utf-8",
     )

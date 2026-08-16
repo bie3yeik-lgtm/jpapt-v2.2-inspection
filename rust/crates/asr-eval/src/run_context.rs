@@ -1,8 +1,13 @@
 use std::{fs, path::Path};
+
+use asr_runtime::ProviderKind;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use asr_runtime::ProviderKind;
-use crate::{config::{RevisionBundleData, detect_environment, logical_path}, Result};
+
+use crate::{
+    config::{detect_environment, logical_path, RevisionBundleData},
+    Result,
+};
 
 pub fn sha256_file(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
@@ -11,14 +16,27 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn revision_context(revisions:&RevisionBundleData)->serde_json::Value {
-    let reference=&revisions.reference;
-    let evaluation=&revisions.evaluation_schema;
-    let datasets=&revisions.datasets_lock;
-    let entries=datasets.get("datasets").cloned().unwrap_or_else(||serde_json::json!([]));
+fn revision_context(revisions: &RevisionBundleData) -> serde_json::Value {
+    let reference = &revisions.reference;
+    let evaluation = &revisions.evaluation_schema;
+    let datasets = &revisions.datasets_lock;
+    let entries = datasets
+        .get("datasets")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+
+    let runtime = revisions.runtime.as_ref().map(|value| {
+        serde_json::json!({
+            "document_sha256": revisions.runtime_hash,
+            "catalog": value.get("catalog").cloned().unwrap_or(serde_json::Value::Null),
+            "profile_set": value.get("profile_set").cloned().unwrap_or(serde_json::Value::Null)
+        })
+    });
+
     serde_json::json!({
         "config_version": revisions.config_version,
         "bundle_sha256": revisions.bundle_hash,
+        "runtime": runtime,
         "reference": {
             "document_sha256": revisions.reference_hash,
             "development_artifact": reference.get("development_artifact").cloned().unwrap_or(serde_json::Value::Null),
@@ -26,14 +44,12 @@ fn revision_context(revisions:&RevisionBundleData)->serde_json::Value {
             "tokenizer": reference.get("tokenizer").cloned().unwrap_or(serde_json::Value::Null),
             "reference_id": reference.pointer("/reference/id").cloned().unwrap_or(serde_json::Value::Null),
             "reference_revision": reference.pointer("/reference/revision").cloned().unwrap_or(serde_json::Value::Null),
-            "canonical_framework": reference.pointer("/reference/canonical_framework").cloned().unwrap_or(serde_json::Value::Null),
-            "decoders": reference.get("decoders").cloned().unwrap_or(serde_json::Value::Null)
+            "canonical_framework": reference.pointer("/reference/canonical_framework").cloned().unwrap_or(serde_json::Value::Null)
         },
         "evaluation_schema": {
             "document_sha256": revisions.evaluation_schema_hash,
             "schema_id": evaluation.pointer("/schema/id").cloned().unwrap_or(serde_json::Value::Null),
-            "schema_revision": evaluation.pointer("/schema/revision").cloned().unwrap_or(serde_json::Value::Null),
-            "decoders": evaluation.get("decoders").cloned().unwrap_or(serde_json::Value::Null)
+            "schema_revision": evaluation.pointer("/schema/revision").cloned().unwrap_or(serde_json::Value::Null)
         },
         "datasets": {
             "document_sha256": revisions.datasets_lock_hash,
@@ -45,12 +61,17 @@ fn revision_context(revisions:&RevisionBundleData)->serde_json::Value {
 fn run_metadata(experiment_id: Option<&str>) -> serde_json::Value {
     let mut metadata = serde_json::Map::new();
     if let Some(id) = experiment_id {
-        metadata.insert("experiment_id".into(), serde_json::Value::String(id.to_owned()));
+        metadata.insert(
+            "experiment_id".into(),
+            serde_json::Value::String(id.to_owned()),
+        );
     }
     for (key, env_name) in [
         ("hf_target_id", "HF_TARGET_ID"),
         ("hf_bucket", "HF_BUCKET"),
         ("hf_model_repo", "HF_MODEL_REPO"),
+        ("runtime_variant", "ASR_RUNTIME_VARIANT"),
+        ("runtime_profile", "EXPECTED_RUNTIME_PROFILE"),
     ] {
         if let Ok(value) = std::env::var(env_name) {
             if !value.is_empty() {
@@ -84,7 +105,7 @@ pub fn build_run_context(
     );
 
     Ok(serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": run_id,
         "created_at": now.to_rfc3339(),
         "config_identity": format!("{model_id}:{}:{provider}:{evaluation}", detect_environment()),

@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--evaluator", required=True)
     parser.add_argument("--decoder", required=True)
+    parser.add_argument("--runtime-variant")
     parser.add_argument("--provider")
     parser.add_argument("--candidate-dir", type=Path)
     parser.add_argument("--repository-root", type=Path, default=Path("."))
@@ -27,12 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    path = (
-        args.repository_root.expanduser().resolve()
-        / "config"
-        / "evaluators"
-        / f"{args.evaluator}.toml"
-    )
+    repository_root = args.repository_root.expanduser().resolve()
+    path = repository_root / "config" / "evaluators" / f"{args.evaluator}.toml"
     if not path.is_file():
         return _error(f"evaluator capability file not found: {path}")
 
@@ -95,14 +92,19 @@ def main() -> int:
     candidate: CandidateArtifacts | None = None
     if args.candidate_dir is not None:
         try:
-            candidate = CandidateArtifacts.load(args.candidate_dir)
+            candidate = CandidateArtifacts.load(
+                args.candidate_dir,
+                variant=args.runtime_variant,
+                repository_root=repository_root,
+            )
             validate_candidate_runtime_contract(candidate)
         except (CandidateMetadataError, KeyError, TypeError, ValueError) as exc:
             return _error(f"candidate runtime contract is invalid: {exc}")
         if candidate.decoder != args.decoder:
             return _error(
                 "candidate decoder mismatch: "
-                f"expected={args.decoder!r}, candidate={candidate.decoder!r}"
+                f"expected={args.decoder!r}, candidate={candidate.decoder!r}, "
+                f"variant={candidate.variant!r}"
             )
         if supported_contracts and candidate.artifact_contract not in supported_contracts:
             return _error(
@@ -121,7 +123,8 @@ def main() -> int:
     suffix = ""
     if candidate is not None:
         suffix = (
-            f", artifact_contract={candidate.artifact_contract}, "
+            f", runtime_variant={candidate.variant or candidate.decoder}, "
+            f"artifact_contract={candidate.artifact_contract}, "
             f"features={dict(candidate.features)!r}"
         )
     print(
@@ -133,10 +136,7 @@ def main() -> int:
 
 
 def _string_list(
-    source: dict[str, object],
-    key: str,
-    *,
-    required: bool = True,
+    source: dict[str, object], key: str, *, required: bool = True
 ) -> list[str]:
     value = source.get(key)
     if value is None and not required:
