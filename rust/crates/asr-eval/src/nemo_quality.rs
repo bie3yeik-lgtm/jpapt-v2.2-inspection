@@ -208,7 +208,10 @@ fn required_str<'a>(value: &'a Value, path: &[&str], label: &str) -> Result<&'a 
         .ok_or_else(|| invalid(format!("{label} must be a string")))
 }
 
-fn validate_source_identity(options: &NemoOnnxQualityOptions, reference: &NemoReferenceDocument) -> Result<()> {
+fn validate_source_identity(
+    options: &NemoOnnxQualityOptions,
+    reference: &NemoReferenceDocument,
+) -> Result<()> {
     validate_report(
         &options.nemo_validation_report,
         &options.nemo_validation_bundle_root,
