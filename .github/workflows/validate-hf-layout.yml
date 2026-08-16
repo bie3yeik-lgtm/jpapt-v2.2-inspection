@@ -13,9 +13,7 @@ on:
       - ".github/workflows/**"
       - "config/**"
       - "evaluation/**"
-      - "python/src/parakeet_onnx/hf/**"
-      - "python/src/parakeet_onnx/config/**"
-      - "python/src/parakeet_onnx/reference/**"
+      - "python/src/parakeet_onnx/**"
       - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
@@ -25,9 +23,7 @@ on:
       - ".github/workflows/**"
       - "config/**"
       - "evaluation/**"
-      - "python/src/parakeet_onnx/hf/**"
-      - "python/src/parakeet_onnx/config/**"
-      - "python/src/parakeet_onnx/reference/**"
+      - "python/src/parakeet_onnx/**"
       - "python/tests/**"
       - "scripts/hf/**"
       - "scripts/ci/**"
@@ -69,6 +65,7 @@ jobs:
           python scripts/dev/verify-python-first.py
           python scripts/dev/doctor.py
           python scripts/ci/validate-hf-targets.py
+          python scripts/ci/validate-github-action-versions.py
           bash -n scripts/hf/hf-allocate-id.sh
           bash -n scripts/hf/hf-request-id.sh
           bash -n scripts/hf/hf-update-root-readme.sh
@@ -79,6 +76,10 @@ jobs:
             python/tests/unit/test_revision_decoder_shapes.py \
             python/tests/unit/test_hf_target_bucket_resolution.py \
             python/tests/unit/test_hf_sequence_id.py \
+            python/tests/unit/test_candidate_artifacts.py \
+            python/tests/unit/test_tdt_decoder.py \
+            python/tests/unit/test_whisper_runtime_contract.py \
+            python/tests/unit/test_runtime_registry.py \
             python/tests/unit/test_evaluator_capability.py
 
       - name: List source-controlled HF targets and evaluators
