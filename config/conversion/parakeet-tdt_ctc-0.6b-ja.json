@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "profile_id": "parakeet-nemo-onnx-v1",
+  "source": {
+    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "repo_type": "model",
+    "library": "nemo",
+    "language": "ja",
+    "license": "cc-by-4.0",
+    "datasets": ["reazon-research/reazonspeech"],
+    "task": "automatic-speech-recognition",
+    "model_file": "parakeet-tdt_ctc-0.6b-ja.nemo"
+  },
+  "semantics": {
+    "architecture": "hybrid_fastconformer_tdt_ctc",
+    "reference_runtime": "nemo",
+    "default_decoder": "tdt",
+    "supported_decoders": ["ctc", "tdt"],
+    "canonical_first_gate": "ctc",
+    "frontend_location": "outside_onnx",
+    "canonical_precision": "fp32"
+  },
+  "artifact_contracts": {
+    "ctc": {
+      "roles": ["primary"],
+      "graph_boundary": "fastconformer_encoder_plus_ctc_head"
+    },
+    "tdt": {
+      "roles": ["encoder", "predictor", "joint"],
+      "graph_boundary": "split_stateful_transducer"
+    }
+  },
+  "required_obstacle_checks": [
+    "A-01-dynamo-dynamic-shapes",
+    "A-02-nemo-pytorch-exporter-generation",
+    "B-01-complex-stft-externalized",
+    "B-02-mel-count-from-upstream",
+    "B-03-feature-parity",
+    "B-04-dither-determinism",
+    "C-01-xscaling-from-upstream",
+    "C-02-optimization-numeric-drift",
+    "D-01-ctc-blank-from-upstream",
+    "E-01-predictor-state-shape",
+    "F-01-duration-zero-loop-guard",
+    "G-01-tokenizer-revision-lock",
+    "I-01-ort-session-load",
+    "K-01-external-data-complete",
+    "K-02-artifact-sha256-complete"
+  ],
+  "acceptance_order": [
+    "source_manifest",
+    "nemo_load",
+    "frontend_fixture",
+    "ctc_export",
+    "ctc_onnx_check",
+    "ctc_ort_cpu",
+    "ctc_reference_parity",
+    "tdt_export",
+    "predictor_state_parity",
+    "joint_parity",
+    "tdt_single_step_parity",
+    "tdt_state_trace_parity"
+  ]
+}
