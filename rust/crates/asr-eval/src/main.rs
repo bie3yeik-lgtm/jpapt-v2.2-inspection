@@ -3,6 +3,7 @@ use std::str::FromStr;
 use asr_eval::bucket_init::{BucketInitOptions, initialize_bucket};
 use asr_eval::evaluator::{EvaluateOptions, evaluate};
 use asr_eval::nemo_onnx::{RequiredScope, validate_report};
+use asr_eval::nemo_quality::{NemoOnnxQualityOptions, measure_nemo_onnx_quality};
 use asr_eval::{Cli, Command};
 use asr_runtime::ProviderKind;
 use clap::Parser;
@@ -51,6 +52,25 @@ fn main() -> anyhow::Result<()> {
                 "NeMo ONNX validation passed for required scope: {}",
                 args.require
             );
+        }
+        Command::NemoOnnxQuality(args) => {
+            let provider = ProviderKind::from_str(&args.provider)?;
+            let result = measure_nemo_onnx_quality(NemoOnnxQualityOptions {
+                provider,
+                candidate_contract: args.candidate_contract,
+                run_context: args.run_context,
+                resolved_manifest: args.resolved_manifest,
+                nemo_reference: args.nemo_reference,
+                output: args.output,
+                max_cer_regression: args.max_cer_regression,
+                max_wer_regression: args.max_wer_regression,
+            })?;
+            println!("reference_run_id: {}", result["comparison"]["reference_run_id"]);
+            println!("candidate_run_id: {}", result["comparison"]["candidate_run_id"]);
+            println!("acceptance.passed: {}", result["acceptance"]["passed"]);
+            if result["acceptance"]["passed"] == false {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())
