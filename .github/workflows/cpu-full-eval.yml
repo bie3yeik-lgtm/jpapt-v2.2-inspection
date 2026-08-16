@@ -12,13 +12,18 @@ on:
         description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
         required: true
         type: string
+      runtime_variant:
+        description: "Runtime variant from the target profile set (blank = catalog default)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
   actions: write
 
 concurrency:
-  group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}
+  group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}
   cancel-in-progress: false
 
 env:
@@ -39,6 +44,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Install project for catalog resolution
+        run: python -m pip install -e ".[dev]"
       - name: Allocate ID through central allocator
         id: allocate
         shell: bash
@@ -47,9 +54,10 @@ jobs:
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           EVALUATION_ID: full
           PROVIDER_ID: cpu
+          ASR_RUNTIME_VARIANT: ${{ inputs.runtime_variant }}
         run: |
           set -euo pipefail
-          ID="$(bash scripts/hf/hf-allocate-id.sh experiments cpu-full-eval)"
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments experiment.cpu_full)"
           echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "Experiment: ${ID}"
 
@@ -65,6 +73,9 @@ jobs:
       EXPECTED_UPSTREAM_REPO_ID: ""
       EXPECTED_TOKENIZER_REPO_ID: ""
       EXPECTED_FRAMEWORK: ""
+      HF_PROFILE_SET: ""
+      ASR_RUNTIME_VARIANT: ""
+      EXPECTED_RUNTIME_PROFILE: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
@@ -88,7 +99,7 @@ jobs:
           python -c "import parakeet_onnx"
           hf --version
 
-      - name: Resolve HF Bucket
+      - name: Resolve HF Bucket and runtime variant
         id: hf
         shell: bash
         run: |
@@ -97,11 +108,16 @@ jobs:
             echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
             exit 1
           }
-          python scripts/ci/resolve-hf-target.py \
-            --bucket "${{ inputs.hf_bucket }}" \
-            --targets-json "${HF_TARGETS_JSON}" \
-            --github-env "${GITHUB_ENV}" \
+          ARGS=(
+            --bucket "${{ inputs.hf_bucket }}"
+            --targets-json "${HF_TARGETS_JSON}"
+            --github-env "${GITHUB_ENV}"
             --github-output "${GITHUB_OUTPUT}"
+          )
+          if [[ -n "${{ inputs.runtime_variant }}" ]]; then
+            ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
+          fi
+          python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
 
       - name: Validate GitHub configuration
         shell: bash
@@ -113,6 +129,10 @@ jobs:
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
+          echo "Profile set: ${HF_PROFILE_SET}"
+          echo "Runtime variant: ${ASR_RUNTIME_VARIANT}"
+          echo "Runtime profile: ${EXPECTED_RUNTIME_PROFILE}"
+          echo "Decoder: ${EXPECTED_DECODER}"
           echo "Experiment: ${EXPERIMENT_ID}"
 
       - name: Prepare directories
@@ -140,6 +160,9 @@ jobs:
             --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
             --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
             --expected-framework "${EXPECTED_FRAMEWORK}" \
+            --expected-profile-set "${HF_PROFILE_SET}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --expected-runtime-profile "${EXPECTED_RUNTIME_PROFILE}" \
             --expected-decoder "${EXPECTED_DECODER}"
 
       - name: Cache model and evaluation assets
@@ -152,18 +175,20 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{
+            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
                 '.ci/hf/config/revisions/reference.json',
                 '.ci/hf/config/revisions/evaluation-schema.json',
                 '.ci/hf/config/revisions/datasets-lock.json',
+                '.ci/hf/config/revisions/runtime.json',
+                'config/asr-catalog.json',
                 'pyproject.toml'
               )
             }}
           restore-keys: |
-            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
@@ -178,6 +203,7 @@ jobs:
           python scripts/ci/validate-evaluator-capability.py \
             --evaluator python-onnx \
             --decoder "${EXPECTED_DECODER}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --provider cpu \
             --candidate-dir .ci/candidate
 
@@ -200,6 +226,7 @@ jobs:
             --environment linux \
             --evaluation full \
             --model-config "${HF_TARGET_ID}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --candidate-dir ".ci/candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
             --experiment-id "${EXPERIMENT_ID}" \
@@ -237,7 +264,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ inputs.candidate_id }}
+          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ inputs.candidate_id }}
           path: |
             results/linux-cpu-full/run-context.json
             results/linux-cpu-full/metrics.json
