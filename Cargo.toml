@@ -4,6 +4,8 @@ members = [
     "rust/crates/asr-runtime",
     "rust/crates/asr-audio",
     "rust/crates/asr-metrics",
+    "rust/crates/asr-input",
+    "rust/crates/asr-capsule",
     "rust/crates/asr-eval",
 ]
 
@@ -29,6 +31,9 @@ symphonia = { version = "0.5.5", features = ["all"] }
 unicode-normalization = "0.1"
 sysinfo = "0.37"
 ort = { version = "=2.0.0-rc.13", features = ["download-binaries"] }
+arrow-array = "=59.2.0"
+arrow-schema = "=59.2.0"
+parquet = { version = "=59.2.0", default-features = false, features = ["arrow", "zstd"] }
 
 [profile.release]
 opt-level = 3
