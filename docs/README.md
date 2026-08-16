@@ -1,6 +1,6 @@
 # Documentation
 
-この `docs/` は、`main` の現行実装を運用・開発・検証するための正規ドキュメントです。対象は **Rust-first runtime、Python-native ML boundary、Hugging Face Bucket、Execution Provider、GitHub Actions、release/promotion** です。
+この `docs/` は、`main` の現行実装を運用・開発・検証するための正規ドキュメントです。対象は **Rust-first runtime、Python-native ML boundary、Hugging Face Bucket、GHCR reference environment、Execution Provider、GitHub Actions、release/promotion** です。
 
 過去schemaや移行途中の互換経路を正当化する資料ではありません。コード・schema・catalog・workflowと本文が矛盾する場合は、実装・source-controlled contract・workflow YAMLを正本とし、docsを修正します。
 
@@ -12,10 +12,13 @@
 4. [hf-buckets.md](./hf-buckets.md) — HF Bucketのcanonical layout、legacy read fallback、Model Repoとの役割分担
 5. [evaluation.md](./evaluation.md) — candidate評価、run、benchmark、acceptance、promotion
 6. [providers.md](./providers.md) — CPU/CUDA/DirectML/CoreMLのprovider evidenceと制約
-7. [github-actions.md](./github-actions.md) — 全GitHub Actionsのtrigger、input、runner、secret、artifact、用途
-8. [workflows.md](./workflows.md) — config publish → candidate publish → evaluation → promotion の運用手順
-9. [json-reference.md](./json-reference.md) — 主要JSON/JSONL/Parquet contractの標準形
-10. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
+7. [ghcr-ci.md](./ghcr-ci.md) — Dockerfile→HF target対応、GHCR build/pull/digest/attestation、Bucket評価
+8. [github-actions.md](./github-actions.md) — GitHub Actionsのtrigger、input、runner、secret、artifact、用途
+9. [github-actions-ux.md](./github-actions-ux.md) — Actionsの操作性、dispatch設計、GitHub UIの制約と改善方針
+10. [repository-dispatch.md](./repository-dispatch.md) — 全workflow共通のrepository_dispatch APIとRust入力検証
+11. [workflows.md](./workflows.md) — config publish → candidate publish → evaluation → promotion の運用手順
+12. [json-reference.md](./json-reference.md) — 主要JSON/JSONL/Parquet contractの標準形
+13. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
 
 ## 現在の実装スタック
 
@@ -31,6 +34,8 @@
 | Dataset acquisition | Python `datasets` boundary |
 | Persistent analytical run format | `ExperimentCapsuleV1` / Parquet (`asr-capsule`) |
 | CI | GitHub Actions |
+| Actions dispatch validation | Rust `asr-workflow-dispatch` |
+| Reference/export environment registry | GitHub Container Registry (GHCR), digest-pinned |
 | Development artifact store | Hugging Face Buckets |
 | Release artifact store | Hugging Face Model Repo + Rust binaryはGitHub Releases |
 
@@ -38,7 +43,7 @@
 
 ```text
 rust/crates/
-├── asr-contracts   # schema/config/revision/run-context/HF policy boundary
+├── asr-contracts   # schema/config/revision/run-context/HF/Actions policy boundary
 ├── asr-hf          # target routing, Bucket layout, allocation, response bookkeeping
 ├── asr-audio       # audio decode/resample/canonical waveform
 ├── asr-runtime     # ONNX Runtime / Execution Provider
@@ -61,6 +66,8 @@ Rust evaluatorのdecoder capabilityは現時点で **CTCのみ**です。Python 
 | `config/evaluation/*.toml` | smoke/parity/coreml-parity/full評価条件 |
 | `config/evaluators/*.toml` | evaluator capability |
 | `evaluation/schemas/*.schema.json` | persisted JSON/JSONL artifact schema |
+| `.github/workflows/*.yml` | GitHub UI/manual input schemaとexecution orchestration |
+| `docker/*/Dockerfile` labels | GHCR package/source framework/source model/reference-environment identity |
 
 ## 現在のHF target
 
@@ -82,7 +89,12 @@ HF target TOMLへupstream/frameworkを重複記入しません。target IDはフ
 - config versionは4文書 (`reference.json`, `evaluation-schema.json`, `datasets-lock.json`, generated `runtime.json`)。
 - fetched configには `.ci/hf/config/resolved.json` が必要。
 - `run-context.json` schema v2のexecution identityに `null` を許さない。
+- GHCR tagは実験identityではない。評価前にRepoDigestへ固定し、`metadata.ghcr.digest`へ記録する。
+- `HF_TARGETS_JSON` はGHCR CIでsource-controlled target routingと一致することを検査し、独立したruntime authorityにはしない。
+- `workflow_dispatch.inputs` をGitHub UI/manual inputの正本とし、repository dispatch用に別input catalogを作らない。
+- repository dispatchはRustがworkflow YAMLからrequired/default/type/choiceを解決し、不正requestをheavy job前に拒否する。
 - provider registration、session creation、successful inference、provider execution proof、node assignment proofを別々に扱う。
+- DirectML/CoreMLをLinux GHCR containerで評価済みと扱わない。
 - accepted `full` runがpromotionの標準条件。
 - GitHub Actionsはruntime semanticsを独自定義せず、Rust CLI / source-controlled config / schemaを呼び出すexecution layerとする。
 
@@ -91,13 +103,22 @@ HF target TOMLへupstream/frameworkを重複記入しません。target IDはフ
 | 分類 | workflow |
 |---|---|
 | 常設PR/Push CI | `python-unit.yml`, `rust-ci.yml`, `validate-hf-layout.yml`, `capsule-interop.yml` |
+| GHCR contract/build | `ghcr-contracts.yml`, `ghcr-build-publish.yml` |
+| GHCR evaluation/audit | `ghcr-evaluate.yml`, `ghcr-audit.yml` |
 | 手動評価 | `cpu-full-eval.yml`, `cross-platform-parity.yml`, `rust-eval.yml` |
 | provider proof | `provider-strict-probes.yml` |
 | public/reference E2E | `public-model-e2e.yml` |
 | HF allocation service | `hf-central-allocator.yml` |
+| external dispatch | `repository-dispatch.yml` |
 | release | `rust-release.yml` |
 
-詳細は [github-actions.md](./github-actions.md) を参照してください。
+正確なdispatch対象一覧は文書へ手書きせず、次で取得します。
+
+```bash
+mise run actions-list
+```
+
+詳細は [github-actions.md](./github-actions.md)、[github-actions-ux.md](./github-actions-ux.md)、[repository-dispatch.md](./repository-dispatch.md)、[ghcr-ci.md](./ghcr-ci.md) を参照してください。
 
 ## 変更時の原則
 

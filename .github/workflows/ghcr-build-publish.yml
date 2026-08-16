@@ -1,0 +1,186 @@
+name: GHCR Build and Publish
+run-name: >-
+  GHCR Build · ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }} · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "docker/**"
+      - ".github/workflows/ghcr-build-publish.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/ghcr-build-publish.yml"
+
+jobs:
+  changes:
+    name: Check Docker build inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build_required: ${{ steps.changes.outputs.build_required }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - id: changes
+        name: Skip PR synchronize runs without Docker changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          required=true
+          if [[ "$EVENT_NAME" == pull_request && "$EVENT_ACTION" == synchronize && -n "$BEFORE_SHA" ]]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+            if ! git diff --quiet "$BEFORE_SHA" "$AFTER_SHA" -- docker/ .github/workflows/ghcr-build-publish.yml; then
+              required=true
+            else
+              required=false
+              echo "No Docker build input changed since the previous PR head; skipping the expensive image rebuild."
+            fi
+          fi
+          echo "build_required=$required" >> "$GITHUB_OUTPUT"
+
+  discover:
+    name: Discover Docker packages
+    needs: changes
+    if: needs.changes.outputs.build_required == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: matrix
+        name: Build Docker package matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          entries='[]'
+          while IFS= read -r dockerfile; do
+            context="$(dirname "$dockerfile")"
+            package="$(sed -n 's/^LABEL io\.jpapt\.ghcr\.package="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            role="$(sed -n 's/^LABEL io\.jpapt\.role="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            [[ -n "$package" ]] || { echo "::error::$dockerfile lacks io.jpapt.ghcr.package"; exit 1; }
+            [[ -n "$source_repo" ]] || { echo "::error::$dockerfile lacks io.jpapt.source.repo_id"; exit 1; }
+            [[ -n "$role" ]] || { echo "::error::$dockerfile lacks io.jpapt.role"; exit 1; }
+            namespace="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+            image="ghcr.io/${namespace}/${package}"
+            item="$(jq -cn --arg context "$context" --arg dockerfile "$dockerfile" --arg package "$package" --arg image "$image" --arg source_repo "$source_repo" --arg role "$role" '{context:$context,dockerfile:$dockerfile,package:$package,image:$image,source_repo:$source_repo,role:$role}')"
+            entries="$(jq -c --argjson item "$item" '. + [$item]' <<<"$entries")"
+          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
+          [[ "$(jq 'length' <<<"$entries")" -gt 0 ]] || { echo "::error::No docker/*/Dockerfile found"; exit 1; }
+          printf 'matrix=%s\n' "$(jq -c '{include:.}' <<<"$entries")" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.package }}
+    needs: discover
+    concurrency:
+      group: ghcr-build-${{ github.ref }}-${{ matrix.package }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: build
+        name: Build and publish immutable environment
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: false
+          tags: |
+            ${{ matrix.image }}:latest
+            ${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.jpapt.source.repo_id=${{ matrix.source_repo }}
+            io.jpapt.role=${{ matrix.role }}
+          cache-from: type=gha,scope=${{ matrix.package }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.package }}
+
+      - name: Resolve published image identity
+        id: image
+        shell: bash
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # PR builds are intentionally not exported to the Docker daemon.
+            # Compatibility smoke runs inside the Dockerfile during Buildx.
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "digest=${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+            echo "reference=${{ matrix.image }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            [[ "$BUILD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::Invalid published image digest: $BUILD_DIGEST"; exit 1;
+            }
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$BUILD_DIGEST" >> "$GITHUB_OUTPUT"
+            echo "reference=${{ matrix.image }}@${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attest pushed image
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Write build provenance
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          mkdir -p .ci/ghcr
+          jq -n \
+            --arg image "${{ matrix.image }}" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg reference "${{ steps.image.outputs.reference }}" \
+            --argjson published "${{ steps.image.outputs.published }}" \
+            --arg dockerfile "${{ matrix.dockerfile }}" \
+            --arg source_repo "${{ matrix.source_repo }}" \
+            --arg role "${{ matrix.role }}" \
+            --arg git_commit "${GITHUB_SHA}" \
+            '{schema_version:2,image:$image,reference:$reference,published:$published,dockerfile:$dockerfile,source_repo:$source_repo,role:$role,git_commit:$git_commit}
+             + if $digest == "" then {} else {digest:$digest} end' \
+            > .ci/ghcr/build.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-build-${{ matrix.package }}
+          path: .ci/ghcr/build.json
+          retention-days: 14
+          if-no-files-found: error

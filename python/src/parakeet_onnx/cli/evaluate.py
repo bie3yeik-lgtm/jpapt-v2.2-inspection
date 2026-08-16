@@ -115,6 +115,19 @@ def main() -> int:
         if value:
             metadata[key] = value
 
+    ghcr_values = {
+        "image": os.environ.get("GHCR_IMAGE"),
+        "digest": os.environ.get("GHCR_IMAGE_DIGEST"),
+        "reference": os.environ.get("GHCR_IMAGE_REFERENCE"),
+        "docker_context": os.environ.get("GHCR_DOCKER_CONTEXT"),
+        "role": os.environ.get("GHCR_IMAGE_ROLE"),
+    }
+    ghcr = {key: value for key, value in ghcr_values.items() if value}
+    if ghcr:
+        if "digest" not in ghcr:
+            raise SystemExit("GHCR execution metadata requires GHCR_IMAGE_DIGEST")
+        metadata["ghcr"] = ghcr
+
     context = build_run_context(
         config=config,
         revisions=revisions,
@@ -146,6 +159,9 @@ def main() -> int:
     print(f"run_id: {benchmark.run_id}")
     if experiment_id:
         print(f"experiment_id: {experiment_id}")
+    if ghcr:
+        print(f"ghcr_image: {ghcr.get('image', '')}")
+        print(f"ghcr_image_digest: {ghcr['digest']}")
     print(f"candidate_id: {candidate.candidate_id}")
     print(f"runtime_variant: {candidate.variant}")
     print(f"runtime_profile: {candidate.profile_id}")

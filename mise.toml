@@ -50,3 +50,15 @@ cargo fmt --all
 [tasks.rust-check]
 description = "Check the Rust workspace"
 run = "cargo check --workspace"
+
+[tasks.actions-list]
+description = "List repository-dispatch reachable GitHub Actions workflows"
+run = "cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- list"
+
+[tasks.actions-validate]
+description = "Validate GitHub Actions workflow_dispatch contracts and defaults"
+run = "cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- validate"
+
+[tasks.actions-ghcr]
+description = "Describe the GHCR evaluation workflow inputs"
+run = "cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe ghcr-evaluate"

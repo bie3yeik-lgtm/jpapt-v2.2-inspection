@@ -1,26 +1,12 @@
 # GitHub Actions
 
-この文書は `.github/workflows/` の現行YAMLを基準に、各Actionのtrigger、input、runner、secret、生成物、用途をまとめます。
+この文書は `.github/workflows/` の現行YAMLを基準に、GitHub Actions全体の役割、trigger、input、権限、成果物、workflow間の関係をまとめます。
 
-## 1. Workflow一覧
+操作性・外部dispatchの設計判断は [github-actions-ux.md](./github-actions-ux.md)、共通repository dispatch APIは [repository-dispatch.md](./repository-dispatch.md)、GHCR固有の詳細は [ghcr-ci.md](./ghcr-ci.md) を参照してください。
 
-| Workflow | Trigger | 主目的 |
-|---|---|---|
-| `python-unit.yml` | PR / `main` push | Python locked環境とunit tests |
-| `rust-ci.yml` | PR / `main` push | Rust fmt/check/clippy/testを3 OS matrixで検証 |
-| `validate-hf-layout.yml` | PR / `main` push / manual | source-controlled contractと選択HF target/Bucketを検証 |
-| `capsule-interop.yml` | PR / `main` push | Rust生成ExperimentCapsuleV1をPython readerで検証 |
-| `cpu-full-eval.yml` | manual | Linux CPUのPython full evaluation、HF run/benchmark publish |
-| `cross-platform-parity.yml` | manual | Python evaluatorのLinux/Windows/macOS parity + CoreML |
-| `rust-eval.yml` | manual | canonical Rust CTC evaluatorを5環境matrixで実行 |
-| `provider-strict-probes.yml` | manual +限定branch push | DirectML/CoreML strict readiness proof |
-| `public-model-e2e.yml` | manual +限定branch push | public model/datasetでreference E2E |
-| `hf-central-allocator.yml` | manual/他workflow dispatch | candidate/experiment/configの中央採番 |
-| `rust-release.yml` | `v*` tag push / manual | `asr-eval` binaryを3 platformでbuildしGitHub Releaseへ公開 |
+## 1. 基本原則
 
-## 2. 共通設計
-
-GitHub Actionsはruntime semanticsのsource of truthではありません。workflowは次を呼び出すexecution/orchestration layerです。
+GitHub Actionsはruntime semanticsのsource of truthではありません。workflowは以下の正規contractを呼び出すexecution/orchestration layerです。
 
 ```text
 config/asr-catalog.json
@@ -31,106 +17,184 @@ config/environments/*.toml
 config/evaluation/*.toml
 config/evaluators/*.toml
 evaluation/schemas/*.schema.json
-Rust CLI (asr-contracts / asr-hf / asr-eval / asr-capsule)
-Python-native ML/dataset preparation boundary
+Dockerfile labels
+Rust CLI
+Python-native ML/dataset boundary
 official hf / gh CLI
 ```
 
-workflowへcandidate prefix、decoder mapping、artifact role、Bucket path ruleを再実装しません。
+workflow YAMLへcandidate prefix、decoder mapping、artifact role、Bucket path rule、allocation prefix、独自target routing tableを再実装しません。
 
-## 3. Secrets / permissions
+`workflow_dispatch.inputs` はGitHub UI/manual APIでのinput schemaの正本です。外部`repository_dispatch`向けに別の入力catalog JSONは持ちません。Rust `asr-workflow-dispatch` がworkflow YAMLを読み、外部dispatchを同じcontractへ正規化します。
+
+## 2. Workflow一覧
+
+正確なdispatch対象一覧は手書きの文書ではなく次で取得できます。
+
+```bash
+mise run actions-list
+```
+
+現行workflowの役割は次です。
+
+| Workflow | 主なtrigger | 主目的 |
+|---|---|---|
+| `python-unit.yml` | PR / main push / manual | Python locked environmentとunit tests |
+| `rust-ci.yml` | PR / main push / manual | Rust fmt/check/clippy/testを3 OSで検証 |
+| `validate-hf-layout.yml` | PR / main push / manual | source-controlled config/HF layout validation |
+| `capsule-interop.yml` | PR / main push / manual | Rust→Python ExperimentCapsuleV1 interop |
+| `ghcr-contracts.yml` | PR / main push / manual | Docker/HF/Actions/dispatchの高速contract gate |
+| `ghcr-build-publish.yml` | Docker関連PR / main push / manual | NeMo環境build、mainでGHCR publish/attestation |
+| `ghcr-evaluate.yml` | manual / schedule / successful GHCR build | digest-pinned GHCR CPU evaluation→HF Bucket |
+| `ghcr-audit.yml` | manual / schedule | live GHCR package audit |
+| `repository-dispatch.yml` | repository_dispatch / manual | 外部要求をRust検証後に対象workflowへroute |
+| `cpu-full-eval.yml` | manual | Python Linux CPU full evaluation→HF run/benchmark |
+| `cross-platform-parity.yml` | manual | Python evaluatorのOS/provider parity |
+| `rust-eval.yml` | manual | canonical Rust CTC evaluator matrix |
+| `provider-strict-probes.yml` | manual /限定branch push | DirectML/CoreML strict readiness evidence |
+| `public-model-e2e.yml` | manual /限定branch push | public model/dataset reference E2E |
+| `hf-central-allocator.yml` | manual / workflow dispatch | candidate/experiment/config中央採番 |
+| `rust-release.yml` | `v*` tag / manual | Rust binary build + GitHub Release |
+
+`repository-dispatch.yml` 自身を除く全workflowは `workflow_dispatch` を持ち、共通routerから起動可能です。`ghcr-contracts.yml` がこの不変条件をRustで検証します。
+
+## 3. 共通repository dispatch
+
+外部システムはworkflowごとの独自event typeを覚える必要はありません。
+
+```json
+{
+  "event_type": "jpapt.workflow",
+  "client_payload": {
+    "workflow": "ghcr-evaluate",
+    "ref": "main",
+    "inputs": {
+      "target": "parakeet-tdt_ctc-0.6b-ja"
+    }
+  }
+}
+```
+
+`workflow` は `.yml` filenameまたはfilename stem aliasを受け付けます。
+
+routerはRust `asr-workflow-dispatch` を使って、heavy job起動前に以下を検証します。
+
+- workflow存在/alias解決
+- `workflow_dispatch`対応
+- required input
+- YAML default補完
+- unknown input拒否
+- `choice`検証
+- boolean型検証
+- Git refの安全性
+- GitHub workflow-dispatch API body生成
+
+router runには要求workflow/refを含むdynamic `run-name` が付き、正規化後のinputは`GITHUB_STEP_SUMMARY`へ出力されます。
+
+ローカル確認:
+
+```bash
+mise run actions-list
+mise run actions-validate
+mise run actions-ghcr
+```
+
+## 4. Secrets / variables / permissions
 
 ### `HF_TOKEN`
 
-HF Bucket、Model Repo、revision/candidate fetch、run/benchmark uploadに使用します。
+HF Bucket/Model Repoのread/write、revision/candidate fetch、run/benchmark upload、central allocationに使用します。
 
-利用workflow:
-
-- `validate-hf-layout.yml` のmanual selected-target validation
-- `cpu-full-eval.yml`
-- `cross-platform-parity.yml`
-- `rust-eval.yml`
-- `hf-central-allocator.yml`
-
-### `HF_ALLOCATOR_GITHUB_TOKEN`
-
-評価workflowからcentral allocatorをdispatch/追跡するためのGitHub tokenです。未設定時は `${{ github.token }}` をfallbackとして使う設計です。
-
-`GH_TOKEN` として以下に設定されます。
+主な利用workflow:
 
 ```text
+validate-hf-layout.yml (manual selected-target lane)
 cpu-full-eval.yml
 cross-platform-parity.yml
 rust-eval.yml
+ghcr-evaluate.yml
+hf-central-allocator.yml
 ```
 
-### Permissions
+### `HF_TARGETS_JSON`
 
-通常CIは原則 `contents: read`。allocatorを呼ぶ評価workflowは `actions: write` を持ちます。release workflowのみGitHub Release作成のため `contents: write` を持ちます。
+repository variableです。GHCR CIでDockerfileとsource-controlled targetを照合するためのchecked routing snapshotとして使用します。
 
-## 4. `python-unit.yml`
+独立したruntime authorityではありません。variable-only entryはsource-controlled targetを生成しません。
 
-### Trigger
+### GHCR authentication
 
-PRおよび`main` pushで、次のpath変更時に起動します。
+GHCRはrepository Package workflow permission + `${{ github.token }}` のみを使います。
+
+read lane:
+
+```yaml
+permissions:
+  contents: read
+  packages: read
+```
+
+publish lane:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+```
+
+PAT fallbackはありません。`SUPERSECRET`はGHCR workflowでは使用しません。
+
+### `HF_ALLOCATOR_GITHUB_TOKEN`
+
+既存評価workflowがcentral allocatorをGitHub API経由でdispatchする場合に使用します。未設定時はworkflowの`github.token` fallbackを利用する既存設計です。
+
+### 最小権限
+
+- 通常CI: `contents: read`
+- repository dispatch router: `contents: read`, `actions: write`
+- allocatorを呼ぶworkflow: 必要な`actions: write`
+- GHCR read: `packages: read`
+- GHCR publish: `packages: write`, attestation用権限
+- release: `contents: write`
+
+## 5. `python-unit.yml`
+
+Python compatibility/reference boundaryの標準CIです。
+
+### Environment
 
 ```text
-.github/workflows/**
-pyproject.toml
-uv.lock
-config/**
-evaluation/**
-python/**
-scripts/**
+runner: ubuntu-latest
+Python: 3.12
+uv locked environment
+onnxruntime: 1.28.0
 ```
 
-### Runner
-
-`ubuntu-latest`, timeout 30分。
-
-### 実行内容
+### Flow
 
 ```bash
-python 3.12
-pip install uv
 uv lock --check
 uv sync --locked --extra datasets --extra onnx --extra dev
-```
-
-さらに `onnxruntime == 1.28.0` をruntimeで検証し、available providersを出力した後:
-
-```bash
 uv run python -m pytest -q python/tests/unit
 ```
 
-### 意味
+Python-native model/dataset/tooling boundaryを検証します。Rust production policyの代替ではありません。
 
-Python-native ML/tooling boundaryとPython compatibility layerがlocked dependency上で成立することを検証します。Rust production policyの代替ではありません。
+## 6. `rust-ci.yml`
 
-## 5. `rust-ci.yml`
+Rust workspaceの標準CIです。
 
-### Trigger
+### Matrix
 
-PR / `main` pushで以下を監視します。
-
-```text
-Cargo.toml
-Cargo.lock
-rust/**
-.github/workflows/rust-*.yml
-```
-
-### Jobs
-
-`rustfmt` + platform matrix。
-
-| job | runner | feature |
+| lane | runner | feature |
 |---|---|---|
-| `linux-cpu` | `ubuntu-latest` | `cpu` |
-| `windows-directml` | `windows-latest` | `cpu,directml` |
-| `macos-coreml` | `macos-15` | `cpu,coreml` |
+| Linux CPU | `ubuntu-latest` | `cpu` |
+| Windows DirectML | `windows-latest` | `cpu,directml` |
+| macOS CoreML | `macos-15` | `cpu,coreml` |
 
-各matrixで:
+各laneで:
 
 ```bash
 cargo metadata --locked --no-deps --format-version 1
@@ -141,372 +205,301 @@ cargo test --locked --workspace --no-default-features --features <features>
 
 `cargo fmt --all -- --check` は独立jobです。
 
-### Cache
+provider featureのcompile/link/unit testを証明しますが、real accelerator execution proofではありません。
 
-Cargo registry/git、ORT download cache、`target` をmatrixごとのkeyでcacheします。
+## 7. `validate-hf-layout.yml`
 
-### 注意
+source-controlled contractとHF layoutの標準validationです。
 
-このCIはprovider featureがcompile/link/testできることを確認しますが、real modelが実acceleratorで実行された証明ではありません。strict provider proofは別workflowです。
+主要項目:
 
-## 6. `validate-hf-layout.yml`
+- locked Python project
+- repository doctor/Python boundary validation
+- `asr-hf validate-targets`
+- GitHub Action version policy
+- ASR catalog fingerprint
+- collection-derived allocation prefix
+- legacy allocation catalog不在
+- revision bundle validation
+- HF shell syntax/focused tests
+- manual dispatch時のselected target/Bucket validation
 
-### Trigger
+`docs/**`変更も監視するため、文書だけが実装から乖離することを防ぎます。
 
-- PR
-- `main` push
-- manual `workflow_dispatch`
+## 8. `capsule-interop.yml`
 
-PR/pushでは `docs/**` も監視対象なので、docs変更でもcontract validationが走ります。
-
-manual input:
-
-```text
-hf_target        required, default parakeet-tdt_ctc-0.6b-ja
-runtime_variant  optional, blank = catalog default
-```
-
-### Job 1: `Validate local HF contracts`
-
-`ubuntu-latest`, Python 3.12 + Rust stable。
-
-locked environment:
-
-```bash
-uv lock --check
-uv sync --locked --extra datasets --extra onnx --extra hf --extra dev
-```
-
-pin checks:
+Rust producer→Python consumerの`ExperimentCapsuleV1`互換性を検証します。
 
 ```text
-onnxruntime == 1.28.0
-huggingface_hub == 1.24.0
+Rust write_fixture
+  ↓
+run.parquet
+  ↓
+Python read_experiment_capsule / summarize_experiment_capsule
+  ↓
+run ID / metric / diagnostic metadata assertions
 ```
 
-主要validation:
+## 9. `ghcr-contracts.yml`
 
-```bash
-python scripts/dev/verify-python-first.py
-python scripts/dev/doctor.py
-cargo run --locked -p asr-hf -- validate-targets
-cargo run --locked -p asr-contracts --bin asr-action-policy
-cargo run --locked -p asr-contracts --bin asr-catalog -- fingerprint catalog_id
-cargo run --locked -p asr-contracts --bin asr-catalog -- fingerprint sha256
-```
+GHCR関連の最も軽量なpreflight gateです。
 
-allocation prefixもRustで確認します。
+検証内容:
+
+- Dockerfile mandatory labels
+- Docker config source identity
+- Dockerfile→source-controlled HF target mapping
+- `HF_TARGETS_JSON`との一致
+- `asr-hf validate-targets`
+- GitHub Action version policy
+- Rust `asr-workflow-dispatch validate`
+- 全workflowのdispatch reachability
+- default GHCR dispatch requestのresolve smoke
+
+重いimage buildやmodel downloadより先に失敗させることが目的です。
+
+## 10. `ghcr-build-publish.yml`
+
+NVIDIA NeMo reference/export environmentをbuild/publishします。
+
+### PRコスト制御
+
+GitHubのPR path filterだけでは、PRに一度Docker変更が入ると後続のdocs-only synchronizeでもworkflow runが作られ得ます。そのためworkflow自身が前回PR head→現在headを比較します。
 
 ```text
-candidates  -> candidate
-experiments -> experiment
-config      -> config
+Dockerfile / build workflowに差分なし
+  -> lightweight gateのみ
+
+差分あり
+  -> Buildx
 ```
 
-`config/hf-allocation-catalog.json` が存在しないことも明示検証します。
+concurrencyはworkflow全体ではなくheavy `build` jobだけに設定します。docs-only synchronizeはgroupへ入らず実行中buildを妨害しません。一方、新しい実Docker変更による同一package buildは旧build jobをcancelできます。
 
-HF shell syntax、revision/candidate/catalog/runtime/optimizer関連のfocused Python testsも実行します。
-
-### Job 2: `Validate selected HF configuration`
-
-manual dispatch時のみ実行。
-
-1. `asr-hf resolve-target`
-2. `HF_TOKEN`, Bucket, Model Repoの解決確認
-3. `hf-fetch-revisions.sh`
-4. 4-document revision bundle validation
-5. Bucket required directories確認
-6. candidate listingを `resolve-candidate-location` で解決
-
-required Bucket dirsとして現行workflowは以下も存在確認します。
+### PR Buildx
 
 ```text
-benchmarks
-runs
-candidates
-experiments
-reference
-scripts
-tmp
+push=false
+load=false
 ```
 
-## 7. `capsule-interop.yml`
+import/version smokeはDockerfile最終`RUN`に組み込まれています。巨大imageをDocker daemonへexportする必要はありません。
 
-### Trigger
-
-PR / `main` pushでcapsule Rust/Python関連pathが変わった場合。
-
-### Flow
-
-1. Rust locked workspace確認
-2. Python locked environment (`datasets`, `dev`) 構築
-3. Rust example `write_fixture` で `target/capsule-interop/run.parquet` を生成
-4. Pythonの `read_experiment_capsule` / `summarize_experiment_capsule` で読み込み
-5. run ID、metric、diagnostic metadataをassert
-
-これは **Rust producer -> Python reference consumer** のversioned file contract互換性テストです。
-
-## 8. `hf-central-allocator.yml`
-
-### Input
+### main/manual publish
 
 ```text
-request_id      required
-hf_bucket       required (namespace/bucket)
-collection      required: candidates | experiments | config
-metadata_json   optional, default {}
+Buildx build
+  -> integrated environment smoke
+  -> GHCR push
+  -> digest validation
+  -> artifact attestation
+  -> build provenance artifact
 ```
 
-### Concurrency
+push直後の再pullは行いません。live registry verificationは`ghcr-audit.yml`、実行検証は`ghcr-evaluate.yml`の責務です。
 
-```text
-hf-central-sequence-<bucket>
-cancel-in-progress: false
-```
+## 11. `ghcr-evaluate.yml`
 
-同一Bucketの採番を直列化し、sequence競合を避けます。
-
-### Flow
-
-1. official HF CLIをinstall
-2. `scripts/hf/hf-allocate-id.sh <collection>`
-3. Bucket root allocator status README更新
-4. Rust `write-allocation-response`
-5. `allocation.json` をGitHub artifactとして1日保持
-
-response schema v4の最小fieldは次です。
-
-```text
-schema_version
-request_id
-id
-bucket
-collection
-```
-
-prefix keyやallocation catalog fingerprintはありません。
-
-## 9. `cpu-full-eval.yml`
-
-manual full evaluationです。
+GHCR environmentを実際のcandidate評価へ接続するworkflowです。
 
 ### Inputs
 
 ```text
-hf_target        required, default parakeet-tdt_ctc-0.6b-ja
-candidate_id     optional, blank = latest candidate in target Bucket
-runtime_variant  optional, blank = catalog default
+target          optional; blank = matching targets
+candidate_id    optional; blank = latest compatible candidate
+runtime_variant optional; blank = target/catalog default
+evaluation      smoke | parity | full
+image_tag       default latest
 ```
 
-### Job 1: allocate experiment
-
-- targetをRustで解決
-- candidate ID指定時は `candidate-NNNNNN` を検証
-- 未指定時はBucket listingから `resolve-candidate-location`
-- legacy pathを選んだ場合warning
-- `experiments` collectionから中央採番
-
-### Job 2: Linux CPU Full Evaluation
-
-`ubuntu-latest`, timeout 360分。
-
-主なflow:
+### Flow
 
 ```text
-resolve target
-fetch/validate revisions
-cache HF/model/evaluation assets
-fetch candidate
-Python ONNX inspection -> generated candidate contract
-Rust evaluator capability validation (python-onnx / cpu)
-optional reference fetch
-Python full evaluator
+Docker/HF target matrix
+  ↓
+revision bundle fetch/validation
+  ↓
+candidate resolve/fetch
+  ↓
+experiment ID allocation
+  ↓
+GHCR login/pull
+  ↓
+tag -> RepoDigest freeze
+  ↓
+image identity validation
+  ↓
+digest-pinned docker run
+  ↓
+Python CPU evaluator
+  ↓
 Rust validate-run
-HF Bucketへrun upload (if run-context exists)
-成功時benchmark publish
-GitHub artifact upload (always)
+  ↓
+HF Bucket run upload
+  ↓
+GHCR-specific benchmark publish
 ```
 
-GitHub artifact retentionは7日です。
+Project sourceは`PYTHONPATH=/workspace/python/src`でbind-mounted repositoryから読み、pulled imageへruntime pip installしません。
 
-## 10. `cross-platform-parity.yml`
+## 12. `ghcr-audit.yml`
 
-### Inputs
+live GHCR packageの定期/手動監査です。
+
+主な検査:
+
+- pull + digest freeze
+- mandatory OCI/project labels
+- source URL
+- GitHub artifact attestation
+- NeMo/PyTorch/ONNX/ORT/HF等のimport
+- ORT/HF pin
+- `pip check`
+- Docker inspect/history evidence
+
+build workflowが省略した「registryへ保存された実物」の確認をここで担います。
+
+## 13. `cpu-full-eval.yml`
+
+Python ONNX evaluatorによるLinux CPU full評価です。
+
+Inputs:
 
 ```text
 hf_target
-candidate_id (optional)
-runtime_variant (optional)
-evaluation = smoke | parity | coreml-parity
+candidate_id     optional
+runtime_variant  optional
 ```
 
-### Matrix
+未指定candidateはBucket listingから自動解決します。
 
-| runner | provider | environment |
-|---|---|---|
-| ubuntu-latest | CPU | linux |
-| windows-latest | CPU | windows |
-| macos-15 | CPU | macos |
-| macos-15 | CoreML | macos |
-
-Python evaluatorを使って同一candidate/revision contractを比較します。
-
-各matrixでrunをHF Bucketへuploadし、成功時benchmarkをpublishします。GitHub artifact retentionは7日です。
-
-## 11. `rust-eval.yml`
-
-canonical Rust CTC evaluatorの手動matrixです。
-
-### Inputs
+Flow:
 
 ```text
-hf_target
-candidate_id       optional
-runtime_variant    optional
-evaluation         smoke | parity | coreml-parity | full
-strict_provider    boolean, default true
-optimization_level configured | disable | basic | extended | all
+target/candidate resolve
+  -> experiment allocation
+  -> revisions
+  -> candidate fetch
+  -> Python ONNX inspection
+  -> Rust evaluator-policy validation
+  -> Python full evaluation
+  -> Rust validate-run
+  -> HF run upload
+  -> benchmark publish
 ```
 
-### Matrix
+## 14. `cross-platform-parity.yml`
+
+Python evaluatorによるplatform/provider parityです。
+
+Matrix:
 
 ```text
-linux-cpu
-windows-cpu
-windows-directml
-macos-cpu
-macos-coreml
+Linux CPU
+Windows CPU
+macOS CPU
+macOS CoreML
 ```
 
-### Preparation boundary
+同一candidate/revision identityを比較し、各runをHF Bucketへ保存します。
 
-Pythonは次の2箇所に限定されます。
+## 15. `rust-eval.yml`
 
-1. `resolve-candidate-artifacts.py` — ONNX graph inspection
-2. `prepare-rust-manifest.py` — HF datasets acquisition/materialization
+canonical Rust CTC evaluatorです。
 
-その後:
+Matrix:
 
 ```text
-asr-contracts build-run-context
-cargo build -p asr-eval --features <provider>
-asr-eval evaluate
-asr-contracts validate-run
+Linux CPU
+Windows CPU
+Windows DirectML
+macOS CPU
+macOS CoreML
 ```
 
-non-CPU + `strict_provider=true` の場合、run-contextへ `--strict-provider` を設定します。
+PythonはONNX graph inspectionとHF dataset materialization境界に限定され、その後はRust run-context/runtime/metrics/evaluationを使用します。
 
-現行workflowは結果をGitHub artifactとして7日保持します。`rust-eval.yml` 自体は `hf-push-run.sh` / benchmark publishを実行しない点に注意してください。
+## 16. `provider-strict-probes.yml`
 
-## 12. `provider-strict-probes.yml`
-
-### Trigger
-
-manual dispatchに加え、専用branch `agent/provider-strict-probes` の関連path pushでも起動します。
-
-### Compile/link gate
+DirectML/CoreMLについて「featureがcompileする」だけでなくstrict provider readinessを分類します。
 
 - Windows: DirectML
-- macOS 14: CoreML
+- macOS: CoreML
+- synthetic provider probe fixture
+- Rust provider-specific run context
+- Rust readiness classification
+- stdout/stderr/results evidence upload
 
-release `asr-eval` をprovider feature付きでbuildします。
+measurement failureを成功扱いにはせず、証拠からclassificationします。
 
-### Strict runtime probes
+## 17. `public-model-e2e.yml`
 
-synthetic CTC candidateをPython boundaryで生成し、Rustでprovider-specific strict run-contextを作成します。
+production candidateとは別のpublic reference laneです。
 
-CoreML:
-
-```text
-macos-14
-coreml feature
-asr-provider-readinessで結果分類
-```
-
-DirectML:
+代表経路:
 
 ```text
-windows-latest
-directml feature
-asr-provider-readinessで結果分類
+public Whisper ONNX + JSUT
+public Japanese CTC PyTorch -> ONNX -> Python ORT -> Rust + JSUT
 ```
 
-measurement stepは `continue-on-error: true` ですが、後段でexit code/stdout/stderr/resultsを使い **readinessをtruthfulに分類**します。失敗を成功扱いに変えるための設定ではありません。
+model export/reference parityでPythonを使うことはRust-first retention policy上の許可された境界です。
 
-probe directoryはalways upload、retention 7日です。
+## 18. `hf-central-allocator.yml`
 
-## 13. `public-model-e2e.yml`
+Bucket内のsequence IDを直列化して割り当てます。
 
-production Bucket candidateではなく、public model / public datasetを使うreference E2Eです。
-
-### Whisper ONNX + JSUT
-
-- `ubuntu-latest`
-- Node 24
-- `onnx-community/whisper-small`
-- `japanese-asr/ja_asr.jsut_basic5000`
-- Hub APIからconcrete revision SHAを解決
-- Transformers.js `4.2.0`
-- ffmpegでcanonical 16 kHz mono f32 PCMをmaterialize
-- real ONNX inference
-
-### Japanese CTC PyTorch -> ONNX -> ORT -> Rust + JSUT
-
-- `ubuntu-latest`
-- Python 3.12 + uv
-- public Japanese CTC modelをPyTorch/TransformersからONNXへprepare
-- Python ORT reference
-- generated candidate contract
-- Rust `asr-eval` CPU
-- Python/Rust transcript parity validation
-
-public-model E2EでのPython model操作はreference/parity boundaryであり、production Rust runtime依存ではありません。
-
-## 14. `rust-release.yml`
-
-### Trigger
-
-- `v*` tag push
-- manual dispatch (`tag` input required)
-
-### Build matrix
-
-| artifact | runner | target | features |
-|---|---|---|---|
-| linux-x86_64 | ubuntu-latest | x86_64-unknown-linux-gnu | cpu |
-| windows-x86_64 | windows-latest | x86_64-pc-windows-msvc | cpu,directml |
-| macos-aarch64 | macos-15 | aarch64-apple-darwin | cpu,coreml |
-
-生成物:
+Collections:
 
 ```text
-asr-eval-linux-x86_64.tar.gz
-asr-eval-windows-x86_64.zip
-asr-eval-macos-aarch64.tar.gz
-SHA256SUMS
+candidates  -> candidate-NNNNNN
+experiments -> experiment-NNNNNN
+config      -> config-NNNNNN
 ```
 
-GitHub Releaseが既存ならassetを`--clobber`で置換し、未作成ならgenerate-notes付きで作成します。
+prefixはcollectionからRustで導出し、allocation catalog/prefix-key JSONは使用しません。
 
-## 15. Workflow選択ガイド
+同一Bucketについてconcurrencyを直列化し、response schema v4の最小allocation JSONを返します。
 
-| 目的 | 使うworkflow |
+## 19. `rust-release.yml`
+
+`asr-eval` release binaryをbuildします。
+
+| artifact | runner | provider feature |
+|---|---|---|
+| Linux x86_64 | Ubuntu | CPU |
+| Windows x86_64 | Windows | CPU + DirectML |
+| macOS arm64 | macOS | CPU + CoreML |
+
+生成物と`SHA256SUMS`をGitHub Releaseへ公開します。
+
+## 20. Workflow選択ガイド
+
+| 目的 | Workflow |
 |---|---|
-| 普通のPR validation | 自動CIに任せる |
-| source config / HF routingを確認 | Validate HF Layout |
-| production candidateをLinux CPUでfull評価 | CPU Full Evaluation |
-| Python runtimeのOS間parity | Cross Platform ONNX Parity |
-| Rust CTC runtimeをOS/provider別評価 | Rust Cross Platform Evaluation |
-| DirectML/CoreMLでCPU fallbackなしのreadinessを確認 | Provider Strict Probes |
-| repository Bucketに依存しないreal model E2E | Public Model E2E |
-| Rust binaryを配布 | Rust Release |
+| 普通のPR validation | 自動Python/Rust/HF/interop CI |
+| HF/config contractだけ確認 | `validate-hf-layout.yml` |
+| Docker/HF/dispatch contract確認 | `ghcr-contracts.yml` |
+| NeMo reference environment build/publish | `ghcr-build-publish.yml` |
+| GHCR上の環境で最新candidateを評価 | `ghcr-evaluate.yml` |
+| GHCR package自体を監査 | `ghcr-audit.yml` |
+| Linux CPU production full | `cpu-full-eval.yml` |
+| Python OS/provider parity | `cross-platform-parity.yml` |
+| Rust CTC runtime matrix | `rust-eval.yml` |
+| DirectML/CoreML strict proof | `provider-strict-probes.yml` |
+| public model reference E2E | `public-model-e2e.yml` |
+| Rust binary release | `rust-release.yml` |
+| 外部システムから任意workflow実行 | `repository-dispatch.yml` / `jpapt.workflow` |
 
-## 16. CI結果の解釈
+## 21. 新規workflow追加時の必須条件
 
-- `rust-ci` green: compile/check/clippy/unit contractがplatform feature上で成立。
-- `provider-strict-probes` green: probe workflow自体がreadiness evidenceを正しく生成・分類できた。readiness JSONの中身を確認する。
-- `cross-platform-parity` green: Python evaluator pathで選択suiteが各matrix上でacceptanceを満たした。
-- `rust-eval` green: Rust CTC evaluatorが指定条件で成立した。
-- `public-model-e2e` green: public fixtureに対するreference/parity pathが成立した。
-
-「workflowがgreen」と「acceleratorへ全nodeが割当済み」は同義ではありません。provider evidenceの詳細は [providers.md](./providers.md) を参照してください。
+1. router自身以外は`workflow_dispatch`を持つ。
+2. model-independent input validationはRust/source-controlled contractへ寄せる。
+3. stable defaultはYAML default、dynamic defaultはruntime resolverを使う。
+4. target/candidate/variant一覧をworkflowへ重複保持しない。
+5. heavy work前にfast validationを置く。
+6. mutable tag/pathを実験identityにしない。
+7. failure diagnosisに有用なartifact/step summaryを残す。
+8. repository dispatchから到達可能にする。
+9. GitHub UIで実装できない制約は[github-actions-ux.md](./github-actions-ux.md)へ記録する。
+10. `mise run actions-validate` と通常CIを通す。

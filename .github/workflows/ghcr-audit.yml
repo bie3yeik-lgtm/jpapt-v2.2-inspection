@@ -1,0 +1,153 @@
+name: GHCR Package Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Optional HF target ID (blank = all Dockerfile-matched targets)"
+        required: false
+        default: ""
+        type: string
+      image_tag:
+        description: "GHCR tag to resolve before auditing the immutable digest"
+        required: false
+        default: latest
+        type: string
+  schedule:
+    - cron: "43 19 * * 3"
+
+permissions:
+  contents: read
+  packages: read
+  attestations: read
+
+concurrency:
+  group: ghcr-audit-${{ github.ref }}-${{ inputs.target || 'all' }}
+  cancel-in-progress: true
+
+env:
+  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - id: matrix
+        env:
+          GHCR_TARGET_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
+        shell: bash
+        run: bash scripts/ci/resolve-ghcr-matrix.sh
+
+  audit:
+    name: ${{ matrix.target_id }} / ${{ matrix.package }}
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: image
+        name: Pull and freeze digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'latest' }}"
+          tagged="${{ matrix.image }}:${tag}"
+          docker pull "$tagged"
+          pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          digest="${pinned#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid digest: $digest"; exit 1; }
+          echo "reference=$pinned" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Validate labels against Dockerfile-derived target identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ steps.image.outputs.reference }}"
+          source_repo="$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.repo_id" }}' "$ref")"
+          framework="$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.framework" }}' "$ref")"
+          package="$(docker inspect --format '{{ index .Config.Labels "io.jpapt.ghcr.package" }}' "$ref")"
+          role="$(docker inspect --format '{{ index .Config.Labels "io.jpapt.role" }}' "$ref")"
+          source_url="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$ref")"
+          test "$source_repo" = "${{ matrix.source_repo }}"
+          test "$framework" = "${{ matrix.framework }}"
+          test "$package" = "${{ matrix.package }}"
+          test "$role" = "${{ matrix.role }}"
+          test "$source_url" = "https://github.com/${GITHUB_REPOSITORY}"
+
+      - name: Verify package attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${{ steps.image.outputs.reference }}" -R "$GITHUB_REPOSITORY"
+
+      - name: Run dependency/import smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -i "${{ steps.image.outputs.reference }}" python - <<'PY'
+          import json
+          import datasets
+          import huggingface_hub
+          import nemo
+          import onnx
+          import onnxruntime
+          import scipy
+          import soundfile
+          import torch
+
+          result = {
+              "datasets": datasets.__version__,
+              "huggingface_hub": huggingface_hub.__version__,
+              "nemo": nemo.__version__,
+              "onnx": onnx.__version__,
+              "onnxruntime": onnxruntime.__version__,
+              "scipy": scipy.__version__,
+              "soundfile": soundfile.__version__,
+              "torch": torch.__version__,
+              "cuda_available": torch.cuda.is_available(),
+          }
+          print(json.dumps(result, sort_keys=True))
+          assert result["onnxruntime"] == "1.28.0"
+          assert result["huggingface_hub"] == "1.24.0"
+          PY
+          docker run --rm "${{ steps.image.outputs.reference }}" python -m pip check
+
+      - name: Persist audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/ghcr-audit
+          docker inspect "${{ steps.image.outputs.reference }}" > .ci/ghcr-audit/image-inspect.json
+          docker history --no-trunc "${{ steps.image.outputs.reference }}" > .ci/ghcr-audit/image-history.txt
+          jq -n \
+            --arg target_id "${{ matrix.target_id }}" \
+            --arg image "${{ matrix.image }}" \
+            --arg digest "${{ steps.image.outputs.digest }}" \
+            --arg reference "${{ steps.image.outputs.reference }}" \
+            --arg dockerfile "${{ matrix.dockerfile }}" \
+            '{schema_version:1,target_id:$target_id,image:$image,digest:$digest,reference:$reference,dockerfile:$dockerfile}' \
+            > .ci/ghcr-audit/summary.json
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ghcr-audit-${{ matrix.target_id }}-${{ matrix.package }}
+          path: .ci/ghcr-audit
+          retention-days: 30
+          if-no-files-found: warn
