@@ -16,7 +16,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Resolve one Hugging Face ASR development target."
     )
-    parser.add_argument("--target", required=True)
+    selector = parser.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--target")
+    selector.add_argument(
+        "--bucket",
+        help=(
+            "Resolve the target whose HF_BUCKET in --targets-json matches "
+            "this value."
+        ),
+    )
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     parser.add_argument(
         "--targets-json",
@@ -26,15 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--github-env", type=Path)
+    parser.add_argument("--github-output", type=Path)
     parser.add_argument("--shell", action="store_true")
     return parser
 
 
-def _load_storage_override(
-    *,
-    target_id: str,
-    raw_json: str | None,
-) -> dict[str, str]:
+def _load_target_mapping(raw_json: str | None) -> dict[str, dict[str, str]]:
     if raw_json is None or not raw_json.strip():
         return {}
 
@@ -48,27 +53,61 @@ def _load_storage_override(
     if not isinstance(raw, dict):
         raise HfTargetError("HF target mapping root must be a JSON object.")
 
-    entry = raw.get(target_id)
-    if entry is None:
-        raise HfTargetError(
-            f"HF target mapping does not contain target {target_id!r}."
-        )
-    if not isinstance(entry, dict):
-        raise HfTargetError(
-            f"HF target mapping entry {target_id!r} must be a JSON object."
-        )
-
-    result: dict[str, str] = {}
-    for key in ("HF_BUCKET", "HF_MODEL_REPO"):
-        value = entry.get(key)
-        if not isinstance(value, str) or not value.strip():
+    result: dict[str, dict[str, str]] = {}
+    seen_buckets: dict[str, str] = {}
+    for target_id, entry in raw.items():
+        if not isinstance(target_id, str) or not target_id:
+            raise HfTargetError("HF target mapping keys must be non-empty strings.")
+        if not isinstance(entry, dict):
             raise HfTargetError(
-                f"HF target mapping entry {target_id!r}.{key} "
-                "must be a non-empty string."
+                f"HF target mapping entry {target_id!r} must be a JSON object."
             )
-        result[key] = value.strip()
+
+        normalized: dict[str, str] = {}
+        for key in ("HF_BUCKET", "HF_MODEL_REPO"):
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise HfTargetError(
+                    f"HF target mapping entry {target_id!r}.{key} "
+                    "must be a non-empty string."
+                )
+            normalized[key] = value.strip()
+
+        bucket = normalized["HF_BUCKET"]
+        previous = seen_buckets.get(bucket)
+        if previous is not None:
+            raise HfTargetError(
+                f"HF_BUCKET {bucket!r} is assigned to both {previous!r} "
+                f"and {target_id!r}."
+            )
+        seen_buckets[bucket] = target_id
+        result[target_id] = normalized
 
     return result
+
+
+def _target_id_from_bucket(
+    *,
+    bucket: str,
+    mapping: dict[str, dict[str, str]],
+) -> str:
+    if not mapping:
+        raise HfTargetError(
+            "--bucket requires --targets-json because Bucket-to-target "
+            "resolution is defined by vars.HF_TARGETS_JSON."
+        )
+    matches = [
+        target_id
+        for target_id, entry in mapping.items()
+        if entry["HF_BUCKET"] == bucket
+    ]
+    if not matches:
+        available = sorted(entry["HF_BUCKET"] for entry in mapping.values())
+        raise HfTargetError(
+            f"HF_BUCKET {bucket!r} is not present in HF target mapping. "
+            f"Available buckets: {available!r}"
+        )
+    return matches[0]
 
 
 def main() -> int:
@@ -76,8 +115,15 @@ def main() -> int:
     root = args.repository_root.expanduser().resolve()
 
     try:
-        target = load_hf_target_by_id(args.target, repository_root=root)
+        mapping = _load_target_mapping(args.targets_json)
+        target_id = (
+            args.target
+            if args.target is not None
+            else _target_id_from_bucket(bucket=args.bucket, mapping=mapping)
+        )
+        target = load_hf_target_by_id(target_id, repository_root=root)
         model = ConfigResolver(root).load_model(target.model_id)
+
         if model.upstream_repo_id != target.upstream_repo_id:
             raise HfTargetError(
                 "HF target upstream repo does not match model config: "
@@ -92,10 +138,11 @@ def main() -> int:
                 f"model={framework!r}"
             )
 
-        storage_override = _load_storage_override(
-            target_id=target.id,
-            raw_json=args.targets_json,
-        )
+        storage_override = mapping.get(target.id, {})
+        if mapping and not storage_override:
+            raise HfTargetError(
+                f"HF target mapping does not contain target {target.id!r}."
+            )
     except (HfTargetError, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -106,8 +153,10 @@ def main() -> int:
     values = {
         "HF_BUCKET": bucket,
         "HF_MODEL_REPO": model_repo,
-        "EXPECTED_MODEL_ID": model_repo,
-        "EXPECTED_UPSTREAM_MODEL_ID": target.upstream_repo_id,
+        "EXPECTED_DEVELOPMENT_REPO_ID": model_repo,
+        "EXPECTED_UPSTREAM_REPO_ID": target.upstream_repo_id,
+        # Current target definitions source tokenizers/processors from upstream.
+        "EXPECTED_TOKENIZER_REPO_ID": target.upstream_repo_id,
         "EXPECTED_FRAMEWORK": target.canonical_framework,
         "EXPECTED_DECODER": target.default_decoder,
         "ALLOW_LEGACY_REVISION_METADATA": (
@@ -119,6 +168,18 @@ def main() -> int:
     if args.github_env is not None:
         with args.github_env.open("a", encoding="utf-8") as file:
             for key, value in values.items():
+                file.write(f"{key}={value}\n")
+
+    if args.github_output is not None:
+        outputs = {
+            "target_id": target.id,
+            "hf_bucket": bucket,
+            "hf_model_repo": model_repo,
+            "decoder": target.default_decoder,
+            "framework": target.canonical_framework,
+        }
+        with args.github_output.open("a", encoding="utf-8") as file:
+            for key, value in outputs.items():
                 file.write(f"{key}={value}\n")
 
     if args.shell:

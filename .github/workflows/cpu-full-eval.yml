@@ -3,10 +3,10 @@ name: CPU Full Evaluation
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: "HF target id"
+      hf_bucket:
+        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
         required: true
-        default: parakeet-tdt_ctc-0.6b-ja
+        default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
       candidate_id:
         description: "HF Bucket candidates/<candidate_id>"
@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cpu-full-${{ inputs.target }}-${{ inputs.candidate_id }}
+  group: cpu-full-${{ inputs.candidate_id }}
   cancel-in-progress: false
 
 env:
@@ -25,6 +25,13 @@ env:
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
   HF_BUCKET: ""
   HF_MODEL_REPO: ""
+  EXPECTED_DEVELOPMENT_REPO_ID: ""
+  EXPECTED_UPSTREAM_REPO_ID: ""
+  EXPECTED_TOKENIZER_REPO_ID: ""
+  EXPECTED_FRAMEWORK: ""
+  EXPECTED_DECODER: ""
+  ALLOW_LEGACY_REVISION_METADATA: "false"
+  HF_TARGET_ID: ""
 
 jobs:
   evaluate:
@@ -51,22 +58,28 @@ jobs:
           python -c "import parakeet_onnx"
           hf --version
 
-      - name: Resolve HF target
+      - name: Resolve HF Bucket
+        id: hf
         shell: bash
         run: |
           set -euo pipefail
+          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
+            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
+            exit 1
+          }
           python scripts/ci/resolve-hf-target.py \
-            --target "${{ inputs.target }}" \
-            --targets-json "${HF_TARGETS_JSON:-}" \
-            --github-env "${GITHUB_ENV}"
+            --bucket "${{ inputs.hf_bucket }}" \
+            --targets-json "${HF_TARGETS_JSON}" \
+            --github-env "${GITHUB_ENV}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Validate GitHub configuration
         shell: bash
         run: |
           set -euo pipefail
           [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is not configured."; exit 1; }
-          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved for ${{ inputs.target }}."; exit 1; }
-          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved for ${{ inputs.target }}."; exit 1; }
+          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved."; exit 1; }
+          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved."; exit 1; }
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
@@ -90,7 +103,27 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/hf/hf-fetch-revisions.sh
-          python scripts/ci/validate-revisions.py --root .ci/hf/config/revisions
+          args=(
+            --root .ci/hf/config/revisions
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
+            --expected-framework "${EXPECTED_FRAMEWORK}"
+            --expected-decoder "${EXPECTED_DECODER}"
+          )
+          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
+            args+=(--allow-legacy-metadata)
+          fi
+          python scripts/ci/validate-revisions.py "${args[@]}"
+
+      - name: Verify Python decoder compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${EXPECTED_DECODER}" != "ctc" ]]; then
+            echo "::error::Python ONNX evaluator currently supports CTC candidates only. Resolved target '${HF_TARGET_ID}' requires decoder '${EXPECTED_DECODER}'."
+            exit 1
+          fi
 
       - name: Cache model and evaluation assets
         uses: actions/cache@v4
@@ -102,7 +135,7 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-full-${{ inputs.target }}-ubuntu-${{ runner.arch }}-${{
+            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
@@ -113,7 +146,7 @@ jobs:
               )
             }}
           restore-keys: |
-            py-full-${{ inputs.target }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-full-${{ steps.hf.outputs.target_id }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
@@ -154,6 +187,7 @@ jobs:
             --provider cpu \
             --environment linux \
             --evaluation full \
+            --model-config "${HF_TARGET_ID}" \
             --model "${{ steps.model.outputs.path }}" \
             --candidate-dir ".ci/candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
@@ -191,7 +225,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-full-${{ inputs.target }}-${{ inputs.candidate_id }}
+          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ inputs.candidate_id }}
           path: |
             results/linux-cpu-full/run-context.json
             results/linux-cpu-full/metrics.json
