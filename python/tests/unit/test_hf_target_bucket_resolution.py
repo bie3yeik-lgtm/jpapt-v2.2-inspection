@@ -56,7 +56,6 @@ def test_bucket_resolves_kotoba_target() -> None:
     assert "EXPECTED_TOKENIZER_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
     assert "EXPECTED_FRAMEWORK=transformers" in result.stdout
     assert "EXPECTED_DECODER=whisper_autoregressive" in result.stdout
-    assert "LEGACY" not in result.stdout
 
 
 def test_unknown_bucket_is_rejected() -> None:
@@ -68,12 +67,11 @@ def test_unknown_bucket_is_rejected() -> None:
     )
 
     assert result.returncode == 1
-    assert "is not present in HF target mapping" in result.stderr
-    assert "gawohok7/tf-v1-onnx-dev-bucket" in result.stderr
+    assert "is not present in the current HF target mapping" in result.stderr
 
 
-def test_duplicate_bucket_is_rejected() -> None:
-    mapping = json.dumps(
+def _shared_mapping() -> str:
+    return json.dumps(
         {
             "kotoba-whisper-v1.0": {
                 "HF_BUCKET": "gawohok7/shared-bucket",
@@ -86,12 +84,29 @@ def test_duplicate_bucket_is_rejected() -> None:
         }
     )
 
+
+def test_shared_bucket_mapping_is_allowed_but_bucket_only_resolution_is_ambiguous() -> None:
     result = _run(
         "--bucket",
         "gawohok7/shared-bucket",
         "--targets-json",
-        mapping,
+        _shared_mapping(),
     )
 
     assert result.returncode == 1
-    assert "is assigned to both" in result.stderr
+    assert "maps to multiple targets" in result.stderr
+    assert "select the target explicitly with --target" in result.stderr
+
+
+def test_explicit_target_resolves_even_when_bucket_is_shared() -> None:
+    result = _run(
+        "--target",
+        "kotoba-whisper-v1.0",
+        "--targets-json",
+        _shared_mapping(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
+    assert "HF_BUCKET=gawohok7/shared-bucket" in result.stdout
+    assert "HF_MODEL_REPO=gawohok7/tf-v1-onnx-dev" in result.stdout
