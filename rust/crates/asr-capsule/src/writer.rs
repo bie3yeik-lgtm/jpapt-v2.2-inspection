@@ -175,10 +175,11 @@ pub fn write_capsule(path: impl AsRef<Path>, run_id: &str, rows: &[CapsuleRow]) 
     let result = (|| -> Result<()> {
         let properties = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
-            .set_max_row_group_size(DEFAULT_ROW_GROUP_SIZE)
+            .set_max_row_group_row_count(DEFAULT_ROW_GROUP_SIZE)
             .build();
         let file = File::create(&temporary)?;
-        let mut writer = ArrowWriter::try_new(file, experiment_capsule_v1_schema(), Some(properties))?;
+        let mut writer =
+            ArrowWriter::try_new(file, experiment_capsule_v1_schema(), Some(properties))?;
         writer.append_key_value_metadata(KeyValue {
             key: "jpapt.capsule.schema".into(),
             value: Some(EXPERIMENT_CAPSULE_SCHEMA_VERSION.into()),
