@@ -1,12 +1,14 @@
 pub mod error;
+pub mod json_adapter;
 pub mod model;
 pub mod reader;
 pub mod schema;
 pub mod writer;
 
 pub use error::{CapsuleError, Result};
+pub use json_adapter::rows_from_evaluation_json;
 pub use model::{
-    CapsuleRow, CapsuleSummary, CapsuleValue, DEFAULT_ROW_GROUP_SIZE,
+    CapsuleReceipt, CapsuleRow, CapsuleSummary, CapsuleValue, DEFAULT_ROW_GROUP_SIZE,
     EXPERIMENT_CAPSULE_SCHEMA_VERSION, RecordKind,
 };
 pub use reader::read_capsule_summary;
@@ -54,9 +56,13 @@ mod tests {
             .with_string("category", "provider")
             .with_string("status", "warning");
 
-        write_capsule(&path, "run-rust", &[manifest, metric, diagnostic]).unwrap();
+        let receipt = write_capsule(&path, "run-rust", &[manifest, metric, diagnostic]).unwrap();
         let summary = read_capsule_summary(&path).unwrap();
 
+        assert_eq!(receipt.run_id, "run-rust");
+        assert_eq!(receipt.path, path);
+        assert_eq!(receipt.sha256.len(), 64);
+        assert!(receipt.size_bytes > 0);
         assert_eq!(summary.run_id, "run-rust");
         assert_eq!(summary.row_count, 3);
         assert_eq!(summary.sample_count, 0);
@@ -64,6 +70,40 @@ mod tests {
         assert_eq!(summary.metric("quality.cer"), Some(0.05));
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn adapts_evaluation_json_to_capsule_rows() {
+        let run_context = serde_json::json!({"run_id":"run-json"});
+        let samples = vec![serde_json::json!({
+            "run_id":"run-json",
+            "sample":{
+                "id":"sample-1","dataset_id":"dataset","dataset_repo_id":"org/dataset",
+                "dataset_revision":"revision","subset":null,"split":"test","index":0,
+                "audio_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "audio_duration_sec":1.0,"sample_rate_hz":16000,"reference_text":"参照"
+            },
+            "execution":{"provider_id":"cpu","decoder":"ctc"},
+            "output":{"text":"認識","normalized_text":"認識","tokens":[1],"token_count":1},
+            "quality":{"cer":0.1,"wer":0.2},
+            "timing":{"total_ms":100.0,"rtf":0.1},
+            "memory":{"peak_ram_mb":64.0,"peak_device_memory_mb":null},
+            "parity":{},"provider":{},"status":"success","errors":[]
+        })];
+        let benchmark = serde_json::json!({
+            "run_id":"run-json",
+            "samples":{"attempted":1},
+            "quality":{"cer":0.1},
+            "provider":{"execution_proven":true}
+        });
+
+        let rows = rows_from_evaluation_json(&run_context, &samples, &benchmark).unwrap();
+        assert_eq!(rows[0].record_kind, RecordKind::Manifest);
+        assert_eq!(rows[1].record_kind, RecordKind::Sample);
+        assert!(rows.iter().any(|row| {
+            row.record_kind == RecordKind::Metric
+                && matches!(row.field("metric_name"), Some(CapsuleValue::String(value)) if value == "quality.cer")
+        }));
     }
 
     #[test]
