@@ -155,7 +155,11 @@ fn inspect_run(
     if metrics_candidate_id != expected_candidate_id {
         return Err("metrics candidate ID mismatch".to_owned());
     }
-    if metrics.pointer("/acceptance/passed").and_then(Value::as_bool) != Some(true) {
+    if metrics
+        .pointer("/acceptance/passed")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
         return Err("candidate is not accepted".to_owned());
     }
 
@@ -342,10 +346,7 @@ fn reject_line_breaks(name: &str, value: &str) -> Result<(), String> {
     }
 }
 
-fn take_value(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<String, String> {
+fn take_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
     args.next()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{option} requires a non-empty value"))
