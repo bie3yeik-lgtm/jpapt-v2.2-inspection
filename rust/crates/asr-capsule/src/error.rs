@@ -5,6 +5,9 @@ pub enum CapsuleError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow_schema::ArrowError),
 

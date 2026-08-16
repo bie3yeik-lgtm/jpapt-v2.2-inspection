@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,12 +11,15 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{CapsuleError, Result};
 use crate::model::{
-    CapsuleRow, CapsuleValue, DEFAULT_ROW_GROUP_SIZE, EXPERIMENT_CAPSULE_SCHEMA_VERSION,
+    CapsuleReceipt, CapsuleRow, CapsuleValue, DEFAULT_ROW_GROUP_SIZE,
+    EXPERIMENT_CAPSULE_SCHEMA_VERSION,
 };
+use crate::reader::read_capsule_summary;
 use crate::schema::experiment_capsule_v1_schema;
 
 pub const CAPSULE_WRITER_VERSION: &str = "rust-arrow-parquet/v1";
@@ -26,6 +30,20 @@ fn temporary_path(destination: &Path) -> PathBuf {
         .and_then(|value| value.to_str())
         .unwrap_or("run.parquet");
     destination.with_file_name(format!(".{name}.{}.tmp", Uuid::new_v4()))
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn field_value<'a>(row: &'a CapsuleRow, name: &str) -> Option<&'a CapsuleValue> {
@@ -150,7 +168,11 @@ pub fn rows_to_record_batch(rows: &[CapsuleRow]) -> Result<RecordBatch> {
     Ok(RecordBatch::try_new(schema, columns)?)
 }
 
-pub fn write_capsule(path: impl AsRef<Path>, run_id: &str, rows: &[CapsuleRow]) -> Result<()> {
+pub fn write_capsule(
+    path: impl AsRef<Path>,
+    run_id: &str,
+    rows: &[CapsuleRow],
+) -> Result<CapsuleReceipt> {
     if run_id.is_empty() {
         return Err(CapsuleError::Contract("run_id must not be empty".into()));
     }
@@ -172,7 +194,7 @@ pub fn write_capsule(path: impl AsRef<Path>, run_id: &str, rows: &[CapsuleRow]) 
     }
     let temporary = temporary_path(destination);
 
-    let result = (|| -> Result<()> {
+    let result = (|| -> Result<CapsuleReceipt> {
         let properties = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
             .set_max_row_group_row_count(Some(DEFAULT_ROW_GROUP_SIZE))
@@ -195,11 +217,26 @@ pub fn write_capsule(path: impl AsRef<Path>, run_id: &str, rows: &[CapsuleRow]) 
 
         for chunk in rows.chunks(DEFAULT_ROW_GROUP_SIZE) {
             writer.write(&rows_to_record_batch(chunk)?)?;
-            writer.flush()?;
         }
+        writer.sync()?;
         writer.close()?;
+        File::options().write(true).open(&temporary)?.sync_all()?;
+
+        let summary = read_capsule_summary(&temporary)?;
+        if summary.run_id != run_id {
+            return Err(CapsuleError::Contract(
+                "written capsule run_id failed verification".into(),
+            ));
+        }
+        let sha256 = sha256_file(&temporary)?;
+        let size_bytes = std::fs::metadata(&temporary)?.len();
         std::fs::rename(&temporary, destination)?;
-        Ok(())
+        Ok(CapsuleReceipt {
+            path: destination.to_path_buf(),
+            sha256,
+            size_bytes,
+            run_id: run_id.to_owned(),
+        })
     })();
 
     if result.is_err() {

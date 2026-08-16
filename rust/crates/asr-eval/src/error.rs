@@ -8,6 +8,8 @@ pub enum EvalError {
     Audio(#[from] asr_audio::AudioError),
     #[error(transparent)]
     Runtime(#[from] asr_runtime::RuntimeError),
+    #[error(transparent)]
+    Capsule(#[from] asr_capsule::CapsuleError),
     #[error("invalid evaluation input: {0}")]
     InvalidInput(String),
     #[error("token {0} is missing from vocabulary")]

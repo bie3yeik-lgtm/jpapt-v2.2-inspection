@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use asr_audio::{CanonicalAudio, decode_audio};
+use asr_capsule::{rows_from_evaluation_json, write_capsule};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
 use asr_runtime::{
     OrtCtcSession, ProviderKind, SessionConfig, SessionTuning,
@@ -245,6 +246,20 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
         aggregate: &aggregate,
     });
     write_json(&options.output.join("metrics.json"), &benchmark)?;
+
+    let capsule_rows = rows_from_evaluation_json(&run_context, &results, &benchmark)?;
+    let receipt = write_capsule(options.output.join("run.parquet"), &run_id, &capsule_rows)?;
+    write_json(
+        &options.output.join("capsule-receipt.json"),
+        &serde_json::json!({
+            "schema_version": 1,
+            "run_id": receipt.run_id,
+            "file": "run.parquet",
+            "sha256": receipt.sha256,
+            "size_bytes": receipt.size_bytes
+        }),
+    )?;
+
     Ok(benchmark)
 }
 

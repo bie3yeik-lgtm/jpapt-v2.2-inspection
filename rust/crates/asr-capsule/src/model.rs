@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -114,6 +115,14 @@ impl CapsuleRow {
     pub fn field(&self, name: &str) -> Option<&CapsuleValue> {
         self.fields.get(name)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapsuleReceipt {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub run_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
