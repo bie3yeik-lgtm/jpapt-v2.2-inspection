@@ -1,0 +1,300 @@
+name: GHCR Environment Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Optional HF target ID (blank = every Dockerfile-matched HF_TARGETS_JSON target)"
+        required: false
+        default: ""
+        type: string
+      candidate_id:
+        description: "Optional candidate-NNNNNN (blank = latest candidate in target Bucket)"
+        required: false
+        default: ""
+        type: string
+      runtime_variant:
+        description: "Optional runtime variant override"
+        required: false
+        default: ""
+        type: string
+      evaluation:
+        description: "Evaluation suite"
+        required: false
+        default: smoke
+        type: choice
+        options: [smoke, parity, full]
+      image_tag:
+        description: "Human-facing GHCR tag to resolve; the actual run is pinned to the pulled digest"
+        required: false
+        default: latest
+        type: string
+  schedule:
+    - cron: "17 18 * * 1"
+  workflow_run:
+    workflows: ["GHCR Build and Publish"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+  actions: write
+
+concurrency:
+  group: ghcr-evaluate-${{ github.event_name }}-${{ inputs.target || 'all' }}-${{ inputs.candidate_id || 'latest' }}
+  cancel-in-progress: false
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
+  GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
+  HF_ALLOCATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
+
+jobs:
+  gate:
+    name: Trigger gate
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          proceed=true
+          if [[ "${{ github.event_name }}" == "workflow_run" && "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+            proceed=false
+          fi
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+
+  discover:
+    name: Match Dockerfiles to HF targets
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - id: matrix
+        name: Derive GHCR evaluation matrix
+        shell: bash
+        env:
+          GHCR_TARGET_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
+        run: bash scripts/ci/resolve-ghcr-matrix.sh
+
+  evaluate:
+    name: ${{ matrix.target_id }} / ${{ matrix.package }} / CPU
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      HF_BUCKET: ""
+      HF_MODEL_REPO: ""
+      EXPECTED_DEVELOPMENT_REPO_ID: ""
+      EXPECTED_UPSTREAM_REPO_ID: ""
+      EXPECTED_TOKENIZER_REPO_ID: ""
+      EXPECTED_FRAMEWORK: ""
+      HF_PROFILE_SET: ""
+      ASR_RUNTIME_VARIANT: ""
+      EXPECTED_RUNTIME_PROFILE: ""
+      EXPECTED_DECODER: ""
+      HF_TARGET_ID: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install host transport tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "huggingface_hub==1.24.0"
+          hf --version
+
+      - name: Resolve target and runtime variant
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          variant="${{ github.event_name == 'workflow_dispatch' && inputs.runtime_variant || '' }}"
+          [[ -n "$variant" ]] || variant="${{ matrix.runtime_variant }}"
+          cargo run --quiet --locked -p asr-hf -- resolve-target \
+            --target "${{ matrix.target_id }}" \
+            --runtime-variant "$variant" \
+            --github-env "$GITHUB_ENV" \
+            --github-output "$GITHUB_OUTPUT"
+          test "$HF_TARGET_ID" = "${{ matrix.target_id }}" || true
+
+      - name: Validate routing snapshot and credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is required"; exit 1; }
+          var_bucket="$(printf '%s' "$HF_TARGETS_JSON" | jq -er --arg id "$HF_TARGET_ID" '.[$id].HF_BUCKET')"
+          var_repo="$(printf '%s' "$HF_TARGETS_JSON" | jq -er --arg id "$HF_TARGET_ID" '.[$id].HF_MODEL_REPO')"
+          test "$var_bucket" = "$HF_BUCKET"
+          test "$var_repo" = "$HF_MODEL_REPO"
+          echo "Target: $HF_TARGET_ID"
+          echo "Bucket: $HF_BUCKET"
+          echo "Candidate: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_id || 'latest' }}"
+          echo "Docker context: ${{ matrix.docker_context }}"
+          echo "GHCR image: ${{ matrix.image }}"
+
+      - name: Prepare local evaluation state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .cache/huggingface .cache/evaluation/audio .ci/hf/config/revisions .ci/ghcr results/ghcr-cpu
+          echo "HF_HOME=$PWD/.cache/huggingface" >> "$GITHUB_ENV"
+          bash scripts/hf/hf-fetch-revisions.sh
+          bash scripts/ci/validate-revisions.sh \
+            --root .ci/hf/config/revisions \
+            --expected-development-repo-id "$EXPECTED_DEVELOPMENT_REPO_ID" \
+            --expected-upstream-repo-id "$EXPECTED_UPSTREAM_REPO_ID" \
+            --expected-tokenizer-repo-id "$EXPECTED_TOKENIZER_REPO_ID" \
+            --expected-framework "$EXPECTED_FRAMEWORK" \
+            --expected-profile-set "$HF_PROFILE_SET" \
+            --runtime-variant "$ASR_RUNTIME_VARIANT" \
+            --expected-runtime-profile "$EXPECTED_RUNTIME_PROFILE" \
+            --expected-decoder "$EXPECTED_DECODER"
+          requested="${{ github.event_name == 'workflow_dispatch' && inputs.candidate_id || '' }}"
+          bash scripts/hf/hf-fetch-candidate.sh "$requested"
+
+      - name: Allocate experiment ID
+        id: experiment
+        shell: bash
+        env:
+          CANDIDATE_ID: ${{ env.CANDIDATE_ID }}
+          EVALUATION_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.evaluation || 'smoke' }}
+          PROVIDER_ID: cpu
+        run: |
+          set -euo pipefail
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments)"
+          echo "experiment_id=$ID" >> "$GITHUB_OUTPUT"
+          echo "EXPERIMENT_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT || github.token }}
+
+      - name: Pull tag and freeze digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'latest' }}"
+          tagged="${{ matrix.image }}:${tag}"
+          docker pull "$tagged"
+          pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          [[ "$pinned" == "${{ matrix.image }}@sha256:"* ]] || { echo "::error::Unexpected RepoDigest: $pinned"; exit 1; }
+          digest="${pinned#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid digest: $digest"; exit 1; }
+          echo "reference=$pinned" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify image identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ steps.image.outputs.reference }}"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.repo_id" }}' "$ref")" = "$EXPECTED_UPSTREAM_REPO_ID"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.framework" }}' "$ref")" = "$EXPECTED_FRAMEWORK"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.ghcr.package" }}' "$ref")" = "${{ matrix.package }}"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.role" }}' "$ref")" = "${{ matrix.role }}"
+
+      - name: Run evaluation inside digest-pinned GHCR environment
+        id: evaluate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evaluation="${{ github.event_name == 'workflow_dispatch' && inputs.evaluation || 'smoke' }}"
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HF_TOKEN \
+            -e HF_TARGET_ID \
+            -e HF_BUCKET \
+            -e HF_MODEL_REPO \
+            -e ASR_RUNTIME_VARIANT \
+            -e EXPERIMENT_ID \
+            -e GITHUB_ACTIONS \
+            -e GITHUB_RUN_ID \
+            -e GITHUB_RUN_ATTEMPT \
+            -e GITHUB_REPOSITORY \
+            -e GITHUB_SHA \
+            -e GITHUB_REF \
+            -e RUNNER_OS \
+            -e RUNNER_ARCH \
+            -e GHCR_IMAGE="${{ matrix.image }}" \
+            -e GHCR_IMAGE_DIGEST="${{ steps.image.outputs.digest }}" \
+            -e GHCR_IMAGE_REFERENCE="${{ steps.image.outputs.reference }}" \
+            -e GHCR_DOCKER_CONTEXT="${{ matrix.docker_context }}" \
+            -e GHCR_IMAGE_ROLE="${{ matrix.role }}" \
+            "${{ steps.image.outputs.reference }}" \
+            bash -lc "python -m pip install --no-deps -e /workspace >/dev/null && python -m parakeet_onnx.cli.evaluate --provider cpu --environment linux --evaluation '$evaluation' --model-config '$HF_TARGET_ID' --runtime-variant '$ASR_RUNTIME_VARIANT' --candidate-dir .ci/candidate --candidate-id '$CANDIDATE_ID' --experiment-id '$EXPERIMENT_ID' --revisions .ci/hf/config/revisions --output results/ghcr-cpu"
+
+      - name: Persist GHCR environment evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results/ghcr-cpu
+          jq -n \
+            --arg image "${{ matrix.image }}" \
+            --arg digest "${{ steps.image.outputs.digest }}" \
+            --arg reference "${{ steps.image.outputs.reference }}" \
+            --arg package "${{ matrix.package }}" \
+            --arg docker_context "${{ matrix.docker_context }}" \
+            --arg role "${{ matrix.role }}" \
+            --arg target_id "$HF_TARGET_ID" \
+            --arg candidate_id "$CANDIDATE_ID" \
+            --arg experiment_id "$EXPERIMENT_ID" \
+            --arg evaluation_outcome "${{ steps.evaluate.outcome }}" \
+            '{schema_version:1,image:$image,digest:$digest,reference:$reference,package:$package,docker_context:$docker_context,role:$role,target_id:$target_id,candidate_id:$candidate_id,experiment_id:$experiment_id,evaluation_outcome:$evaluation_outcome}' \
+            > results/ghcr-cpu/ghcr-environment.json
+
+      - name: Validate and upload run to HF Bucket
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f results/ghcr-cpu/run-context.json ]]; then
+            cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- validate-run results/ghcr-cpu
+            bash scripts/hf/hf-push-run.sh results/ghcr-cpu
+          else
+            echo "::warning::Evaluation did not produce a run-context; GHCR evidence remains in the GitHub artifact only."
+          fi
+
+      - name: Publish GHCR CPU benchmark
+        if: steps.evaluate.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/hf/hf-push-benchmark.sh \
+            results/ghcr-cpu/metrics.json \
+            "ghcr-${{ matrix.package }}-cpu"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ghcr-eval-${{ matrix.target_id }}-${{ matrix.package }}-${{ env.CANDIDATE_ID }}
+          path: results/ghcr-cpu
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Propagate evaluation failure
+        if: steps.evaluate.outcome != 'success'
+        shell: bash
+        run: exit 1
