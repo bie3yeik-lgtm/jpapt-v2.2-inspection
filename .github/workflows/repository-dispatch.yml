@@ -1,0 +1,101 @@
+name: Repository Dispatch Router
+
+on:
+  repository_dispatch:
+    types: [jpapt.workflow]
+  workflow_dispatch:
+    inputs:
+      workflow:
+        description: "Workflow filename, e.g. ghcr-evaluate.yml"
+        required: true
+        type: string
+      ref:
+        description: "Git ref passed to workflow_dispatch"
+        required: false
+        default: main
+        type: string
+      inputs_json:
+        description: "JSON object passed as workflow_dispatch inputs"
+        required: false
+        default: "{}"
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: repository-dispatch-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve dispatch request
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PAYLOAD_WORKFLOW: ${{ github.event.client_payload.workflow }}
+          PAYLOAD_REF: ${{ github.event.client_payload.ref }}
+          PAYLOAD_INPUTS: ${{ toJSON(github.event.client_payload.inputs) }}
+          MANUAL_WORKFLOW: ${{ inputs.workflow }}
+          MANUAL_REF: ${{ inputs.ref }}
+          MANUAL_INPUTS: ${{ inputs.inputs_json }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == repository_dispatch ]]; then
+            workflow="$PAYLOAD_WORKFLOW"
+            ref="${PAYLOAD_REF:-main}"
+            inputs_json="${PAYLOAD_INPUTS:-{}}"
+          else
+            workflow="$MANUAL_WORKFLOW"
+            ref="${MANUAL_REF:-main}"
+            inputs_json="${MANUAL_INPUTS:-{}}"
+          fi
+
+          [[ "$workflow" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]] || {
+            echo "::error::workflow must be a workflow filename"; exit 1;
+          }
+          [[ -f ".github/workflows/$workflow" ]] || {
+            echo "::error::Unknown workflow: $workflow"; exit 1;
+          }
+          [[ "$workflow" != repository-dispatch.yml ]] || {
+            echo "::error::Router cannot dispatch itself"; exit 1;
+          }
+          jq -e 'type == "object"' <<<"$inputs_json" >/dev/null || {
+            echo "::error::inputs must be a JSON object"; exit 1;
+          }
+
+          # Every routed workflow must expose workflow_dispatch. This keeps one
+          # repository_dispatch contract instead of duplicating client_payload
+          # parsing in every workflow file.
+          if ! grep -qE '^[[:space:]]{2}workflow_dispatch:' ".github/workflows/$workflow"; then
+            echo "::error::$workflow does not expose workflow_dispatch"; exit 1
+          fi
+
+          echo "workflow=$workflow" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "inputs=$(jq -c . <<<"$inputs_json")" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: ${{ steps.request.outputs.workflow }}
+          TARGET_REF: ${{ steps.request.outputs.ref }}
+          INPUTS_JSON: ${{ steps.request.outputs.inputs }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(jq -cn --arg ref "$TARGET_REF" --argjson inputs "$INPUTS_JSON" '{ref:$ref,inputs:$inputs}')"
+          printf '%s\n' "$body" | gh api \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW}/dispatches" \
+            --input -
+          echo "Dispatched $WORKFLOW on ref $TARGET_REF"
