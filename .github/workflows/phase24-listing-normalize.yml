@@ -1,0 +1,64 @@
+name: Phase24 Listing Normalize
+
+on:
+  push:
+    branches: [agent/review-minimal-json-bucket-phase24]
+    paths:
+      - ".github/workflows/phase24-listing-normalize.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/review-minimal-json-bucket-phase24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Normalize collection-root-prefixed listings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('rust/crates/asr-hf/src/allocation.rs')
+          s=p.read_text()
+          old='''    for raw in listing.lines() {\n        let value = raw.trim().trim_start_matches('/');\n        if value.is_empty() {\n            continue;\n        }\n        let parts = value.split('/').collect::<Vec<_>>();\n'''
+          new='''    for raw in listing.lines() {\n        let value = normalize_collection_listing_path(raw, "candidates");\n        if value.is_empty() {\n            continue;\n        }\n        let parts = value.split('/').collect::<Vec<_>>();\n'''
+          if old not in s:
+              raise SystemExit('candidate listing loop not found')
+          s=s.replace(old,new,1)
+          marker='''fn resolve_legacy_exact(\n'''
+          helper='''fn normalize_collection_listing_path<'a>(raw: &'a str, collection: &str) -> &'a str {\n    let value = raw.trim().trim_start_matches('/');\n    value\n        .strip_prefix(collection)\n        .and_then(|rest| rest.strip_prefix('/'))\n        .unwrap_or(value)\n}\n\n'''
+          if marker not in s:
+              raise SystemExit('helper insertion marker not found')
+          s=s.replace(marker,helper+marker,1)
+          # Sequence allocation must tolerate the same hf CLI root-prefixed output.
+          old2='''fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {\n    let parts = raw\n        .trim()\n        .trim_start_matches('/')\n        .split('/')\n'''
+          new2='''fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {\n    let value = raw.trim().trim_start_matches('/');\n    let value = ["candidates", "experiments", "config"]\n        .iter()\n        .find_map(|collection| {\n            value\n                .strip_prefix(collection)\n                .and_then(|rest| rest.strip_prefix('/'))\n        })\n        .unwrap_or(value);\n    let parts = value\n        .split('/')\n'''
+          if old2 not in s:
+              raise SystemExit('sequence listing parser not found')
+          s=s.replace(old2,new2,1)
+          test_marker='''    #[test]\n    fn historical_nested_ids_reserve_sequence_numbers() {\n'''
+          test='''    #[test]\n    fn collection_root_prefix_is_ignored_in_bucket_listing() {\n        let listing = "candidates/ctc/candidate-000001/metadata.json\\ncandidates/tdt/candidate-000004/metadata.json\\n";\n        assert_eq!(\n            next_sequence_id("candidate", listing).unwrap(),\n            "candidate-000005"\n        );\n        let location = candidate_location(listing, None, Some("ctc")).unwrap();\n        assert_eq!(location.id, "candidate-000001");\n        assert_eq!(location.relative_path, "ctc/candidate-000001");\n        assert!(location.legacy);\n    }\n\n'''
+          if test_marker not in s:
+              raise SystemExit('test insertion marker not found')
+          s=s.replace(test_marker,test+test_marker,1)
+          p.write_text(s)
+          PY
+          cargo fmt --all
+          cargo clippy --locked -p asr-hf --all-targets -- -D warnings
+          cargo test --locked -p asr-hf
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/asr-hf/src/allocation.rs
+          git commit -m 'Normalize HF Bucket listing roots'
+          git push origin HEAD:agent/review-minimal-json-bucket-phase24
