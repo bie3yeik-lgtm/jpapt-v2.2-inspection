@@ -20,7 +20,10 @@ fn resolves_parakeet_default_from_source_config() {
     .expect("target must resolve");
 
     assert_eq!(resolved.target_id, "parakeet-tdt_ctc-0.6b-ja");
-    assert_eq!(resolved.expected_upstream_repo_id, "nvidia/parakeet-tdt_ctc-0.6b-ja");
+    assert_eq!(
+        resolved.expected_upstream_repo_id,
+        "nvidia/parakeet-tdt_ctc-0.6b-ja"
+    );
     assert_eq!(resolved.expected_framework, "nemo");
     assert_eq!(resolved.profile_set, "parakeet-tdt-ctc-v1");
     assert_eq!(resolved.runtime_variant, "ctc");
@@ -46,7 +49,10 @@ fn routing_snapshot_can_select_bucket_and_override_storage() {
 
     assert_eq!(resolved.hf_bucket, "example/routed-bucket");
     assert_eq!(resolved.hf_model_repo, "example/routed-model");
-    assert_eq!(resolved.expected_development_repo_id, "example/routed-model");
+    assert_eq!(
+        resolved.expected_development_repo_id,
+        "example/routed-model"
+    );
     assert_eq!(resolved.runtime_variant, "tdt");
     assert_eq!(resolved.runtime_profile, "tdt-v1");
     assert_eq!(resolved.decoder, "tdt");

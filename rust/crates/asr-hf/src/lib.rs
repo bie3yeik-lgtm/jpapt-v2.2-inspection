@@ -42,9 +42,15 @@ impl ResolvedHfTarget {
         vec![
             ("HF_BUCKET", &self.hf_bucket),
             ("HF_MODEL_REPO", &self.hf_model_repo),
-            ("EXPECTED_DEVELOPMENT_REPO_ID", &self.expected_development_repo_id),
+            (
+                "EXPECTED_DEVELOPMENT_REPO_ID",
+                &self.expected_development_repo_id,
+            ),
             ("EXPECTED_UPSTREAM_REPO_ID", &self.expected_upstream_repo_id),
-            ("EXPECTED_TOKENIZER_REPO_ID", &self.expected_tokenizer_repo_id),
+            (
+                "EXPECTED_TOKENIZER_REPO_ID",
+                &self.expected_tokenizer_repo_id,
+            ),
             ("EXPECTED_FRAMEWORK", &self.expected_framework),
             ("HF_PROFILE_SET", &self.profile_set),
             ("ASR_RUNTIME_VARIANT", &self.runtime_variant),
@@ -174,15 +180,26 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
             target_path.display()
         )));
     }
-    expect_equal("target filename", &target_id, "target.id", &target.target.id)?;
+    expect_equal(
+        "target filename",
+        &target_id,
+        "target.id",
+        &target.target.id,
+    )?;
     for (name, value) in [
         ("target.model_id", target.target.model_id.as_str()),
         ("upstream.repo_id", target.upstream.repo_id.as_str()),
-        ("reference.canonical_framework", target.reference.canonical_framework.as_str()),
+        (
+            "reference.canonical_framework",
+            target.reference.canonical_framework.as_str(),
+        ),
         ("runtime.profile_set", target.runtime.profile_set.as_str()),
         ("storage.bucket", target.storage.bucket.as_str()),
         ("storage.model_repo", target.storage.model_repo.as_str()),
-        ("evaluation.datasets_policy", target.evaluation.datasets_policy.as_str()),
+        (
+            "evaluation.datasets_policy",
+            target.evaluation.datasets_policy.as_str(),
+        ),
     ] {
         require_nonempty(name, value)?;
     }
@@ -191,14 +208,23 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
         .join("config/models")
         .join(format!("{}.toml", target.target.model_id));
     let model: toml::Value = load_toml(&model_path)?;
-    if model.get("schema_version").and_then(toml::Value::as_integer) != Some(1) {
+    if model
+        .get("schema_version")
+        .and_then(toml::Value::as_integer)
+        != Some(1)
+    {
         return Err(contract(format!(
             "{}: schema_version must equal 1",
             model_path.display()
         )));
     }
     let model_id = toml_string(&model, &["model", "id"], "model.id")?;
-    expect_equal("target.model_id", &target.target.model_id, "model.id", model_id)?;
+    expect_equal(
+        "target.model_id",
+        &target.target.model_id,
+        "model.id",
+        model_id,
+    )?;
     let model_upstream = toml_string(&model, &["upstream", "repo_id"], "upstream.repo_id")?;
     expect_equal(
         "HF target upstream.repo_id",
@@ -217,12 +243,19 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
     let catalog_path = root.join("config/asr-catalog.json");
     let catalog: Catalog = serde_json::from_slice(&read(&catalog_path)?)?;
     if catalog.schema_version != 1 {
-        return Err(contract("config/asr-catalog.json schema_version must equal 1"));
+        return Err(contract(
+            "config/asr-catalog.json schema_version must equal 1",
+        ));
     }
     let profile_set = catalog
         .profile_sets
         .get(&target.runtime.profile_set)
-        .ok_or_else(|| contract(format!("unknown profile set {:?}", target.runtime.profile_set)))?;
+        .ok_or_else(|| {
+            contract(format!(
+                "unknown profile set {:?}",
+                target.runtime.profile_set
+            ))
+        })?;
     let variant = options
         .runtime_variant
         .as_deref()

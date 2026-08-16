@@ -84,7 +84,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn shell_quote(value: &str) -> String {
-    if value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte)) {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte))
+    {
         value.to_owned()
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
