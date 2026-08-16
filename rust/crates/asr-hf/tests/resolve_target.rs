@@ -101,7 +101,11 @@ fn unknown_bucket_is_rejected() {
         )),
     })
     .expect_err("unknown bucket must fail");
-    assert!(error.to_string().contains("is not present in the current HF target mapping"));
+    assert!(
+        error
+            .to_string()
+            .contains("is not present in the current HF target mapping")
+    );
 }
 
 #[test]
