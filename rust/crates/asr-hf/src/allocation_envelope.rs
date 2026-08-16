@@ -94,6 +94,7 @@ pub fn write_allocation_response(
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct StoredAllocationResponse {
     schema_version: u32,
     request_id: String,
