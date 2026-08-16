@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Find allocation Python callers
+      - name: Find remaining allocation Python callers
         shell: bash
         run: |
           set -euo pipefail
