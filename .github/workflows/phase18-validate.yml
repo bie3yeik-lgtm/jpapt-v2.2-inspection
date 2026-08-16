@@ -1,0 +1,62 @@
+name: Phase18 Validate
+
+on:
+  push:
+    branches: [agent/rust-action-version-policy-phase18]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-action-version-policy-phase18
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate Phase 18
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          output="$(cargo run --quiet --locked -p asr-contracts --bin asr-action-policy)"
+          grep -q '^OK: actions/checkout@v7 ' <<<"$output"
+          grep -q '^OK: actions/setup-python@v7 ' <<<"$output"
+          grep -q '^OK: actions/upload-artifact@v7 ' <<<"$output"
+          grep -q '^OK: actions/cache@v6 ' <<<"$output"
+
+          tmp="$(mktemp -d)"
+          mkdir -p "$tmp/.github/workflows"
+          cat > "$tmp/.github/workflows/test.yml" <<'YAML'
+          steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-python@v7
+            - uses: actions/upload-artifact@v7
+            - uses: actions/cache@v6
+          YAML
+          if cargo run --quiet --locked -p asr-contracts --bin asr-action-policy -- --repository-root "$tmp"; then
+            echo 'version policy accepted forbidden checkout version' >&2
+            exit 1
+          fi
+          rm -rf "$tmp"
+
+          if git grep -n 'validate-github-action-versions.py' -- ':!.github/workflows/phase18-validate.yml'; then
+            echo 'deleted Python action-version validator still has callers' >&2
+            exit 1
+          fi
+      - name: Normalize production files and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          rm -f .github/workflows/phase18-validate.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/asr-contracts/src/bin/asr-action-policy.rs .github/workflows/phase18-validate.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'Normalize Rust GitHub Actions version policy'
+            git push origin HEAD:agent/rust-action-version-policy-phase18
+          fi
