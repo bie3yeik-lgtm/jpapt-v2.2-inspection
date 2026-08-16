@@ -18,7 +18,7 @@ on:
         type: choice
         options: [candidates, experiments, config]
       prefix_key:
-        description: "Semantic allocation prefix key from config/asr-catalog.json"
+        description: "Semantic allocation prefix key from config/hf-allocation-catalog.json"
         required: true
         type: string
       metadata_json:
@@ -59,9 +59,13 @@ jobs:
         run: |
           set -euo pipefail
           ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}" "${{ inputs.prefix_key }}")"
-          PREFIX="$(python scripts/ci/resolve-asr-catalog.py prefix "${{ inputs.prefix_key }}")"
+          PREFIX="$(python scripts/ci/resolve-allocation-catalog.py prefix "${{ inputs.prefix_key }}")"
+          CATALOG_ID="$(python scripts/ci/resolve-allocation-catalog.py fingerprint catalog_id)"
+          CATALOG_SHA="$(python scripts/ci/resolve-allocation-catalog.py fingerprint sha256)"
           echo "id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "prefix=${PREFIX}" >> "${GITHUB_OUTPUT}"
+          echo "allocation_catalog_id=${CATALOG_ID}" >> "${GITHUB_OUTPUT}"
+          echo "allocation_catalog_sha256=${CATALOG_SHA}" >> "${GITHUB_OUTPUT}"
       - name: Update Bucket root allocator status
         shell: bash
         env:
@@ -79,11 +83,15 @@ jobs:
           import os
           from pathlib import Path
           value = {
-              "schema_version": 2,
+              "schema_version": 3,
               "request_id": "${{ inputs.request_id }}",
               "id": "${{ steps.allocate.outputs.id }}",
               "bucket": os.environ["HF_BUCKET"],
               "collection": "${{ inputs.collection }}",
+              "allocation_catalog": {
+                  "id": "${{ steps.allocate.outputs.allocation_catalog_id }}",
+                  "sha256": "${{ steps.allocate.outputs.allocation_catalog_sha256 }}",
+              },
               "prefix_key": "${{ inputs.prefix_key }}",
               "resolved_prefix": "${{ steps.allocate.outputs.prefix }}",
           }
