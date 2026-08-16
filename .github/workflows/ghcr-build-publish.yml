@@ -14,10 +14,6 @@ on:
       - "docker/**"
       - ".github/workflows/ghcr-build-publish.yml"
 
-concurrency:
-  group: ghcr-build-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   changes:
     name: Check Docker build inputs
@@ -89,6 +85,9 @@ jobs:
   build:
     name: ${{ matrix.package }}
     needs: discover
+    concurrency:
+      group: ghcr-build-${{ github.ref }}-${{ matrix.package }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
