@@ -7,7 +7,7 @@
 以下が正しい値です。
 
 ```yaml
-- uses: actions/checkout@v6
+- uses: actions/checkout@v7
 - uses: actions/setup-python@v7
 - uses: actions/upload-artifact@v7
 - uses: actions/cache@v6
@@ -23,7 +23,7 @@
 
 | Action | 固定version | 利用必須 |
 |---|---:|---:|
-| `actions/checkout` | `v6` | yes |
+| `actions/checkout` | `v7` | yes |
 | `actions/setup-python` | `v7` | yes |
 | `actions/upload-artifact` | `v7` | yes |
 | `actions/cache` | `v6` | yes |
@@ -45,14 +45,14 @@ scripts/ci/validate-github-action-versions.py
 例えば、
 
 ```text
-actions/checkout@v7
+actions/checkout@v6
 ```
 
 が追加されると、CIは次の種類のエラーとして拒否します。
 
 ```text
 ERROR: .github/workflows/example.yml:<line>:
-actions/checkout@v7 is forbidden; required=actions/checkout@v6
+actions/checkout@v6 is forbidden; required=actions/checkout@v7
 ```
 
 同様に、
@@ -70,7 +70,7 @@ actions/cache/save@v5
 
 ```text
 DO NOT downgrade, upgrade, or rewrite:
-  actions/checkout@v6
+  actions/checkout@v7
   actions/setup-python@v7
   actions/upload-artifact@v7
   actions/cache@v6
