@@ -43,6 +43,18 @@ pub struct ProviderTelemetry {
     pub fallback_nodes: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BenchmarkInput<'a> {
+    pub run_context: &'a serde_json::Value,
+    pub manifest: &'a str,
+    pub expected: usize,
+    pub session_creation_ms: f64,
+    pub provider: &'a str,
+    pub provider_ort: &'a str,
+    pub provider_telemetry: ProviderTelemetry,
+    pub aggregate: &'a SampleAggregate,
+}
+
 impl SampleAggregate {
     #[allow(clippy::too_many_arguments)]
     pub fn add_success(
@@ -74,16 +86,17 @@ impl SampleAggregate {
     }
 }
 
-pub fn build_benchmark(
-    run_context: &serde_json::Value,
-    manifest: &str,
-    expected: usize,
-    session_creation_ms: f64,
-    provider: &str,
-    provider_ort: &str,
-    provider_telemetry: ProviderTelemetry,
-    agg: &SampleAggregate,
-) -> serde_json::Value {
+pub fn build_benchmark(input: BenchmarkInput<'_>) -> serde_json::Value {
+    let BenchmarkInput {
+        run_context,
+        manifest,
+        expected,
+        session_creation_ms,
+        provider,
+        provider_ort,
+        provider_telemetry,
+        aggregate: agg,
+    } = input;
     let dist = distribution(&agg.timing_ms);
     let n = agg.successful.max(1) as f64;
     let total_ms = agg.timing_ms.iter().sum::<f64>();
