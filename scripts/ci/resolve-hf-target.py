@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--github-env", type=Path)
+    parser.add_argument("--github-output", type=Path)
     parser.add_argument("--shell", action="store_true")
     return parser
 
@@ -167,6 +168,18 @@ def main() -> int:
     if args.github_env is not None:
         with args.github_env.open("a", encoding="utf-8") as file:
             for key, value in values.items():
+                file.write(f"{key}={value}\n")
+
+    if args.github_output is not None:
+        outputs = {
+            "target_id": target.id,
+            "hf_bucket": bucket,
+            "hf_model_repo": model_repo,
+            "decoder": target.default_decoder,
+            "framework": target.canonical_framework,
+        }
+        with args.github_output.open("a", encoding="utf-8") as file:
+            for key, value in outputs.items():
                 file.write(f"{key}={value}\n")
 
     if args.shell:
