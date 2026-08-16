@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 from parakeet_onnx.contracts import RunContext
 
@@ -16,6 +16,7 @@ from .models import BenchmarkResult, SampleResult
 
 
 EXPERIMENT_CAPSULE_SCHEMA_VERSION = "experiment-capsule/v1"
+DEFAULT_CAPSULE_ROW_BATCH_SIZE = 512
 
 _CAPSULE_COLUMNS = (
     "schema_version",
@@ -227,15 +228,15 @@ def _diagnostic_row(
     return row
 
 
-def build_experiment_capsule_rows(
+def iter_experiment_capsule_rows(
     *,
     run_context: Mapping[str, Any],
     samples: Iterable[Mapping[str, Any]],
     benchmark: Mapping[str, Any],
     artifacts: Iterable[CapsuleArtifact] = (),
     diagnostics: Iterable[CapsuleDiagnostic] = (),
-) -> list[dict[str, Any]]:
-    """Build the deterministic flat row set for one capsule."""
+) -> Iterator[dict[str, Any]]:
+    """Yield deterministic capsule rows without materializing the complete run."""
 
     run_id = run_context.get("run_id")
     if not isinstance(run_id, str) or not run_id:
@@ -243,8 +244,8 @@ def build_experiment_capsule_rows(
     if benchmark.get("run_id") != run_id:
         raise ValueError("benchmark run_id does not match run_context run_id")
 
-    rows: list[dict[str, Any]] = []
-    manifest = _empty_row(run_id=run_id, record_kind="manifest", ordinal=0)
+    ordinal = 0
+    manifest = _empty_row(run_id=run_id, record_kind="manifest", ordinal=ordinal)
     manifest.update(
         {
             "name": "run",
@@ -257,16 +258,14 @@ def build_experiment_capsule_rows(
             ),
         }
     )
-    rows.append(manifest)
+    yield manifest
+    ordinal += 1
 
-    ordinal = 1
     for sample in samples:
-        rows.append(
-            _sample_row(
-                sample,
-                ordinal=ordinal,
-                expected_run_id=run_id,
-            )
+        yield _sample_row(
+            sample,
+            ordinal=ordinal,
+            expected_run_id=run_id,
         )
         ordinal += 1
 
@@ -299,7 +298,7 @@ def build_experiment_capsule_rows(
                     "metric_unit": metric_unit,
                 }
             )
-            rows.append(row)
+            yield row
             ordinal += 1
 
     artifact_ids: set[str] = set()
@@ -318,20 +317,68 @@ def build_experiment_capsule_rows(
                 ordinal=ordinal,
             )
             row.update(part)
-            rows.append(row)
+            yield row
             ordinal += 1
 
     for diagnostic in diagnostics:
-        rows.append(
-            _diagnostic_row(
-                diagnostic,
-                run_id=run_id,
-                ordinal=ordinal,
-            )
+        yield _diagnostic_row(
+            diagnostic,
+            run_id=run_id,
+            ordinal=ordinal,
         )
         ordinal += 1
 
-    return rows
+
+def build_experiment_capsule_rows(
+    *,
+    run_context: Mapping[str, Any],
+    samples: Iterable[Mapping[str, Any]],
+    benchmark: Mapping[str, Any],
+    artifacts: Iterable[CapsuleArtifact] = (),
+    diagnostics: Iterable[CapsuleDiagnostic] = (),
+) -> list[dict[str, Any]]:
+    """Compatibility helper that materializes all deterministic capsule rows."""
+
+    return list(
+        iter_experiment_capsule_rows(
+            run_context=run_context,
+            samples=samples,
+            benchmark=benchmark,
+            artifacts=artifacts,
+            diagnostics=diagnostics,
+        )
+    )
+
+
+def iter_experiment_capsule_row_batches(
+    *,
+    run_context: Mapping[str, Any],
+    samples: Iterable[Mapping[str, Any]],
+    benchmark: Mapping[str, Any],
+    artifacts: Iterable[CapsuleArtifact] = (),
+    diagnostics: Iterable[CapsuleDiagnostic] = (),
+    batch_size: int = DEFAULT_CAPSULE_ROW_BATCH_SIZE,
+) -> Iterator[tuple[dict[str, Any], ...]]:
+    """Yield bounded row batches for a future streaming Arrow/Parquet writer."""
+
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+
+    batch: list[dict[str, Any]] = []
+    for row in iter_experiment_capsule_rows(
+        run_context=run_context,
+        samples=samples,
+        benchmark=benchmark,
+        artifacts=artifacts,
+        diagnostics=diagnostics,
+    ):
+        batch.append(row)
+        if len(batch) >= batch_size:
+            yield tuple(batch)
+            batch.clear()
+
+    if batch:
+        yield tuple(batch)
 
 
 def _features() -> Any:
