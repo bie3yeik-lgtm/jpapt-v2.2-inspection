@@ -64,6 +64,10 @@ mise run actions-ghcr
 
 These commands make the repository itself discoverable without opening every workflow YAML manually.
 
+### Router runs are identifiable
+
+The repository-dispatch router uses a dynamic `run-name` containing the requested workflow/ref and writes the Rust-normalized request into `GITHUB_STEP_SUMMARY`. External automation failures can therefore be diagnosed from the Actions run without reconstructing the original payload manually.
+
 ### Heavy work is separated from routing
 
 The repository uses fast contract jobs before expensive jobs wherever practical:
@@ -80,6 +84,19 @@ publish
 ```
 
 This reduces wasted GitHub-hosted runner time.
+
+### Repeated PR Docker builds are suppressed
+
+GitHub's `pull_request.paths` filter evaluates the PR change set, so once a PR contains a Docker change a later docs-only commit can still create another workflow run. `GHCR Build and Publish` therefore adds a second gate for `pull_request/synchronize` events and compares the previous PR head with the new head.
+
+Only changes under:
+
+```text
+docker/**
+.github/workflows/ghcr-build-publish.yml
+```
+
+cause another expensive image rebuild. Other synchronize commits finish at the lightweight gate.
 
 ### Immutable execution identity
 
