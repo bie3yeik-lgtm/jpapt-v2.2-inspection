@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 
 import numpy as np
@@ -12,7 +13,7 @@ import onnxruntime as ort
 from scipy.signal import resample_poly
 import soundfile as sf
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download
 from transformers import AutoModelForCTC, AutoProcessor
 
 MODEL_ID = os.environ.get("CTC_MODEL_ID", "TKU410410103/wav2vec2-base-japanese-asr")
@@ -33,7 +34,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-sample_path = Path(hf_hub_download(DATASET_ID, "sample.flac", repo_type="dataset"))
+def require_commit_sha(name: str, value: str | None) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", value) is None:
+        raise RuntimeError(f"{name} did not resolve to a concrete Hub commit SHA: {value!r}")
+    return value.lower()
+
+
+api = HfApi()
+model_revision = require_commit_sha("model revision", api.model_info(MODEL_ID).sha)
+dataset_revision = require_commit_sha(
+    "dataset revision", api.dataset_info(DATASET_ID).sha
+)
+
+sample_path = Path(
+    hf_hub_download(
+        DATASET_ID,
+        "sample.flac",
+        repo_type="dataset",
+        revision=dataset_revision,
+    )
+)
 audio, source_sample_rate = sf.read(sample_path, dtype="float32", always_2d=False)
 if audio.ndim == 2:
     audio = audio.mean(axis=1)
@@ -51,8 +71,8 @@ sample_rate = 16_000
 if audio.size == 0 or not np.isfinite(audio).all():
     raise RuntimeError("resampled JSUT sample is empty or non-finite")
 
-processor = AutoProcessor.from_pretrained(MODEL_ID)
-model = AutoModelForCTC.from_pretrained(MODEL_ID).eval()
+processor = AutoProcessor.from_pretrained(MODEL_ID, revision=model_revision)
+model = AutoModelForCTC.from_pretrained(MODEL_ID, revision=model_revision).eval()
 inputs = processor(audio, sampling_rate=sample_rate, return_tensors="pt")
 input_values = inputs.input_values
 
@@ -166,11 +186,11 @@ resolved_manifest = {
             "manifest_entry_id": "jsut-sample",
             "dataset_id": "jsut-basic5000",
             "dataset_repo_id": DATASET_ID,
-            "dataset_revision": "main",
+            "dataset_revision": dataset_revision,
             "subset": None,
             "split": None,
             "row_index": 0,
-            "source_identity": f"{DATASET_ID}:sample.flac",
+            "source_identity": f"{DATASET_ID}@{dataset_revision}:sample.flac",
             "selection_hash": selection_hash,
             "selection_rank": 0,
             "duration_sec": source_duration_sec,
@@ -190,8 +210,11 @@ resolved_manifest = {
 max_abs = float(np.max(np.abs(torch_logits - ort_logits)))
 summary = {
     "model_id": MODEL_ID,
+    "model_revision": model_revision,
     "dataset_id": DATASET_ID,
+    "dataset_revision": dataset_revision,
     "sample_file": "sample.flac",
+    "sample_sha256": selection_hash,
     "source_sample_rate_hz": int(source_sample_rate),
     "source_sample_count": source_sample_count,
     "sample_rate_hz": sample_rate,
