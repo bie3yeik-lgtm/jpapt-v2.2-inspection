@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Validate that an evaluator supports the resolved decoder, provider, "
-            "candidate artifact contract, runtime contract, and required features."
+            "candidate artifact contract, runtime contract, and decoder-scoped features."
         )
     )
     parser.add_argument("--evaluator", required=True)
@@ -48,12 +48,21 @@ def main() -> int:
         supported_contracts = _string_list(
             capabilities, "supported_artifact_contracts", required=False
         )
-        features_raw = raw.get("features", {})
-        if not isinstance(features_raw, dict) or not all(
-            isinstance(key, str) and isinstance(value, bool)
-            for key, value in features_raw.items()
-        ):
-            return _error("features must be a TOML table of booleans")
+        decoder_features_raw = raw.get("decoder_features", {})
+        if not isinstance(decoder_features_raw, dict):
+            return _error("decoder_features must be a TOML table")
+        decoder_features: dict[str, dict[str, bool]] = {}
+        for decoder_id, feature_table in decoder_features_raw.items():
+            if not isinstance(decoder_id, str) or not isinstance(feature_table, dict):
+                return _error("decoder_features entries must be tables")
+            if not all(
+                isinstance(key, str) and isinstance(value, bool)
+                for key, value in feature_table.items()
+            ):
+                return _error(
+                    f"decoder_features.{decoder_id} must contain booleans only"
+                )
+            decoder_features[decoder_id] = dict(feature_table)
     except (KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
         return _error(f"invalid evaluator capability file {path}: {exc}")
 
@@ -66,6 +75,11 @@ def main() -> int:
             "evaluator capability mismatch: "
             f"evaluator={args.evaluator!r}, decoder={args.decoder!r}, "
             f"supported={supported_decoders!r}"
+        )
+    feature_capabilities = decoder_features.get(args.decoder)
+    if feature_capabilities is None:
+        return _error(
+            f"evaluator has no decoder_features table for supported decoder {args.decoder!r}"
         )
     if (
         args.provider is not None
@@ -97,10 +111,11 @@ def main() -> int:
                 f"supported={supported_contracts!r}"
             )
         for feature, required in candidate.features.items():
-            if required and not bool(features_raw.get(feature, False)):
+            if required and not bool(feature_capabilities.get(feature, False)):
                 return _error(
                     "candidate requires unsupported evaluator feature: "
-                    f"feature={feature!r}, evaluator={args.evaluator!r}"
+                    f"feature={feature!r}, decoder={args.decoder!r}, "
+                    f"evaluator={args.evaluator!r}"
                 )
 
     suffix = ""
