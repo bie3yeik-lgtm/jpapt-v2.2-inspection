@@ -1,18 +1,18 @@
 use std::{fs, path::PathBuf, time::Instant};
 
-use asr_audio::{CanonicalAudio, decode_audio};
+use asr_audio::{decode_audio, CanonicalAudio};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
 use asr_runtime::{
-    OrtCtcSession, ProviderKind, SessionConfig, SessionTuning,
-    metadata::model_metadata::GeneratedCandidateContract,
+    metadata::model_metadata::GeneratedCandidateContract, OrtCtcSession, ProviderKind,
+    SessionConfig, SessionTuning,
 };
 
 use crate::{
-    EvalError, Result,
-    benchmark::{ProviderTelemetry, SampleAggregate, build_benchmark},
+    benchmark::{build_benchmark, BenchmarkInput, ProviderTelemetry, SampleAggregate},
     decoding::ctc::Vocabulary,
     manifest::load_resolved_manifest,
     writer::{ensure_dir, write_json, write_jsonl},
+    EvalError, Result,
 };
 
 #[derive(Debug, Clone)]
@@ -233,16 +233,17 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
 
     write_json(&options.output.join("run-context.json"), &run_context)?;
     write_jsonl(&options.output.join("samples.jsonl"), &results)?;
-    let benchmark = build_benchmark(
-        &run_context,
-        &manifest.manifest_path,
-        manifest.expected_sample_count,
+    let provider_name = options.provider.to_string();
+    let benchmark = build_benchmark(BenchmarkInput {
+        run_context: &run_context,
+        manifest: &manifest.manifest_path,
+        expected: manifest.expected_sample_count,
         session_creation_ms,
-        &options.provider.to_string(),
-        options.provider.ort_name(),
-        telemetry,
-        &aggregate,
-    );
+        provider: &provider_name,
+        provider_ort: options.provider.ort_name(),
+        provider_telemetry: telemetry,
+        aggregate: &aggregate,
+    });
     write_json(&options.output.join("metrics.json"), &benchmark)?;
     Ok(benchmark)
 }
@@ -323,16 +324,8 @@ fn finalized_provider_telemetry(
     aggregate: &SampleAggregate,
 ) -> ProviderTelemetry {
     let executed = aggregate.successful > 0;
-    if provider == ProviderKind::Cpu {
-        ProviderTelemetry {
-            registered: true,
-            used: Some(executed),
-            fallback_detected: Some(false),
-            fallback_only: Some(false),
-            assigned_nodes: None,
-            fallback_nodes: Some(0),
-        }
-    } else if strict_provider {
+    let execution_is_proven = provider == ProviderKind::Cpu || strict_provider;
+    if execution_is_proven {
         ProviderTelemetry {
             registered: true,
             used: Some(executed),
