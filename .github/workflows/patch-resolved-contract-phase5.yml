@@ -20,40 +20,25 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
+
           path = Path("rust/crates/asr-contracts/src/revisions.rs")
           text = path.read_text()
-          old = '''    exact_fields(
-              object,
-              "resolved.json",
-              &["schema_version", "config_version"],
-              &[],
-          )?;
-          if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
-          '''
-          new = '''    exact_fields(
-              object,
-              "resolved.json",
-              &["schema_version", "config_version"],
-              &["current_version", "selection_source"],
-          )?;
-          if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
-          '''
-          if old not in text:
-              raise SystemExit("expected resolved.json exact_fields block was not found")
-          text = text.replace(old, new, 1)
-          old2 = '''    if !valid_config_version(value) {
-              return Err(ContractError::validation(format!(
-                  "resolved.json: config_version must match config-NNNNNN; got {value:?}"
-              )));
+
+          text, count = re.subn(
+              r'(exact_fields\(\s*object,\s*"resolved\.json",\s*&\["schema_version", "config_version"\],\s*)&\[\](,\s*\)\?;)',
+              r'\1&["current_version", "selection_source"]\2',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit("resolved.json exact_fields block was not uniquely found")
+
+          marker = '''    Ok(value.to_owned())
           }
-          Ok(value.to_owned())
-          '''
-          new2 = '''    if !valid_config_version(value) {
-              return Err(ContractError::validation(format!(
-                  "resolved.json: config_version must match config-NNNNNN; got {value:?}"
-              )));
-          }
-          if let Some(current_version) = optional_string(object, "current_version", "resolved.json")?
+
+          fn parse_reference'''
+          insertion = '''    if let Some(current_version) = optional_string(object, "current_version", "resolved.json")?
               && !valid_config_version(current_version)
           {
               return Err(ContractError::validation(format!(
@@ -68,10 +53,12 @@ jobs:
               )));
           }
           Ok(value.to_owned())
-          '''
-          if old2 not in text:
-              raise SystemExit("expected resolved.json config version validation block was not found")
-          path.write_text(text.replace(old2, new2, 1))
+          }
+
+          fn parse_reference'''
+          if marker not in text:
+              raise SystemExit("load_config_version return marker was not found")
+          path.write_text(text.replace(marker, insertion, 1))
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
