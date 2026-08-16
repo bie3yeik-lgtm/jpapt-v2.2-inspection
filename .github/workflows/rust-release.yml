@@ -53,10 +53,13 @@ jobs:
             ~/.cargo/git
             ~/.cache/ort.pyke.io
             target
-          key: release-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'rust/crates/**/Cargo.toml') }}
+          key: release-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust/crates/**/Cargo.toml') }}
+      - name: Verify lockfile
+        shell: bash
+        run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
       - name: Build release binary
         shell: bash
-        run: cargo build --release -p asr-eval --no-default-features --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+        run: cargo build --locked --release -p asr-eval --no-default-features --features "${{ matrix.features }}" --target "${{ matrix.target }}"
       - name: Package Unix binary
         if: matrix.archive == 'tar'
         shell: bash
