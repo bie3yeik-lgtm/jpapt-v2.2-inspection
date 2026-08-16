@@ -184,10 +184,11 @@ fn collect_metrics(prefix: &str, value: &Value, output: &mut Vec<(String, f64)>)
         };
         if item.is_object() {
             collect_metrics(&name, item, output);
-        } else if !item.is_boolean() && !item.is_null() {
-            if let Some(number) = item.as_f64() {
-                output.push((name, number));
-            }
+        } else if !item.is_boolean()
+            && !item.is_null()
+            && let Some(number) = item.as_f64()
+        {
+            output.push((name, number));
         }
     }
 }
