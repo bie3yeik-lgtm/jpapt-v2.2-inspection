@@ -146,6 +146,7 @@ jobs:
             --provider "${{ matrix.provider }}" \
             --evaluation "${{ inputs.evaluation }}" \
             --environment "${{ matrix.environment }}" \
+            --model-config "${HF_TARGET_ID}" \
             --revisions .ci/hf/config/revisions \
             --output .ci/resolved-manifest.json
 
