@@ -190,7 +190,7 @@ mod tests {
                 "requested": "coreml"
             }
         });
-        let result = classify_coreml(Some(&metrics), "success", "0");
+        let result = classify_coreml(Some(&metrics), "", "success", "0");
         assert_eq!(result["execution_proven"], true);
         assert_eq!(result["classification"], "strict_execution_proven");
         assert_eq!(result["telemetry"]["requested"], "coreml");
