@@ -62,10 +62,14 @@ fn usage() -> &'static str {
 }
 
 fn print_summary(catalog: &Catalog) -> Result<(), String> {
-    println!("ASR runtime catalog: {} {}", catalog.catalog_id, catalog.sha256);
+    println!(
+        "ASR runtime catalog: {} {}",
+        catalog.catalog_id, catalog.sha256
+    );
     println!("Runtime profile sets:");
     for (profile_set_id, profile_set) in &catalog.profile_sets {
-        let variants = serde_json::to_string(&profile_set.variants).map_err(|error| error.to_string())?;
+        let variants =
+            serde_json::to_string(&profile_set.variants).map_err(|error| error.to_string())?;
         println!(
             "- {profile_set_id}: {variants} default={}",
             profile_set.default_variant
