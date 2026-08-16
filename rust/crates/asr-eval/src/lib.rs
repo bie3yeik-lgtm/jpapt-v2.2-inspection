@@ -1,5 +1,6 @@
 pub mod benchmark;
 pub mod bucket_init;
+pub mod capsule;
 pub mod cli;
 pub mod config;
 pub mod dataset;
