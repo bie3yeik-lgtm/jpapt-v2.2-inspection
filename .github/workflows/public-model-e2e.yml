@@ -42,6 +42,44 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+      - name: Resolve exact Hugging Face revisions
+        shell: python
+        env:
+          GITHUB_ENV_FILE: ${{ github.env }}
+        run: |
+          import json
+          import os
+          import re
+          import urllib.request
+
+          model_id = "onnx-community/whisper-small"
+          dataset_id = "japanese-asr/ja_asr.jsut_basic5000"
+
+          def resolve(url: str, label: str) -> str:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  value = json.load(response).get("sha")
+              if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", value) is None:
+                  raise SystemExit(f"{label} did not resolve to a concrete Hub commit SHA: {value!r}")
+              return value.lower()
+
+          model_revision = resolve(
+              f"https://huggingface.co/api/models/{model_id}", "Whisper model"
+          )
+          dataset_revision = resolve(
+              f"https://huggingface.co/api/datasets/{dataset_id}", "JSUT dataset"
+          )
+          env_file = os.environ["GITHUB_ENV_FILE"]
+          with open(env_file, "a", encoding="utf-8") as handle:
+              handle.write(f"WHISPER_MODEL_ID={model_id}\n")
+              handle.write(f"WHISPER_MODEL_REVISION={model_revision}\n")
+              handle.write(f"JSUT_DATASET_ID={dataset_id}\n")
+              handle.write(f"JSUT_DATASET_REVISION={dataset_revision}\n")
+          print(json.dumps({
+              "model_id": model_id,
+              "model_revision": model_revision,
+              "dataset_id": dataset_id,
+              "dataset_revision": dataset_revision,
+          }, indent=2))
       - name: Install pinned Transformers.js
         shell: bash
         run: |
@@ -50,22 +88,24 @@ jobs:
           cd .ci/transformersjs
           npm init -y >/dev/null
           npm install --no-audit --no-fund @huggingface/transformers@4.2.0
-      - name: Materialize canonical JSUT PCM
+      - name: Materialize revision-pinned canonical JSUT PCM
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ffmpeg
           curl --fail --location --retry 3 \
-            https://huggingface.co/datasets/japanese-asr/ja_asr.jsut_basic5000/resolve/main/sample.flac \
+            "https://huggingface.co/datasets/${JSUT_DATASET_ID}/resolve/${JSUT_DATASET_REVISION}/sample.flac" \
             --output .ci/jsut-sample.flac
+          sample_sha="$(sha256sum .ci/jsut-sample.flac | awk '{print $1}')"
+          test "${#sample_sha}" -eq 64
+          echo "JSUT_SAMPLE_SHA256=$sample_sha" >> "$GITHUB_ENV"
           ffmpeg -hide_banner -loglevel error -y \
             -i .ci/jsut-sample.flac -ac 1 -ar 16000 -f f32le .ci/jsut-sample.f32
           test -s .ci/jsut-sample.f32
-      - name: Run real ONNX Whisper inference
+      - name: Run revision-pinned real ONNX Whisper inference
         shell: bash
         env:
-          WHISPER_MODEL_ID: onnx-community/whisper-small
           JSUT_PCM_PATH: .ci/jsut-sample.f32
         run: |
           set -euo pipefail
@@ -96,14 +136,14 @@ jobs:
           set -euo pipefail
           uv lock --check
           uv sync --locked --extra onnx --extra transformers --extra hf
-      - name: Run real Japanese CTC ONNX parity smoke and materialize candidate
+      - name: Run revision-pinned Japanese CTC ONNX parity smoke and materialize candidate
         shell: bash
         env:
           CTC_MODEL_ID: TKU410410103/wav2vec2-base-japanese-asr
         run: |
           set -euo pipefail
           uv run python scripts/ci/e2e-ctc-onnx.py
-      - name: Generate strict candidate execution contract
+      - name: Generate strict candidate execution contract and provenance
         shell: bash
         run: |
           set -euo pipefail
