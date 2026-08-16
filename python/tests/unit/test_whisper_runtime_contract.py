@@ -102,5 +102,5 @@ def test_whisper_contract_is_derived_from_graph_and_generation_config(tmp_path: 
 
 
 def test_whisper_contract_rejects_derived_cache_arity_mismatch(tmp_path: Path) -> None:
-    with pytest.raises(CandidateMetadataError, match="past_outputs count"):
+    with pytest.raises(CandidateMetadataError, match="past_inputs/past_outputs"):
         WhisperRuntimeContract.from_candidate(_candidate(tmp_path, mismatched_cache=True))

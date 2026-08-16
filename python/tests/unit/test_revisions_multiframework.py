@@ -103,7 +103,7 @@ def test_duplicate_decoder_fields_are_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "evaluation-schema.json", _evaluation_schema())
     _write(tmp_path, "datasets-lock.json", _datasets_lock())
     _write(tmp_path, "runtime.json", _runtime("parakeet-tdt-ctc-v1"))
-    with pytest.raises(RevisionError, match="unsupported fields"):
+    with pytest.raises(RevisionError, match="must not repeat decoder declarations"):
         load_revision_bundle(tmp_path)
 
 

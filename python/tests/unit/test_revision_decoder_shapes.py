@@ -97,7 +97,7 @@ def test_duplicate_decoder_declaration_is_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "datasets-lock.json", _datasets())
     _write(tmp_path, "runtime.json", _runtime())
 
-    with pytest.raises(RevisionError, match="unsupported fields"):
+    with pytest.raises(RevisionError, match="must not repeat decoder declarations"):
         load_revision_bundle(tmp_path)
 
 
