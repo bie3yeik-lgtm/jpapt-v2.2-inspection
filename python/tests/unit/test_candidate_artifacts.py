@@ -44,11 +44,13 @@ def _write_minimal_candidate(root: Path) -> None:
     )
 
 
-def test_minimal_candidate_derives_all_runtime_provenance(tmp_path: Path) -> None:
+def test_minimal_candidate_derives_typed_execution_contract(tmp_path: Path) -> None:
     _write_minimal_candidate(tmp_path)
     (tmp_path / ".candidate-id").write_text("parakeet-candidate-000002\n", encoding="utf-8")
 
     candidate = CandidateArtifacts.load(tmp_path, repository_root=ROOT)
+    contract = candidate.generated_contract()
+    serialized = contract.to_dict()
 
     assert candidate.candidate_id == "parakeet-candidate-000002"
     assert candidate.profile_set_id == "parakeet-tdt-ctc-v1"
@@ -65,9 +67,12 @@ def test_minimal_candidate_derives_all_runtime_provenance(tmp_path: Path) -> Non
     assert len(candidate.artifact("primary").sha256) == 64
     assert candidate.artifact("primary").size_bytes > 0
     assert len(candidate.bundle_sha256) == 64
-    provenance = candidate.provenance_dict()
-    assert provenance["catalog"]["sha256"] == load_repository_catalog(ROOT).sha256
-    assert provenance["artifacts"]["primary"]["sha256"] == candidate.artifact("primary").sha256
+    assert contract.schema_version == 1
+    assert contract.candidate_root == str(tmp_path)
+    assert contract.catalog.sha256 == load_repository_catalog(ROOT).sha256
+    assert contract.artifacts["primary"].sha256 == candidate.artifact("primary").sha256
+    assert serialized["tokenizer"]["kind"] == "vocabulary"
+    assert all(value is not None for value in serialized.values())
 
 
 def test_conventional_vocabulary_path_can_be_omitted(tmp_path: Path) -> None:
