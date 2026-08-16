@@ -1,6 +1,7 @@
 name: Python Unit
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - ".github/workflows/**"
