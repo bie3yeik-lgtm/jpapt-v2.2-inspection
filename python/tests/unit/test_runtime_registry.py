@@ -5,8 +5,10 @@ from pathlib import Path
 
 import onnx
 from onnx import TensorProto, helper
+import pytest
 
 from parakeet_onnx.runtime import CandidateArtifacts, registered_decoders
+from parakeet_onnx.runtime.artifacts import CandidateMetadataError
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 
@@ -17,12 +19,15 @@ def _save(path: Path, inputs: list[object], outputs: list[object]) -> None:
     onnx.save(helper.make_model(helper.make_graph([], path.stem, inputs, outputs)), path)
 
 
-def test_registry_contains_all_python_decoder_adapters() -> None:
-    assert registered_decoders() == ("ctc", "tdt", "whisper_autoregressive")
-
-
-def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(tmp_path: Path) -> None:
-    (tmp_path / "vocabulary.json").write_text('["<blank>", "a"]\n', encoding="utf-8")
+def _write_tdt_candidate(tmp_path: Path, *, write_durations: bool = True) -> None:
+    (tmp_path / "vocabulary.json").write_text(
+        '["<blank>", "<bos>"]\n', encoding="utf-8"
+    )
+    if write_durations:
+        (tmp_path / "model_config.json").write_text(
+            json.dumps({"tdt_durations": [0, 1, 2, 3]}) + "\n",
+            encoding="utf-8",
+        )
     _save(
         tmp_path / "encoder.onnx",
         [
@@ -75,8 +80,24 @@ def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(tmp_path:
         encoding="utf-8",
     )
 
+
+def test_registry_contains_all_python_decoder_adapters() -> None:
+    assert registered_decoders() == ("ctc", "tdt", "whisper_autoregressive")
+
+
+def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(tmp_path: Path) -> None:
+    _write_tdt_candidate(tmp_path)
+
     candidate = CandidateArtifacts.load(tmp_path, variant="tdt", repository_root=ROOT)
     validate_candidate_runtime_contract(candidate)
     assert candidate.runtime_contract["decoder_config"]["blank_id"] == 0
+    assert candidate.runtime_contract["decoder_config"]["bos_id"] == 1
     assert candidate.runtime_contract["decoder_config"]["durations"] == [0, 1, 2, 3]
     assert candidate.runtime_contract["io"]["predictor"]["state_shapes"] == [[1, 1, 64]]
+
+
+def test_tdt_runtime_contract_rejects_missing_exact_durations(tmp_path: Path) -> None:
+    _write_tdt_candidate(tmp_path, write_durations=False)
+
+    with pytest.raises(CandidateMetadataError, match="duration values cannot be derived exactly"):
+        CandidateArtifacts.load(tmp_path, variant="tdt", repository_root=ROOT)
