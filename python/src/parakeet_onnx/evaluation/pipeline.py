@@ -3,14 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Protocol
-
-import numpy as np
 
 from parakeet_onnx.audio import decode_audio_file, to_canonical_audio
 from parakeet_onnx.audio.features import FeatureExtractor
 from parakeet_onnx.datasets.models import ResolvedDatasetSample
-from parakeet_onnx.decoding.ctc import greedy_ctc_ids
 from parakeet_onnx.evaluation.metrics import (
     character_error_rate,
     normalize_text,
@@ -28,27 +24,19 @@ from parakeet_onnx.evaluation.models import (
     SampleResult,
     TimingMetrics,
 )
+from parakeet_onnx.runtime.adapter import AsrRuntimeAdapter
+from parakeet_onnx.runtime.ctc import CtcRuntimeAdapter
 from parakeet_onnx.runtime.inference import OrtCtcRunner
 
 
-class TokenTextDecoder(Protocol):
-    def ids_to_text(self, token_ids: list[int]) -> str: ...
-
-
 @dataclass(slots=True)
-class PythonCtcEvaluator:
+class PythonAsrEvaluator:
     run_id: str
-    runner: OrtCtcRunner
-    tokenizer: TokenTextDecoder
+    adapter: AsrRuntimeAdapter
     provider_id: str
-    feature_extractor: FeatureExtractor | None = None
 
-    def evaluate_sample(
-        self,
-        sample: ResolvedDatasetSample,
-    ) -> SampleResult:
+    def evaluate_sample(self, sample: ResolvedDatasetSample) -> SampleResult:
         started_total = perf_counter()
-
         if sample.audio_path is None:
             return self._failed(
                 sample,
@@ -66,38 +54,12 @@ class PythonCtcEvaluator:
             canonical = to_canonical_audio(decoded)
             resample_ms = (perf_counter() - started) * 1000.0
 
-            frontend_ms: float | None = None
-            if self.runner.contract.input_kind == "canonical_waveform":
-                inference = self.runner.run_waveform(canonical)
-            else:
-                if self.feature_extractor is None:
-                    raise RuntimeError(
-                        "candidate expects external frontend features, but no "
-                        "FeatureExtractor was supplied."
-                    )
-                started = perf_counter()
-                features = self.feature_extractor.extract(canonical)
-                frontend_ms = (perf_counter() - started) * 1000.0
-                inference = self.runner.run_features(features)
+            output = self.adapter.transcribe(canonical)
 
             started = perf_counter()
-            logits = inference.logits
-            token_ids = greedy_ctc_ids(
-                logits[0] if logits.ndim == 3 else logits,
-                blank_id=self.runner.contract.blank_id,
-            )
-            if not isinstance(token_ids, list) or (
-                token_ids and isinstance(token_ids[0], list)
-            ):
-                raise RuntimeError("unexpected batched token result")
-            decoder_ms = (perf_counter() - started) * 1000.0
-
-            started = perf_counter()
-            text = self.tokenizer.ids_to_text(
-                [int(item) for item in token_ids]
-            )
-            normalized = normalize_text(text)
-            postprocess_ms = (perf_counter() - started) * 1000.0
+            normalized = normalize_text(output.text)
+            normalization_ms = (perf_counter() - started) * 1000.0
+            postprocess_ms = (output.postprocess_ms or 0.0) + normalization_ms
 
             total_ms = (perf_counter() - started_total) * 1000.0
             rtf = (
@@ -113,24 +75,25 @@ class PythonCtcEvaluator:
                     runtime="python",
                     backend="onnxruntime",
                     provider_id=self.provider_id,  # type: ignore[arg-type]
-                    decoder="ctc",
+                    decoder=self.adapter.decoder_id,  # type: ignore[arg-type]
                     batch_size=1,
                 ),
                 output=AsrOutput.from_tokens(
-                    text=text,
+                    text=output.text,
                     normalized_text=normalized,
-                    tokens=[int(item) for item in token_ids],
+                    tokens=output.token_ids,
                 ),
                 quality=QualityMetrics(
-                    cer=character_error_rate(sample.transcription, text),
-                    wer=word_error_rate(sample.transcription, text),
+                    cer=character_error_rate(sample.transcription, output.text),
+                    wer=word_error_rate(sample.transcription, output.text),
                 ),
                 timing=TimingMetrics(
                     audio_decode_ms=decode_ms,
                     resample_ms=resample_ms,
-                    frontend_ms=frontend_ms,
-                    inference_ms=inference.inference_ms,
-                    decoder_ms=decoder_ms,
+                    frontend_ms=output.frontend_ms,
+                    encoder_ms=output.encoder_ms,
+                    inference_ms=output.inference_ms,
+                    decoder_ms=output.decoder_ms,
                     postprocess_ms=postprocess_ms,
                     total_ms=total_ms,
                     rtf=rtf,
@@ -191,7 +154,7 @@ class PythonCtcEvaluator:
                 runtime="python",
                 backend="onnxruntime",
                 provider_id=self.provider_id,  # type: ignore[arg-type]
-                decoder="ctc",
+                decoder=self.adapter.decoder_id,  # type: ignore[arg-type]
                 batch_size=1,
             ),
             output=AsrOutput.from_tokens(
@@ -214,3 +177,29 @@ class PythonCtcEvaluator:
                 )
             ],
         )
+
+
+@dataclass(slots=True)
+class PythonCtcEvaluator:
+    """Compatibility wrapper for callers that still construct the CTC pieces.
+
+    New code should construct evaluators through evaluation.factory.
+    """
+
+    run_id: str
+    runner: OrtCtcRunner
+    tokenizer: object
+    provider_id: str
+    feature_extractor: FeatureExtractor | None = None
+
+    def evaluate_sample(self, sample: ResolvedDatasetSample) -> SampleResult:
+        evaluator = PythonAsrEvaluator(
+            run_id=self.run_id,
+            adapter=CtcRuntimeAdapter(
+                runner=self.runner,
+                tokenizer=self.tokenizer,
+                feature_extractor=self.feature_extractor,
+            ),
+            provider_id=self.provider_id,
+        )
+        return evaluator.evaluate_sample(sample)
