@@ -1,0 +1,86 @@
+name: NeMo Model Card Contract Patch
+
+on:
+  push:
+    branches: [agent/nemo-onnx-validation]
+    paths:
+      - ".github/workflows/_nemo-model-card-contract-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/nemo-onnx-validation
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Enforce Model Card constants in Rust validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('rust/crates/asr-eval/src/nemo_onnx.rs')
+          text = path.read_text()
+          old = '''    let _ = model.xscaling;
+    nonempty("resolved_model.tokenizer_type", &model.tokenizer_type)?;
+    ensure!(model.vocab_size > 1, "vocab_size must be > 1");
+    ensure!(
+        model.ctc_blank_id >= model.vocab_size,
+        "CTC blank must not collide with tokenizer vocabulary"
+    );
+    ensure!(
+        !model.tdt_durations.is_empty(),
+        "TDT durations are required"
+    );
+    ensure!(
+        model.tdt_durations.contains(&0),
+        "TDT duration vocabulary must expose duration=0 for loop-safety validation"
+    );
+'''
+          new = '''    let _ = model.xscaling;
+    ensure!(
+        model.tokenizer_type == "sentencepiece",
+        "Model Card tokenizer type must be sentencepiece"
+    );
+    ensure!(
+        model.vocab_size == 3072,
+        "Model Card tokenizer vocabulary size must be 3072"
+    );
+    ensure!(
+        model.ctc_blank_id >= model.vocab_size,
+        "CTC blank must not collide with tokenizer vocabulary"
+    );
+    ensure!(
+        !model.tdt_durations.is_empty(),
+        "TDT durations are required"
+    );
+    ensure!(
+        model.tdt_durations.contains(&0),
+        "TDT duration vocabulary must expose duration=0 for loop-safety validation"
+    );
+    ensure!(
+        model.tdt_durations.iter().all(|duration| *duration <= 4),
+        "Model Card constrains TDT duration advance to at most 4 encoder frames"
+    );
+'''
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --all
+          cargo test --locked -p asr-eval --no-default-features --features cpu
+      - name: Commit strict Model Card constants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/asr-eval/src/nemo_onnx.rs
+          git diff --cached --quiet && exit 0
+          git commit -m "Enforce NeMo Model Card constants in Rust"
+          git push origin HEAD:agent/nemo-onnx-validation
