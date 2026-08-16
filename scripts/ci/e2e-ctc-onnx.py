@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
@@ -10,31 +11,40 @@ import onnxruntime as ort
 import soundfile as sf
 import torch
 from huggingface_hub import hf_hub_download
+from scipy.signal import resample_poly
 from transformers import AutoModelForCTC, AutoProcessor
 
 MODEL_ID = os.environ.get("CTC_MODEL_ID", "TKU410410103/wav2vec2-base-japanese-asr")
 DATASET_ID = "japanese-asr/ja_asr.jsut_basic5000"
+TARGET_SAMPLE_RATE = 16_000
 OUT = Path(os.environ.get("CTC_E2E_OUT", ".ci/public-model-e2e/ctc"))
 OUT.mkdir(parents=True, exist_ok=True)
 
-sample_path = Path(
-    hf_hub_download(DATASET_ID, "sample.flac", repo_type="dataset")
-)
-audio, sample_rate = sf.read(sample_path, dtype="float32", always_2d=False)
+sample_path = Path(hf_hub_download(DATASET_ID, "sample.flac", repo_type="dataset"))
+audio, source_sample_rate = sf.read(sample_path, dtype="float32", always_2d=False)
 if audio.ndim == 2:
     audio = audio.mean(axis=1)
-if sample_rate != 16_000:
-    raise RuntimeError(f"JSUT sample rate must be 16000 Hz, got {sample_rate}")
 if audio.size == 0 or not np.isfinite(audio).all():
     raise RuntimeError("JSUT sample is empty or non-finite")
 
+if source_sample_rate != TARGET_SAMPLE_RATE:
+    divisor = math.gcd(source_sample_rate, TARGET_SAMPLE_RATE)
+    audio = resample_poly(
+        audio,
+        TARGET_SAMPLE_RATE // divisor,
+        source_sample_rate // divisor,
+    ).astype(np.float32, copy=False)
+if audio.size == 0 or not np.isfinite(audio).all():
+    raise RuntimeError("resampled JSUT sample is empty or non-finite")
+
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 model = AutoModelForCTC.from_pretrained(MODEL_ID).eval()
-inputs = processor(audio, sampling_rate=sample_rate, return_tensors="pt")
+inputs = processor(audio, sampling_rate=TARGET_SAMPLE_RATE, return_tensors="pt")
 input_values = inputs.input_values
 
 with torch.inference_mode():
     torch_logits = model(input_values=input_values).logits.cpu().numpy()
+
 
 class LogitsOnly(torch.nn.Module):
     def __init__(self, inner: torch.nn.Module) -> None:
@@ -43,6 +53,7 @@ class LogitsOnly(torch.nn.Module):
 
     def forward(self, input_values: torch.Tensor) -> torch.Tensor:
         return self.inner(input_values=input_values).logits
+
 
 onnx_path = OUT / "model.onnx"
 torch.onnx.export(
@@ -57,13 +68,11 @@ torch.onnx.export(
     },
     opset_version=17,
     do_constant_folding=True,
+    dynamo=False,
 )
 onnx.checker.check_model(onnx.load(onnx_path, load_external_data=False))
 
-session = ort.InferenceSession(
-    str(onnx_path),
-    providers=["CPUExecutionProvider"],
-)
+session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
 ort_logits = session.run(
     ["logits"],
     {"input_values": input_values.cpu().numpy()},
@@ -92,7 +101,8 @@ summary = {
     "model_id": MODEL_ID,
     "dataset_id": DATASET_ID,
     "sample_file": "sample.flac",
-    "sample_rate_hz": sample_rate,
+    "source_sample_rate_hz": source_sample_rate,
+    "sample_rate_hz": TARGET_SAMPLE_RATE,
     "sample_count": int(audio.size),
     "onnx_opset": 17,
     "onnxruntime_version": ort.__version__,
