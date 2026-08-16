@@ -22,8 +22,6 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          path = Path('docs/hf-buckets.md')
-          text = path.read_text()
           replacements = {
               'parakeet-candidate-000003': 'candidate-000003',
               'whisper-candidate-000004': 'candidate-000004',
@@ -33,9 +31,16 @@ jobs:
               'cross-platform-parity-000006': 'experiment-000006',
               'rust-eval-000007': 'experiment-000007',
               'rust-eval-000125': 'experiment-000125',
+              'candidates/parakeet-candidate-000124': 'candidates/candidate-000124',
           }
-          for old, new in replacements.items():
-              text = text.replace(old, new)
+          for path in Path('docs').glob('*.md'):
+              text = path.read_text()
+              for old, new in replacements.items():
+                  text = text.replace(old, new)
+              path.write_text(text)
+
+          path = Path('docs/hf-buckets.md')
+          text = path.read_text()
           old = '''現在のprefix:\n\n```text\ncandidate.parakeet-tdt-ctc-v1  -> parakeet-candidate\ncandidate.whisper-autoregressive-v1 -> whisper-candidate\n```\n'''
           new = '''canonical IDはprofile setに依存せず次の1形式です。profile/variantはcandidate metadataとASR catalogから解決します。\n\n```text\ncandidate-NNNNNN\n```\n\n旧Bucketの `ctc/candidate-NNNNNN` / `tdt/candidate-NNNNNN` はread-only fallbackとしてのみ扱い、新規publishでは生成しません。\n'''
           if old not in text:
@@ -59,7 +64,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/hf-buckets.md
+          git add docs
           if git diff --cached --quiet; then
             echo 'nothing to commit'
           else
