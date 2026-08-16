@@ -46,13 +46,6 @@ Rust Cross Platform Evaluation
 
 GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できません。そのため`hf_bucket`は文字列入力です。ただし入力値は実行開始直後に`HF_TARGETS_JSON`と照合され、不明なBucketは拒否されます。
 
-例:
-
-```text
-gawohok7/jpapt-v2.2-dev-bucket
-gawohok7/tf-v1-onnx-dev-bucket
-```
-
 内部では次の順で解決します。
 
 ```text
@@ -62,18 +55,28 @@ hf_bucket
   -> HF_MODEL_REPO
   -> canonical framework
   -> decoder
-  -> revision policy
   -> target固有 model config
 ```
 
+revision policyやlegacy modeはありません。すべてのtargetが同じstrict revision contractを使用します。
+
 ## Validate HF Layout
 
-用途:
+`Validate HF Layout` は処理を3つに分離しています。
 
-- Bucketのrevision lock取得
-- development artifact / upstream / tokenizer identityの照合
-- framework/decoder contractの照合
-- `benchmarks`, `runs`, `candidates`, `reference`, `scripts`, `tmp` directoryの確認
+```text
+local-contracts
+  -> source-controlled config / schema / testsを検証
+  -> config/hf-targets/*.tomlからtarget matrixを生成
+
+workflow_dispatch
+  -> validate-selected
+  -> 指定hf_bucketをstrictに検証
+
+pull_request / push
+  -> validate-targets
+  -> source-controlled targetを自動matrixで確認
+```
 
 手動実行:
 
@@ -84,9 +87,64 @@ Actions
   -> hf_bucket
 ```
 
-手動選択はstrictです。選択したBucketのrevision metadataがsource-controlled target contractと一致しない場合は失敗します。
+手動選択では、Bucketのrevision metadataが新contractまたはtarget identityと一致しない場合は失敗します。
 
-PR/pushの自動target matrixではremote metadata driftをwarningとして報告します。これにより外部Bucketの更新不整合だけでRepositoryのコード変更全体をブロックせず、必要な場合は手動`Validate HF Layout`でstrict validationできます。
+PR/pushの自動matrixは外部Bucket driftをwarningとして報告します。target一覧はYAMLに固定せず `config/hf-targets/*.toml` から生成されるため、新しいsource-controlled targetを追加する際にmatrix一覧を編集する必要はありません。
+
+## Revision fetch/validation
+
+`hf-fetch-revisions.sh` は次の3ファイルを取得します。
+
+```text
+config/revisions/reference.json
+config/revisions/evaluation-schema.json
+config/revisions/datasets-lock.json
+```
+
+取得後は必ず現在のPython環境から `RevisionBundle` loaderを実行します。以前のように`uv`が存在しないためproject-level validationをskipする動作はありません。
+
+その後 `validate-revisions.py` が選択targetとのidentityを照合します。
+
+```text
+development_artifact.repo_id
+upstream.repo_id
+tokenizer.repo_id
+reference.canonical_framework
+decoders
+```
+
+## reference.json
+
+全targetで以下の3 identityが必須です。
+
+```json
+{
+  "schema_version": 1,
+  "development_artifact": {
+    "repo_id": "gawohok7/tf-v1-onnx-dev",
+    "revision": "<artifact-sha>"
+  },
+  "upstream": {
+    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
+    "revision": "<upstream-sha>"
+  },
+  "tokenizer": {
+    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
+    "revision": "<tokenizer-sha>"
+  },
+  "reference": {
+    "id": "transformers-reference-v1",
+    "revision": "<reference-revision>",
+    "canonical_framework": "transformers"
+  },
+  "decoders": {
+    "supported": ["whisper_autoregressive"],
+    "default": "whisper_autoregressive"
+  }
+}
+```
+
+旧`model`形式、`model_id`/`model_revision`、`decorders`、単数`decoder`は受理されません。Bucket側を新形式へ移行してから手動`Validate HF Layout`を実行してください。
 
 ## CPU Full Evaluation
 
@@ -101,7 +159,8 @@ candidate_id
 
 ```text
 Bucket解決
- -> revision validation
+ -> revision fetch + strict schema validation
+ -> target identity validation
  -> decoder compatibility check
  -> candidate取得
  -> reference取得
@@ -109,7 +168,9 @@ Bucket解決
  -> run/benchmark upload
 ```
 
-現在のPython ONNX evaluatorは`PythonCtcEvaluator` / `OrtCtcRunner`を使用するCTC-only実装です。そのため`whisper_autoregressive`等の非CTC targetを選択した場合、Bucket/revision解決後に明示的なdecoder compatibility errorで停止します。
+同じ`candidate_id`でもBucketが異なる評価を互いに衝突させないよう、concurrency keyには`hf_bucket`も含めます。
+
+現在のPython ONNX evaluatorはCTC-only実装です。`whisper_autoregressive`等の非CTC targetを選択した場合、revision検証後に明示的なdecoder compatibility errorで停止します。
 
 ## Cross Platform ONNX Parity
 
@@ -130,9 +191,7 @@ macOS CPU
 macOS CoreML
 ```
 
-解決した`HF_TARGET_ID`を`--model-config`としてPython evaluatorへ渡します。現行runtimeはCTC-onlyのため、非CTC targetはinference開始前に明示的に停止します。
-
-artifact名には解決後のtarget idを使用するため、Bucket文字列に含まれる`/`をartifact名へ直接持ち込みません。
+解決した`HF_TARGET_ID`を`--model-config`としてPython evaluatorへ渡します。concurrency keyにも`hf_bucket`を含めるため、target間でrunが誤ってcancelされません。
 
 ## Rust Cross Platform Evaluation
 
@@ -153,46 +212,12 @@ macOS CPU
 macOS CoreML
 ```
 
-`prepare-rust-manifest.py`にも解決済み`HF_TARGET_ID`を`--model-config`として渡すため、dataset materializationも選択targetのmodel configを使用します。
-
-Rust evaluatorは現在CTC-onlyです。したがってKotoba Whisper Bucketのように`whisper_autoregressive`を要求するtargetも選択・revision検証までは可能ですが、inference前に明示的なdecoder compatibility errorで停止します。
-
-## reference.json revision contract
-
-新規strict targetでは以下を分離します。
-
-```json
-{
-  "schema_version": 1,
-  "development_artifact": {
-    "repo_id": "gawohok7/tf-v1-onnx-dev",
-    "revision": "<artifact-sha>"
-  },
-  "upstream": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<upstream-sha>"
-  },
-  "tokenizer": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<tokenizer-sha>"
-  }
-}
-```
-
-意味:
-
-```text
-development_artifact = ONNX/deployment artifactのrepoとrevision
-upstream             = 元モデルcheckpointのrepoとrevision
-tokenizer            = tokenizer/processorのrepoとrevision
-```
-
-既存Parakeet Bucketの旧`model`形式はlegacy contractとして読み取り可能です。
-
-詳細は `docs/multi-framework-asr.md` を参照してください。
+`prepare-rust-manifest.py`にも解決済み`HF_TARGET_ID`を`--model-config`として渡します。Rust evaluatorは現在CTC-onlyなので、非CTC targetはrevision検証後に明示的に停止します。
 
 ## Rust CI / Release
 
 `rust-ci.yml` はHF target選択を必要としません。Linux CPU / Windows DirectML / macOS CoreML featureのcompile/testを行います。
 
 `rust-release.yml` もHF storageを参照せず、`v*` tagまたは手動tag入力からLinux/Windows/macOS向け`asr-eval` binaryと`SHA256SUMS`をGitHub Releaseへ公開します。
+
+詳細なrevision contractは `docs/multi-framework-asr.md` を参照してください。
