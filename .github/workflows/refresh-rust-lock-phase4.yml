@@ -1,0 +1,32 @@
+name: Refresh Rust Lock Phase4
+
+on:
+  push:
+    branches: [agent/rust-revisions-phase4]
+    paths:
+      - "rust/crates/asr-contracts/Cargo.toml"
+      - ".github/workflows/refresh-rust-lock-phase4.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-revisions-phase4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo generate-lockfile
+      - name: Commit lockfile if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Cargo.lock; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "Refresh Cargo.lock for revision validator"
+          git push origin HEAD:agent/rust-revisions-phase4
