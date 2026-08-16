@@ -12,24 +12,43 @@ from .ctc import CtcRuntimeAdapter
 from .inference import OrtCtcRunner
 from .model_contract import ModelContract
 from .session import OrtSessionConfig, create_session
-from .tdt import OrtTdtRuntimeAdapter
-from .whisper import OrtWhisperRuntimeAdapter
+from .tdt import OrtTdtRuntimeAdapter, TdtRuntimeContract
+from .whisper import OrtWhisperRuntimeAdapter, WhisperRuntimeContract
 
 
 RuntimeFactory = Callable[[CandidateArtifacts, str], AsrRuntimeAdapter]
+RuntimeContractValidator = Callable[[CandidateArtifacts], object]
 _RUNTIME_FACTORIES: dict[str, RuntimeFactory] = {}
+_RUNTIME_CONTRACT_VALIDATORS: dict[str, RuntimeContractValidator] = {}
 
 
-def register_runtime_factory(decoder_id: str, factory: RuntimeFactory) -> None:
+def register_runtime_factory(
+    decoder_id: str,
+    factory: RuntimeFactory,
+    *,
+    contract_validator: RuntimeContractValidator,
+) -> None:
     if not decoder_id:
         raise ValueError("decoder_id must not be empty")
     if decoder_id in _RUNTIME_FACTORIES:
         raise ValueError(f"runtime factory already registered: {decoder_id}")
     _RUNTIME_FACTORIES[decoder_id] = factory
+    _RUNTIME_CONTRACT_VALIDATORS[decoder_id] = contract_validator
 
 
 def registered_decoders() -> tuple[str, ...]:
     return tuple(sorted(_RUNTIME_FACTORIES))
+
+
+def validate_candidate_runtime_contract(candidate: CandidateArtifacts) -> None:
+    try:
+        validator = _RUNTIME_CONTRACT_VALIDATORS[candidate.decoder]
+    except KeyError as exc:
+        raise CandidateMetadataError(
+            f"no runtime contract validator is registered for decoder "
+            f"{candidate.decoder!r}; registered={registered_decoders()}"
+        ) from exc
+    validator(candidate)
 
 
 def create_runtime_adapter(
@@ -37,6 +56,7 @@ def create_runtime_adapter(
     candidate: CandidateArtifacts,
     provider_id: str,
 ) -> AsrRuntimeAdapter:
+    validate_candidate_runtime_contract(candidate)
     try:
         factory = _RUNTIME_FACTORIES[candidate.decoder]
     except KeyError as exc:
@@ -50,10 +70,7 @@ def create_runtime_adapter(
 def _session(candidate: CandidateArtifacts, role: str, provider_id: str) -> Any:
     artifact = candidate.artifact(role)
     return create_session(
-        OrtSessionConfig(
-            model_path=artifact.path,
-            provider_id=provider_id,
-        )
+        OrtSessionConfig(model_path=artifact.path, provider_id=provider_id)
     )
 
 
@@ -88,13 +105,12 @@ def _build_ctc(candidate: CandidateArtifacts, provider_id: str) -> AsrRuntimeAda
     artifact = candidate.primary_artifact
     contract = ModelContract.from_candidate(candidate)
     runner = OrtCtcRunner(
-        create_session(OrtSessionConfig(model_path=artifact.path, provider_id=provider_id)),
+        create_session(
+            OrtSessionConfig(model_path=artifact.path, provider_id=provider_id)
+        ),
         contract,
     )
-    return CtcRuntimeAdapter(
-        runner=runner,
-        tokenizer=_vocabulary(candidate),
-    )
+    return CtcRuntimeAdapter(runner=runner, tokenizer=_vocabulary(candidate))
 
 
 def _build_tdt(candidate: CandidateArtifacts, provider_id: str) -> AsrRuntimeAdapter:
@@ -112,7 +128,7 @@ def _load_transformers_processor(path: Path) -> Any:
         from transformers import AutoProcessor
     except ImportError as exc:
         raise RuntimeError(
-            "Whisper runtime requires the project 'transformers' extra"
+            "Whisper runtime requires the project 'transformers-runtime' extra"
         ) from exc
     return AutoProcessor.from_pretrained(path, local_files_only=True)
 
@@ -141,6 +157,14 @@ def _build_whisper(candidate: CandidateArtifacts, provider_id: str) -> AsrRuntim
     )
 
 
-register_runtime_factory("ctc", _build_ctc)
-register_runtime_factory("tdt", _build_tdt)
-register_runtime_factory("whisper_autoregressive", _build_whisper)
+register_runtime_factory(
+    "ctc", _build_ctc, contract_validator=ModelContract.from_candidate
+)
+register_runtime_factory(
+    "tdt", _build_tdt, contract_validator=TdtRuntimeContract.from_candidate
+)
+register_runtime_factory(
+    "whisper_autoregressive",
+    _build_whisper,
+    contract_validator=WhisperRuntimeContract.from_candidate,
+)
