@@ -1,16 +1,4 @@
-"""Phase-1 Parquet experiment capsule output.
-
-The canonical evaluation contract remains the typed Python result model and the
-existing JSON/JSONL files.  This module adds ``run.parquet`` as a secondary,
-analytical representation that can be uploaded beside those files to the
-Hugging Face run bucket.
-
-The physical schema is deliberately flat.  Nested structures that are useful
-for replay but not yet first-class analytical columns are retained in
-``metadata_json``.  This keeps the first Parquet contract simple and avoids
-making unresolved Hugging Face/Arrow nesting behavior part of the runtime
-contract prematurely.
-"""
+"""ExperimentCapsuleV1 Parquet output."""
 
 from __future__ import annotations
 
@@ -22,6 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from parakeet_onnx.contracts import RunContext
 
+from .capsule_artifacts import CapsuleArtifact, iter_artifact_parts
 from .models import BenchmarkResult, SampleResult
 
 
@@ -217,8 +206,9 @@ def build_experiment_capsule_rows(
     run_context: Mapping[str, Any],
     samples: Iterable[Mapping[str, Any]],
     benchmark: Mapping[str, Any],
+    artifacts: Iterable[CapsuleArtifact] = (),
 ) -> list[dict[str, Any]]:
-    """Build the deterministic row set used by the Phase-1 capsule."""
+    """Build the deterministic flat row set for one capsule."""
 
     run_id = run_context.get("run_id")
     if not isinstance(run_id, str) or not run_id:
@@ -285,13 +275,32 @@ def build_experiment_capsule_rows(
             rows.append(row)
             ordinal += 1
 
+    artifact_ids: set[str] = set()
+    for artifact in artifacts:
+        parts = list(iter_artifact_parts(artifact))
+        if not parts:
+            continue
+        artifact_id = str(parts[0]["artifact_id"])
+        if artifact_id in artifact_ids:
+            raise ValueError(f"duplicate artifact_id: {artifact_id}")
+        artifact_ids.add(artifact_id)
+        for part in parts:
+            row = _empty_row(
+                run_id=run_id,
+                record_kind="artifact",
+                ordinal=ordinal,
+            )
+            row.update(part)
+            rows.append(row)
+            ordinal += 1
+
     return rows
 
 
 def _features() -> Any:
     try:
         from datasets import Features, Value
-    except ImportError as exc:  # pragma: no cover - environment contract failure
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "Parquet capsule output requires the project's 'datasets' optional dependency."
         ) from exc
@@ -370,7 +379,7 @@ def _features() -> Any:
 def _atomic_write_parquet(destination: Path, rows: list[dict[str, Any]]) -> None:
     try:
         from datasets import Dataset
-    except ImportError as exc:  # pragma: no cover - environment contract failure
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "Parquet capsule output requires the project's 'datasets' optional dependency."
         ) from exc
@@ -394,7 +403,7 @@ def _atomic_write_parquet(destination: Path, rows: list[dict[str, Any]]) -> None
 
 
 class ExperimentCapsuleWriter:
-    """Write one immutable-in-concept Phase-1 ``run.parquet`` capsule."""
+    """Write one immutable-in-concept ``run.parquet`` capsule."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -405,11 +414,13 @@ class ExperimentCapsuleWriter:
         run_context: RunContext,
         samples: Iterable[SampleResult],
         benchmark: BenchmarkResult,
+        artifacts: Iterable[CapsuleArtifact] = (),
     ) -> None:
         sample_values = [sample.to_dict() for sample in samples]
         rows = build_experiment_capsule_rows(
             run_context=run_context.to_dict(),
             samples=sample_values,
             benchmark=benchmark.to_dict(),
+            artifacts=artifacts,
         )
         _atomic_write_parquet(self.path, rows)
