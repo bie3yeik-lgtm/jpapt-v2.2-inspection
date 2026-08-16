@@ -130,6 +130,10 @@ def test_normalized_runtime_lock_resolves_variants_from_catalog(tmp_path: Path) 
     catalog = load_repository_catalog(ROOT)
     revisions = tmp_path / "revisions"
     revisions.mkdir()
+    (tmp_path / "resolved.json").write_text(
+        json.dumps({"schema_version": 1, "config_version": "config-000001"}),
+        encoding="utf-8",
+    )
     (revisions / "reference.json").write_text(
         json.dumps(
             {
@@ -182,6 +186,7 @@ def test_normalized_runtime_lock_resolves_variants_from_catalog(tmp_path: Path) 
         "tdt",
     )
     snapshot = bundle.to_dict()
+    assert snapshot["config_version"] == "config-000001"
     assert set(snapshot["runtime"]) == {"document_sha256", "catalog", "profile_set"}
     assert "decoders" not in snapshot["reference"]
     assert "decoders" not in snapshot["evaluation_schema"]
