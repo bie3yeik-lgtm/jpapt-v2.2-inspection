@@ -13,21 +13,6 @@
 - 各targetは1つの`HF_BUCKET`と`HF_MODEL_REPO`を持つ
 - Bucketからtargetを一意に逆引きできる
 
-例:
-
-```json
-{
-  "model-a": {
-    "HF_BUCKET": "owner/bucket-a",
-    "HF_MODEL_REPO": "owner/model-a"
-  },
-  "model-b": {
-    "HF_BUCKET": "owner/bucket-b",
-    "HF_MODEL_REPO": "owner/model-b"
-  }
-}
-```
-
 同一snapshotで2 targetが同じ`HF_BUCKET`を持つ構成は無効です。
 
 ## 過去との対応変更は許容する
@@ -48,7 +33,13 @@ model-b -> bucket-a
 
 ## `reference.json`にBucketを書かない理由
 
-`reference.json`はmodel provenanceを固定します。
+```text
+reference.json   = model provenance
+HF_TARGETS_JSON  = current routing
+run-context.json = execution-time routing snapshot
+```
+
+`reference.json`は:
 
 ```text
 development_artifact
@@ -58,17 +49,11 @@ reference
 decoder contract
 ```
 
-一方、`HF_BUCKET`は運用上の保存場所です。
-
-```text
-reference.json   = provenance
-HF_TARGETS_JSON  = current routing
-run-context.json = execution-time routing snapshot
-```
+を固定します。`HF_BUCKET`は運用上の保存場所なので含めません。
 
 ## Runに保存するrouting snapshot
 
-過去runは現在のRepository Variableから推測しません。実行時点で次をrun metadataへ保存します。
+実行時点で次をrun metadataへ保存します。
 
 ```text
 metadata.hf_target_id
@@ -87,8 +72,6 @@ metadata.experiment_id
 を使えば、当時の実行対象を特定できます。
 
 ## 過去runの再現
-
-再現時の参照順:
 
 ```text
 run-context.metadata.hf_bucket
@@ -139,16 +122,41 @@ unknown bucket
 
 これらは正常なrouting変更です。
 
-## 自動採番への影響
+## 中央Allocatorへの影響
 
-Candidate/Experimentの連番は物理Bucket内のcollectionを走査して決めます。
+Candidate、Experiment、Config Versionの連番はtargetではなく**物理Bucket内のcollection**に属します。
 
 ```text
 <bucket>/candidates/
 <bucket>/experiments/
+<bucket>/config/versions/
 ```
 
-Targetが別Bucketへ移った場合、移動先Bucketに存在する最大suffix+1から続行します。Target専用の恒久counterではありません。
+Targetが別Bucketへ移った場合、移動先Bucketの既存最大suffix+1から続行します。Target専用の恒久counterではありません。
+
+複数Repositoryがその移動先Bucketを利用していても、全採番要求は中央Allocatorへ集約されます。
+
+```text
+Repo A ─┐
+Repo B ─┼─> Central Allocator -> destination Bucket
+Repo C ─┘
+```
+
+したがってrouting変更後も、各Repositoryが独自にcounterを持つことはありません。
+
+## BucketルートREADME
+
+中央Allocatorは採番のたびにBucketルート`README.md`へ現在最大番号を更新します。
+
+```text
+candidates 現在番号
+experiments 現在番号
+config 現在番号
+```
+
+routing変更後にtargetが別Bucketへ移動した場合、この表示も移動先Bucketの物理履歴を表します。target固有の累積番号ではありません。
+
+過去の番号・pathはrun-contextの`hf_bucket`とcandidate/config identityの組み合わせで追跡します。
 
 ## 運用上の不変条件
 
@@ -159,6 +167,16 @@ Bucketをmodel identityとして扱わない
 reference.jsonへHF_BUCKETを書かない
 runへ実行時routingを保存する
 過去runは現在routingから推測しない
+採番counterはtargetではなく物理Bucket collectionに属する
+複数Repositoryの採番は中央Allocatorへ集約する
 ```
 
-この分離により、storage再編とmodel provenanceを独立して変更できます。
+この分離により、storage再編、model provenance、採番履歴をそれぞれ独立して管理できます。
+
+関連文書:
+
+```text
+docs/central-allocator.md
+docs/hf-bucket-operations.md
+docs/hf-layout.md
+```
