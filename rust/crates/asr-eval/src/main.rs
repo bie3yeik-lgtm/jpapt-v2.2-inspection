@@ -65,8 +65,14 @@ fn main() -> anyhow::Result<()> {
                 max_cer_regression: args.max_cer_regression,
                 max_wer_regression: args.max_wer_regression,
             })?;
-            println!("reference_run_id: {}", result["comparison"]["reference_run_id"]);
-            println!("candidate_run_id: {}", result["comparison"]["candidate_run_id"]);
+            println!(
+                "reference_run_id: {}",
+                result["comparison"]["reference_run_id"]
+            );
+            println!(
+                "candidate_run_id: {}",
+                result["comparison"]["candidate_run_id"]
+            );
             println!("acceptance.passed: {}", result["acceptance"]["passed"]);
             if result["acceptance"]["passed"] == false {
                 std::process::exit(1);
