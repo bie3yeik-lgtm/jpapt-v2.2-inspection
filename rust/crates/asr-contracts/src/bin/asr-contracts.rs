@@ -1,7 +1,9 @@
 use std::env;
 use std::path::PathBuf;
 
-use asr_contracts::{validate_benchmark, validate_run_context, validate_run_directory, validate_sample_result};
+use asr_contracts::{
+    validate_benchmark, validate_run_context, validate_run_directory, validate_sample_result,
+};
 use serde_json::Value;
 
 fn usage() -> &'static str {
@@ -9,8 +11,8 @@ fn usage() -> &'static str {
 }
 
 fn read_json(path: &PathBuf) -> Result<Value, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
     serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 

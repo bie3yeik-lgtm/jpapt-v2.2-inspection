@@ -11,8 +11,10 @@ use serde_json::{Map, Value};
 pub use error::{ContractError, Result};
 use schema::EmbeddedSchema;
 
-const RUN_CONTEXT_SCHEMA: &str = include_str!("../../../../evaluation/schemas/run-context.schema.json");
-const SAMPLE_RESULT_SCHEMA: &str = include_str!("../../../../evaluation/schemas/result.schema.json");
+const RUN_CONTEXT_SCHEMA: &str =
+    include_str!("../../../../evaluation/schemas/run-context.schema.json");
+const SAMPLE_RESULT_SCHEMA: &str =
+    include_str!("../../../../evaluation/schemas/result.schema.json");
 const BENCHMARK_SCHEMA: &str = include_str!("../../../../evaluation/schemas/benchmark.schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,10 +76,7 @@ pub fn validate_run_directory(path: impl AsRef<Path>) -> Result<RunValidationSum
             source,
         })?;
         validate_sample_result(&value).map_err(|error| {
-            ContractError::validation(format!(
-                "samples.jsonl line {}: {error}",
-                index + 1
-            ))
+            ContractError::validation(format!("samples.jsonl line {}: {error}", index + 1))
         })?;
         let sample_run_id = required_string_at(&value, "/run_id", "sample.run_id")?;
         if sample_run_id != run_id {
@@ -119,7 +118,8 @@ fn read_json(path: PathBuf) -> Result<Value> {
 
 fn validate_run_context_semantics(value: &Value) -> Result<()> {
     let provider_id = required_string_at(value, "/provider_id", "provider_id")?;
-    let runtime_provider = required_string_at(value, "/runtime/provider_id", "runtime.provider_id")?;
+    let runtime_provider =
+        required_string_at(value, "/runtime/provider_id", "runtime.provider_id")?;
     if provider_id != runtime_provider {
         return Err(ContractError::validation(
             "runtime.provider_id must equal provider_id",
@@ -131,16 +131,26 @@ fn validate_run_context_semantics(value: &Value) -> Result<()> {
         .ok_or_else(|| ContractError::validation("metadata.candidate is required"))?;
     validate_generated_candidate(candidate)?;
 
-    let artifact_candidate = required_string_at(value, "/artifact/candidate_id", "artifact.candidate_id")?;
-    let candidate_id = required_string_at(candidate, "/candidate_id", "metadata.candidate.candidate_id")?;
+    let artifact_candidate =
+        required_string_at(value, "/artifact/candidate_id", "artifact.candidate_id")?;
+    let candidate_id = required_string_at(
+        candidate,
+        "/candidate_id",
+        "metadata.candidate.candidate_id",
+    )?;
     if artifact_candidate != candidate_id {
         return Err(ContractError::validation(
             "artifact.candidate_id must equal metadata.candidate.candidate_id",
         ));
     }
 
-    let profile_set = required_string_at(value, "/revisions/runtime/profile_set", "revisions.runtime.profile_set")?;
-    let candidate_profile_set = required_string_at(candidate, "/profile_set", "metadata.candidate.profile_set")?;
+    let profile_set = required_string_at(
+        value,
+        "/revisions/runtime/profile_set",
+        "revisions.runtime.profile_set",
+    )?;
+    let candidate_profile_set =
+        required_string_at(candidate, "/profile_set", "metadata.candidate.profile_set")?;
     if profile_set != candidate_profile_set {
         return Err(ContractError::validation(
             "metadata.candidate.profile_set must equal revisions.runtime.profile_set",
@@ -150,8 +160,16 @@ fn validate_run_context_semantics(value: &Value) -> Result<()> {
     for field in ["id", "sha256"] {
         let revision_pointer = format!("/revisions/runtime/catalog/{field}");
         let candidate_pointer = format!("/catalog/{field}");
-        let revision_value = required_string_at(value, &revision_pointer, &format!("revisions.runtime.catalog.{field}"))?;
-        let candidate_value = required_string_at(candidate, &candidate_pointer, &format!("metadata.candidate.catalog.{field}"))?;
+        let revision_value = required_string_at(
+            value,
+            &revision_pointer,
+            &format!("revisions.runtime.catalog.{field}"),
+        )?;
+        let candidate_value = required_string_at(
+            candidate,
+            &candidate_pointer,
+            &format!("metadata.candidate.catalog.{field}"),
+        )?;
         if revision_value != candidate_value {
             return Err(ContractError::validation(
                 "metadata.candidate.catalog must equal revisions.runtime.catalog",
@@ -189,7 +207,9 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
     let schema_version = raw
         .get("schema_version")
         .and_then(Value::as_u64)
-        .ok_or_else(|| ContractError::validation("metadata.candidate.schema_version must be an integer"))?;
+        .ok_or_else(|| {
+            ContractError::validation("metadata.candidate.schema_version must be an integer")
+        })?;
     if schema_version != 1 {
         return Err(ContractError::validation(
             "generated candidate schema_version must equal 1",
@@ -207,7 +227,11 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
         required_nonempty(raw, field, "metadata.candidate")?;
     }
     let decoder = required_nonempty(raw, "decoder", "metadata.candidate")?;
-    require_one_of("metadata.candidate.decoder", decoder, &["ctc", "tdt", "whisper_autoregressive"])?;
+    require_one_of(
+        "metadata.candidate.decoder",
+        decoder,
+        &["ctc", "tdt", "whisper_autoregressive"],
+    )?;
     require_sha256(
         "metadata.candidate.bundle_sha256",
         required_nonempty(raw, "bundle_sha256", "metadata.candidate")?,
@@ -217,7 +241,12 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
         raw.get("catalog").expect("required field checked"),
         "metadata.candidate.catalog",
     )?;
-    exact_fields(catalog, "metadata.candidate.catalog", &["id", "sha256"], &[])?;
+    exact_fields(
+        catalog,
+        "metadata.candidate.catalog",
+        &["id", "sha256"],
+        &[],
+    )?;
     required_nonempty(catalog, "id", "metadata.candidate.catalog")?;
     require_sha256(
         "metadata.candidate.catalog.sha256",
@@ -250,7 +279,9 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
         let size = artifact
             .get("size_bytes")
             .and_then(Value::as_u64)
-            .ok_or_else(|| ContractError::validation(format!("{name}.size_bytes must be a positive integer")))?;
+            .ok_or_else(|| {
+                ContractError::validation(format!("{name}.size_bytes must be a positive integer"))
+            })?;
         if size == 0 {
             return Err(ContractError::validation(format!(
                 "{name}.size_bytes must be a positive integer"
@@ -260,7 +291,12 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
 
     if let Some(tokenizer) = raw.get("tokenizer") {
         let tokenizer = object(tokenizer, "metadata.candidate.tokenizer")?;
-        exact_fields(tokenizer, "metadata.candidate.tokenizer", &["kind", "path"], &[])?;
+        exact_fields(
+            tokenizer,
+            "metadata.candidate.tokenizer",
+            &["kind", "path"],
+            &[],
+        )?;
         required_nonempty(tokenizer, "kind", "metadata.candidate.tokenizer")?;
         required_nonempty(tokenizer, "path", "metadata.candidate.tokenizer")?;
     }
@@ -287,7 +323,8 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
         &["decoder", "input_kind", "io", "decoder_config"],
         &[],
     )?;
-    let runtime_decoder = required_nonempty(runtime, "decoder", "metadata.candidate.runtime_contract")?;
+    let runtime_decoder =
+        required_nonempty(runtime, "decoder", "metadata.candidate.runtime_contract")?;
     require_one_of(
         "metadata.candidate.runtime_contract.decoder",
         runtime_decoder,
@@ -308,7 +345,9 @@ fn validate_generated_candidate(value: &Value) -> Result<()> {
         "metadata.candidate.runtime_contract.io",
     )?;
     object(
-        runtime.get("decoder_config").expect("required field checked"),
+        runtime
+            .get("decoder_config")
+            .expect("required field checked"),
         "metadata.candidate.runtime_contract.decoder_config",
     )?;
 
@@ -370,7 +409,9 @@ fn required_nonempty<'a>(value: &'a Map<String, Value>, key: &str, name: &str) -
         .get(key)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ContractError::validation(format!("{name}.{key} must be a non-empty string")))
+        .ok_or_else(|| {
+            ContractError::validation(format!("{name}.{key} must be a non-empty string"))
+        })
 }
 
 fn required_string_at<'a>(value: &'a Value, pointer: &str, name: &str) -> Result<&'a str> {

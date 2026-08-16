@@ -104,11 +104,7 @@ fn validate_node(
             ))
         })?;
         if value < minimum {
-            return violation(
-                schema_name,
-                path,
-                format!("number must be >= {minimum}"),
-            );
+            return violation(schema_name, path, format!("number must be >= {minimum}"));
         }
     }
 
@@ -119,11 +115,7 @@ fn validate_node(
             ))
         })?;
         if value > maximum {
-            return violation(
-                schema_name,
-                path,
-                format!("number must be <= {maximum}"),
-            );
+            return violation(schema_name, path, format!("number must be <= {maximum}"));
         }
     }
 
@@ -148,7 +140,12 @@ fn validate_node(
     Ok(())
 }
 
-fn validate_type(instance: &Value, type_schema: &Value, schema_name: &str, path: &str) -> Result<()> {
+fn validate_type(
+    instance: &Value,
+    type_schema: &Value,
+    schema_name: &str,
+    path: &str,
+) -> Result<()> {
     let allowed = match type_schema {
         Value::String(value) => vec![value.as_str()],
         Value::Array(values) => values
@@ -164,11 +161,14 @@ fn validate_type(instance: &Value, type_schema: &Value, schema_name: &str, path:
         _ => {
             return Err(ContractError::validation(format!(
                 "schema {schema_name} contains invalid type declaration at {path}"
-            )))
+            )));
         }
     };
 
-    if allowed.iter().any(|kind| instance_matches_type(instance, kind)) {
+    if allowed
+        .iter()
+        .any(|kind| instance_matches_type(instance, kind))
+    {
         return Ok(());
     }
 
@@ -270,7 +270,9 @@ fn resolve_local_ref<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> 
 
 fn matches_supported_pattern(pattern: &str, value: &str) -> Result<bool> {
     let result = match pattern {
-        "^[A-Fa-f0-9]{64}$" => value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "^[A-Fa-f0-9]{64}$" => {
+            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }
         "^[A-Fa-f0-9]{7,64}$" => {
             (7..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
         }
@@ -282,7 +284,7 @@ fn matches_supported_pattern(pattern: &str, value: &str) -> Result<bool> {
         other => {
             return Err(ContractError::validation(format!(
                 "embedded schema uses unsupported regex pattern {other:?}; extend asr-contracts before accepting this schema change"
-            )))
+            )));
         }
     };
     Ok(result)
@@ -306,7 +308,11 @@ mod tests {
         )
         .unwrap();
         schema.validate(&serde_json::json!({"id":"ok"})).unwrap();
-        assert!(schema.validate(&serde_json::json!({"id":"ok","extra":1})).is_err());
+        assert!(
+            schema
+                .validate(&serde_json::json!({"id":"ok","extra":1}))
+                .is_err()
+        );
     }
 
     #[test]
@@ -316,7 +322,9 @@ mod tests {
             r##"{"type":"object","required":["sha"],"properties":{"sha":{"$ref":"#/$defs/sha"}},"$defs":{"sha":{"type":"string","pattern":"^[A-Fa-f0-9]{64}$"}}}"##,
         )
         .unwrap();
-        schema.validate(&serde_json::json!({"sha":"a".repeat(64)})).unwrap();
+        schema
+            .validate(&serde_json::json!({"sha":"a".repeat(64)}))
+            .unwrap();
         assert!(schema.validate(&serde_json::json!({"sha":"bad"})).is_err());
     }
 }

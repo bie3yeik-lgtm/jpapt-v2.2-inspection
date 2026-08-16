@@ -175,9 +175,21 @@ fn run_directory_validation_cross_checks_run_and_samples() {
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("jpapt-contracts-{}-{unique}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("run-context.json"), serde_json::to_vec_pretty(&run_context()).unwrap()).unwrap();
-    fs::write(dir.join("metrics.json"), serde_json::to_vec_pretty(&benchmark()).unwrap()).unwrap();
-    fs::write(dir.join("samples.jsonl"), format!("{}\n", serde_json::to_string(&sample()).unwrap())).unwrap();
+    fs::write(
+        dir.join("run-context.json"),
+        serde_json::to_vec_pretty(&run_context()).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("metrics.json"),
+        serde_json::to_vec_pretty(&benchmark()).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("samples.jsonl"),
+        format!("{}\n", serde_json::to_string(&sample()).unwrap()),
+    )
+    .unwrap();
 
     let summary = validate_run_directory(&dir).unwrap();
     assert_eq!(summary.run_id, "run-1");
