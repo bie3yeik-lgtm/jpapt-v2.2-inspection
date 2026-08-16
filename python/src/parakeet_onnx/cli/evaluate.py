@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--candidate-id", default=None)
+    parser.add_argument("--experiment-id", default=None)
     parser.add_argument(
         "--vocabulary",
         type=Path,
@@ -153,12 +154,17 @@ def main() -> int:
 
     tokenizer = VocabularyTokenizer.from_json(vocabulary)
 
+    metadata: dict[str, str] = {}
+    if args.experiment_id:
+        metadata["experiment_id"] = args.experiment_id
+
     context = build_run_context(
         config=config,
         revisions=revisions,
         candidate_path=model_path,
         candidate_id=args.candidate_id,
         artifact_role="primary",
+        metadata=metadata,
     )
 
     evaluator = PythonCtcEvaluator(
@@ -179,6 +185,8 @@ def main() -> int:
     )
 
     print(f"run_id: {benchmark.run_id}")
+    if args.experiment_id:
+        print(f"experiment_id: {args.experiment_id}")
     print(f"acceptance.passed: {benchmark.acceptance.passed}")
     print(f"CER: {benchmark.quality.cer}")
     print(f"WER: {benchmark.quality.wer}")
