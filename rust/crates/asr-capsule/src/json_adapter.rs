@@ -134,7 +134,10 @@ fn sample_row(value: &Value, run_id: &str, ordinal: i64) -> Result<CapsuleRow> {
     let mut metadata = Map::new();
     metadata.insert(
         "sample_index".into(),
-        value.pointer("/sample/index").cloned().unwrap_or(Value::Null),
+        value
+            .pointer("/sample/index")
+            .cloned()
+            .unwrap_or(Value::Null),
     );
     for (name, pointer) in [
         ("execution", "/execution"),
@@ -144,7 +147,10 @@ fn sample_row(value: &Value, run_id: &str, ordinal: i64) -> Result<CapsuleRow> {
         ("provider", "/provider"),
         ("errors", "/errors"),
     ] {
-        metadata.insert(name.into(), value.pointer(pointer).cloned().unwrap_or(Value::Null));
+        metadata.insert(
+            name.into(),
+            value.pointer(pointer).cloned().unwrap_or(Value::Null),
+        );
     }
     Ok(row.with_string("metadata_json", json(Value::Object(metadata))?))
 }
