@@ -103,13 +103,12 @@ Supported logical EPs:
 ```text
 cpu
 cuda
-directml
 coreml
 ```
 
 CoreML means ONNX Runtime CoreML Execution Provider only.
 
-Do not introduce MLX or native Core ML model conversion into the canonical
+Do not introduce DirectML or MLX or native Core ML model conversion into the canonical
 runtime path unless the project specification is explicitly changed.
 
 ## Hugging Face lifecycle
