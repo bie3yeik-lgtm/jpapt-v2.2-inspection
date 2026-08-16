@@ -1,39 +1,18 @@
-# Hugging Face Storage Layout
+# Hugging Face Bucket構造
 
-## Purpose
+## 目的
 
-The project separates mutable development/evaluation data from promoted model
-artifacts.
-
-```text
-Hugging Face Bucket
-    development, experiments, candidates, evaluation history
-
-Hugging Face Model Repo
-    validated promoted artifacts
-```
-
-For the complete reusable operating model, including sequential ID allocation,
-concurrency, reproduction, and migration to other repositories, see:
+Hugging Face Bucketは、model開発・評価中に増えるmutableな履歴を保存する場所です。検証済みartifactを公開するHF Model Repoとは役割を分けます。
 
 ```text
-docs/hf-bucket-operations.md
+HF Bucket      = 開発・実験・評価履歴
+HF Model Repo  = promotion済みartifact
+GitHub         = source/config/schema/workflow
 ```
 
-## Target routing
+この構造はNeMo/Transformers共通です。
 
-GitHub Actions receives target storage through `vars.HF_TARGETS_JSON` and uses:
-
-```text
-HF_TOKEN
-HF_BUCKET
-HF_MODEL_REPO
-```
-
-Bucket routing is operational state. `reference.json` does not duplicate the
-Bucket name.
-
-## Canonical Bucket layout
+## Canonical tree
 
 ```text
 hf://buckets/<namespace>/<bucket>/
@@ -51,7 +30,7 @@ hf://buckets/<namespace>/<bucket>/
 │   └── <prefix>-NNNNNN/
 │       ├── README.md
 │       ├── metadata.json
-│       └── <deployment artifacts>
+│       └── <artifacts>
 ├── reference/
 │   ├── manifests/
 │   ├── outputs/
@@ -59,20 +38,25 @@ hf://buckets/<namespace>/<bucket>/
 │   └── metadata/
 ├── runs/
 │   └── <run-id>/
+│       ├── run-context.json
+│       ├── samples.jsonl
+│       ├── metrics.json
+│       └── promotion.json
 ├── benchmarks/
 │   └── <candidate-id>/
 │       └── <environment-provider>/
+│           └── <run-id>.json
 ├── scripts/
 └── tmp/
 ```
 
-Framework and decoder names are not top-level storage categories. NeMo,
-Transformers, CTC, TDT, and Whisper autoregressive behavior are encoded in
-configuration and metadata.
+`ctc/`、`tdt/`、`whisper/`、`nemo/`、`transformers/`をtop-level分類にはしません。これらはmetadata/configで表現します。
 
-## Versioned revision configuration
+## `config/`
 
-### `config/current.json`
+### `current.json`
+
+現在使用するimmutable config versionへのpointerです。
 
 ```json
 {
@@ -81,17 +65,9 @@ configuration and metadata.
 }
 ```
 
-Normal workflows follow this pointer. Reproduction may set:
+### `versions/config-NNNNNN/`
 
-```bash
-HF_CONFIG_VERSION=config-000002
-```
-
-to select an immutable historical version directly.
-
-### `config/versions/config-NNNNNN/`
-
-Every version contains exactly the canonical revision documents:
+1 versionは3つのrevision文書の集合です。
 
 ```text
 reference.json
@@ -99,235 +75,144 @@ evaluation-schema.json
 datasets-lock.json
 ```
 
-Published versions are immutable. Any revision-document change creates a new
-`config-NNNNNN`, followed by an update of `current.json`.
+公開済みversionは上書きしません。どれか1つでも変更したら新しい`config-NNNNNN`を作ります。
 
-### Fetch flow
-
-```text
-config/current.json
-        ↓
-config/versions/<selected-version>/
-        ↓
-hf-fetch-revisions.sh
-        ↓
-.ci/hf/config/revisions/
-        ↓
-RevisionBundle strict loader
-```
-
-The selected version is saved in `.ci/hf/config/resolved.json` and propagated to
-`run-context.json.revisions.config_version`.
+通常実行は`current.json`を参照し、再現時は`HF_CONFIG_VERSION`で過去versionを直接指定できます。
 
 ## `reference.json`
 
-Canonical structure:
+共通identity:
 
-```json
-{
-  "schema_version": 1,
-  "development_artifact": {
-    "repo_id": "example/development-model-repo",
-    "revision": "<DEVELOPMENT_ARTIFACT_REVISION>"
-  },
-  "upstream": {
-    "repo_id": "vendor/upstream-model",
-    "revision": "<UPSTREAM_REVISION>"
-  },
-  "tokenizer": {
-    "repo_id": "vendor/tokenizer-or-processor",
-    "revision": "<TOKENIZER_REVISION>"
-  },
-  "reference": {
-    "id": "framework-reference-v1",
-    "revision": "<REFERENCE_REVISION>",
-    "canonical_framework": "transformers"
-  },
-  "decoders": {
-    "supported": ["whisper_autoregressive"],
-    "default": "whisper_autoregressive"
-  }
-}
+```text
+development_artifact
+upstream
+tokenizer
+reference
+decoders
 ```
 
-Meanings:
+Bucket名は記録しません。Bucketはrouting情報です。
 
-- `development_artifact`: the HF Model Repo snapshot containing the development
-  or promoted deployment artifact;
-- `upstream`: the source model/checkpoint;
-- `tokenizer`: the independently pinned tokenizer/processor source;
-- `reference`: the implementation used to produce canonical expected results.
+## `experiments/`
 
-## `evaluation-schema.json`
+論理的な試行・評価単位です。
 
-Pins evaluation-rule identity and supported decoders through canonical `schema`
-and `decoders` objects. It is separate from Git JSON Schema files under
-`evaluation/schemas/`.
+```text
+cpu-full-eval-000002
+cross-platform-parity-000003
+graph-optimization-000004
+```
 
-## `datasets-lock.json`
+prefixは説明用、6桁suffixは機械管理です。
 
-Pins exact evaluation dataset revisions and maps logical manifest IDs to their
-HF Dataset repositories/revisions.
+## `candidates/`
 
-## Sequential candidate and experiment IDs
+正式評価対象になったartifactを保存します。
 
-Candidates and experiments use:
+### 単一graph例
+
+```text
+candidates/parakeet-ctc-candidate-000002/
+  README.md
+  metadata.json
+  model.onnx
+  vocabulary.json
+```
+
+### 複数graph例
+
+```text
+candidates/whisper-candidate-000003/
+  README.md
+  metadata.json
+  encoder.onnx
+  decoder.onnx
+  decoder_with_past.onnx
+  tokenizer/
+```
+
+frameworkによってtreeの階層を変えず、artifact roleを`metadata.json`で識別します。
+
+## 自動採番
+
+CandidateとExperimentは次の形式です。
 
 ```text
 <prefix>-NNNNNN
 ```
 
-The prefix is descriptive; the numeric sequence is machine managed across the
-entire collection irrespective of prefix.
-
-Example:
+採番はprefixごとではなくcollection全体で行います。
 
 ```text
-experiments/
-├── cpu-full-eval-000002/
-├── cross-platform-parity-000003/
-└── rust-eval-000004/
+最大既存suffix + 1
 ```
 
-The next experiment with any prefix is `...-000005`.
+`000001`を構造例として置いている場合、最初の実運用IDは自動的に`000002`になります。
 
-`scripts/hf/hf-allocate-id.sh` lists the collection, computes maximum suffix + 1,
-and immediately writes `README.md` to reserve/document the allocated path.
-GitHub Actions serializes the short allocator job using a Bucket-scoped
-concurrency group so heavy evaluations can still run in parallel.
+採番後すぐ`README.md`を作成し、object storage上でpathを実体化するとともに用途を記録します。
 
-## Candidates
+## `reference/`
 
-Candidates are unpromoted deployment artifacts selected for evaluation.
-New candidate publication uses:
+canonical frameworkから生成した比較用assetを保存します。
 
 ```text
-scripts/hf/hf-push-candidate.sh
+manifests/
+outputs/
+tensors/
+metadata/
 ```
 
-which allocates the ID automatically. Existing candidate IDs remain explicit
-inputs to evaluation workflows because selecting which immutable artifact to
-evaluate is different from allocating a new ID.
+大容量tensorやaudioをGitへ入れず、必要なreference artifactをBucketへ置きます。
 
-A Whisper-style candidate may contain multiple ONNX graphs:
+## `runs/`
 
-```text
-candidates/<candidate-id>/
-├── README.md
-├── metadata.json
-├── encoder.onnx
-├── decoder.onnx
-├── decoder_with_past.onnx
-└── tokenizer/
-```
-
-A CTC candidate may contain one primary ONNX graph. The lifecycle structure is
-the same.
-
-## Experiments
-
-Experiments group a logical attempt or evaluation across one or more concrete
-runs. Current workflow prefixes include:
-
-```text
-cpu-full-eval
-cross-platform-parity
-rust-eval
-```
-
-The ID is recorded in:
-
-```text
-run-context.json.metadata.experiment_id
-```
-
-Cross-platform matrix jobs share one experiment ID but each produces its own
-run ID.
-
-## Reference assets
-
-```text
-reference/
-├── manifests/
-├── outputs/
-├── tensors/
-└── metadata/
-```
-
-Large canonical framework outputs/tensors belong in the Bucket rather than Git.
-
-## Runs
+1回の具体的なexecutionです。連番にはしません。
 
 ```text
 runs/<run-id>/
-├── run-context.json
-├── samples.jsonl
-├── metrics.json
-└── promotion.json
 ```
 
-Runs are execution records, not sequential human-managed entities. They retain
-candidate, experiment, configuration version, revision bundle, artifact hash,
-runtime/provider, host, and Git identity.
+`run-context.json`にはcandidate、experiment、config version、HF routing snapshot、provider、host、Git revision等を保存します。
 
-## Benchmarks
+## `benchmarks/`
 
-Use environment/provider names rather than framework names:
+frameworkではなく実行環境で分類します。
 
 ```text
 benchmarks/<candidate-id>/
-├── linux-cpu/
-├── linux-cuda/
-├── windows-cpu/
-├── windows-cuda/
-├── windows-directml/
-├── macos-cpu/
-└── macos-coreml/
+  linux-cpu/
+  linux-cuda/
+  windows-cpu/
+  windows-cuda/
+  windows-directml/
+  macos-cpu/
+  macos-coreml/
 ```
 
-Only directories for actually executed benchmark configurations need to exist.
+実行していないdirectoryを作る必要はありません。
 
-## `scripts/` and `tmp/`
+## `scripts/`と`tmp/`
 
-Bucket `scripts/` is reserved for artifact-history material when required.
-Source code remains in Git. `tmp/` is disposable and is never canonical
-identity/history.
+`tmp/`は破棄可能です。`scripts/`はBucket側に履歴として必要な補助materialを置くための領域であり、source codeの正本はGitです。
 
-## Model Repo policy
-
-Validated/promotion artifacts live in the Model Repo, for example:
+## Model Repoとの関係
 
 ```text
-README.md
-model.onnx
-metadata.json
-tokenizer/
-release/
-├── run-context.json
-├── metrics.json
-└── promotion.json
+Candidate
+  ↓
+Evaluation
+  ↓
+Acceptance
+  ↓
+Promotion
+  ↓
+HF Model Repo
 ```
 
-Development candidates remain in the Bucket until promotion.
+`development_artifact.repo_id`はModel Repoを指し、Bucketを指しません。
 
-## Lifecycle
+## Routing
 
-```text
-config/current.json
-        ↓
-immutable config version
-        ↓
-export/build artifact
-        ↓
-auto-numbered candidate
-        ↓
-auto-numbered experiment
-        ↓
-one or more runs
-        ↓
-benchmarks
-        ↓
-acceptance
-        ↓
-promotion to HF Model Repo
-```
+現在のBucket割当は`HF_TARGETS_JSON`で管理します。同一snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更でtargetのBucketを変更できます。過去runは当時のBucketをrun-contextに保存します。
+
+詳細は`docs/hf-bucket-operations.md`と`docs/hf-routing-snapshots.md`を参照してください。
