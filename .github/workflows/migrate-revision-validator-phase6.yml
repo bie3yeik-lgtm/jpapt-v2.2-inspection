@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: agent/remove-revision-python-shim-phase6
+          token: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
       - name: Replace Python revision validator entrypoints
         shell: bash
         run: |
