@@ -6,13 +6,25 @@ import re
 import sys
 
 
+# Project policy. Cache restore/save are optional actions, but when they are
+# used they must follow the same v6 major as actions/cache.
 REQUIRED = {
-    "actions/checkout": "v7",
+    "actions/checkout": "v6",
     "actions/setup-python": "v7",
     "actions/upload-artifact": "v7",
-    "actions/cache": "6",
+    "actions/cache": "v6",
+    "actions/cache/restore": "v6",
+    "actions/cache/save": "v6",
 }
-USES_RE = re.compile(r"\buses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)")
+REQUIRED_PRESENT = {
+    "actions/checkout",
+    "actions/setup-python",
+    "actions/upload-artifact",
+    "actions/cache",
+}
+USES_RE = re.compile(
+    r"\buses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)@([^\s#]+)"
+)
 
 
 def main() -> int:
@@ -22,7 +34,9 @@ def main() -> int:
     seen: dict[str, int] = {name: 0 for name in REQUIRED}
 
     for path in sorted(workflow_root.glob("*.yml")):
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
             match = USES_RE.search(line)
             if match is None:
                 continue
@@ -33,15 +47,15 @@ def main() -> int:
             seen[action] += 1
             if version != expected:
                 errors.append(
-                    f"{path.relative_to(root)}:{line_number}: {action}@{version} is forbidden; "
-                    f"required={action}@{expected}"
+                    f"{path.relative_to(root)}:{line_number}: "
+                    f"{action}@{version} is forbidden; required={action}@{expected}"
                 )
 
-    missing = [name for name, count in seen.items() if count == 0]
+    missing = [name for name in sorted(REQUIRED_PRESENT) if seen[name] == 0]
     if missing:
         errors.append(
-            "version-policy actions were not found in any workflow; if an action is "
-            f"intentionally removed, update the policy explicitly: {missing!r}"
+            "required version-policy actions were not found in any workflow; if an "
+            f"action is intentionally removed, update the policy explicitly: {missing!r}"
         )
 
     if errors:
@@ -50,7 +64,8 @@ def main() -> int:
         return 1
 
     for action, version in REQUIRED.items():
-        print(f"OK: {action}@{version} ({seen[action]} use(s))")
+        requirement = "required" if action in REQUIRED_PRESENT else "if-used"
+        print(f"OK: {action}@{version} ({seen[action]} use(s), {requirement})")
     return 0
 
 
