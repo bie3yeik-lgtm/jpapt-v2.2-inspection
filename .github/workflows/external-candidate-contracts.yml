@@ -11,6 +11,7 @@ on:
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/run-candidate-package-evaluation.sh
@@ -23,6 +24,7 @@ on:
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/run-candidate-package-evaluation.sh
@@ -79,6 +81,7 @@ jobs:
       - name: Validate Python helper syntax
         run: |
           python -m py_compile \
+            scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/generic-candidate-evaluate.py
 
