@@ -98,10 +98,7 @@ struct CurrentAllocation {
 }
 
 fn current(listing: &str) -> Result<CurrentAllocation, String> {
-    let mut best = CurrentAllocation {
-        sequence: 0,
-        allocation_id: "none".to_owned(),
-    };
+    let mut best: Option<CurrentAllocation> = None;
     for raw in listing.lines() {
         let path = raw.trim().trim_start_matches('/');
         if path.is_empty() {
@@ -117,14 +114,17 @@ fn current(listing: &str) -> Result<CurrentAllocation, String> {
         let sequence = suffix
             .parse::<u32>()
             .map_err(|error| format!("invalid allocation sequence {suffix:?}: {error}"))?;
-        if sequence > best.sequence {
-            best = CurrentAllocation {
+        if best.as_ref().is_none_or(|current| sequence > current.sequence) {
+            best = Some(CurrentAllocation {
                 sequence,
                 allocation_id: first.to_owned(),
-            };
+            });
         }
     }
-    Ok(best)
+    Ok(best.unwrap_or(CurrentAllocation {
+        sequence: 0,
+        allocation_id: "none".to_owned(),
+    }))
 }
 
 fn render_block(
@@ -206,6 +206,17 @@ mod tests {
             CurrentAllocation {
                 sequence: 9,
                 allocation_id: "ctc-000009".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn zero_suffix_is_a_real_allocation() {
+        assert_eq!(
+            current("candidate-000000/file\n").unwrap(),
+            CurrentAllocation {
+                sequence: 0,
+                allocation_id: "candidate-000000".to_owned(),
             }
         );
     }
