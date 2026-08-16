@@ -314,11 +314,8 @@ mod tests {
 
     #[test]
     fn type_specific_keywords_ignore_null_union_members() {
-        let schema = EmbeddedSchema::parse(
-            "test",
-            r#"{"type":["number","null"],"minimum":0}"#,
-        )
-        .unwrap();
+        let schema =
+            EmbeddedSchema::parse("test", r#"{"type":["number","null"],"minimum":0}"#).unwrap();
         schema.validate(&Value::Null).unwrap();
         schema.validate(&serde_json::json!(0.0)).unwrap();
         assert!(schema.validate(&serde_json::json!(-1.0)).is_err());
