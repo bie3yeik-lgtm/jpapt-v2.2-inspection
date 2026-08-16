@@ -24,31 +24,10 @@ BUCKET="${BUCKET%/}"
 [[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
 REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
 
-if [[ -n "${HF_TARGETS_JSON:-}" ]]; then
-  HF_TARGET_ID="$(python - "$BUCKET" <<'PY'
-import json
-import os
-import sys
-
-bucket=sys.argv[1]
-raw=json.loads(os.environ["HF_TARGETS_JSON"])
-if not isinstance(raw,dict):
-    raise SystemExit("HF_TARGETS_JSON root must be an object")
-matches=[
-    target
-    for target,value in raw.items()
-    if isinstance(value,dict) and value.get("HF_BUCKET")==bucket
-]
-if len(matches)!=1:
-    raise SystemExit(
-        f"HF_BUCKET {bucket!r} must match exactly one HF_TARGETS_JSON target; "
-        f"matches={matches!r}"
-    )
-print(matches[0])
-PY
-)"
-  export HF_TARGET_ID
-fi
+# Allocation is intentionally Bucket-scoped rather than target-scoped.
+# HF_TARGETS_JSON is operational routing and may be changed or may temporarily
+# map multiple targets to one Bucket. When the caller already resolved a target,
+# HF_TARGET_ID is recorded as provenance only; it is never inferred here.
 
 listing="$(mktemp)"
 readme="$(mktemp)"
@@ -74,10 +53,11 @@ This directory identifier was allocated automatically from the largest existing
 six-digit sequence in \`${COLLECTION}/\` plus one.
 
 - collection: \`${COLLECTION}\`
+- bucket: \`${BUCKET}\`
 - prefix: \`${PREFIX}\`
 - sequence: \`${SEQUENCE}\`
 - allocated_at: \`${CREATED_AT}\`
-- target_id: \`${HF_TARGET_ID:-unknown}\`
+- target_id: \`${HF_TARGET_ID:-not-resolved}\`
 - candidate_id: \`${CANDIDATE_ID:-not-applicable}\`
 - evaluation_id: \`${EVALUATION_ID:-not-applicable}\`
 - provider_id: \`${PROVIDER_ID:-not-applicable}\`
@@ -86,9 +66,10 @@ six-digit sequence in \`${COLLECTION}/\` plus one.
 
 The numeric suffix is machine-managed. Do not manually renumber or reuse it.
 The prefix is descriptive only and does not define an independent sequence.
+HF target-to-Bucket routing is operational metadata and may change over time.
 EOF
 
 hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md" >/dev/null
 
-log "Allocated ${COLLECTION}/${ID}"
+log "Allocated ${COLLECTION}/${ID} in ${BUCKET}"
 printf '%s\n' "$ID"
