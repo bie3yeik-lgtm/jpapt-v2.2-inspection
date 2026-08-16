@@ -1,0 +1,49 @@
+name: Phase12 Normalize
+
+on:
+  push:
+    branches: [agent/rust-hf-config-publish-phase12]
+    paths:
+      - .github/workflows/phase12-normalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-hf-config-publish-phase12
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Normalize and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --locked -p asr-contracts --all-targets -- -D warnings
+          cargo test --locked -p asr-contracts
+          bash -n scripts/hf/hf-push-config-version.sh
+          echo '--- write-runtime-lock.py references ---'
+          git grep -n 'write-runtime-lock.py' || true
+          echo '--- Python in config publisher ---'
+          if grep -nE '(^|[^[:alnum:]_])(python|uv run python)([^[:alnum:]_]|$)' scripts/hf/hf-push-config-version.sh; then
+            echo 'Python remains in config publish path' >&2
+            exit 1
+          fi
+      - name: Commit normalized state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- rust/crates/asr-contracts scripts/hf/hf-push-config-version.sh; then
+            echo 'No normalization changes.'
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/asr-contracts scripts/hf/hf-push-config-version.sh
+          git commit -m "Normalize Rust config publication helper"
+          git push origin HEAD:agent/rust-hf-config-publish-phase12
