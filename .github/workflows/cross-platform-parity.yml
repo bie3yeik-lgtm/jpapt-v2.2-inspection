@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cross-platform-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
+  group: cross-platform-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
   cancel-in-progress: true
 
 env:
@@ -104,6 +104,7 @@ jobs:
           hf --version
 
       - name: Resolve HF Bucket
+        id: hf
         shell: bash
         run: |
           set -euo pipefail
@@ -114,7 +115,8 @@ jobs:
           python scripts/ci/resolve-hf-target.py \
             --bucket "${{ inputs.hf_bucket }}" \
             --targets-json "${HF_TARGETS_JSON}" \
-            --github-env "${GITHUB_ENV}"
+            --github-env "${GITHUB_ENV}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Validate GitHub configuration
         shell: bash
@@ -169,7 +171,7 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-eval-${{ inputs.hf_bucket }}-${{ matrix.os }}-${{ runner.arch }}-${{
+            py-eval-${{ steps.hf.outputs.target_id }}-${{ matrix.os }}-${{ runner.arch }}-${{
               inputs.candidate_id
             }}-${{
               hashFiles(
@@ -180,7 +182,7 @@ jobs:
               )
             }}
           restore-keys: |
-            py-eval-${{ inputs.hf_bucket }}-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-eval-${{ steps.hf.outputs.target_id }}-${{ matrix.os }}-${{ runner.arch }}-${{ inputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
@@ -258,7 +260,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: parity-${{ inputs.hf_bucket }}-${{ matrix.result_name }}-${{ inputs.candidate_id }}
+          name: parity-${{ steps.hf.outputs.target_id }}-${{ matrix.result_name }}-${{ inputs.candidate_id }}
           path: |
             results/${{ matrix.result_name }}/run-context.json
             results/${{ matrix.result_name }}/metrics.json
