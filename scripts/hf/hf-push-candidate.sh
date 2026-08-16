@@ -18,12 +18,8 @@ command -v python >/dev/null 2>&1 || fail "python is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 command -v gh >/dev/null 2>&1 || fail "gh CLI is unavailable; central allocation requires GitHub access"
 
-SOURCE="$(python - "$SOURCE" <<'PY'
-import sys
-from pathlib import Path
-print(Path(sys.argv[1]).expanduser().resolve())
-PY
-)"
+SOURCE="$(cd -- "$SOURCE" >/dev/null 2>&1 && pwd -P)" \
+  || fail "failed to resolve candidate source directory"
 metadata="$SOURCE/metadata.json"
 [[ -s "$metadata" ]] || fail "minimal metadata.json is required before candidate allocation"
 [[ ! -e "$SOURCE/.candidate-id" ]] || fail "refusing to republish a materialized candidate containing .candidate-id"
@@ -32,6 +28,8 @@ run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
 
+# CandidateArtifacts and runtime-contract inspection remain Python-native because they bind
+# directly to the current ML/runtime implementation. Allocation and sync-plan policy are Rust.
 PROFILE_SET="$(run_project_python - "$SOURCE" <<'PY'
 import json
 import sys
@@ -84,30 +82,16 @@ hf buckets sync \
   "$REMOTE" \
   --plan "$PLAN"
 
-python - "$PLAN" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path=Path(sys.argv[1])
-actions=[]
-for line in path.read_text(encoding="utf-8").splitlines():
-    if not line.strip():
-        continue
-    item=json.loads(line)
-    action=item.get("action")
-    if action is not None:
-        actions.append(str(action).lower())
-if not actions:
-    raise SystemExit("candidate sync plan contains no file operations")
-unsafe=sorted({action for action in actions if action != "upload"})
-if unsafe:
-    raise SystemExit(
-        "candidate prefix is not write-once clean; unexpected sync actions: "
-        + ", ".join(unsafe)
-    )
-print(f"validated fresh candidate plan: {len(actions)} uploads")
-PY
+PLAN_SUMMARY="$(
+  cargo run --quiet --locked \
+    -p asr-hf \
+    --bin asr-candidate-plan \
+    -- \
+    "$PLAN"
+)"
+UPLOAD_COUNT="$(printf '%s\n' "$PLAN_SUMMARY" | sed -n 's/^upload_count=//p')"
+[[ "$UPLOAD_COUNT" =~ ^[1-9][0-9]*$ ]] || fail "Rust candidate plan validator returned an invalid upload count"
+log "Validated fresh candidate plan: ${UPLOAD_COUNT} uploads"
 
 hf buckets sync --token "$HF_TOKEN" --apply "$PLAN"
 
