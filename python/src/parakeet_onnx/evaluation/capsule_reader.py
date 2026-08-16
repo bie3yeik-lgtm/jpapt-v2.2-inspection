@@ -1,8 +1,9 @@
-"""Reader and structural validator for ExperimentCapsuleV1 Parquet files."""
+"""Reader and structural/integrity validator for ExperimentCapsuleV1."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -14,7 +15,11 @@ _ALLOWED_RECORD_KINDS = frozenset({"manifest", "sample", "metric", "artifact"})
 
 
 class ExperimentCapsuleError(RuntimeError):
-    """Raised when a Parquet capsule violates the Phase-1/2 contract."""
+    """Raised when a Parquet capsule violates its contract."""
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,17 +42,11 @@ class ExperimentCapsule:
         return tuple(row for row in self.rows if row["record_kind"] == "artifact")
 
     def metric(self, name: str) -> float | None:
-        matches = [
-            row
-            for row in self.metrics
-            if row.get("metric_name") == name
-        ]
+        matches = [row for row in self.metrics if row.get("metric_name") == name]
         if not matches:
             return None
         if len(matches) != 1:
-            raise ExperimentCapsuleError(
-                f"metric {name!r} appears {len(matches)} times"
-            )
+            raise ExperimentCapsuleError(f"metric {name!r} appears {len(matches)} times")
         value = matches[0].get("metric_value")
         return None if value is None else float(value)
 
@@ -65,15 +64,58 @@ class ExperimentCapsule:
             raise ExperimentCapsuleError("manifest metadata_json must decode to an object")
         return value
 
+    def artifact_ids(self) -> tuple[str, ...]:
+        return tuple(sorted({str(row["artifact_id"]) for row in self.artifacts}))
+
+    def artifact_metadata(self, artifact_id: str) -> dict[str, Any]:
+        rows = [row for row in self.artifacts if row.get("artifact_id") == artifact_id]
+        if not rows:
+            raise ExperimentCapsuleError(f"artifact not found: {artifact_id}")
+        raw = rows[0].get("metadata_json")
+        if not isinstance(raw, str) or not raw:
+            return {}
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ExperimentCapsuleError(
+                f"artifact {artifact_id!r} metadata_json must decode to an object"
+            )
+        return value
+
+    def extract_artifact(self, artifact_id: str, output: str | Path) -> Path:
+        rows = [row for row in self.artifacts if row.get("artifact_id") == artifact_id]
+        if not rows:
+            raise ExperimentCapsuleError(f"artifact not found: {artifact_id}")
+        rows.sort(key=lambda row: int(row["artifact_part_index"]))
+
+        metadata = self.artifact_metadata(artifact_id)
+        if metadata.get("location") == "external":
+            raise ExperimentCapsuleError(
+                f"artifact {artifact_id!r} is external and has no embedded payload"
+            )
+
+        payload = b"".join(bytes(row.get("payload") or b"") for row in rows)
+        expected_size = rows[0].get("artifact_size_raw")
+        expected_sha256 = rows[0].get("artifact_sha256")
+        if len(payload) != expected_size:
+            raise ExperimentCapsuleError(
+                f"artifact {artifact_id!r} size mismatch: expected={expected_size}, actual={len(payload)}"
+            )
+        if _sha256(payload) != expected_sha256:
+            raise ExperimentCapsuleError(f"artifact {artifact_id!r} SHA-256 mismatch")
+
+        destination = Path(output).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return destination
+
 
 def _load_rows(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     try:
         from datasets import Dataset
-    except ImportError as exc:  # pragma: no cover - environment contract failure
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "Parquet capsule reading requires the project's 'datasets' optional dependency."
         ) from exc
-
     dataset = Dataset.from_parquet(str(path))
     return list(dataset.column_names), [dict(row) for row in dataset]
 
@@ -82,6 +124,66 @@ def _require_nonempty_string(name: str, value: Any) -> str:
     if not isinstance(value, str) or not value:
         raise ExperimentCapsuleError(f"{name} must be a non-empty string")
     return value
+
+
+def _validate_artifact_rows(rows: list[dict[str, Any]]) -> None:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        artifact_id = _require_nonempty_string("artifact.artifact_id", row.get("artifact_id"))
+        groups.setdefault(artifact_id, []).append(row)
+
+    for artifact_id, parts in groups.items():
+        parts.sort(key=lambda row: int(row.get("artifact_part_index") or 0))
+        expected_count = parts[0].get("artifact_part_count")
+        if not isinstance(expected_count, int) or expected_count <= 0:
+            raise ExperimentCapsuleError(
+                f"artifact {artifact_id!r} has invalid artifact_part_count"
+            )
+        if len(parts) != expected_count:
+            raise ExperimentCapsuleError(
+                f"artifact {artifact_id!r} part count mismatch: expected={expected_count}, actual={len(parts)}"
+            )
+        common = (
+            parts[0].get("artifact_name"),
+            parts[0].get("mime_type"),
+            parts[0].get("artifact_sha256"),
+            parts[0].get("artifact_size_raw"),
+        )
+        offset = 0
+        embedded = False
+        for index, part in enumerate(parts):
+            if part.get("artifact_part_index") != index:
+                raise ExperimentCapsuleError(
+                    f"artifact {artifact_id!r} has non-contiguous part indexes"
+                )
+            if part.get("artifact_offset") != offset:
+                raise ExperimentCapsuleError(
+                    f"artifact {artifact_id!r} has invalid part offset at index {index}"
+                )
+            if (
+                part.get("artifact_name"),
+                part.get("mime_type"),
+                part.get("artifact_sha256"),
+                part.get("artifact_size_raw"),
+            ) != common:
+                raise ExperimentCapsuleError(
+                    f"artifact {artifact_id!r} metadata differs across parts"
+                )
+            payload = part.get("payload")
+            if payload is not None:
+                embedded = True
+                payload_bytes = bytes(payload)
+                if _sha256(payload_bytes) != part.get("artifact_part_sha256"):
+                    raise ExperimentCapsuleError(
+                        f"artifact {artifact_id!r} part {index} SHA-256 mismatch"
+                    )
+                offset += len(payload_bytes)
+        if embedded:
+            payload = b"".join(bytes(part.get("payload") or b"") for part in parts)
+            if len(payload) != common[3] or _sha256(payload) != common[2]:
+                raise ExperimentCapsuleError(
+                    f"artifact {artifact_id!r} aggregate integrity check failed"
+                )
 
 
 def _validate_rows(
@@ -106,24 +208,19 @@ def _validate_rows(
     sample_ids: set[str] = set()
 
     for index, row in enumerate(rows):
-        schema_version = row.get("schema_version")
-        if schema_version != EXPERIMENT_CAPSULE_SCHEMA_VERSION:
+        if row.get("schema_version") != EXPERIMENT_CAPSULE_SCHEMA_VERSION:
             raise ExperimentCapsuleError(
-                f"row {index} has unsupported schema_version {schema_version!r}"
+                f"row {index} has unsupported schema_version {row.get('schema_version')!r}"
             )
-
         run_id = _require_nonempty_string(f"row {index}.run_id", row.get("run_id"))
         run_ids.add(run_id)
-
         record_kind = _require_nonempty_string(
-            f"row {index}.record_kind",
-            row.get("record_kind"),
+            f"row {index}.record_kind", row.get("record_kind")
         )
         if record_kind not in _ALLOWED_RECORD_KINDS:
             raise ExperimentCapsuleError(
                 f"row {index} has unsupported record_kind {record_kind!r}"
             )
-
         ordinal = row.get("ordinal")
         if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 0:
             raise ExperimentCapsuleError(
@@ -135,22 +232,13 @@ def _validate_rows(
             manifests.append(row)
         elif record_kind == "sample":
             sample_id = _require_nonempty_string(
-                f"row {index}.sample_id",
-                row.get("sample_id"),
+                f"row {index}.sample_id", row.get("sample_id")
             )
             if sample_id in sample_ids:
                 raise ExperimentCapsuleError(f"duplicate sample_id: {sample_id}")
             sample_ids.add(sample_id)
         elif record_kind == "metric":
-            _require_nonempty_string(
-                f"row {index}.metric_name",
-                row.get("metric_name"),
-            )
-        elif record_kind == "artifact":
-            _require_nonempty_string(
-                f"row {index}.artifact_id",
-                row.get("artifact_id"),
-            )
+            _require_nonempty_string(f"row {index}.metric_name", row.get("metric_name"))
 
     if len(run_ids) != 1:
         raise ExperimentCapsuleError(
@@ -162,13 +250,8 @@ def _validate_rows(
         )
     if manifests[0].get("ordinal") != 0:
         raise ExperimentCapsuleError("manifest row must have ordinal 0")
-
-    expected_ordinals = list(range(len(rows)))
-    if ordinals != expected_ordinals:
-        raise ExperimentCapsuleError(
-            "capsule ordinals must be contiguous and row-ordered: "
-            f"expected={expected_ordinals}, actual={ordinals}"
-        )
+    if ordinals != list(range(len(rows))):
+        raise ExperimentCapsuleError("capsule ordinals must be contiguous and row-ordered")
 
     run_id = next(iter(run_ids))
     capsule = ExperimentCapsule(
@@ -188,7 +271,6 @@ def _validate_rows(
         raise ExperimentCapsuleError(
             "manifest benchmark.run_id does not match capsule run_id"
         )
-
     benchmark_samples = benchmark.get("samples")
     if isinstance(benchmark_samples, Mapping):
         attempted = benchmark_samples.get("attempted")
@@ -199,12 +281,11 @@ def _validate_rows(
                     f"benchmark={attempted}, parquet={len(capsule.samples)}"
                 )
 
+    _validate_artifact_rows([dict(row) for row in capsule.artifacts])
     return capsule
 
 
 def read_experiment_capsule(path: str | Path) -> ExperimentCapsule:
-    """Load and validate one ``run.parquet`` ExperimentCapsuleV1 file."""
-
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         raise ExperimentCapsuleError(f"capsule does not exist: {resolved}")
@@ -215,8 +296,6 @@ def read_experiment_capsule(path: str | Path) -> ExperimentCapsule:
 
 
 def validate_experiment_capsule(path: str | Path, *, expected_run_id: str | None = None) -> int:
-    """Validate a capsule and return the number of sample records."""
-
     capsule = read_experiment_capsule(path)
     if expected_run_id is not None and capsule.run_id != expected_run_id:
         raise ExperimentCapsuleError(

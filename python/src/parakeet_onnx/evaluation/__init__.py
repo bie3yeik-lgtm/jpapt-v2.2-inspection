@@ -1,6 +1,13 @@
 """Evaluation contracts and Python-first orchestration."""
 
 from .aggregate import AggregateResult, aggregate_sample_results
+from .capsule_artifacts import (
+    CapsuleArtifact,
+    CapsuleArtifactError,
+    EmbeddedCapsuleArtifact,
+    ExternalCapsuleArtifact,
+    MAX_EMBEDDED_ARTIFACT_BYTES,
+)
 from .capsule_reader import (
     ExperimentCapsule,
     ExperimentCapsuleError,
@@ -31,7 +38,10 @@ from .writer import BenchmarkWriter, SampleResultWriter, write_benchmark
 __all__ = [
     "AggregateResult",
     "BenchmarkWriter",
+    "CapsuleArtifact",
+    "CapsuleArtifactError",
     "CorpusErrorAccumulator",
+    "EmbeddedCapsuleArtifact",
     "EXPERIMENT_CAPSULE_SCHEMA_VERSION",
     "EvaluationRunInputs",
     "EvaluationSchemaError",
@@ -40,6 +50,8 @@ __all__ = [
     "ExperimentCapsule",
     "ExperimentCapsuleError",
     "ExperimentCapsuleWriter",
+    "ExternalCapsuleArtifact",
+    "MAX_EMBEDDED_ARTIFACT_BYTES",
     "PythonAsrEvaluator",
     "PythonCtcEvaluator",
     "SampleResultWriter",
