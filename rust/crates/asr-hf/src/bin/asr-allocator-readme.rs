@@ -26,10 +26,16 @@ fn run() -> Result<(), String> {
         match arg.as_str() {
             "--readme" => readme = Some(PathBuf::from(take_value(&mut args, "--readme")?)),
             "--candidates-listing" => {
-                candidates = Some(PathBuf::from(take_value(&mut args, "--candidates-listing")?))
+                candidates = Some(PathBuf::from(take_value(
+                    &mut args,
+                    "--candidates-listing",
+                )?))
             }
             "--experiments-listing" => {
-                experiments = Some(PathBuf::from(take_value(&mut args, "--experiments-listing")?))
+                experiments = Some(PathBuf::from(take_value(
+                    &mut args,
+                    "--experiments-listing",
+                )?))
             }
             "--config-listing" => {
                 config = Some(PathBuf::from(take_value(&mut args, "--config-listing")?))
@@ -114,7 +120,10 @@ fn current(listing: &str) -> Result<CurrentAllocation, String> {
         let sequence = suffix
             .parse::<u32>()
             .map_err(|error| format!("invalid allocation sequence {suffix:?}: {error}"))?;
-        if best.as_ref().is_none_or(|current| sequence > current.sequence) {
+        if best
+            .as_ref()
+            .is_none_or(|current| sequence > current.sequence)
+        {
             best = Some(CurrentAllocation {
                 sequence,
                 allocation_id: first.to_owned(),
@@ -172,7 +181,9 @@ fn validate_inline(name: &str, value: &str) -> Result<(), String> {
         return Err(format!("{name} must be a non-empty string"));
     }
     if value.contains(['\n', '\r', '`']) {
-        return Err(format!("{name} contains an unsafe inline Markdown character"));
+        return Err(format!(
+            "{name} contains an unsafe inline Markdown character"
+        ));
     }
     Ok(())
 }
@@ -185,10 +196,7 @@ fn required_value(value: Option<String>, option: &str) -> Result<String, String>
     value.ok_or_else(|| format!("{option} is required"))
 }
 
-fn take_value(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<String, String> {
+fn take_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
     args.next()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{option} requires a non-empty value"))
@@ -241,6 +249,9 @@ mod tests {
 
     #[test]
     fn missing_block_appends_once() {
-        assert_eq!(replace_managed_block("# Bucket\n", "BLOCK"), "# Bucket\n\nBLOCK\n");
+        assert_eq!(
+            replace_managed_block("# Bucket\n", "BLOCK"),
+            "# Bucket\n\nBLOCK\n"
+        );
     }
 }
