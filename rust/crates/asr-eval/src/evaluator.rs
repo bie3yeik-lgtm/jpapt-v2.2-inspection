@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf, time::Instant};
 use asr_audio::{decode_audio, CanonicalAudio};
 use asr_metrics::{character_error_rate, normalize_text, word_error_rate};
 use asr_runtime::{
-    metadata::model_metadata::GeneratedCandidateContract,
-    OrtCtcSession, ProviderKind, SessionConfig, SessionTuning,
+    metadata::model_metadata::GeneratedCandidateContract, OrtCtcSession, ProviderKind,
+    SessionConfig, SessionTuning,
 };
 
 use crate::{
@@ -37,27 +37,28 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
     validate_execution_inputs(&run_context, &candidate, options.provider, &model_path)?;
 
     let tuning = SessionTuning::from_run_context(&run_context)?;
+    let strict_provider = options.provider != ProviderKind::Cpu && !tuning.allow_cpu_fallback;
     let mut session = OrtCtcSession::create(
         SessionConfig::new(&model_path, options.provider, tuning),
         ctc_contract,
     )?;
     let session_creation_ms = session.session_creation_ms();
-    let telemetry = provider_telemetry(options.provider, session.cpu_fallback_allowed());
 
     run_context["runtime"]["provider_available"] = serde_json::Value::Bool(true);
-    run_context["metadata"]["provider_telemetry"] = serde_json::json!({
-        "registered": telemetry.registered,
-        "used": telemetry.used,
-        "fallback_detected": telemetry.fallback_detected,
-        "fallback_only": telemetry.fallback_only,
-        "assigned_nodes": telemetry.assigned_nodes,
-        "fallback_nodes": telemetry.fallback_nodes,
+    run_context["metadata"]["provider_readiness"] = serde_json::json!({
+        "compiled": options.provider.compiled(),
+        "registered": true,
+        "session_created": true,
+        "execution_proven": false,
+        "assignment_proven": options.provider == ProviderKind::Cpu,
+        "strict_provider": strict_provider,
+        "cpu_fallback_allowed": session.cpu_fallback_allowed(),
         "evidence": if options.provider == ProviderKind::Cpu {
             "cpu_provider_selected"
-        } else if !session.cpu_fallback_allowed() {
-            "cpu_fallback_disabled_and_inference_succeeded"
+        } else if strict_provider {
+            "session_created_with_cpu_fallback_disabled; awaiting successful inference"
         } else {
-            "registration_only; node assignment not asserted"
+            "session_created_with_cpu_fallback_allowed; requested EP execution is not inferred"
         }
     });
 
@@ -160,7 +161,7 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
                     "peak_device_memory_mb": null
                 },
                 "parity": unavailable_parity(),
-                "provider": sample_provider(options.provider, telemetry),
+                "provider": sample_provider(options.provider, strict_provider, true),
                 "status": "success",
                 "errors": []
             }))
@@ -203,13 +204,32 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
                     },
                     "memory":{"peak_ram_mb":null,"peak_device_memory_mb":null},
                     "parity": unavailable_parity(),
-                    "provider": sample_provider(options.provider, telemetry),
+                    "provider": sample_provider(options.provider, strict_provider, false),
                     "status":"failed",
                     "errors":[{"code":"SAMPLE_EVALUATION_FAILED","stage":"inference","message":error.to_string(),"fatal":true}]
                 }));
             }
         }
     }
+
+    let telemetry = finalized_provider_telemetry(options.provider, strict_provider, &aggregate);
+    let readiness = &mut run_context["metadata"]["provider_readiness"];
+    readiness["execution_proven"] = serde_json::Value::Bool(telemetry.used == Some(true));
+    readiness["assignment_proven"] = serde_json::Value::Bool(
+        options.provider == ProviderKind::Cpu || telemetry.assigned_nodes.is_some(),
+    );
+    readiness["evidence"] = serde_json::Value::String(
+        if options.provider == ProviderKind::Cpu && aggregate.successful > 0 {
+            "cpu inference succeeded"
+        } else if strict_provider && aggregate.successful > 0 {
+            "inference succeeded with CPU fallback disabled; node assignment remains unmeasured"
+        } else if aggregate.successful > 0 {
+            "inference succeeded with CPU fallback allowed; requested EP execution remains unproven"
+        } else {
+            "no successful inference"
+        }
+        .to_owned(),
+    );
 
     write_json(&options.output.join("run-context.json"), &run_context)?;
     write_jsonl(&options.output.join("samples.jsonl"), &results)?;
@@ -238,9 +258,8 @@ fn validate_execution_inputs(
             "Rust evaluator requires run-context schema_version 2".into(),
         ));
     }
-    if context.get("provider_id").and_then(serde_json::Value::as_str)
-        != Some(provider.to_string().as_str())
-    {
+    let provider_id = provider.to_string();
+    if context.get("provider_id").and_then(serde_json::Value::as_str) != Some(provider_id.as_str()) {
         return Err(EvalError::InvalidInput(
             "run-context provider_id does not match requested provider".into(),
         ));
@@ -274,20 +293,25 @@ fn validate_execution_inputs(
     Ok(())
 }
 
-fn provider_telemetry(provider: ProviderKind, allow_cpu_fallback: bool) -> ProviderTelemetry {
+fn finalized_provider_telemetry(
+    provider: ProviderKind,
+    strict_provider: bool,
+    aggregate: &SampleAggregate,
+) -> ProviderTelemetry {
+    let executed = aggregate.successful > 0;
     if provider == ProviderKind::Cpu {
         ProviderTelemetry {
             registered: true,
-            used: Some(true),
+            used: Some(executed),
             fallback_detected: Some(false),
             fallback_only: Some(false),
             assigned_nodes: None,
-            fallback_nodes: None,
+            fallback_nodes: Some(0),
         }
-    } else if !allow_cpu_fallback {
+    } else if strict_provider {
         ProviderTelemetry {
             registered: true,
-            used: Some(true),
+            used: Some(executed),
             fallback_detected: Some(false),
             fallback_only: Some(false),
             assigned_nodes: None,
@@ -305,15 +329,16 @@ fn provider_telemetry(provider: ProviderKind, allow_cpu_fallback: bool) -> Provi
     }
 }
 
-fn sample_provider(provider: ProviderKind, telemetry: ProviderTelemetry) -> serde_json::Value {
+fn sample_provider(provider: ProviderKind, strict_provider: bool, success: bool) -> serde_json::Value {
+    let proven = provider == ProviderKind::Cpu || strict_provider;
     serde_json::json!({
         "requested": provider.to_string(),
-        "registered": telemetry.registered,
-        "used": telemetry.used,
-        "fallback_detected": telemetry.fallback_detected,
-        "fallback_only": telemetry.fallback_only,
-        "assigned_nodes": telemetry.assigned_nodes,
-        "fallback_nodes": telemetry.fallback_nodes
+        "registered": true,
+        "used": if proven { Some(success) } else { None },
+        "fallback_detected": if proven { Some(false) } else { None },
+        "fallback_only": if proven { Some(false) } else { None },
+        "assigned_nodes": null,
+        "fallback_nodes": if proven { Some(0) } else { None }
     })
 }
 
