@@ -9,6 +9,21 @@ fn repository_root() -> PathBuf {
         .expect("repository root")
 }
 
+fn two_target_routes(kotoba_bucket: &str, parakeet_bucket: &str) -> String {
+    format!(
+        r#"{{
+          "kotoba-whisper-v1.0": {{
+            "HF_BUCKET": "{kotoba_bucket}",
+            "HF_MODEL_REPO": "gawohok7/tf-v1-onnx-dev"
+          }},
+          "parakeet-tdt_ctc-0.6b-ja": {{
+            "HF_BUCKET": "{parakeet_bucket}",
+            "HF_MODEL_REPO": "gawohok7/jpapt-v2.2-dev"
+          }}
+        }}"#
+    )
+}
+
 #[test]
 fn resolves_parakeet_default_from_source_config() {
     let resolved = resolve_target(&ResolveTargetOptions {
@@ -72,4 +87,50 @@ fn resolves_whisper_framework_and_profile() {
     assert_eq!(resolved.runtime_variant, "whisper");
     assert_eq!(resolved.runtime_profile, "whisper-autoregressive-v1");
     assert_eq!(resolved.decoder, "whisper_autoregressive");
+}
+
+#[test]
+fn unknown_bucket_is_rejected() {
+    let error = resolve_target(&ResolveTargetOptions {
+        repository_root: repository_root(),
+        selector: TargetSelector::Bucket("gawohok7/not-configured-bucket".into()),
+        runtime_variant: None,
+        targets_json: Some(two_target_routes(
+            "gawohok7/tf-v1-onnx-dev-bucket",
+            "gawohok7/jpapt-v2.2-dev-bucket",
+        )),
+    })
+    .expect_err("unknown bucket must fail");
+    assert!(error.to_string().contains("is not present in the current HF target mapping"));
+}
+
+#[test]
+fn duplicate_bucket_is_rejected() {
+    let error = resolve_target(&ResolveTargetOptions {
+        repository_root: repository_root(),
+        selector: TargetSelector::Bucket("gawohok7/shared-bucket".into()),
+        runtime_variant: None,
+        targets_json: Some(two_target_routes(
+            "gawohok7/shared-bucket",
+            "gawohok7/shared-bucket",
+        )),
+    })
+    .expect_err("duplicate bucket must fail");
+    assert!(error.to_string().contains("assigned to multiple targets"));
+}
+
+#[test]
+fn bucket_routing_can_change_between_snapshots() {
+    let resolved = resolve_target(&ResolveTargetOptions {
+        repository_root: repository_root(),
+        selector: TargetSelector::Bucket("gawohok7/tf-v1-capacity-bucket-b".into()),
+        runtime_variant: None,
+        targets_json: Some(two_target_routes(
+            "gawohok7/tf-v1-capacity-bucket-b",
+            "gawohok7/jpapt-v2.2-dev-bucket",
+        )),
+    })
+    .expect("moved bucket must resolve");
+    assert_eq!(resolved.target_id, "kotoba-whisper-v1.0");
+    assert_eq!(resolved.hf_bucket, "gawohok7/tf-v1-capacity-bucket-b");
 }
