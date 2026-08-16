@@ -18,6 +18,13 @@ class CandidateArtifact:
     sha256: str | None
     size_bytes: int | None
 
+    def computed_sha256(self) -> str:
+        digest = hashlib.sha256()
+        with self.path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def verify(self) -> None:
         if not self.path.is_file():
             raise CandidateMetadataError(
@@ -29,11 +36,7 @@ class CandidateArtifact:
                 f"expected={self.size_bytes}, actual={self.path.stat().st_size}"
             )
         if self.sha256 is not None:
-            digest = hashlib.sha256()
-            with self.path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            actual = digest.hexdigest()
+            actual = self.computed_sha256()
             if actual.lower() != self.sha256.lower():
                 raise CandidateMetadataError(
                     f"candidate artifact SHA-256 mismatch for role {self.role!r}: "
@@ -260,9 +263,38 @@ class CandidateArtifacts:
             return self.artifacts["primary"]
         if len(self.artifacts) == 1:
             return next(iter(self.artifacts.values()))
+        if "encoder" in self.artifacts:
+            return self.artifacts["encoder"]
         raise CandidateMetadataError(
-            "candidate has multiple artifacts and no explicit 'primary' role"
+            "candidate has multiple artifacts and no primary/encoder role"
         )
+
+    @property
+    def bundle_sha256(self) -> str:
+        digest = hashlib.sha256()
+        for role in sorted(self.artifacts):
+            artifact = self.artifacts[role]
+            sha = artifact.sha256 or artifact.computed_sha256()
+            relative = artifact.path.relative_to(self.root).as_posix()
+            digest.update(f"{role}\0{relative}\0{sha}\n".encode("utf-8"))
+        return digest.hexdigest()
+
+    def provenance_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "decoder": self.decoder,
+            "artifact_contract": self.artifact_contract,
+            "bundle_sha256": self.bundle_sha256,
+            "artifacts": {
+                role: {
+                    "path": artifact.path.relative_to(self.root).as_posix(),
+                    "sha256": artifact.sha256 or artifact.computed_sha256(),
+                    "size_bytes": artifact.path.stat().st_size,
+                }
+                for role, artifact in sorted(self.artifacts.items())
+            },
+            "features": dict(self.features),
+        }
 
 
 def _required_string(value: Mapping[str, Any], key: str) -> str:
