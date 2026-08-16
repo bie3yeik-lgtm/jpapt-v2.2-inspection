@@ -13,7 +13,7 @@ supported_artifact_contracts = [
   "ctc-single-graph-v1",
 ]
 
-[features]
+[decoder_features.ctc]
 kv_cache = false
 multi_graph = false
 transformers_processor = false
