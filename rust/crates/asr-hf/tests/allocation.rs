@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use asr_hf::allocation::{
-    load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
+    AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
 };
 
 fn repository_root() -> PathBuf {
@@ -78,14 +78,16 @@ fn allocation_readme_is_deterministic_and_metadata_sorted() {
     ));
     write_allocation_readme(
         &path,
-        "rust-eval-000042",
-        "experiments",
-        "owner/bucket",
-        "experiment.rust_eval",
-        "rust-eval",
-        "000042",
-        "2026-08-17T00:00:00Z",
-        r#"{"zeta":"last","alpha":"first"}"#,
+        &AllocationReadme {
+            allocation_id: "rust-eval-000042",
+            collection: "experiments",
+            bucket: "owner/bucket",
+            prefix_key: "experiment.rust_eval",
+            prefix: "rust-eval",
+            sequence: "000042",
+            allocated_at: "2026-08-17T00:00:00Z",
+            metadata_json: r#"{"zeta":"last","alpha":"first"}"#,
+        },
     )
     .unwrap();
     let text = fs::read_to_string(&path).unwrap();

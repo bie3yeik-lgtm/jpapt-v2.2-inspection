@@ -120,46 +120,51 @@ pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
     Ok(format!("{prefix}-{next:06}"))
 }
 
+#[derive(Debug, Clone)]
+pub struct AllocationReadme<'a> {
+    pub allocation_id: &'a str,
+    pub collection: &'a str,
+    pub bucket: &'a str,
+    pub prefix_key: &'a str,
+    pub prefix: &'a str,
+    pub sequence: &'a str,
+    pub allocated_at: &'a str,
+    pub metadata_json: &'a str,
+}
+
 pub fn write_allocation_readme(
     output: impl AsRef<Path>,
-    allocation_id: &str,
-    collection: &str,
-    bucket: &str,
-    prefix_key: &str,
-    prefix: &str,
-    sequence: &str,
-    allocated_at: &str,
-    metadata_json: &str,
+    input: &AllocationReadme<'_>,
 ) -> Result<()> {
-    validate_prefix(prefix)?;
+    validate_prefix(input.prefix)?;
     for (name, value) in [
-        ("allocation_id", allocation_id),
-        ("collection", collection),
-        ("bucket", bucket),
-        ("prefix_key", prefix_key),
-        ("sequence", sequence),
-        ("allocated_at", allocated_at),
+        ("allocation_id", input.allocation_id),
+        ("collection", input.collection),
+        ("bucket", input.bucket),
+        ("prefix_key", input.prefix_key),
+        ("sequence", input.sequence),
+        ("allocated_at", input.allocated_at),
     ] {
         if value.trim().is_empty() {
             return Err(contract(format!("{name} must be a non-empty string")));
         }
     }
-    let metadata: Value = serde_json::from_str(metadata_json)?;
+    let metadata: Value = serde_json::from_str(input.metadata_json)?;
     let object = metadata
         .as_object()
         .ok_or_else(|| contract("HF_ALLOCATION_METADATA_JSON must be a JSON object"))?;
 
     let mut lines = vec![
-        format!("# {allocation_id}"),
+        format!("# {}", input.allocation_id),
         String::new(),
         "このディレクトリIDは中央Allocatorが自動採番しました。数値suffixは手動で再利用・変更しないでください。".to_owned(),
         String::new(),
-        format!("- collection: `{collection}`"),
-        format!("- bucket: `{bucket}`"),
-        format!("- prefix_key: `{prefix_key}`"),
-        format!("- resolved_prefix: `{prefix}`"),
-        format!("- sequence: `{sequence}`"),
-        format!("- allocated_at: `{allocated_at}`"),
+        format!("- collection: `{}`", input.collection),
+        format!("- bucket: `{}`", input.bucket),
+        format!("- prefix_key: `{}`", input.prefix_key),
+        format!("- resolved_prefix: `{}`", input.prefix),
+        format!("- sequence: `{}`", input.sequence),
+        format!("- allocated_at: `{}`", input.allocated_at),
     ];
     let mut keys = object.keys().collect::<Vec<_>>();
     keys.sort();

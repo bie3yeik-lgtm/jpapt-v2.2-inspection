@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 use asr_hf::allocation::{
-    load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
+    AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,
 };
 use asr_hf::{ResolveTargetOptions, TargetSelector, append_github_file, resolve_target};
 use clap::{Parser, Subcommand};
@@ -210,14 +210,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             metadata_json,
         } => write_allocation_readme(
             output,
-            &allocation_id,
-            &collection,
-            &bucket,
-            &prefix_key,
-            &prefix,
-            &sequence,
-            &allocated_at,
-            &metadata_json,
+            &AllocationReadme {
+                allocation_id: &allocation_id,
+                collection: &collection,
+                bucket: &bucket,
+                prefix_key: &prefix_key,
+                prefix: &prefix,
+                sequence: &sequence,
+                allocated_at: &allocated_at,
+                metadata_json: &metadata_json,
+            },
         )?,
     }
     Ok(())
