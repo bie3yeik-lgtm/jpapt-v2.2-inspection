@@ -437,35 +437,35 @@ def _inspect_whisper_decoder(graph: GraphInfo, *, allow_past: bool) -> dict[str,
     auxiliary_inputs: list[dict[str, Any]] = []
     for item in graph.inputs:
         if item.name in excluded:
-  continue
+            continue
         aux_kind = _whisper_aux_kind(item.name)
         if aux_kind is not None:
-  auxiliary_inputs.append(
-      {
-          "name": item.name,
-          "kind": aux_kind,
-          "dtype": item.dtype,
-          "rank": len(item.shape),
-      }
-  )
-  continue
+            auxiliary_inputs.append(
+                {
+                    "name": item.name,
+                    "kind": aux_kind,
+                    "dtype": item.dtype,
+                    "rank": len(item.shape),
+                }
+            )
+            continue
         if allow_past and _is_whisper_cache_tensor(item.name, past=True):
-  past_inputs.append(item.name)
-  continue
+            past_inputs.append(item.name)
+            continue
         raise CandidateInspectionError(
-  f"Whisper decoder input {item.name!r} is neither a supported auxiliary input nor an exact past-cache tensor"
+            f"Whisper decoder input {item.name!r} is neither a supported auxiliary input nor an exact past-cache tensor"
         )
 
     logits = _best_tensor(graph.outputs, ("logits", "output"), prefer_float=True)
     past_outputs: list[str] = []
     for item in graph.outputs:
         if item.name == logits.name:
-  continue
+            continue
         if _is_whisper_cache_tensor(item.name, past=False):
-  past_outputs.append(item.name)
-  continue
+            past_outputs.append(item.name)
+            continue
         raise CandidateInspectionError(
-  f"Whisper decoder output {item.name!r} is neither logits nor an exact present-cache tensor"
+            f"Whisper decoder output {item.name!r} is neither logits nor an exact present-cache tensor"
         )
 
     result: dict[str, Any] = {
