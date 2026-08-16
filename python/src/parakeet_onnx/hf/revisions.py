@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -38,6 +39,34 @@ def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def _load_config_version(root: Path) -> str | None:
+    """Read the config version materialized by hf-fetch-revisions.sh."""
+    path = root.parent / "resolved.json"
+    if not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            value = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise RevisionError(f"Invalid JSON in config selection file {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RevisionError(f"Config selection root must be an object: {path}")
+    if value.get("schema_version") != 1:
+        raise RevisionError(
+            f"{path.name}: schema_version must equal 1; "
+            f"got {value.get('schema_version')!r}"
+        )
+    config_version = value.get("config_version")
+    if not isinstance(config_version, str) or re.fullmatch(
+        r"config-\d{6}", config_version
+    ) is None:
+        raise RevisionError(
+            f"{path.name}: config_version must match config-NNNNNN; "
+            f"got {config_version!r}"
+        )
+    return config_version
 
 
 def _reject_keys(
@@ -219,19 +248,13 @@ class ReferenceRevision:
             document=document.name,
         )
         development_repo_id, development_revision = _require_identity(
-            raw,
-            "development_artifact",
-            document=document.name,
+            raw, "development_artifact", document=document.name
         )
         upstream_repo_id, upstream_revision = _require_identity(
-            raw,
-            "upstream",
-            document=document.name,
+            raw, "upstream", document=document.name
         )
         tokenizer_repo_id, tokenizer_revision = _require_identity(
-            raw,
-            "tokenizer",
-            document=document.name,
+            raw, "tokenizer", document=document.name
         )
         reference = _require_mapping(raw, "reference", document=document.name)
 
@@ -244,14 +267,10 @@ class ReferenceRevision:
             tokenizer_repo_id=tokenizer_repo_id,
             tokenizer_revision=tokenizer_revision,
             reference_id=_require_string(
-                reference,
-                "id",
-                document=f"{document.name}.reference",
+                reference, "id", document=f"{document.name}.reference"
             ),
             reference_revision=_require_string(
-                reference,
-                "revision",
-                document=f"{document.name}.reference",
+                reference, "revision", document=f"{document.name}.reference"
             ),
             canonical_framework=_require_string(
                 reference,
@@ -270,10 +289,7 @@ class EvaluationSchemaRevision:
     decoders: DecoderRevisionSet
 
     @classmethod
-    def from_document(
-        cls,
-        document: RevisionDocument,
-    ) -> "EvaluationSchemaRevision":
+    def from_document(cls, document: RevisionDocument) -> "EvaluationSchemaRevision":
         raw = document.raw
         _reject_keys(
             raw,
@@ -284,14 +300,10 @@ class EvaluationSchemaRevision:
         return cls(
             document=document,
             schema_id=_require_string(
-                schema,
-                "id",
-                document=f"{document.name}.schema",
+                schema, "id", document=f"{document.name}.schema"
             ),
             schema_revision=_require_string(
-                schema,
-                "revision",
-                document=f"{document.name}.schema",
+                schema, "revision", document=f"{document.name}.schema"
             ),
             decoders=_parse_decoders(raw, document=document.name),
         )
@@ -332,14 +344,10 @@ class DatasetLock:
                 DatasetLockEntry(
                     id=_require_string(item, "id", document=document.name),
                     repo_id=_require_string(
-                        item,
-                        "repo_id",
-                        document=document.name,
+                        item, "repo_id", document=document.name
                     ),
                     revision=_require_string(
-                        item,
-                        "revision",
-                        document=document.name,
+                        item, "revision", document=document.name
                     ),
                     subset=_optional_string(item, "subset"),
                     split=_optional_string(item, "split"),
@@ -370,6 +378,7 @@ class RevisionBundle:
     reference: ReferenceRevision
     evaluation_schema: EvaluationSchemaRevision
     datasets: DatasetLock
+    config_version: str | None = None
 
     def validate_compatibility(self) -> None:
         reference_decoders = set(self.reference.decoders.supported)
@@ -401,6 +410,7 @@ class RevisionBundle:
     def to_dict(self) -> dict[str, Any]:
         reference = self.reference
         return {
+            "config_version": self.config_version,
             "bundle_sha256": self.sha256,
             "reference": {
                 "document_sha256": reference.document.sha256,
@@ -473,6 +483,7 @@ class RevisionLoader:
                     path=self.root / self.DATASETS_LOCK_FILE,
                 )
             ),
+            config_version=_load_config_version(self.root),
         )
         bundle.validate_compatibility()
         return bundle
