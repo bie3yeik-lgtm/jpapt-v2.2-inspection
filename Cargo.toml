@@ -6,6 +6,7 @@ members = [
     "rust/crates/asr-metrics",
     "rust/crates/asr-eval",
     "rust/crates/asr-capsule",
+    "rust/crates/asr-contracts",
 ]
 
 [workspace.package]
