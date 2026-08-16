@@ -13,10 +13,12 @@ Framework-specific Export Adapter
   ↓
 Local Export
   ↓
+Central Candidate Allocation
+  ↓
 Candidate Publish
 ```
 
-NeMo/Transformersで異なるのはexport adapterとgraph構成であり、candidate lifecycleは同じです。
+NeMo/Transformersで異なるのはexport adapterとgraph構成であり、candidate lifecycleと採番方法は同じです。
 
 ## 使用するrevision
 
@@ -38,7 +40,7 @@ floatingな`main`、`latest`、暗黙HEADをcanonical exportに使用しない�
 
 ### NeMo / Parakeet
 
-代表的にはNeMo modelを固定revisionでloadし、CTC/TDT向けgraphを生成します。
+NeMo modelを固定revisionでloadし、CTC/TDT向けgraphを生成します。
 
 CTCでは単一primary ONNX artifactで成立する場合があります。
 
@@ -48,7 +50,7 @@ metadata.json
 vocabulary.json
 ```
 
-TDTではpredictor/joint等のruntime contractを追加で考慮する必要があります。
+TDTではpredictor/joint等のruntime contractを追加で考慮します。
 
 ### Transformers / Whisper
 
@@ -64,7 +66,7 @@ metadata.json
 tokenizer/
 ```
 
-複数graphの役割はファイル名だけに依存せず、candidate metadataで明示してください。
+複数graphの役割はファイル名だけに依存せず、candidate metadataで明示します。
 
 ## Audio / Frontend境界
 
@@ -101,15 +103,14 @@ frontend + model ONNX
 
 ## Local exportと正式Candidate ID
 
-ローカルexport時点では人間がcandidate連番を決めません。
+ローカルexport時点ではcandidate連番を決めません。
 
 ```text
 tmp/export/work/
+candidate_id = unallocated
 ```
 
-metadataのcandidate IDは暫定`unallocated`でも構いません。
-
-正式IDはBucket publish時に発行します。
+正式IDはBucket publish時に中央Allocatorが発行します。
 
 ```bash
 HF_BUCKET=owner/dev-bucket \
@@ -117,13 +118,31 @@ HF_TARGET_ID=<target-id> \
   bash scripts/hf/hf-push-candidate.sh ./tmp/export/work
 ```
 
-生成例:
+内部:
 
 ```text
-<target-or-purpose>-candidate-000002
+hf-push-candidate.sh
+  ↓
+hf-request-id.sh
+  ↓
+HF Central Sequence Allocator
+  ↓
+candidates/<prefix>-NNNNNN/README.md予約
+  ↓
+metadata.json candidate_id更新
+  ↓
+artifact sync
 ```
 
-採番は`candidates/`全体の最大suffix+1です。
+複数Repositoryから同じBucketへpublishしても採番は中央で直列化されます。
+
+他Repositoryから利用する場合は、中央Allocator Repositoryへアクセス可能な`HF_ALLOCATOR_GITHUB_TOKEN`を設定します。
+
+## 予約番号の扱い
+
+中央Allocatorがcandidate IDを予約した後にartifact uploadが失敗しても、そのsuffixは再利用しません。
+
+BucketルートREADMEには「Allocatorが予約済みの現在最大candidate番号」が表示されます。これは「publish成功済み最大番号」とは限りません。
 
 ## Candidate metadata
 
@@ -142,7 +161,7 @@ runtime input/output contract
 
 ## Validation
 
-Candidate publish前後に確認する代表項目:
+Candidate publish前後の代表項目:
 
 ```text
 ONNX structural validation
@@ -154,19 +173,34 @@ decoder/token/text parity
 config version / revision provenance
 ```
 
-最終transcript一致だけでconversion correctnessを判断しないでください。
+最終transcript一致だけでconversion correctnessを判断しません。
 
 ## Dynamic shape
 
 ASRは可変長入力を扱うため、必要なtime dimensionはdynamicに保ちます。Provider固有問題が出た場合、まずgraph/operator/provider compatibilityを調査し、安易にOSごとの別モデルへ分岐しないことを基本とします。
 
+## Evaluator capabilityとの関係
+
+Candidateを保存できることと、現在のevaluatorで実行できることは別です。
+
+```text
+candidate.decoder
+  ↓
+config/evaluators/<evaluator>.toml
+  ↓
+validate-evaluator-capability.py
+```
+
+現在はPython/Rust ONNX evaluatorともCTC capabilityを宣言しています。Whisper/TDT artifactをBucketへ保存できても、runtime capabilityが追加されるまでは評価開始前に明示的に停止します。
+
 ## 現在の実装状況
 
-- NeMo/Parakeet CTC: 現在の主要runtime/evaluation path
-- Parakeet TDT: target contractはあるがruntime実装は未完成
-- Transformers/Whisper: reference/config/storageは対応、autoregressive ONNX evaluatorは未完成
-
-したがって、Whisper candidateを保存するBucket構造は既に共通化されていますが、評価runtimeがCTCと同等に完成しているわけではありません。
+```text
+NeMo/Parakeet CTC                 主要runtime/evaluation path
+Parakeet TDT                      target contractあり、runtime未完成
+Transformers/Whisper reference    対応
+Whisper autoregressive evaluator  未完成
+```
 
 ## Promotion
 
@@ -185,3 +219,11 @@ HF Model Repo
 ```
 
 Exporterから直接Model Repoへreleaseしません。
+
+関連文書:
+
+```text
+docs/central-allocator.md
+docs/multi-framework-asr.md
+docs/evaluation.md
+```
