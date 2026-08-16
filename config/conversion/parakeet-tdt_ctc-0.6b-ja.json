@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "profile_id": "parakeet-nemo-onnx-v1",
+  "source": {
+    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "repo_type": "model",
+    "library": "nemo",
+    "language": "ja",
+    "license": "cc-by-4.0",
+    "datasets": ["reazon-research/reazonspeech"],
+    "task": "automatic-speech-recognition",
+    "model_file": "parakeet-tdt_ctc-0.6b-ja.nemo"
+  },
+  "model_card_contract": {
+    "parameter_scale": "0.6b",
+    "input_sample_rate_hz": 16000,
+    "input_channels": 1,
+    "fastconformer_subsampling_factor": 8,
+    "tokenizer_type": "sentencepiece",
+    "tokenizer_vocab_size": 3072,
+    "tdt_max_duration_frames": 4,
+    "default_decoder": "tdt",
+    "supported_decoders": ["tdt", "ctc"],
+    "reported_cer_percent": {
+      "jsut_basic5000": {"tdt": 6.4, "ctc": 6.5},
+      "mcv_8_test": {"tdt": 7.1, "ctc": 7.2},
+      "mcv_16_1_dev": {"tdt": 10.1, "ctc": 10.2},
+      "mcv_16_1_test": {"tdt": 13.2, "ctc": 13.3},
+      "tedxjp_10k": {"tdt": 9.0, "ctc": 9.1}
+    }
+  },
+  "semantics": {
+    "architecture": "hybrid_fastconformer_tdt_ctc",
+    "reference_runtime": "nemo",
+    "default_decoder": "tdt",
+    "supported_decoders": ["ctc", "tdt"],
+    "canonical_first_gate": "ctc",
+    "frontend_location": "outside_onnx",
+    "canonical_precision": "fp32"
+  },
+  "checkpoint_resolved_fields": [
+    "frontend.n_mels",
+    "frontend.normalize",
+    "frontend.dither",
+    "encoder.xscaling",
+    "ctc.blank_id",
+    "tdt.duration_values",
+    "tdt.predictor_state_shape",
+    "onnx.tensor_names",
+    "onnx.tensor_shapes"
+  ],
+  "artifact_contracts": {
+    "ctc": {
+      "roles": ["primary", "tokenizer", "fixture"],
+      "graph_boundary": "fastconformer_encoder_plus_ctc_head"
+    },
+    "tdt": {
+      "roles": ["primary", "encoder", "predictor", "joint", "tokenizer", "fixture"],
+      "graph_boundary": "split_stateful_transducer"
+    }
+  },
+  "required_obstacle_checks": [
+    "A-01-dynamo-dynamic-shapes",
+    "A-02-nemo-pytorch-exporter-generation",
+    "B-01-complex-stft-externalized",
+    "B-02-mel-count-from-upstream",
+    "B-03-feature-parity",
+    "B-04-dither-determinism",
+    "C-01-xscaling-from-upstream",
+    "C-02-optimization-numeric-drift",
+    "D-01-ctc-blank-from-upstream",
+    "E-01-predictor-state-shape",
+    "F-01-duration-zero-loop-guard",
+    "G-01-tokenizer-revision-lock",
+    "I-01-ort-session-load",
+    "K-01-external-data-complete",
+    "K-02-artifact-sha256-complete"
+  ],
+  "acceptance_order": [
+    "source_manifest",
+    "nemo_load",
+    "frontend_fixture",
+    "ctc_export",
+    "ctc_onnx_check",
+    "ctc_ort_cpu",
+    "ctc_reference_parity",
+    "tdt_export",
+    "predictor_state_parity",
+    "joint_parity",
+    "tdt_single_step_parity",
+    "tdt_state_trace_parity"
+  ]
+}

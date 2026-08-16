@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use asr_eval::bucket_init::{BucketInitOptions, initialize_bucket};
 use asr_eval::evaluator::{EvaluateOptions, evaluate};
+use asr_eval::nemo_onnx::{RequiredScope, validate_report};
 use asr_eval::{Cli, Command};
 use asr_runtime::ProviderKind;
 use clap::Parser;
@@ -42,6 +43,14 @@ fn main() -> anyhow::Result<()> {
                 apply: args.apply,
             })?;
             println!("{}", serde_json::to_string_pretty(&manifest)?);
+        }
+        Command::NemoOnnxValidate(args) => {
+            let scope = RequiredScope::parse(&args.require)?;
+            validate_report(&args.report, &args.bundle_root, scope)?;
+            println!(
+                "NeMo ONNX validation passed for required scope: {}",
+                args.require
+            );
         }
     }
     Ok(())

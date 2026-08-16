@@ -1,6 +1,6 @@
 # Documentation
 
-この `docs/` は **現行 `main` の実装だけ**を説明します。過去schema、旧runtime-contract、移行互換、将来構想を正本として扱いません。
+この `docs/` は **現行実装だけ**を説明します。過去schema、旧runtime-contract、移行互換、将来構想を正本として扱いません。
 
 ## 読む順番
 
@@ -9,10 +9,11 @@
 3. [candidate-metadata.md](./candidate-metadata.md) — minimal candidate metadataとstrict inspection
 4. [multi-framework-asr.md](./multi-framework-asr.md) — CTC / TDT / Whisperのruntime profile
 5. [onnx-export.md](./onnx-export.md) — export/finalizeとcandidate生成
-6. [evaluation.md](./evaluation.md) — manifest、run-context、評価
-7. [hf-layout.md](./hf-layout.md) / [hf-bucket-operations.md](./hf-bucket-operations.md) / [hf-bucket-initialization.md](./hf-bucket-initialization.md) — HF Bucket構造・初期化・運用
-8. [github-actions.md](./github-actions.md) — CI / evaluation workflow
-9. [rust-first.md](./rust-first.md) — Rust evaluatorの現在範囲
+6. [nemo-onnx-validation.md](./nemo-onnx-validation.md) — Parakeet NeMo→ONNXのCTC-first検証構造、既知障害gate、HF Jobs evidence bundle
+7. [evaluation.md](./evaluation.md) — manifest、run-context、評価
+8. [hf-layout.md](./hf-layout.md) / [hf-bucket-operations.md](./hf-bucket-operations.md) / [hf-bucket-initialization.md](./hf-bucket-initialization.md) — HF Bucket構造・初期化・運用
+9. [github-actions.md](./github-actions.md) — CI / evaluation workflow
+10. [rust-first.md](./rust-first.md) — Rust evaluatorの現在範囲
 
 ## 現行契約の重要な不変条件
 
@@ -26,6 +27,8 @@
 - `runtime.json` は必須で、ASR runtime catalogのID/SHAと`profile_set`を固定する。
 - `run-context.json` はschema v2のみ。実行時に必要なartifact / Git / host / provider / revision / resolved configをimmutable snapshotとして保存する。
 - evaluation manifestはminimal JSONL。`max_duration_sec` は上限非包含として扱う。
+- NeMo→ONNXではexport成功をcandidate acceptanceとみなさない。`nemo-onnx-validation.json`、実artifact hash、reference fixture、既知障害gateをRelease Rust CLIで検証した後にcandidate publicationへ進む。
+- Parakeet HybridモデルはCTCをcanonical first gateとし、TDTはPredictor state / Joint / duration / state traceを独立gateで検証する。
 
 ## Runtime catalog
 
@@ -44,4 +47,4 @@ Parakeet profile set `parakeet-tdt-ctc-v1` は `ctc` をdeployment defaultとし
 | Python ONNX | CTC / TDT / Whisper autoregressive | CPU / CUDA / DirectML / CoreML |
 | Rust ONNX | CTC | CPU / CUDA / DirectML / CoreML |
 
-対応可否は文書ではなく `config/evaluators/*.toml` が正本です。
+NeMo→ONNX bundle validatorがTDTのartifact/state gateを検証できることは、Rust TDT inference runtimeが完成していることを意味しません。対応可否は文書ではなく `config/evaluators/*.toml` が正本です。
