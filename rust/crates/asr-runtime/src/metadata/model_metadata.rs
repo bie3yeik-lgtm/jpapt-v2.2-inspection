@@ -27,12 +27,14 @@ pub enum DecoderKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneratedCatalog {
     pub id: String,
     pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneratedArtifact {
     pub path: String,
     pub sha256: String,
@@ -40,12 +42,14 @@ pub struct GeneratedArtifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneratedTokenizer {
     pub kind: String,
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneratedRuntimeContract {
     pub decoder: DecoderKind,
     pub input_kind: InputKind,
@@ -54,6 +58,7 @@ pub struct GeneratedRuntimeContract {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneratedCandidateContract {
     pub schema_version: u32,
     pub candidate_root: PathBuf,
@@ -89,7 +94,10 @@ impl GeneratedCandidateContract {
         let text = fs::read_to_string(path).map_err(|error| {
             RuntimeError::InvalidMetadata(format!("{}: {error}", path.display()))
         })?;
-        let value: Self = serde_json::from_str(&text)
+        let raw: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| RuntimeError::InvalidMetadata(error.to_string()))?;
+        reject_nulls(&raw, "$")?;
+        let value: Self = serde_json::from_value(raw)
             .map_err(|error| RuntimeError::InvalidMetadata(error.to_string()))?;
         value.validate()?;
         Ok(value)
@@ -110,11 +118,12 @@ impl GeneratedCandidateContract {
             ("artifact_contract", self.artifact_contract.as_str()),
             ("catalog.id", self.catalog.id.as_str()),
         ] {
-            if value.trim().is_empty() {
-                return Err(RuntimeError::InvalidMetadata(format!(
-                    "generated candidate contract {name} must be non-empty"
-                )));
-            }
+            require_nonempty(name, value)?;
+        }
+        if self.candidate_root.as_os_str().is_empty() {
+            return Err(RuntimeError::InvalidMetadata(
+                "generated candidate contract candidate_root must be non-empty".into(),
+            ));
         }
         validate_sha256("catalog.sha256", &self.catalog.sha256)?;
         validate_sha256("bundle_sha256", &self.bundle_sha256)?;
@@ -127,6 +136,18 @@ impl GeneratedCandidateContract {
             return Err(RuntimeError::InvalidMetadata(
                 "generated candidate contract contains no artifacts".into(),
             ));
+        }
+        for (role, artifact) in &self.artifacts {
+            require_nonempty(&format!("artifacts.{role}.path"), &artifact.path)?;
+            if artifact.size_bytes == 0 {
+                return Err(RuntimeError::InvalidMetadata(format!(
+                    "generated candidate contract artifacts.{role}.size_bytes must be greater than zero"
+                )));
+            }
+        }
+        if let Some(tokenizer) = &self.tokenizer {
+            require_nonempty("tokenizer.kind", &tokenizer.kind)?;
+            require_nonempty("tokenizer.path", &tokenizer.path)?;
         }
         self.verify_artifacts()?;
         self.verify_bundle_sha256()?;
@@ -219,6 +240,12 @@ impl GeneratedCandidateContract {
             let metadata = fs::metadata(&path).map_err(|error| {
                 RuntimeError::InvalidMetadata(format!("{}: {error}", path.display()))
             })?;
+            if !metadata.is_file() {
+                return Err(RuntimeError::InvalidMetadata(format!(
+                    "artifact {role:?} is not a regular file: {}",
+                    path.display()
+                )));
+            }
             if metadata.len() != artifact.size_bytes {
                 return Err(RuntimeError::InvalidMetadata(format!(
                     "artifact {role:?} size mismatch: expected={}, actual={}",
@@ -287,6 +314,36 @@ impl GeneratedCandidateContract {
     }
 }
 
+fn require_nonempty(name: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(RuntimeError::InvalidMetadata(format!(
+            "generated candidate contract {name} must be non-empty"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_nulls(value: &serde_json::Value, path: &str) -> Result<()> {
+    match value {
+        serde_json::Value::Null => Err(RuntimeError::InvalidMetadata(format!(
+            "generated candidate contract must not contain null: {path}"
+        ))),
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                reject_nulls(item, &format!("{path}[{index}]"))?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(entries) => {
+            for (key, item) in entries {
+                reject_nulls(item, &format!("{path}.{key}"))?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn required_json_string(value: Option<&serde_json::Value>, name: &str) -> Result<String> {
     value
         .and_then(serde_json::Value::as_str)
@@ -315,4 +372,16 @@ fn sha256_file(path: &Path) -> Result<String> {
     std::io::copy(&mut file, &mut digest)
         .map_err(|error| RuntimeError::InvalidMetadata(format!("{}: {error}", path.display())))?;
     Ok(format!("{:x}", digest.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_null_in_generated_contract() {
+        let value = serde_json::json!({"runtime_contract": {"io": null}});
+        let error = reject_nulls(&value, "$").expect_err("null must fail");
+        assert!(error.to_string().contains("$.runtime_contract.io"));
+    }
 }

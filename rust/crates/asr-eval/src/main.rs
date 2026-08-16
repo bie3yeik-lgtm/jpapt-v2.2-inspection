@@ -1,6 +1,8 @@
 use std::str::FromStr;
 
+use asr_eval::bucket_init::{BucketInitOptions, initialize_bucket};
 use asr_eval::evaluator::{EvaluateOptions, evaluate};
+use asr_eval::run_context::RunContextV2;
 use asr_eval::{Cli, Command};
 use asr_runtime::ProviderKind;
 use clap::Parser;
@@ -13,10 +15,11 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Evaluate(args) => {
             let provider = ProviderKind::from_str(&args.provider)?;
+            let run_context = RunContextV2::load(&args.run_context)?;
             let result = evaluate(EvaluateOptions {
                 provider,
                 candidate_contract: args.candidate_contract,
-                run_context: args.run_context,
+                run_context,
                 resolved_manifest: args.resolved_manifest,
                 output: args.output,
             })?;
@@ -25,6 +28,22 @@ fn main() -> anyhow::Result<()> {
             if result["acceptance"]["passed"] == false {
                 std::process::exit(1);
             }
+        }
+        Command::BucketInit(args) => {
+            let manifest = initialize_bucket(BucketInitOptions {
+                bucket_id: args.bucket_id,
+                model_repo: args.model_repo,
+                model_revision: args.model_revision,
+                expected_task: args.expected_task,
+                expected_library: args.expected_library,
+                expected_language: args.expected_language,
+                expected_license: args.expected_license,
+                expected_architecture: args.expected_architecture,
+                profile_set: args.profile_set,
+                confirmation: args.confirmation,
+                apply: args.apply,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
         }
     }
     Ok(())
