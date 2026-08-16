@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from parakeet_onnx.config import resolve_config
@@ -26,7 +27,50 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--experiment-id")
     p.add_argument("--revisions", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument(
+        "--strict-provider",
+        action="store_true",
+        help="Disable CPU fallback for non-CPU provider proof runs.",
+    )
+    p.add_argument(
+        "--optimization-level",
+        choices=("configured", "disable", "basic", "extended", "all"),
+        default="configured",
+        help="Override ORT graph optimization for diagnostic A/B runs.",
+    )
     return p
+
+
+def _apply_runtime_overrides(
+    context: dict[str, object],
+    *,
+    strict_provider: bool,
+    optimization_level: str,
+) -> None:
+    config = context["config"]
+    assert isinstance(config, dict)
+    resolved = config["resolved"]
+    assert isinstance(resolved, dict)
+    provider = resolved["provider"]
+    assert isinstance(provider, dict)
+
+    session = provider.setdefault("session", {})
+    assert isinstance(session, dict)
+    validation = provider.setdefault("validation", {})
+    assert isinstance(validation, dict)
+
+    if optimization_level != "configured":
+        session["graph_optimization_level"] = optimization_level
+    if strict_provider:
+        validation["strict_provider_mode"] = True
+        validation["allow_cpu_fallback"] = False
+
+    metadata = context.setdefault("metadata", {})
+    assert isinstance(metadata, dict)
+    metadata["runtime_overrides"] = {
+        "strict_provider": strict_provider,
+        "optimization_level": optimization_level,
+    }
 
 
 def main() -> int:
@@ -57,8 +101,6 @@ def main() -> int:
         ("hf_bucket", "HF_BUCKET"),
         ("hf_model_repo", "HF_MODEL_REPO"),
     ):
-        import os
-
         value = os.environ.get(env_name)
         if value:
             metadata[key] = value
@@ -80,6 +122,11 @@ def main() -> int:
         "provider_ort_name": config.provider.ort_name,
         "provider_available": None,
     }
+    _apply_runtime_overrides(
+        context,
+        strict_provider=args.strict_provider,
+        optimization_level=args.optimization_level,
+    )
     validate_run_context(context)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
