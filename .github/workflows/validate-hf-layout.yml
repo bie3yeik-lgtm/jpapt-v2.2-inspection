@@ -107,7 +107,6 @@ jobs:
             python/tests/unit/test_tdt_decoder.py \
             python/tests/unit/test_whisper_runtime_contract.py \
             python/tests/unit/test_runtime_registry.py \
-            python/tests/unit/test_evaluator_capability.py \
             python/tests/unit/test_ort_optimizer_canary.py
 
       - name: List source-controlled runtime catalogs, targets and evaluators

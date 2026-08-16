@@ -181,16 +181,24 @@ jobs:
       - name: Fetch candidate
         shell: bash
         run: bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
+      - name: Resolve candidate execution contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/candidate \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --contract-out .ci/candidate-contract.json
       - name: Validate evaluator and candidate capability
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/ci/validate-evaluator-capability.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \
             --evaluator python-onnx \
             --decoder "${EXPECTED_DECODER}" \
             --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --provider "${{ matrix.provider }}" \
-            --candidate-dir .ci/candidate
+            --candidate-contract .ci/candidate-contract.json
       - name: Fetch reference assets
         shell: bash
         run: bash scripts/hf/hf-fetch-reference.sh || true
