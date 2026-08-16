@@ -30,13 +30,9 @@ jobs:
 
           tmp="$(mktemp -d)"
           mkdir -p "$tmp/.github/workflows"
-          cat > "$tmp/.github/workflows/test.yml" <<'YAML'
-          steps:
-            - uses: actions/checkout@v6
-            - uses: actions/setup-python@v7
-            - uses: actions/upload-artifact@v7
-            - uses: actions/cache@v6
-          YAML
+          key='uses'
+          printf 'steps:\n  - %s: actions/checkout@v6\n  - %s: actions/setup-python@v7\n  - %s: actions/upload-artifact@v7\n  - %s: actions/cache@v6\n' \
+            "$key" "$key" "$key" "$key" > "$tmp/.github/workflows/test.yml"
           if cargo run --quiet --locked -p asr-contracts --bin asr-action-policy -- --repository-root "$tmp"; then
             echo 'version policy accepted forbidden checkout version' >&2
             exit 1
