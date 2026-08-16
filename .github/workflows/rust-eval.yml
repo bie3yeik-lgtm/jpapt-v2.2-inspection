@@ -40,8 +40,8 @@ jobs:
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - id: allocate
@@ -97,8 +97,8 @@ jobs:
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
