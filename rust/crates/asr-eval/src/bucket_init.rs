@@ -151,7 +151,10 @@ fn model_architecture(value: &Value) -> Result<String> {
 
 fn unquote_yaml_scalar(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    ensure!(!trimmed.is_empty(), "Model Card metadata value must not be empty");
+    ensure!(
+        !trimmed.is_empty(),
+        "Model Card metadata value must not be empty"
+    );
     let bytes = trimmed.as_bytes();
     if bytes.len() >= 2
         && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
@@ -162,7 +165,10 @@ fn unquote_yaml_scalar(value: &str) -> Result<String> {
             !inner.contains('\\'),
             "escaped YAML scalars are unsupported in strict Model Card metadata"
         );
-        ensure!(!inner.trim().is_empty(), "Model Card metadata value must not be empty");
+        ensure!(
+            !inner.trim().is_empty(),
+            "Model Card metadata value must not be empty"
+        );
         return Ok(inner.to_owned());
     }
     ensure!(
@@ -239,7 +245,10 @@ fn parse_model_card_metadata(text: &str) -> Result<ModelCardMetadata> {
         }
     }
 
-    ensure!(closed, "README.md Model Card front matter has no closing --- delimiter");
+    ensure!(
+        closed,
+        "README.md Model Card front matter has no closing --- delimiter"
+    );
 
     fn exactly_one(values: &BTreeMap<String, Vec<String>>, key: &str) -> Result<String> {
         let items = values
@@ -294,8 +303,7 @@ fn parse_model_info(
     let repo_id = exact_string(value, "id", "model manifest")?;
     let revision_resolved = exact_string(value, "sha", "model manifest")?;
     ensure!(
-        revision_resolved.len() >= 40
-            && revision_resolved.chars().all(|c| c.is_ascii_hexdigit()),
+        revision_resolved.len() >= 40 && revision_resolved.chars().all(|c| c.is_ascii_hexdigit()),
         "model manifest sha is not an immutable hexadecimal revision: {revision_resolved}"
     );
     Ok((
@@ -347,11 +355,31 @@ fn fetch_model_manifest(repo: &str, revision: &str) -> Result<ModelManifest> {
 
 fn validate_model_manifest(manifest: &ModelManifest, options: &BucketInitOptions) -> Result<()> {
     let checks = [
-        ("repo_id", manifest.repo_id.as_str(), options.model_repo.as_str()),
-        ("task", manifest.task.as_str(), options.expected_task.as_str()),
-        ("library", manifest.library.as_str(), options.expected_library.as_str()),
-        ("language", manifest.language.as_str(), options.expected_language.as_str()),
-        ("license", manifest.license.as_str(), options.expected_license.as_str()),
+        (
+            "repo_id",
+            manifest.repo_id.as_str(),
+            options.model_repo.as_str(),
+        ),
+        (
+            "task",
+            manifest.task.as_str(),
+            options.expected_task.as_str(),
+        ),
+        (
+            "library",
+            manifest.library.as_str(),
+            options.expected_library.as_str(),
+        ),
+        (
+            "language",
+            manifest.language.as_str(),
+            options.expected_language.as_str(),
+        ),
+        (
+            "license",
+            manifest.license.as_str(),
+            options.expected_license.as_str(),
+        ),
         (
             "architecture",
             manifest.architecture.as_str(),
@@ -410,7 +438,10 @@ fn initialize_staging(root: &Path, manifest: &BucketManifest) -> Result<()> {
     )?;
     for (path, title) in [
         ("config/README.md", "Configuration"),
-        ("config/versions/README.md", "Immutable configuration versions"),
+        (
+            "config/versions/README.md",
+            "Immutable configuration versions",
+        ),
         ("candidates/README.md", "Write-once candidate prefixes"),
         ("experiments/README.md", "Experiment allocation records"),
         ("runs/README.md", "Evaluation runs"),
