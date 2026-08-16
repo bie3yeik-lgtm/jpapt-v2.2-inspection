@@ -51,8 +51,18 @@ s = s.replace(
     "let metadata: Value = serde_json::from_str(metadata_json)?;",
     "let metadata: Value = serde_json::from_str(input.metadata_json)?;",
 )
-for name in ["allocation_id", "collection", "bucket", "prefix_key", "prefix", "sequence", "allocated_at"]:
-    s = s.replace("{" + name + "}", "{input." + name + "}")
+for old_line, new_line in {
+    'format!("# {allocation_id}"),': 'format!("# {}", input.allocation_id),',
+    'format!("- collection: `{collection}`"),': 'format!("- collection: `{}`", input.collection),',
+    'format!("- bucket: `{bucket}`"),': 'format!("- bucket: `{}`", input.bucket),',
+    'format!("- prefix_key: `{prefix_key}`"),': 'format!("- prefix_key: `{}`", input.prefix_key),',
+    'format!("- resolved_prefix: `{prefix}`"),': 'format!("- resolved_prefix: `{}`", input.prefix),',
+    'format!("- sequence: `{sequence}`"),': 'format!("- sequence: `{}`", input.sequence),',
+    'format!("- allocated_at: `{allocated_at}`"),': 'format!("- allocated_at: `{}`", input.allocated_at),',
+}.items():
+    if old_line not in s:
+        raise SystemExit(f"README format marker not found: {old_line}")
+    s = s.replace(old_line, new_line, 1)
 p.write_text(s)
 
 p = Path("rust/crates/asr-hf/src/main.rs")
