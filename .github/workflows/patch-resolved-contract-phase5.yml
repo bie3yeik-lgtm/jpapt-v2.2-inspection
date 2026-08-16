@@ -1,0 +1,87 @@
+name: Patch Resolved Contract Phase5
+
+on:
+  push:
+    branches: [agent/rust-revisions-operational-phase5]
+    paths:
+      - ".github/workflows/patch-resolved-contract-phase5.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-revisions-operational-phase5
+      - name: Align resolved.json validator with emitted contract
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path("rust/crates/asr-contracts/src/revisions.rs")
+          text = path.read_text()
+          old = '''    exact_fields(
+              object,
+              "resolved.json",
+              &["schema_version", "config_version"],
+              &[],
+          )?;
+          if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
+          '''
+          new = '''    exact_fields(
+              object,
+              "resolved.json",
+              &["schema_version", "config_version"],
+              &["current_version", "selection_source"],
+          )?;
+          if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
+          '''
+          if old not in text:
+              raise SystemExit("expected resolved.json exact_fields block was not found")
+          text = text.replace(old, new, 1)
+          old2 = '''    if !valid_config_version(value) {
+              return Err(ContractError::validation(format!(
+                  "resolved.json: config_version must match config-NNNNNN; got {value:?}"
+              )));
+          }
+          Ok(value.to_owned())
+          '''
+          new2 = '''    if !valid_config_version(value) {
+              return Err(ContractError::validation(format!(
+                  "resolved.json: config_version must match config-NNNNNN; got {value:?}"
+              )));
+          }
+          if let Some(current_version) = optional_string(object, "current_version", "resolved.json")?
+              && !valid_config_version(current_version)
+          {
+              return Err(ContractError::validation(format!(
+                  "resolved.json: current_version must match config-NNNNNN; got {current_version:?}"
+              )));
+          }
+          if let Some(selection_source) = optional_string(object, "selection_source", "resolved.json")?
+              && !matches!(selection_source, "current" | "override")
+          {
+              return Err(ContractError::validation(format!(
+                  "resolved.json: selection_source must be current or override; got {selection_source:?}"
+              )));
+          }
+          Ok(value.to_owned())
+          '''
+          if old2 not in text:
+              raise SystemExit("expected resolved.json config version validation block was not found")
+          path.write_text(text.replace(old2, new2, 1))
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/asr-contracts/src/revisions.rs
+          git commit -m "Accept normalized resolved config metadata"
+          git push origin HEAD:agent/rust-revisions-operational-phase5
