@@ -56,8 +56,8 @@ fn validate_action_versions(repository_root: &Path) -> Result<(), String> {
     let mut errors = Vec::new();
 
     for path in paths {
-        let text = fs::read_to_string(&path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let text =
+            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         for (index, line) in text.lines().enumerate() {
             let Some((action, version)) = parse_uses(line) else {
                 continue;
@@ -65,7 +65,9 @@ fn validate_action_versions(repository_root: &Path) -> Result<(), String> {
             let Some((expected, _)) = policy.get(action.as_str()) else {
                 continue;
             };
-            *seen.get_mut(action.as_str()).expect("policy keys are preseeded") += 1;
+            *seen
+                .get_mut(action.as_str())
+                .expect("policy keys are preseeded") += 1;
             if version != *expected {
                 let relative = path
                     .strip_prefix(repository_root)
@@ -94,7 +96,10 @@ fn validate_action_versions(repository_root: &Path) -> Result<(), String> {
         for error in &errors {
             eprintln!("ERROR: {error}");
         }
-        return Err(format!("GitHub Actions version policy failed with {} error(s)", errors.len()));
+        return Err(format!(
+            "GitHub Actions version policy failed with {} error(s)",
+            errors.len()
+        ));
     }
 
     for (action, version, required) in REQUIRED {
