@@ -221,6 +221,9 @@ impl OrtCtcSession {
         if samples.is_empty() {
             return Err(RuntimeError::UnsupportedContract("empty waveform".into()));
         }
+        if !samples.iter().all(|value| value.is_finite()) {
+            return Err(RuntimeError::NonFiniteTensor("waveform input".into()));
+        }
 
         let waveform = TensorRef::from_array_view(([1usize, samples.len()], samples))?;
         let started = Instant::now();
@@ -252,6 +255,17 @@ impl OrtCtcSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        if shape.iter().any(|dimension| *dimension == 0) {
+            return Err(RuntimeError::UnsupportedContract(format!(
+                "zero-dimension logits shape is not accepted: {shape:?}"
+            )));
+        }
+        if !data.iter().all(|value| value.is_finite()) {
+            return Err(RuntimeError::NonFiniteTensor(format!(
+                "{} output",
+                self.contract.logits_output
+            )));
+        }
         let token_ids = greedy_ctc_ids(data, &shape, self.contract.blank_id)?;
 
         Ok(InferenceOutput {
