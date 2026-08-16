@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+
+  "model": {
+    "name": "jpapt-v2.2-dev",
+    "task": "automatic-speech-recognition",
+    "language": "ja",
+    "architecture": "hybrid-fastconformer-tdt-ctc",
+    "deployment_format": "onnx"
+  },
+
+  "source": {
+    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "revision": "44edb27eea9317daf89333e75eb830db4b1cc298",
+    "framework": "nemo"
+  },
+
+  "audio": {
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+
+  "decoder": {
+    "supported": [
+      "ctc",
+      "tdt"
+    ],
+    "default": "ctc"
+  },
+
+  "artifacts": {
+    "baseline": {
+      "precision": "fp32",
+      "models": {
+        "encoder_ctc": "onnx/baseline/encoder_ctc.onnx"
+      }
+    }
+  },
+
+  "runtime": {
+    "onnxruntime": {
+      "minimum_version": null,
+      "supported_execution_providers": [
+        "CPUExecutionProvider",
+        "CUDAExecutionProvider",
+        "CoreMLExecutionProvider"
+      ]
+    }
+  },
+
+  "tokenizer": {
+    "type": "sentencepiece",
+    "path": "tokenizer/tokenizer.model"
+  },
+
+  "provenance": {
+    "config_revision": "config-000002",
+    "reference": "nemo/reference-000002",
+    "candidate": "ctc/candidate-000002"
+  }
+}

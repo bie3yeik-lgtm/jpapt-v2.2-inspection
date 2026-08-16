@@ -1,0 +1,19 @@
+{
+    "schema_version": 1,
+
+    "upstream": {
+        "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+        "repo_type": "model",
+        "revision": "44edb27eea9317daf89333e75eb830db4b1cc298"
+    },
+    
+    "runtime": {
+        "canonical_framework": "nemo",
+        "sample_rate_hz": 16000
+    },
+
+    "decoders": [
+        "ctc",
+        "tdt"
+    ]
+}

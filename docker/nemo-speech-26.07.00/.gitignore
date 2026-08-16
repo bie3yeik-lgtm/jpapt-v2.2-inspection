@@ -1,0 +1,27 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Rust
+target/
+
+# ML cache
+.cache/
+.cache/huggingface/
+.cache/torch/
+
+# Model artifacts
+artifacts/
+*.nemo
+*.onnx
+*.npz
+*.npy
+
+# Local evaluation audio
+evaluation/audio/*
+!evaluation/audio/.gitkeep
+
+# Benchmarks generated locally
+benchmarks/*.json
