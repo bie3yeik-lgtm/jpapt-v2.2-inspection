@@ -158,7 +158,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/hf/hf-fetch-revisions.sh
-          python scripts/ci/validate-revisions.py \
+          bash scripts/ci/validate-revisions.sh \
             --root .ci/hf/config/revisions \
             --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
             --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
