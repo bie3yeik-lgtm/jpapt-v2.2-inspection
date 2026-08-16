@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::{BTreeMap, BTreeSet}, fs, path::Path};
 
 use asr_runtime::metadata::model_metadata::GeneratedCandidateContract;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ pub struct RunContextV2 {
     pub git: GitIdentity,
     pub host: HostIdentity,
     pub runtime: RuntimeIdentity,
-    pub revisions: serde_json::Value,
+    pub revisions: RevisionSnapshot,
     pub config: serde_json::Value,
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
@@ -73,6 +73,149 @@ pub struct RuntimeIdentity {
     pub provider_available: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevisionSnapshot {
+    pub config_version: String,
+    pub bundle_sha256: String,
+    pub runtime: RuntimeRevisionSnapshot,
+    pub reference: ReferenceRevisionSnapshot,
+    pub evaluation_schema: EvaluationSchemaRevisionSnapshot,
+    pub datasets: DatasetsRevisionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRevisionSnapshot {
+    pub document_sha256: String,
+    pub catalog: CatalogReference,
+    pub profile_set: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogReference {
+    pub id: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceRevisionSnapshot {
+    pub document_sha256: String,
+    pub development_artifact: RepoRevisionIdentity,
+    pub upstream: RepoRevisionIdentity,
+    pub tokenizer: RepoRevisionIdentity,
+    pub reference_id: String,
+    pub reference_revision: String,
+    pub canonical_framework: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoRevisionIdentity {
+    pub repo_id: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationSchemaRevisionSnapshot {
+    pub document_sha256: String,
+    pub schema_id: String,
+    pub schema_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetsRevisionSnapshot {
+    pub document_sha256: String,
+    pub entries: Vec<DatasetRevisionEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetRevisionEntry {
+    pub id: String,
+    pub repo_id: String,
+    pub revision: String,
+    pub subset: String,
+    pub split: String,
+    pub sha256: String,
+    pub manifest: String,
+}
+
+impl RevisionSnapshot {
+    fn validate(&self) -> Result<()> {
+        require_nonempty("revisions.config_version", &self.config_version)?;
+        validate_sha256("revisions.bundle_sha256", &self.bundle_sha256)?;
+        validate_sha256(
+            "revisions.runtime.document_sha256",
+            &self.runtime.document_sha256,
+        )?;
+        require_nonempty("revisions.runtime.catalog.id", &self.runtime.catalog.id)?;
+        validate_sha256(
+            "revisions.runtime.catalog.sha256",
+            &self.runtime.catalog.sha256,
+        )?;
+        require_nonempty("revisions.runtime.profile_set", &self.runtime.profile_set)?;
+        validate_sha256(
+            "revisions.reference.document_sha256",
+            &self.reference.document_sha256,
+        )?;
+        validate_repo_revision(
+            "revisions.reference.development_artifact",
+            &self.reference.development_artifact,
+        )?;
+        validate_repo_revision("revisions.reference.upstream", &self.reference.upstream)?;
+        validate_repo_revision("revisions.reference.tokenizer", &self.reference.tokenizer)?;
+        require_nonempty("revisions.reference.reference_id", &self.reference.reference_id)?;
+        require_nonempty(
+            "revisions.reference.reference_revision",
+            &self.reference.reference_revision,
+        )?;
+        require_nonempty(
+            "revisions.reference.canonical_framework",
+            &self.reference.canonical_framework,
+        )?;
+        validate_sha256(
+            "revisions.evaluation_schema.document_sha256",
+            &self.evaluation_schema.document_sha256,
+        )?;
+        require_nonempty(
+            "revisions.evaluation_schema.schema_id",
+            &self.evaluation_schema.schema_id,
+        )?;
+        require_nonempty(
+            "revisions.evaluation_schema.schema_revision",
+            &self.evaluation_schema.schema_revision,
+        )?;
+        validate_sha256(
+            "revisions.datasets.document_sha256",
+            &self.datasets.document_sha256,
+        )?;
+
+        let mut ids = BTreeSet::new();
+        for (index, entry) in self.datasets.entries.iter().enumerate() {
+            let prefix = format!("revisions.datasets.entries[{index}]");
+            require_nonempty(&format!("{prefix}.id"), &entry.id)?;
+            require_nonempty(&format!("{prefix}.repo_id"), &entry.repo_id)?;
+            require_nonempty(&format!("{prefix}.revision"), &entry.revision)?;
+            require_nonempty(&format!("{prefix}.subset"), &entry.subset)?;
+            require_nonempty(&format!("{prefix}.split"), &entry.split)?;
+            validate_sha256(&format!("{prefix}.sha256"), &entry.sha256)?;
+            require_nonempty(&format!("{prefix}.manifest"), &entry.manifest)?;
+            if !ids.insert(entry.id.as_str()) {
+                return Err(EvalError::InvalidInput(format!(
+                    "run-context revisions.datasets contains duplicate dataset id {:?}",
+                    entry.id
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl RunContextV2 {
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)?;
@@ -102,10 +245,7 @@ impl RunContextV2 {
             ("artifact.path", self.artifact.path.as_str()),
             ("artifact.sha256", self.artifact.sha256.as_str()),
             ("artifact.candidate_id", self.artifact.candidate_id.as_str()),
-            (
-                "artifact.artifact_role",
-                self.artifact.artifact_role.as_str(),
-            ),
+            ("artifact.artifact_role", self.artifact.artifact_role.as_str()),
             ("git.repository", self.git.repository.as_str()),
             ("git.commit", self.git.commit.as_str()),
             ("git.ref", self.git.git_ref.as_str()),
@@ -115,35 +255,21 @@ impl RunContextV2 {
             ("host.python_version", self.host.python_version.as_str()),
             ("host.implementation", self.host.implementation.as_str()),
             ("host.github_runner_os", self.host.github_runner_os.as_str()),
-            (
-                "host.github_runner_arch",
-                self.host.github_runner_arch.as_str(),
-            ),
+            ("host.github_runner_arch", self.host.github_runner_arch.as_str()),
             ("host.github_run_id", self.host.github_run_id.as_str()),
-            (
-                "host.github_run_attempt",
-                self.host.github_run_attempt.as_str(),
-            ),
-            (
-                "runtime.implementation",
-                self.runtime.implementation.as_str(),
-            ),
+            ("host.github_run_attempt", self.host.github_run_attempt.as_str()),
+            ("runtime.implementation", self.runtime.implementation.as_str()),
             ("runtime.backend", self.runtime.backend.as_str()),
-            (
-                "runtime.backend_version",
-                self.runtime.backend_version.as_str(),
-            ),
+            ("runtime.backend_version", self.runtime.backend_version.as_str()),
             ("runtime.provider_id", self.runtime.provider_id.as_str()),
-            (
-                "runtime.provider_ort_name",
-                self.runtime.provider_ort_name.as_str(),
-            ),
+            ("runtime.provider_ort_name", self.runtime.provider_ort_name.as_str()),
         ] {
             require_nonempty(name, value)?;
         }
 
         validate_sha256("artifact.sha256", &self.artifact.sha256)?;
         validate_git_commit(&self.git.commit)?;
+        self.revisions.validate()?;
 
         if self.artifact.size_bytes == 0 {
             return Err(EvalError::InvalidInput(
@@ -201,6 +327,18 @@ impl RunContextV2 {
                     .into(),
             ));
         }
+        if candidate.profile_set != self.revisions.runtime.profile_set {
+            return Err(EvalError::InvalidInput(
+                "run-context candidate.profile_set must match revisions.runtime.profile_set".into(),
+            ));
+        }
+        if candidate.catalog.id != self.revisions.runtime.catalog.id
+            || candidate.catalog.sha256 != self.revisions.runtime.catalog.sha256
+        {
+            return Err(EvalError::InvalidInput(
+                "run-context candidate catalog must match revisions.runtime.catalog".into(),
+            ));
+        }
         let primary = candidate.artifacts.get("primary").ok_or_else(|| {
             EvalError::InvalidInput("run-context candidate has no primary artifact".into())
         })?;
@@ -217,6 +355,11 @@ impl RunContextV2 {
     pub fn into_value(self) -> Result<serde_json::Value> {
         Ok(serde_json::to_value(self)?)
     }
+}
+
+fn validate_repo_revision(name: &str, value: &RepoRevisionIdentity) -> Result<()> {
+    require_nonempty(&format!("{name}.repo_id"), &value.repo_id)?;
+    require_nonempty(&format!("{name}.revision"), &value.revision)
 }
 
 fn require_nonempty(name: &str, value: &str) -> Result<()> {
