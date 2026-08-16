@@ -1,32 +1,15 @@
 # Candidate Metadata
 
-## 目的
-
-`metadata.json` は **人間がcandidateの構成を指定する最小入力**です。
-
-人間が決めるのは次だけです。
-
-```text
-profile_set
-variant -> artifact role/path
-必要な場合だけ tokenizer/processor path
-```
-
-SHA-256、file size、candidate ID、catalog fingerprint、decoder/profile、tensor I/O、token ID、state/KV metadataは書きません。コードが実artifact・catalog・model/tokenizer configから取得します。
+`metadata.json` はcandidateの構成だけを指定するminimal human-authored inputです。
 
 ## Canonical form
-
-Parakeet:
 
 ```json
 {
   "profile_set": "parakeet-tdt-ctc-v1",
   "variants": {
     "ctc": {
-      "artifacts": {
-        "primary": "ctc/model.onnx"
-      },
-      "tokenizer": "tokenizer/vocabulary.json"
+      "artifacts": {"primary": "ctc/model.onnx"}
     },
     "tdt": {
       "artifacts": {
@@ -40,140 +23,36 @@ Parakeet:
 }
 ```
 
-Whisper:
+`tokenizer` は既定配置から一意に発見できる場合は省略できます。
 
-```json
-{
-  "profile_set": "whisper-autoregressive-v1",
-  "variants": {
-    "whisper": {
-      "artifacts": {
-        "encoder": "encoder.onnx",
-        "decoder": "decoder.onnx",
-        "decoder_with_past": "decoder_with_past.onnx"
-      },
-      "tokenizer": "tokenizer"
-    }
-  }
-}
-```
+## 書かない値
 
-Schema:
+- `schema_version`
+- `candidate_id`
+- catalog ID/SHA
+- artifact SHA/size
+- decoder/profile/artifact contract/features
+- tensor I/O
+- blank/BOS/EOS/prompt token IDs
+- TDT durations/state metadata
+- KV-cache binding
 
-```text
-evaluation/schemas/candidate-metadata.schema.json
-```
+これらは `CandidateArtifacts.load()` がcatalog・artifact・vocabulary・生成済みconfigを検査して生成します。
 
-## 自動解決される値
+## Candidate ID
 
-`CandidateArtifacts.load()` は次を生成・検証します。
+取得済みcandidate rootに `.candidate-id` があればそれを使用し、なければdirectory名を使用します。allocatorは`metadata.json`を書き換えません。
 
-```text
-candidate_id
-    Bucketから取得した場合 .candidate-id
-    それ以外はcandidate directory名
+## Tokenizer discovery
 
-catalog id / SHA-256
-    config/asr-catalog.json
+Vocabulary profileは既知の `vocabulary.json` / `vocab.json` / `tokens.json` 配置を探索します。Transformers processorは `tokenizer/`, `processor/`, candidate rootの既知configを探索します。曖昧な配置は明示pathを要求します。
 
-profile / decoder / artifact contract / features
-    profile_set + variant + ASR runtime catalog
+## Strict inspection
 
-artifact SHA-256 / size
-    実ファイル
+runtime-critical値を推測しません。
 
-tensor I/O / predictor state / KV-cache names
-    ONNX graph inspection
+TDTでは特に、BOSをblankで代用しない、duration output shapeからduration値を生成しない、dynamic state shapeを`1`で埋めない、曖昧tensor候補を先頭採用しない、という契約を維持します。
 
-blank/bos/eos/prompt token IDs / generation parameters
-    ONNX metadata + vocabulary + generated model/tokenizer config
-```
+## Provenance
 
-導出できないruntime-critical値は推測しません。candidate validationを失敗させます。
-
-## Tokenizer path
-
-既定配置なら `tokenizer` は省略できます。
-
-Vocabulary profileでは次を探索します。
-
-```text
-tokenizer/vocabulary.json
-vocabulary.json
-tokenizer/vocab.json
-vocab.json
-tokenizer/tokens.json
-tokens.json
-```
-
-Transformers processorでは `tokenizer/`, `processor/`, candidate rootにある既知configを探索します。
-
-配置が曖昧な場合だけ `tokenizer` を明示してください。
-
-## Candidate lifecycle
-
-```text
-artifact export
-    ↓
-finalize_candidate_variant()
-    ↓
-minimal metadata.json生成
-    ↓
-ONNX/tokenizer inspection
-    ↓
-runtime contract validation
-    ↓
-hf-push-candidate.sh
-    ↓
-全variantを再検証
-    ↓
-Central Allocatorでcandidate ID採番
-    ↓
-candidates/<candidate-id>/へupload
-```
-
-採番後も `metadata.json` は書き換えません。candidate IDの正本はBucket directory名です。
-
-取得時:
-
-```text
-hf-fetch-candidate.sh
-    ↓
-.candidate-id をlocal candidate rootへmaterialize
-```
-
-これにより、同じminimal metadataをlocal export時とBucket取得後の両方で使えます。
-
-## Generated provenance
-
-評価時には `CandidateArtifacts.provenance_dict()` が次を生成し、`run-context.json`へsnapshotします。
-
-```text
-candidate_id
-profile_set
-variant
-resolved profile
-decoder
-artifact contract
-catalog fingerprint
-artifact path / SHA-256 / size
-variant bundle SHA-256
-tokenizer identity
-resolved runtime contract
-features
-```
-
-これらは再現性のため必要ですが、人間入力ではありません。
-
-## Compatibility
-
-次はサポートしません。
-
-```text
-candidate metadata schema v1/v2
-旧verbose schema v3
-runtime-contract.json の手書き
-metadata.json 内の candidate_id / catalog SHA / hash / bindings
-```
-
-入力形式を一つに固定し、人間が同期しなければならない情報を増やさないことを優先します。
+評価時にはcandidate ID、profile set/variant/profile、decoder、artifact contract、catalog fingerprint、bundle SHA、artifact hash/size、tokenizer、features、resolved runtime contractをgenerated provenanceとしてrun-contextへ保存します。

@@ -1,99 +1,21 @@
-# GitHub Actions version固定ポリシー
+# GitHub Actions Version Policy
 
-## 目的
+workflowのAction referenceは、repositoryで実際に採用されているversionを基準に更新します。
 
-本リポジトリでは、workflow修正時にAction versionが意図せず変更されることを防ぐため、主要な公式Actionのversionを**開発規約かつCI contract**として固定します。
+## ルール
 
-以下が正しい値です。
+- 既存workflowを編集する際、理由なくAction major versionを巻き戻さない。
+- `actions/checkout`, `actions/setup-python`, `actions/cache` 等は各workflow間で同じ世代へ揃える。
+- syntaxは `@vN` を基本とし、誤って `@N` を導入しない。
+- dependency updateだけのためにevaluation semanticsやHF contractを変更しない。
+- Action major upgrade時は対象workflowのCIを実行して確認する。
 
-```yaml
-- uses: actions/checkout@v7
-- uses: actions/setup-python@v7
-- uses: actions/upload-artifact@v7
-- uses: actions/cache@v6
-- uses: actions/cache/restore@v6
-- uses: actions/cache/save@v6
-```
+## 現行例
 
-`actions/cache/restore` と `actions/cache/save` は必須利用ではありませんが、使用する場合は必ず `@v6` とします。
+repositoryでは `actions/checkout@v7`, `actions/setup-python@v7`, `actions/cache@v6` を使用するworkflowがあります。文書内の固定例より `.github/workflows/*.yml` を正本とします。
 
-## 適用範囲
+## Security
 
-`.github/workflows/*.yml`に存在する以下のActionが対象です。
+外部Actionを追加する場合はpublisher、権限、token exposure、fork PR時の挙動を確認します。workflow `permissions` は必要最小限を維持し、read-only jobへwrite permissionを付けません。
 
-| Action | 固定version | 利用必須 |
-|---|---:|---:|
-| `actions/checkout` | `v7` | yes |
-| `actions/setup-python` | `v7` | yes |
-| `actions/upload-artifact` | `v7` | yes |
-| `actions/cache` | `v6` | yes |
-| `actions/cache/restore` | `v6` | no |
-| `actions/cache/save` | `v6` | no |
-
-その他のAction（例: `dtolnay/rust-toolchain`, `actions/download-artifact`）は、この固定ポリシーとは別に管理します。
-
-## CIによる強制
-
-次のscriptをsource-controlled contractとして実行します。
-
-```text
-scripts/ci/validate-github-action-versions.py
-```
-
-`Validate HF Layout`のPR/push jobで全workflowを走査し、対象Actionが指定version以外なら失敗します。
-
-例えば、
-
-```text
-actions/checkout@v6
-```
-
-が追加されると、CIは次の種類のエラーとして拒否します。
-
-```text
-ERROR: .github/workflows/example.yml:<line>:
-actions/checkout@v6 is forbidden; required=actions/checkout@v7
-```
-
-同様に、
-
-```text
-actions/cache@6
-actions/cache@v5
-actions/cache/restore@v5
-actions/cache/save@v5
-```
-
-も拒否されます。
-
-## 開発時の不変条件
-
-```text
-DO NOT downgrade, upgrade, or rewrite:
-  actions/checkout@v7
-  actions/setup-python@v7
-  actions/upload-artifact@v7
-  actions/cache@v6
-  actions/cache/restore@v6   # when used
-  actions/cache/save@v6      # when used
-```
-
-Action version policyそのものを変更する必要がある場合は、workflowだけを先に変更せず、次を同一PRで更新します。
-
-```text
-docs/github-actions-version-policy.md
-scripts/ci/validate-github-action-versions.py
-該当workflow
-```
-
-## なぜdocsとCIの両方を持つか
-
-```text
-docs
-  = 人間・AIに意図を伝える
-
-CI guard
-  = 意図に反する変更をmerge前に機械的に止める
-```
-
-どちらか一方だけに依存しません。
+この文書はversion catalogではありません。実versionを知るときはworkflow sourceを確認してください。
