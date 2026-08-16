@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e ".[datasets,onnx,dev]"
+          python -m pip install -e ".[datasets,onnx,transformers-runtime,dev]"
           python -m pip install --upgrade huggingface_hub
           python -c "import parakeet_onnx"
           hf --version
@@ -142,14 +142,6 @@ jobs:
             --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
 
-      - name: Validate evaluator capability
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/ci/validate-evaluator-capability.py \
-            --evaluator python-onnx \
-            --decoder "${EXPECTED_DECODER}"
-
       - name: Cache model and evaluation assets
         uses: actions/cache@v6
         with:
@@ -179,24 +171,21 @@ jobs:
           set -euo pipefail
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
+      - name: Validate evaluator and candidate capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/validate-evaluator-capability.py \
+            --evaluator python-onnx \
+            --decoder "${EXPECTED_DECODER}" \
+            --provider cpu \
+            --candidate-dir .ci/candidate
+
       - name: Fetch reference assets
         shell: bash
         run: |
           set -euo pipefail
           bash scripts/hf/hf-fetch-reference.sh || true
-
-      - name: Locate ONNX model
-        id: model
-        shell: bash
-        run: |
-          set -euo pipefail
-          MODEL="$(find .ci/candidate -type f -name '*.onnx' -print -quit)"
-          if [[ -z "${MODEL}" ]]; then
-            echo "::error::No ONNX model was found under .ci/candidate."
-            exit 1
-          fi
-          echo "path=${MODEL}" >> "${GITHUB_OUTPUT}"
-          echo "ONNX model: ${MODEL}"
 
       - name: Verify Python-first package
         shell: bash
@@ -211,7 +200,6 @@ jobs:
             --environment linux \
             --evaluation full \
             --model-config "${HF_TARGET_ID}" \
-            --model "${{ steps.model.outputs.path }}" \
             --candidate-dir ".ci/candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
             --experiment-id "${EXPERIMENT_ID}" \

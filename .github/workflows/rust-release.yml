@@ -71,7 +71,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/asr-eval.exe"
           Compress-Archive -Path "dist/asr-eval.exe" -DestinationPath "asr-eval-${{ matrix.name }}.zip" -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: asr-eval-${{ matrix.name }}
           path: asr-eval-${{ matrix.name }}.*
@@ -81,7 +81,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           path: dist

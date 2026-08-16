@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 [evaluator]
 id = "python-onnx"
@@ -6,4 +6,32 @@ implementation = "python"
 backend = "onnxruntime"
 
 [capabilities]
-supported_decoders = ["ctc"]
+supported_decoders = ["ctc", "tdt", "whisper_autoregressive"]
+supported_providers = ["cpu", "cuda", "directml", "coreml"]
+supported_artifact_contracts = [
+  "ctc-single-graph-v0",
+  "ctc-single-graph-v1",
+  "tdt-multi-graph-v1",
+  "whisper-autoregressive-v1",
+]
+
+[decoder_features.ctc]
+kv_cache = false
+multi_graph = false
+transformers_processor = false
+external_frontend = false
+timestamps = false
+
+[decoder_features.tdt]
+kv_cache = false
+multi_graph = true
+transformers_processor = false
+external_frontend = false
+timestamps = false
+
+[decoder_features.whisper_autoregressive]
+kv_cache = true
+multi_graph = true
+transformers_processor = true
+external_frontend = true
+timestamps = false

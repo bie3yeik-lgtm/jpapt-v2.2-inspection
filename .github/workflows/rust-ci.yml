@@ -42,7 +42,7 @@ jobs:
         with:
           components: rustfmt,clippy
       - name: Cache cargo and ort
-        uses: actions/cache@v4
+        uses: actions/cache@6
         with:
           path: |
             ~/.cargo/registry

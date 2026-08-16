@@ -19,42 +19,12 @@ import json
 from typing import Any, Literal
 
 
-RuntimeImplementation = Literal[
-    "python",
-    "rust",
-]
-
-BackendName = Literal[
-    "onnxruntime",
-    "nemo",
-    "transformers",
-]
-
-ProviderId = Literal[
-    "cpu",
-    "cuda",
-    "directml",
-    "coreml",
-]
-
-DecoderId = Literal[
-    "ctc",
-    "tdt",
-    "whisper",
-]
-
-EvaluationSuite = Literal[
-    "smoke",
-    "parity",
-    "full",
-]
-
-SampleStatus = Literal[
-    "success",
-    "failed",
-    "skipped",
-]
-
+RuntimeImplementation = Literal["python", "rust"]
+BackendName = Literal["onnxruntime", "nemo", "transformers"]
+ProviderId = Literal["cpu", "cuda", "directml", "coreml"]
+DecoderId = Literal["ctc", "tdt", "whisper_autoregressive"]
+EvaluationSuite = Literal["smoke", "parity", "coreml-parity", "full"]
+SampleStatus = Literal["success", "failed", "skipped"]
 ErrorStage = Literal[
     "configuration",
     "dataset",
@@ -74,10 +44,6 @@ ErrorStage = Literal[
 
 
 class JsonModelMixin:
-    """
-    Common JSON serialization behavior.
-    """
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -95,27 +61,18 @@ class JsonModelMixin:
         )
 
 
-# ---------------------------------------------------------------------------
-# Per-sample result models
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class SampleIdentity(JsonModelMixin):
     id: str
-
     dataset_id: str
     dataset_repo_id: str
     dataset_revision: str
-
     subset: str | None
     split: str | None
     index: int | None
-
     audio_sha256: str | None
     audio_duration_sec: float
     sample_rate_hz: int
-
     reference_text: str
 
 
@@ -132,7 +89,6 @@ class ExecutionIdentity(JsonModelMixin):
 class AsrOutput(JsonModelMixin):
     text: str
     normalized_text: str
-
     tokens: list[int]
     token_count: int
 
@@ -162,18 +118,14 @@ class QualityMetrics(JsonModelMixin):
 class TimingMetrics(JsonModelMixin):
     load_ms: float | None = None
     session_creation_ms: float | None = None
-
     audio_decode_ms: float | None = None
     resample_ms: float | None = None
-
     frontend_ms: float | None = None
     encoder_ms: float | None = None
     decoder_ms: float | None = None
     postprocess_ms: float | None = None
-
     inference_ms: float | None = None
     total_ms: float | None = None
-
     rtf: float | None = None
 
 
@@ -186,76 +138,47 @@ class MemoryMetrics(JsonModelMixin):
 @dataclass(frozen=True, slots=True)
 class TensorComparison(JsonModelMixin):
     compared: bool = False
-
     passed: bool | None = None
-
     max_abs_error: float | None = None
     mean_abs_error: float | None = None
     relative_l2: float | None = None
 
     @classmethod
     def not_compared(cls) -> "TensorComparison":
-        return cls(
-            compared=False,
-            passed=None,
-            max_abs_error=None,
-            mean_abs_error=None,
-            relative_l2=None,
-        )
+        return cls()
 
 
 @dataclass(frozen=True, slots=True)
 class NumericParity(JsonModelMixin):
-    frontend: TensorComparison = field(
-        default_factory=TensorComparison.not_compared
-    )
-    encoder: TensorComparison = field(
-        default_factory=TensorComparison.not_compared
-    )
-    logits: TensorComparison = field(
-        default_factory=TensorComparison.not_compared
-    )
+    frontend: TensorComparison = field(default_factory=TensorComparison.not_compared)
+    encoder: TensorComparison = field(default_factory=TensorComparison.not_compared)
+    logits: TensorComparison = field(default_factory=TensorComparison.not_compared)
 
 
 @dataclass(frozen=True, slots=True)
 class ParityResult(JsonModelMixin):
     reference_run_id: str | None
-
     text_match: bool | None
     token_match: bool | None
-
-    numeric: NumericParity = field(
-        default_factory=NumericParity
-    )
+    numeric: NumericParity = field(default_factory=NumericParity)
 
     @classmethod
     def unavailable(cls) -> "ParityResult":
-        return cls(
-            reference_run_id=None,
-            text_match=None,
-            token_match=None,
-            numeric=NumericParity(),
-        )
+        return cls(reference_run_id=None, text_match=None, token_match=None)
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderResult(JsonModelMixin):
     requested: str
-
     registered: bool | None
     used: bool | None
-
     fallback_detected: bool | None
     fallback_only: bool | None
-
     assigned_nodes: int | None
     fallback_nodes: int | None
 
     @classmethod
-    def unknown(
-        cls,
-        requested: str,
-    ) -> "ProviderResult":
+    def unknown(cls, requested: str) -> "ProviderResult":
         return cls(
             requested=requested,
             registered=None,
@@ -278,9 +201,7 @@ class ErrorRecord(JsonModelMixin):
 @dataclass(frozen=True, slots=True)
 class SampleResult(JsonModelMixin):
     schema_version: int
-
     run_id: str
-
     sample: SampleIdentity
     execution: ExecutionIdentity
     output: AsrOutput
@@ -289,9 +210,7 @@ class SampleResult(JsonModelMixin):
     memory: MemoryMetrics
     parity: ParityResult
     provider: ProviderResult
-
     status: SampleStatus
-
     errors: list[ErrorRecord]
 
     @classmethod
@@ -324,20 +243,12 @@ class SampleResult(JsonModelMixin):
         )
 
 
-# ---------------------------------------------------------------------------
-# Benchmark / aggregate result models
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class CandidateIdentity(JsonModelMixin):
     candidate_id: str | None
-
     model_id: str
-
     artifact_sha256: str
     artifact_size_bytes: int
-
     decoder: DecoderId
 
 
@@ -345,9 +256,7 @@ class CandidateIdentity(JsonModelMixin):
 class EvaluationIdentity(JsonModelMixin):
     suite: EvaluationSuite
     manifest: str
-
     expected_sample_count: int
-
     reference_revision_sha256: str
     evaluation_schema_sha256: str
     datasets_lock_sha256: str
@@ -359,16 +268,9 @@ class RuntimeIdentity(JsonModelMixin):
     implementation: RuntimeImplementation
     backend: BackendName
     backend_version: str | None
-
-    environment_id: Literal[
-        "linux",
-        "windows",
-        "macos",
-    ]
-
+    environment_id: Literal["linux", "windows", "macos"]
     provider_id: ProviderId
     provider_ort_name: str
-
     os: str
     architecture: str
 
@@ -380,7 +282,6 @@ class SampleSummary(JsonModelMixin):
     successful: int
     failed: int
     skipped: int
-
     total_audio_duration_sec: float
 
 
@@ -394,11 +295,9 @@ class QualitySummary(JsonModelMixin):
 class TimingDistribution(JsonModelMixin):
     mean_ms: float | None
     median_ms: float | None
-
     p50_ms: float | None
     p95_ms: float | None
     p99_ms: float | None
-
     min_ms: float | None
     max_ms: float | None
 
@@ -407,12 +306,10 @@ class TimingDistribution(JsonModelMixin):
 class ComponentTimingSummary(JsonModelMixin):
     audio_decode_ms: float | None
     resample_ms: float | None
-
     frontend_ms: float | None
     encoder_ms: float | None
     decoder_ms: float | None
     postprocess_ms: float | None
-
     inference_ms: float | None
 
 
@@ -420,10 +317,8 @@ class ComponentTimingSummary(JsonModelMixin):
 class PerformanceSummary(JsonModelMixin):
     load_ms: float | None
     session_creation_ms: float | None
-
     total_processing_ms: float | None
     rtf: float | None
-
     per_sample: TimingDistribution
     components: ComponentTimingSummary
 
@@ -438,61 +333,41 @@ class MemorySummary(JsonModelMixin):
 class TensorSummary(JsonModelMixin):
     compared_samples: int
     failed_samples: int
-
     max_abs_error: float | None
     max_mean_abs_error: float | None
     max_relative_l2: float | None
 
     @classmethod
     def empty(cls) -> "TensorSummary":
-        return cls(
-            compared_samples=0,
-            failed_samples=0,
-            max_abs_error=None,
-            max_mean_abs_error=None,
-            max_relative_l2=None,
-        )
+        return cls(0, 0, None, None, None)
 
 
 @dataclass(frozen=True, slots=True)
 class NumericSummary(JsonModelMixin):
-    frontend: TensorSummary = field(
-        default_factory=TensorSummary.empty
-    )
-    encoder: TensorSummary = field(
-        default_factory=TensorSummary.empty
-    )
-    logits: TensorSummary = field(
-        default_factory=TensorSummary.empty
-    )
+    frontend: TensorSummary = field(default_factory=TensorSummary.empty)
+    encoder: TensorSummary = field(default_factory=TensorSummary.empty)
+    logits: TensorSummary = field(default_factory=TensorSummary.empty)
 
 
 @dataclass(frozen=True, slots=True)
 class ParitySummary(JsonModelMixin):
     reference_run_id: str | None
-
     text_matches: int
     text_mismatches: int
-
     token_matches: int
     token_mismatches: int
-
     text_match_rate: float | None
     token_match_rate: float | None
-
     numeric: NumericSummary
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderSummary(JsonModelMixin):
     requested: str
-
     registered: bool | None
     execution_proven: bool | None
-
     fallback_detected: bool | None
     fallback_only: bool | None
-
     assigned_nodes: int | None
     fallback_nodes: int | None
 
@@ -500,12 +375,10 @@ class ProviderSummary(JsonModelMixin):
 @dataclass(frozen=True, slots=True)
 class AcceptanceSummary(JsonModelMixin):
     passed: bool
-
     quality_passed: bool | None
     parity_passed: bool | None
     provider_passed: bool | None
     performance_passed: bool | None
-
     failed_checks: list[str]
     warnings: list[str]
 
@@ -518,31 +391,22 @@ class ErrorSummary(JsonModelMixin):
 
     @classmethod
     def empty(cls) -> "ErrorSummary":
-        return cls(
-            total=0,
-            fatal=0,
-            by_code={},
-        )
+        return cls(total=0, fatal=0, by_code={})
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkResult(JsonModelMixin):
     schema_version: int
-
     run_id: str
-
     candidate: CandidateIdentity
     evaluation: EvaluationIdentity
     runtime: RuntimeIdentity
-
     samples: SampleSummary
     quality: QualitySummary
     performance: PerformanceSummary
     memory: MemorySummary
-
     parity: ParitySummary
     provider: ProviderSummary
-
     acceptance: AcceptanceSummary
     errors: ErrorSummary
 

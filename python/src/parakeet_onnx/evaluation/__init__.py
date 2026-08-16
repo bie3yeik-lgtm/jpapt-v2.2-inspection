@@ -1,6 +1,7 @@
 """Evaluation contracts and Python-first orchestration."""
 
 from .aggregate import AggregateResult, aggregate_sample_results
+from .factory import EvaluatorBuildRequest, create_python_evaluator
 from .metrics import (
     CorpusErrorAccumulator,
     character_error_rate,
@@ -9,7 +10,7 @@ from .metrics import (
     word_error_rate,
 )
 from .models import *
-from .pipeline import PythonCtcEvaluator
+from .pipeline import PythonAsrEvaluator, PythonCtcEvaluator
 from .runner import EvaluationRunInputs, run_evaluation
 from .schema import (
     EvaluationSchemaError,
@@ -27,10 +28,13 @@ __all__ = [
     "EvaluationRunInputs",
     "EvaluationSchemaError",
     "EvaluationSchemaRegistry",
+    "EvaluatorBuildRequest",
+    "PythonAsrEvaluator",
     "PythonCtcEvaluator",
     "SampleResultWriter",
     "aggregate_sample_results",
     "character_error_rate",
+    "create_python_evaluator",
     "edit_distance",
     "normalize_text",
     "run_evaluation",
