@@ -174,17 +174,6 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
-      - name: Validate Rust evaluator capability
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/ci/validate-evaluator-capability.py \
-            --evaluator rust-onnx \
-            --decoder "${EXPECTED_DECODER}" \
-            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
-            --provider "${{ matrix.provider }}" \
-            --candidate-dir .ci/candidate
-
       - name: Generate strict candidate execution contract
         id: candidate
         shell: bash
@@ -207,6 +196,17 @@ jobs:
             echo "::error::Rust CTC evaluator requires a vocabulary tokenizer"
             exit 1
           }
+
+      - name: Validate Rust evaluator capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \
+            --evaluator rust-onnx \
+            --decoder "${EXPECTED_DECODER}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --provider "${{ matrix.provider }}" \
+            --candidate-contract .ci/candidate-contract.json
 
       - name: Materialize locked dataset selection
         shell: bash
