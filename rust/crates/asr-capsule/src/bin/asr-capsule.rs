@@ -71,13 +71,13 @@ fn run() -> Result<(), String> {
         "validate" => {
             let (path, expected_run_id, json) = parse_path_and_flags(args, true)?;
             let summary = read_capsule_summary(&path).map_err(|error| error.to_string())?;
-            if let Some(expected) = expected_run_id {
-                if summary.run_id != expected {
-                    return Err(format!(
-                        "capsule run_id does not match expected run_id: capsule={:?}, expected={expected:?}",
-                        summary.run_id
-                    ));
-                }
+            if let Some(expected) = expected_run_id
+                && summary.run_id != expected
+            {
+                return Err(format!(
+                    "capsule run_id does not match expected run_id: capsule={:?}, expected={expected:?}",
+                    summary.run_id
+                ));
             }
             print_summary(&summary, json).map_err(|error| error.to_string())?;
         }
