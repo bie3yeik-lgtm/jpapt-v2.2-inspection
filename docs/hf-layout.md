@@ -2,15 +2,15 @@
 
 ## 目的
 
-Hugging Face Bucketはmodel開発・評価中に増えるmutableな履歴を保存する場所です。検証済みartifactを公開するHF Model Repoとは役割を分けます。
+Hugging Face Bucketはmodel開発・実験・評価履歴を保存します。検証済みartifactを公開するHF Model Repoとは役割を分けます。
 
 ```text
-HF Bucket      = 開発・実験・評価履歴
-HF Model Repo  = promotion済みartifact
-GitHub         = source/schema/workflow/ASR catalog
+HF Bucket      開発・実験・評価履歴
+HF Model Repo  promotion済みartifact
+GitHub         source/schema/workflow/catalog
 ```
 
-NeMo/Transformers、CTC/TDT/Whisperでtop-level treeは変えません。
+NeMo/Transformers、CTC/TDT/WhisperでBucket top-level treeは変えません。
 
 ---
 
@@ -29,10 +29,10 @@ hf://buckets/<namespace>/<bucket>/
 │           ├── datasets-lock.json
 │           └── runtime.json
 ├── experiments/
-│   └── <catalog-resolved-prefix>-NNNNNN/
+│   └── <allocator-prefix>-NNNNNN/
 │       └── README.md
 ├── candidates/
-│   └── <catalog-resolved-prefix>-NNNNNN/
+│   └── <allocator-prefix>-NNNNNN/
 │       ├── README.md
 │       ├── metadata.json
 │       └── <variant artifacts>
@@ -55,36 +55,50 @@ hf://buckets/<namespace>/<bucket>/
 └── tmp/
 ```
 
-`ctc/`、`tdt/`、`whisper/`、`nemo/`、`transformers/`をBucket root分類にはしません。
+framework/decoderをBucket rootのdirectory分類にしません。
 
 ---
 
-## Git側の中央ASR Catalog
+# Git側の2つの中央catalog
 
-Bucket自身には再利用可能なdecoder semanticsを複製しません。
+## Allocation catalog
 
 ```text
-Git
-└── config/asr-catalog.json
+config/hf-allocation-catalog.json
 ```
 
-ここが次のSource of Truthです。
+管理対象:
 
 ```text
-ID prefix
+candidate prefix
+experiment prefix
+config prefix
+```
+
+## ASR runtime catalog
+
+```text
+config/asr-catalog.json
+```
+
+管理対象:
+
+```text
 decoder profile
 artifact contract
-required artifact roles
+required/optional artifact roles
 tokenizer kind
-runtime feature requirements
-profile set / variant
+runtime features
+profile set / runtime variant
 ```
 
-Bucket configは`runtime.json`からこのcatalog snapshotを参照します。
+採番名を変更してもruntime catalog SHAが変化しないよう、2つは分離します。
+
+詳細は [`json-contract-design.md`](./json-contract-design.md) を参照してください。
 
 ---
 
-## ルートREADME
+# Bucket root README
 
 ```text
 hf://buckets/<namespace>/<bucket>/README.md
@@ -101,14 +115,14 @@ hf://buckets/<namespace>/<bucket>/README.md
 記録内容:
 
 ```text
-直近採番
-candidates最大番号
-experiments最大番号
-config最大番号
-最終更新時刻
+last allocation
+candidates reserved maximum
+experiments reserved maximum
+config reserved maximum
+updated timestamp
 ```
 
-表示番号はpublish成功番号ではなく予約済み最大番号です。
+marker外の人間向け説明は保持します。
 
 ---
 
@@ -116,7 +130,7 @@ config最大番号
 
 ## current.json
 
-mutable pointerです。
+現在利用するimmutable config versionへのmutable pointerです。
 
 ```json
 {
@@ -127,24 +141,15 @@ mutable pointerです。
 }
 ```
 
-`config_version`がidentityであり、`updated_at`はprovenanceです。
-
 ## versions/config-NNNNNN/
 
-normalized configは4 JSONです。
+新規configは4 JSONです。
 
 ```text
-reference.json
-    model/reference/tokenizer provenance
-
-evaluation-schema.json
-    evaluation policy/schema/threshold
-
-datasets-lock.json
-    dataset provenance
-
-runtime.json
-    ASR catalog snapshot + profile_set reference
+reference.json          model/reference/tokenizer provenance
+evaluation-schema.json  evaluation rule/schema
+datasets-lock.json       dataset provenance
+runtime.json             runtime catalog snapshot + profile_set
 ```
 
 ### runtime.json
@@ -153,37 +158,26 @@ runtime.json
 {
   "schema_version": 1,
   "catalog": {
-    "id": "asr-catalog-v1",
-    "sha256": "<CATALOG_SHA256>"
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
   },
   "profile_set": "parakeet-tdt-ctc-v1"
 }
 ```
 
-`runtime.json`は`hf-push-config-version.sh`が自動生成します。
+`reference.json`と`evaluation-schema.json`にはdecoder一覧を記述しません。
 
-新しいnormalized configでは、
+CTC/TDTはprofile setから導出し、実行時に`runtime_variant`で選択します。
 
-```text
-reference.json.decoders
-evaluation-schema.json.decoders
-```
-
-を記述しません。
-
-CTC/TDT等は`profile_set`から導出します。
-
-旧3-file configは読み取り互換のみ維持します。
+旧3-file configは過去履歴の読み取り互換のみです。
 
 ---
 
 # candidates/
 
-新規candidateはmetadata schema v3です。
+新規candidateは`metadata.json schema_version=3`です。
 
 ## Parakeet CTC + TDT
-
-同じcandidate IDに両方のvariantを保持できます。
 
 ```text
 candidates/parakeet-candidate-000002/
@@ -199,17 +193,29 @@ candidates/parakeet-candidate-000002/
     └── joint.onnx
 ```
 
-`metadata.json`は、
+metadataは、
 
 ```text
-profile_set = parakeet-tdt-ctc-v1
-variants.ctc.profile = ctc-v1
-variants.tdt.profile = tdt-v1
+catalog fingerprint
+profile_set
+variants.ctc artifact/binding
+variants.tdt artifact/binding
 ```
 
-を持ちます。
+だけを保持します。
 
-CTC/TDTのdecoder名、artifact contract、required role等は中央catalogから導出します。
+以下は書きません。
+
+```text
+variants.ctc.profile
+variants.tdt.profile
+decoder
+artifact_contract
+features
+tokenizer kind
+```
+
+これらは`profile_set + variant`からASR runtime catalogで導出します。
 
 ## Whisper
 
@@ -237,50 +243,47 @@ cross-platform-parity-000003
 rust-eval-000004
 ```
 
-ただしWorkflowはこれらのraw prefix文字列を直接指定しません。
+workflowはraw prefixを持ちません。
 
 ```text
 experiment.cpu_full
-experiment.cross_platform_parity
-experiment.rust_eval
-        ↓ ASR Catalog
-表示prefix
+    ↓ hf-allocation-catalog.json
+cpu-full-eval
 ```
 
 ---
 
 # runs/
 
-1回の具体的executionです。連番にしません。
+1回の具体的executionで、連番にはしません。
+
+新規`run-context.json`はschema v2です。
 
 ```text
-runs/<run-id>/
+revisions.runtime
+  runtime.json SHA
+  ASR runtime catalog id/SHA
+  profile_set
+
+metadata.candidate
+  selected variant
+  resolved profile
+  decoder
+  artifact contract
+  selected variant bundle SHA
+
+metadata
+  experiment ID
+  HF routing snapshot
 ```
 
-run-contextには少なくとも、
-
-```text
-candidate_id
-selected runtime_variant
-selected runtime profile
-selected variant bundle SHA
-config_version
-runtime catalog fingerprint
-experiment_id
-HF routing snapshot
-provider/environment
-Git revision
-```
-
-を残します。
-
-同じcandidateのCTC/TDTは別variant bundle identityを持ちます。
+`revisions.reference`と`revisions.evaluation_schema`へdecoder listを再複製しません。
 
 ---
 
 # benchmarks/
 
-framework/decoderではなく実行環境軸です。
+framework/decoderではなく実行環境/provider軸で保存します。
 
 ```text
 benchmarks/<candidate-id>/
@@ -293,7 +296,7 @@ benchmarks/<candidate-id>/
 └── macos-coreml/
 ```
 
-実行していないdirectoryを作る必要はありません。
+実行していないdirectoryは不要です。
 
 ---
 
@@ -309,18 +312,7 @@ reference/
 └── metadata/
 ```
 
-NeMo/Transformersでroot構造は分けません。
-
----
-
-# scripts/ / tmp/
-
-```text
-tmp      破棄可能
-scripts  Bucket履歴として必要な補助materialのみ
-```
-
-source codeの正本はGitです。
+NeMo/Transformersでroot構造を分けません。
 
 ---
 
@@ -340,9 +332,23 @@ config/versions
 最大既存suffix + 1
 ```
 
-prefixは `config/asr-catalog.json.id_prefixes` から解決します。
+prefixは`config/hf-allocation-catalog.json`から解決します。
 
 詳細は [`central-allocator.md`](./central-allocator.md) を参照してください。
+
+---
+
+# Routing
+
+```text
+現在のtarget -> Bucket/Model Repo    HF_TARGETS_JSON
+採番policy                           hf-allocation-catalog.json
+runtime semantics                   asr-catalog.json
+config snapshot                     config-NNNNNN
+execution snapshot                  run-context.json
+```
+
+同一`HF_TARGETS_JSON` snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更でtargetのBucket割当を変更できます。
 
 ---
 
@@ -350,38 +356,10 @@ prefixは `config/asr-catalog.json.id_prefixes` から解決します。
 
 ```text
 Candidate variant
-  ↓
-Evaluation
-  ↓
+  ↓ Evaluation
 Acceptance
-  ↓
-Promotion
-  ↓
+  ↓ Promotion
 HF Model Repo
 ```
 
-promotionはrun-contextに保存されたruntime variantのbundle SHAを再検証します。
-
----
-
-# Routing
-
-現在のtarget→Bucket割当は`HF_TARGETS_JSON`で管理します。
-
-```text
-Current routing     HF_TARGETS_JSON
-Config semantics    runtime.json + catalog SHA
-Execution snapshot  run-context.json
-```
-
-同一routing snapshot内では`HF_BUCKET`は一意ですが、将来の容量・用途変更で割当を変更できます。
-
-関連文書:
-
-```text
-docs/json-contract-design.md
-docs/candidate-metadata.md
-docs/central-allocator.md
-docs/hf-bucket-operations.md
-docs/hf-routing-snapshots.md
-```
+promotionではrun-contextに保存されたselected variant bundle identityを再検証します。
