@@ -20,9 +20,7 @@ pub fn resample_bandlimited(input: &[f32], input_rate: u32, output_rate: u32) ->
         return Ok(input.to_vec());
     }
 
-    let output_len = ((input.len() as u128 * output_rate as u128)
-        .saturating_add(input_rate as u128 - 1)
-        / input_rate as u128) as usize;
+    let output_len = (input.len() as u128 * output_rate as u128).div_ceil(input_rate as u128) as usize;
     let cutoff = (output_rate as f64 / input_rate as f64).min(1.0) * CUTOFF_MARGIN;
     let kernels = build_polyphase_kernels(cutoff);
     let source_per_output = input_rate as f64 / output_rate as f64;
@@ -92,7 +90,7 @@ mod tests {
     fn output_length_matches_polyphase_ceil_rule() {
         let input = vec![0.0_f32; 10];
         let output = resample_bandlimited(&input, 44_100, 16_000).unwrap();
-        let expected = ((10_u128 * 16_000_u128) + 44_099) / 44_100;
+        let expected = (10_u128 * 16_000_u128).div_ceil(44_100);
         assert_eq!(output.len(), expected as usize);
     }
 
