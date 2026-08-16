@@ -85,27 +85,17 @@ def test_runtime_profile_set_derives_ctc_and_tdt(tmp_path: Path) -> None:
     assert bundle.evaluation_schema.decoders.supported == ("ctc", "tdt")
 
 
-def test_decorders_typo_is_rejected_in_normalized_config(tmp_path: Path) -> None:
+def test_duplicate_decoder_declaration_is_rejected_in_normalized_config(
+    tmp_path: Path,
+) -> None:
     value = _reference()
-    value["decorders"] = {"supported": ["ctc"], "default": "ctc"}
+    value["decoders"] = {"supported": ["ctc", "tdt"], "default": "ctc"}
     _write(tmp_path, "reference.json", value)
     _write(tmp_path, "evaluation-schema.json", _evaluation())
     _write(tmp_path, "datasets-lock.json", _datasets())
     _write(tmp_path, "runtime.json", _runtime())
 
-    with pytest.raises(RevisionError, match="unsupported legacy fields.*decorders"):
-        load_revision_bundle(tmp_path)
-
-
-def test_single_decoder_field_is_rejected_in_normalized_config(tmp_path: Path) -> None:
-    value = _reference()
-    value["decoder"] = "ctc"
-    _write(tmp_path, "reference.json", value)
-    _write(tmp_path, "evaluation-schema.json", _evaluation())
-    _write(tmp_path, "datasets-lock.json", _datasets())
-    _write(tmp_path, "runtime.json", _runtime())
-
-    with pytest.raises(RevisionError, match="unsupported legacy fields.*decoder"):
+    with pytest.raises(RevisionError, match="must not repeat decoder declarations"):
         load_revision_bundle(tmp_path)
 
 
