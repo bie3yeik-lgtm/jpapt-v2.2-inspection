@@ -6,22 +6,18 @@ JSONは「人間が決める値」と「コードが観測・生成できる値�
 
 ```text
 人間が決めるpolicy / selection
-    -> 最小限の入力JSON/TOML
+    -> 最小入力JSON/TOML
 
-file・Git・catalog・runtimeから取得できる値
+file・Git・catalog・model config・runtimeから取得できる値
     -> コードで生成
 
 過去runの再現に必要な事実
     -> generated snapshotへ保存
 ```
 
-同じ意味を複数のJSONへ手入力させません。
+同じ意味を複数のJSONへ手入力させません。機械が取得できる値を人間入力へ戻すことも行いません。
 
----
-
-## Human-authored
-
-人間が直接触るJSONは可能な限り少なくします。
+## Human-authored contracts
 
 ### Candidate metadata
 
@@ -44,17 +40,19 @@ file・Git・catalog・runtimeから取得できる値
 ```text
 schema_version
 candidate_id
-catalog SHA
+catalog id / SHA
 artifact SHA / size
-decoder / profile / artifact contract
+decoder / profile / artifact contract / features
 tensor I/O
 token IDs
-state/KV metadata
+state / KV metadata
 ```
+
+`tokenizer` は既定配置から一意に発見できる場合は省略できます。
 
 ### Evaluation manifest JSONL
 
-1行の最小形:
+最小形:
 
 ```json
 {"dataset_id":"jsut-basic5000","count":6,"seed":"smoke-jsut-v1"}
@@ -66,23 +64,21 @@ state/KV metadata
 {"dataset_id":"jsut-basic5000","count":6,"seed":"smoke-jsut-v1","min_duration_sec":1.0,"max_duration_sec":15.0}
 ```
 
-手書きしない値:
+手書きしません:
 
 ```text
 schema_version
 entry id
 selection.strategy = stable_hash
 tags
-selection / filtersの不要な入れ子
+selection / filters wrapper
 ```
 
-entry identityはseedと行位置等からコード側で生成できます。
+`ManifestLoader` がstable-hash selection、entry ID、filter objectへ展開します。
 
----
+## Generated / locked contracts
 
-## Generated / locked JSON
-
-次は再現性のため情報量が多くてもよく、人間が手で維持する対象にはしません。
+次は人間が直接維持しません。
 
 ```text
 config/versions/config-NNNNNN/reference.json
@@ -92,13 +88,12 @@ config/versions/config-NNNNNN/runtime.json
 runs/<run-id>/run-context.json
 runs/<run-id>/samples.jsonl
 runs/<run-id>/metrics.json
+runs/<run-id>/promotion.json
 benchmarks/**/*.json
 evaluation/expected/*.json
 ```
 
-これらはsource/config/artifactを読み取って生成またはlockすることを基本とします。
-
----
+情報量が多くても問題ありません。これらは再現性・監査性のためのsnapshotです。
 
 ## Source of Truth
 
@@ -112,10 +107,10 @@ ASR runtime semantics
 Target routing / profile set
     config/hf-targets/*.toml
 
-人間のcandidate artifact選択
-    candidates/<candidate-id>/metadata.json
+candidate artifact selection
+    metadata.json
 
-人間のevaluation sample選択
+evaluation sample selection
     evaluation/manifests/*.jsonl
 
 immutable config snapshot
@@ -125,11 +120,68 @@ execution snapshot
     runs/<run-id>/run-context.json
 ```
 
----
+## Candidate derivation pipeline
+
+```text
+minimal metadata.json
+    +
+config/asr-catalog.json
+    +
+ONNX graphs
+    +
+tokenizer / generated model config
+    ↓
+CandidateArtifacts.load()
+    ↓
+resolved profile / decoder / contract / features
+artifact SHA / size
+ONNX tensor binding
+state / KV binding
+token/generation config
+    ↓
+validate_candidate_runtime_contract()
+    ↓
+run-context generated provenance
+```
+
+Runtime-critical factが一意に取得できない場合は、推測せずvalidation errorにします。
+
+Candidate IDはmetadataの一部ではありません。
+
+```text
+local candidate
+    candidate directory名
+
+HF Bucket candidate
+    candidates/<candidate-id>/ directory名
+        ↓ fetch
+    .candidate-id
+```
+
+`hf-push-candidate.sh` は採番後にmetadataを書き換えません。
+
+## Manifest derivation pipeline
+
+```text
+minimal JSONL
+    ↓
+ManifestLoader
+    ↓
+internal ManifestEntry
+    id = dataset_id + line position
+    strategy = stable_hash
+    optional duration filter
+    ↓
+DatasetResolver
+    ↓
+resolved immutable sample manifest
+```
+
+評価コードはhuman JSONLの構造を再実装せず、canonical loaderを使用します。`scripts/dev/doctor.py` も同じloaderで検証します。
 
 ## Canonical config bundle
 
-3-file legacy bundleは廃止します。
+3-file bundleはサポートしません。
 
 ```text
 config/versions/config-NNNNNN/
@@ -139,7 +191,7 @@ config/versions/config-NNNNNN/
 └── runtime.json
 ```
 
-`runtime.json`は必須です。
+`runtime.json` は必須generated lockです。
 
 ```json
 {
@@ -152,15 +204,11 @@ config/versions/config-NNNNNN/
 }
 ```
 
-ただしこれはgenerated lockです。人間にcatalog SHAを入力させません。
-
 `reference.json` / `evaluation-schema.json`へdecoder一覧を複製しません。
-
----
 
 ## ASR runtime catalog
 
-`config/asr-catalog.json`に共有runtime semanticsを集約します。
+`config/asr-catalog.json`へ共有runtime semanticsを集約します。
 
 ```text
 decoder
@@ -173,15 +221,26 @@ variant -> profile mapping
 default variant
 ```
 
-candidate側は`profile_set + variant`だけで参照します。
+candidate metadataは `profile_set + variant` だけで参照します。
 
----
+Evaluator capabilityは別contractです。
+
+```text
+config/asr-catalog.json
+    candidateが要求する能力
+
+config/evaluators/*.toml
+    evaluatorが提供する能力
+
+validate-evaluator-capability.py
+    required <= provided を検証
+```
+
+Candidateが要求するfeatureをmetadataへ書き足すことはできません。
 
 ## run-context.json
 
-run-contextは完全なgenerated execution snapshotです。
-
-人間の編集性より、再現性と監査性を優先します。
+完全なgenerated execution snapshotです。
 
 ```text
 host / OS / architecture
@@ -192,32 +251,47 @@ catalog fingerprint
 selected candidate
 resolved profile / decoder
 artifact hashes
+resolved candidate runtime contract
 resolved evaluation configuration
 ```
 
-ここにderived情報を保存することは重複ではありません。これはSource of Truthではなく、実行時点のsnapshotです。
+schema v2のみをcanonicalとし、v1互換は維持しません。
 
-schema v2のみをcanonicalとし、run-context v1互換は維持しません。
+## Promotion
 
----
+promotionはhuman metadataの内容ではなく、評価時に生成されたcandidate provenanceを照合します。
+
+```text
+accepted full run
+    ↓
+run-context metadata.candidate.variant / bundle_sha256
+    ↓
+Bucket candidate取得
+    ↓
+.candidate-id materialize
+    ↓
+CandidateArtifactsで再導出・再hash
+    ↓
+bundle SHA一致
+    ↓
+HF Model Repoへpromotion
+```
+
+これによりmetadataへhashやcandidate IDを書かなくてもpromotion時のidentityを固定できます。
 
 ## Legacy compatibility
 
 維持しません。
 
 ```text
-candidate metadata v1/v2        unsupported
-3-file config bundle            unsupported
-run-context schema v1           unsupported
+candidate metadata v1/v2       unsupported
+旧verbose candidate schema     unsupported
+手書き runtime-contract.json   unsupported
+3-file config bundle           unsupported
+run-context schema v1          unsupported
 ```
 
-未使用のschemaを温存することで入力形式が複数になる方がリスクが高いためです。
-
----
-
 ## Field追加の判断基準
-
-新しいfieldを追加する前に次を確認します。
 
 ```text
 1. 人間しか決められないか？
@@ -230,7 +304,7 @@ run-context schema v1           unsupported
    YES -> generated snapshotへ保存
 
 4. 別のSource of Truthに既に存在するか？
-   YES -> 再入力させず参照・snapshotする
+   YES -> 再入力させず参照またはsnapshotする
 ```
 
-目標は「schemaに情報を詰めること」ではなく、**人間が間違えられる入力欄を最小化すること**です。
+目標は **人間が間違えられる入力欄を最小化すること** です。
