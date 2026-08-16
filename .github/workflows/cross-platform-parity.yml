@@ -161,6 +161,15 @@ jobs:
           fi
           python scripts/ci/validate-revisions.py "${args[@]}"
 
+      - name: Verify Python decoder compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${EXPECTED_DECODER}" != "ctc" ]]; then
+            echo "::error::Python ONNX evaluator currently supports CTC candidates only. Resolved target '${HF_TARGET_ID}' requires decoder '${EXPECTED_DECODER}'."
+            exit 1
+          fi
+
       - name: Cache model and evaluation assets
         uses: actions/cache@v4
         with:
@@ -223,6 +232,7 @@ jobs:
             --provider "${{ matrix.provider }}" \
             --environment "${{ matrix.environment }}" \
             --evaluation "${{ inputs.evaluation }}" \
+            --model-config "${HF_TARGET_ID}" \
             --model "${{ steps.model.outputs.path }}" \
             --candidate-dir ".ci/candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
