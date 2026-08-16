@@ -125,7 +125,12 @@ vocabulary_path.write_text(
     encoding="utf-8",
 )
 (CANDIDATE / "config.json").write_text(
-    json.dumps({"pad_token_id": blank_id}, indent=2, sort_keys=True) + "\n",
+    json.dumps(
+        {"blank_id": blank_id, "pad_token_id": blank_id},
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
     encoding="utf-8",
 )
 (CANDIDATE / "metadata.json").write_text(
