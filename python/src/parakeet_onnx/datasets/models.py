@@ -24,9 +24,9 @@ class JsonModelMixin:
 
 @dataclass(frozen=True, slots=True)
 class ManifestSelection(JsonModelMixin):
-    strategy: SelectionStrategy
     count: int
     seed: str
+    strategy: SelectionStrategy = "stable_hash"
 
     def validate(self) -> None:
         if self.strategy != "stable_hash":
@@ -39,47 +39,46 @@ class ManifestSelection(JsonModelMixin):
 
 @dataclass(frozen=True, slots=True)
 class ManifestFilters(JsonModelMixin):
-    min_duration_sec: float
-    max_duration_sec: float
+    min_duration_sec: float | None = None
+    max_duration_sec: float | None = None
 
     def validate(self) -> None:
-        if self.min_duration_sec < 0:
-            raise ValueError("min_duration_sec must be >= 0.")
-        if self.max_duration_sec <= 0:
-            raise ValueError("max_duration_sec must be > 0.")
-        if self.max_duration_sec <= self.min_duration_sec:
+        if self.min_duration_sec is not None and self.min_duration_sec < 0:
+            raise ValueError("min_duration_sec must be >= 0 when present.")
+        if self.max_duration_sec is not None and self.max_duration_sec <= 0:
+            raise ValueError("max_duration_sec must be > 0 when present.")
+        if (
+            self.min_duration_sec is not None
+            and self.max_duration_sec is not None
+            and self.max_duration_sec <= self.min_duration_sec
+        ):
             raise ValueError(
                 "max_duration_sec must be greater than min_duration_sec."
             )
 
     def accepts(self, duration_sec: float) -> bool:
-        # Half-open intervals prevent adjacent duration buckets from selecting
-        # the same sample, e.g. [1, 5) and [5, 10).
-        return self.min_duration_sec <= duration_sec < self.max_duration_sec
+        if self.min_duration_sec is not None and duration_sec < self.min_duration_sec:
+            return False
+        if self.max_duration_sec is not None and duration_sec >= self.max_duration_sec:
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True)
 class ManifestEntry(JsonModelMixin):
-    schema_version: int
     id: str
     dataset_id: str
     selection: ManifestSelection
     filters: ManifestFilters
-    tags: tuple[str, ...]
+    tags: tuple[str, ...] = ()
 
     def validate(self) -> None:
-        if self.schema_version != 1:
-            raise ValueError(
-                f"Unsupported manifest schema_version: {self.schema_version}"
-            )
         if not self.id:
             raise ValueError("Manifest entry id must not be empty.")
         if not self.dataset_id:
             raise ValueError("Manifest dataset_id must not be empty.")
         self.selection.validate()
         self.filters.validate()
-        if len(self.tags) != len(set(self.tags)):
-            raise ValueError(f"Duplicate manifest tags in entry: {self.id}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,23 +146,14 @@ class ResolvedManifest(JsonModelMixin):
                 f"Unsupported resolved manifest schema: {self.schema_version}"
             )
         if self.resolved_sample_count != len(self.samples):
-            raise ValueError(
-                "resolved_sample_count does not match samples."
-            )
+            raise ValueError("resolved_sample_count does not match samples.")
         if self.resolved_sample_count != self.expected_sample_count:
-            raise ValueError(
-                "Resolved sample count does not match expected sample count."
-            )
+            raise ValueError("Resolved sample count does not match expected sample count.")
         ids = [sample.id for sample in self.samples]
         if len(ids) != len(set(ids)):
-            raise ValueError(
-                "Resolved manifest contains duplicate sample IDs."
-            )
+            raise ValueError("Resolved manifest contains duplicate sample IDs.")
 
     def write_json(self, path: str | Path) -> None:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(
-            self.to_json(indent=2) + "\n",
-            encoding="utf-8",
-        )
+        destination.write_text(self.to_json(indent=2) + "\n", encoding="utf-8")

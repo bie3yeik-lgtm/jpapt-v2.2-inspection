@@ -6,12 +6,16 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from jsonschema import Draft202012Validator
+
 from parakeet_onnx.config.catalog import (
     AsrCatalog,
     AsrCatalogError,
     DecoderProfile,
     load_repository_catalog,
 )
+
+from .inspection import CandidateInspectionError, inspect_runtime_contract
 
 
 class CandidateMetadataError(RuntimeError):
@@ -22,33 +26,38 @@ class CandidateMetadataError(RuntimeError):
 class CandidateArtifact:
     role: str
     path: Path
-    sha256: str | None
-    size_bytes: int | None
+    sha256: str
+    size_bytes: int
 
-    def computed_sha256(self) -> str:
-        digest = hashlib.sha256()
-        with self.path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+    @classmethod
+    def from_file(cls, *, role: str, path: Path) -> "CandidateArtifact":
+        if not path.is_file():
+            raise CandidateMetadataError(
+                f"candidate artifact for role {role!r} does not exist: {path}"
+            )
+        return cls(
+            role=role,
+            path=path,
+            sha256=_sha256_file(path),
+            size_bytes=path.stat().st_size,
+        )
 
     def verify(self) -> None:
         if not self.path.is_file():
             raise CandidateMetadataError(
                 f"candidate artifact for role {self.role!r} does not exist: {self.path}"
             )
-        if self.size_bytes is not None and self.path.stat().st_size != self.size_bytes:
+        if self.path.stat().st_size != self.size_bytes:
             raise CandidateMetadataError(
-                f"candidate artifact size mismatch for role {self.role!r}: "
+                f"candidate artifact size changed for role {self.role!r}: "
                 f"expected={self.size_bytes}, actual={self.path.stat().st_size}"
             )
-        if self.sha256 is not None:
-            actual = self.computed_sha256()
-            if actual.lower() != self.sha256.lower():
-                raise CandidateMetadataError(
-                    f"candidate artifact SHA-256 mismatch for role {self.role!r}: "
-                    f"expected={self.sha256}, actual={actual}"
-                )
+        actual = _sha256_file(self.path)
+        if actual.lower() != self.sha256.lower():
+            raise CandidateMetadataError(
+                f"candidate artifact SHA-256 changed for role {self.role!r}: "
+                f"expected={self.sha256}, actual={actual}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +68,10 @@ class CandidateTokenizer:
 
 @dataclass(frozen=True, slots=True)
 class CandidateArtifacts:
-    """One resolved schema-v3 runtime variant of a candidate bundle."""
+    """One resolved runtime variant from minimal human-authored metadata."""
 
     root: Path
     metadata_path: Path
-    schema_version: int
     candidate_id: str
     decoder: str
     artifact_contract: str
@@ -100,62 +108,19 @@ class CandidateArtifacts:
             ) from exc
         if not isinstance(raw, dict):
             raise CandidateMetadataError("candidate metadata root must be an object")
-        if raw.get("schema_version") != 3:
-            raise CandidateMetadataError(
-                "candidate metadata schema_version must equal 3; legacy schemas are unsupported"
-            )
+
+        repo_root = (
+            Path(repository_root).expanduser().resolve()
+            if repository_root is not None
+            else _discover_repository_root(root)
+        )
+        _validate_metadata_schema(raw, repo_root)
 
         if catalog is None:
-            repo_root = (
-                Path(repository_root).expanduser().resolve()
-                if repository_root is not None
-                else _discover_repository_root(root)
-            )
             try:
                 catalog = load_repository_catalog(repo_root)
             except AsrCatalogError as exc:
                 raise CandidateMetadataError(str(exc)) from exc
-
-        value = cls._load_v3(
-            root=root,
-            metadata_path=metadata_path,
-            raw=raw,
-            catalog=catalog,
-            variant=variant,
-        )
-
-        if verify_artifacts:
-            for artifact in value.artifacts.values():
-                artifact.verify()
-            if value.tokenizer is not None and not value.tokenizer.path.exists():
-                raise CandidateMetadataError(
-                    f"candidate tokenizer/processor path does not exist: {value.tokenizer.path}"
-                )
-        return value
-
-    @classmethod
-    def _load_v3(
-        cls,
-        *,
-        root: Path,
-        metadata_path: Path,
-        raw: Mapping[str, Any],
-        catalog: AsrCatalog,
-        variant: str | None,
-    ) -> "CandidateArtifacts":
-        candidate_id = _required_string(raw, "candidate_id")
-        catalog_ref = _required_mapping(raw, "catalog")
-        catalog_id = _required_string(catalog_ref, "id")
-        catalog_sha256 = _required_string(catalog_ref, "sha256")
-        if catalog_id != catalog.catalog_id:
-            raise CandidateMetadataError(
-                f"candidate catalog id mismatch: metadata={catalog_id!r}, "
-                f"repository={catalog.catalog_id!r}"
-            )
-        if catalog_sha256.lower() != catalog.sha256.lower():
-            raise CandidateMetadataError(
-                "candidate catalog SHA-256 does not match config/asr-catalog.json"
-            )
 
         profile_set_id = _required_string(raw, "profile_set")
         try:
@@ -163,16 +128,13 @@ class CandidateArtifacts:
         except AsrCatalogError as exc:
             raise CandidateMetadataError(str(exc)) from exc
 
-        variants_raw = raw.get("variants")
-        if not isinstance(variants_raw, Mapping) or not variants_raw:
-            raise CandidateMetadataError("variants must be a non-empty object")
+        variants_raw = _required_mapping(raw, "variants")
         unknown_variants = sorted(set(variants_raw) - set(profile_set.variants))
         if unknown_variants:
             raise CandidateMetadataError(
                 f"candidate contains variants not defined by profile set "
                 f"{profile_set_id!r}: {unknown_variants}"
             )
-
         selected_variant = variant or profile_set.default_variant
         if selected_variant not in profile_set.variants:
             raise CandidateMetadataError(
@@ -187,42 +149,25 @@ class CandidateArtifacts:
             )
 
         profile_id = profile_set.profile_id_for(selected_variant)
-        try:
-            profile = catalog.decoder_profile(profile_id)
-        except AsrCatalogError as exc:
-            raise CandidateMetadataError(str(exc)) from exc
-
+        profile = catalog.decoder_profile(profile_id)
         artifacts = _load_artifacts(root, variant_raw.get("artifacts"))
         _validate_artifact_roles(profile, artifacts)
+        tokenizer = _load_tokenizer(root, variant_raw.get("tokenizer"), profile)
+        candidate_id = _candidate_id(root)
 
-        bindings = variant_raw.get("bindings")
-        if not isinstance(bindings, Mapping):
-            raise CandidateMetadataError(
-                f"variants.{selected_variant}.bindings must be an object"
+        try:
+            runtime_contract = inspect_runtime_contract(
+                root=root,
+                decoder=profile.decoder,
+                artifacts={role: artifact.path for role, artifact in artifacts.items()},
+                tokenizer_path=tokenizer.path if tokenizer is not None else None,
             )
-        runtime_contract = {
-            "decoder": profile.decoder,
-            "input_kind": _required_string(bindings, "input_kind"),
-            "io": _required_mapping(bindings, "io"),
-            "decoder_config": _required_mapping(bindings, "decoder_config"),
-        }
+        except CandidateInspectionError as exc:
+            raise CandidateMetadataError(str(exc)) from exc
 
-        tokenizer: CandidateTokenizer | None = None
-        tokenizer_binding = variant_raw.get("tokenizer")
-        if tokenizer_binding is not None:
-            if not isinstance(tokenizer_binding, Mapping):
-                raise CandidateMetadataError(
-                    f"variants.{selected_variant}.tokenizer must be an object"
-                )
-            tokenizer = CandidateTokenizer(
-                kind=profile.tokenizer_kind,
-                path=_under_root(root, _required_string(tokenizer_binding, "path")),
-            )
-
-        return cls(
+        value = cls(
             root=root,
             metadata_path=metadata_path,
-            schema_version=3,
             candidate_id=candidate_id,
             decoder=profile.decoder,
             artifact_contract=profile.artifact_contract,
@@ -236,6 +181,14 @@ class CandidateArtifacts:
             catalog_id=catalog.catalog_id,
             catalog_sha256=catalog.sha256,
         )
+        if verify_artifacts:
+            for artifact in value.artifacts.values():
+                artifact.verify()
+            if value.tokenizer is not None and not value.tokenizer.path.exists():
+                raise CandidateMetadataError(
+                    f"candidate tokenizer/processor path does not exist: {value.tokenizer.path}"
+                )
+        return value
 
     def artifact(self, role: str) -> CandidateArtifact:
         try:
@@ -263,9 +216,8 @@ class CandidateArtifacts:
         digest = hashlib.sha256()
         for role in sorted(self.artifacts):
             artifact = self.artifacts[role]
-            sha = artifact.sha256 or artifact.computed_sha256()
             relative = artifact.path.relative_to(self.root).as_posix()
-            digest.update(f"{role}\0{relative}\0{sha}\n".encode("utf-8"))
+            digest.update(f"{role}\0{relative}\0{artifact.sha256}\n".encode("utf-8"))
         return digest.hexdigest()
 
     def provenance_dict(self) -> dict[str, Any]:
@@ -281,46 +233,55 @@ class CandidateArtifacts:
             "artifacts": {
                 role: {
                     "path": artifact.path.relative_to(self.root).as_posix(),
-                    "sha256": artifact.sha256 or artifact.computed_sha256(),
-                    "size_bytes": artifact.path.stat().st_size,
+                    "sha256": artifact.sha256,
+                    "size_bytes": artifact.size_bytes,
                 }
                 for role, artifact in sorted(self.artifacts.items())
             },
+            "tokenizer": (
+                {
+                    "kind": self.tokenizer.kind,
+                    "path": self.tokenizer.path.relative_to(self.root).as_posix(),
+                }
+                if self.tokenizer is not None
+                else None
+            ),
             "features": dict(self.features),
+            "runtime_contract": dict(self.runtime_contract),
         }
+
+
+def _validate_metadata_schema(raw: Mapping[str, Any], repository_root: Path) -> None:
+    schema_path = repository_root / "evaluation" / "schemas" / "candidate-metadata.schema.json"
+    if not schema_path.is_file():
+        raise CandidateMetadataError(f"candidate metadata schema is missing: {schema_path}")
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CandidateMetadataError(f"invalid candidate metadata schema: {exc}") from exc
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(raw),
+        key=lambda error: list(error.absolute_path),
+    )
+    if errors:
+        first = errors[0]
+        location = ".".join(str(item) for item in first.absolute_path) or "$"
+        raise CandidateMetadataError(
+            f"candidate metadata schema violation at {location}: {first.message}"
+        )
 
 
 def _load_artifacts(root: Path, raw: object) -> dict[str, CandidateArtifact]:
     if not isinstance(raw, Mapping) or not raw:
         raise CandidateMetadataError("artifacts must be a non-empty object")
     artifacts: dict[str, CandidateArtifact] = {}
-    for role, entry in raw.items():
+    for role, relative in raw.items():
         if not isinstance(role, str) or not role:
             raise CandidateMetadataError("artifact roles must be non-empty strings")
-        if not isinstance(entry, Mapping):
-            raise CandidateMetadataError(f"artifact {role!r} must be an object")
-        relative = _required_string(entry, "path")
-        sha256 = _optional_string(entry, "sha256")
-        if sha256 is not None and len(sha256) != 64:
-            raise CandidateMetadataError(
-                f"artifact {role!r}.sha256 must be a 64-character digest"
-            )
-        size_value = entry.get("size_bytes")
-        size_bytes: int | None
-        if size_value is None:
-            size_bytes = None
-        elif isinstance(size_value, int) and size_value >= 0:
-            size_bytes = size_value
-        else:
-            raise CandidateMetadataError(
-                f"artifact {role!r}.size_bytes must be a non-negative integer"
-            )
-        artifacts[role] = CandidateArtifact(
-            role=role,
-            path=_under_root(root, relative),
-            sha256=sha256,
-            size_bytes=size_bytes,
-        )
+        if not isinstance(relative, str) or not relative.strip():
+            raise CandidateMetadataError(f"artifact {role!r} path must be a non-empty string")
+        path = _under_root(root, relative.strip())
+        artifacts[role] = CandidateArtifact.from_file(role=role, path=path)
     return artifacts
 
 
@@ -340,6 +301,61 @@ def _validate_artifact_roles(
         )
 
 
+def _load_tokenizer(
+    root: Path, raw: object, profile: DecoderProfile
+) -> CandidateTokenizer | None:
+    explicit: Path | None = None
+    if raw is not None:
+        if not isinstance(raw, str) or not raw.strip():
+            raise CandidateMetadataError("tokenizer must be a non-empty path string when present")
+        explicit = _under_root(root, raw.strip())
+        if not explicit.exists():
+            raise CandidateMetadataError(f"candidate tokenizer path does not exist: {explicit}")
+
+    path = explicit or _discover_tokenizer(root, profile.tokenizer_kind)
+    if path is None:
+        raise CandidateMetadataError(
+            f"decoder profile {profile.profile_id!r} requires tokenizer kind "
+            f"{profile.tokenizer_kind!r}; declare tokenizer path or use a conventional layout"
+        )
+    return CandidateTokenizer(kind=profile.tokenizer_kind, path=path)
+
+
+def _discover_tokenizer(root: Path, kind: str) -> Path | None:
+    if kind == "vocabulary":
+        for relative in (
+            "tokenizer/vocabulary.json",
+            "vocabulary.json",
+            "tokenizer/vocab.json",
+            "vocab.json",
+            "tokenizer/tokens.json",
+            "tokens.json",
+        ):
+            path = root / relative
+            if path.is_file():
+                return path.resolve()
+        return None
+    if kind == "transformers_processor":
+        for relative in ("tokenizer", "processor", "."):
+            path = (root / relative).resolve()
+            if path.is_dir() and any(
+                (path / name).is_file()
+                for name in ("preprocessor_config.json", "tokenizer_config.json", "config.json")
+            ):
+                return path
+        return None
+    return None
+
+
+def _candidate_id(root: Path) -> str:
+    marker = root / ".candidate-id"
+    if marker.is_file():
+        value = marker.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    return root.name
+
+
 def _required_mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     item = value.get(key)
     if not isinstance(item, Mapping):
@@ -354,15 +370,6 @@ def _required_string(value: Mapping[str, Any], key: str) -> str:
     return item.strip()
 
 
-def _optional_string(value: Mapping[str, Any], key: str) -> str | None:
-    item = value.get(key)
-    if item is None:
-        return None
-    if not isinstance(item, str) or not item.strip():
-        raise CandidateMetadataError(f"{key} must be a non-empty string when present")
-    return item.strip()
-
-
 def _under_root(root: Path, relative: str) -> Path:
     path = (root / relative).resolve()
     try:
@@ -372,6 +379,14 @@ def _under_root(root: Path, relative: str) -> Path:
             f"candidate metadata path escapes candidate root: {relative!r}"
         ) from exc
     return path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _discover_repository_root(start: Path) -> Path:

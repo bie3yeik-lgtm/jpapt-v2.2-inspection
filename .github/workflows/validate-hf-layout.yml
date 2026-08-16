@@ -89,6 +89,7 @@ jobs:
             python/tests/unit/test_hf_target_bucket_resolution.py \
             python/tests/unit/test_hf_sequence_id.py \
             python/tests/unit/test_candidate_artifacts.py \
+            python/tests/unit/test_manifest.py \
             python/tests/unit/test_asr_catalog_normalization.py \
             python/tests/unit/test_catalog_normalization.py \
             python/tests/unit/test_tdt_decoder.py \

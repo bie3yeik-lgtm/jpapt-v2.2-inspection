@@ -19,6 +19,7 @@ CANDIDATE_ID="${1:-}"
 RUN_DIRECTORY="${2:-}"
 [[ -n "$CANDIDATE_ID" && -n "$RUN_DIRECTORY" ]] || fail "Usage: $0 <candidate-id> <run-directory>"
 [[ "$CANDIDATE_ID" != */* && "$CANDIDATE_ID" != *".."* ]] || fail "Unsafe candidate ID"
+
 RUN_DIRECTORY="$(python - "$RUN_DIRECTORY" <<'PY'
 import sys
 from pathlib import Path
@@ -48,35 +49,34 @@ validate_run_context(run)
 validate_benchmark(metrics)
 if run.get("run_id") != metrics.get("run_id"):
     raise SystemExit("run-context and metrics run IDs differ")
-candidate=metrics.get("candidate", {})
-if candidate.get("candidate_id") != expected_id:
-    raise SystemExit("candidate ID mismatch")
-acceptance=metrics.get("acceptance", {})
-if acceptance.get("passed") is not True:
-    raise SystemExit(f"candidate is not accepted: {acceptance.get('failed_checks', [])!r}")
+metric_candidate=metrics.get("candidate")
+if not isinstance(metric_candidate,dict) or metric_candidate.get("candidate_id") != expected_id:
+    raise SystemExit("metrics candidate ID mismatch")
+acceptance=metrics.get("acceptance")
+if not isinstance(acceptance,dict) or acceptance.get("passed") is not True:
+    raise SystemExit(f"candidate is not accepted: {acceptance!r}")
 evaluation_id=run.get("evaluation_id")
 if evaluation_id != "full" and os.environ.get("HF_PROMOTION_ALLOW_NON_FULL", "0") != "1":
     raise SystemExit(f"promotion requires full evaluation, got {evaluation_id!r}")
-metadata=run.get("metadata", {})
-provenance=metadata.get("candidate", {}) if isinstance(metadata, dict) else {}
-runtime_variant=metadata.get("runtime_variant") if isinstance(metadata,dict) else None
-if runtime_variant is None and isinstance(provenance,dict):
-    runtime_variant=provenance.get("variant")
-if runtime_variant is not None and not isinstance(runtime_variant,str):
-    raise SystemExit("run-context metadata.runtime_variant must be a string")
-bundle=provenance.get("bundle_sha256") if isinstance(provenance, dict) else None
-metrics_identity=candidate.get("artifact_sha256")
-if bundle is not None and bundle != metrics_identity:
-    raise SystemExit("candidate variant bundle SHA differs between run-context metadata and metrics")
-legacy_primary=run.get("artifact", {}).get("sha256")
-identity_kind="variant_bundle" if bundle else "legacy_primary"
-expected=bundle or metrics_identity or legacy_primary
-if not isinstance(expected, str) or len(expected) != 64:
-    raise SystemExit("validated run has no usable candidate SHA-256 identity")
+metadata=run.get("metadata")
+if not isinstance(metadata,dict):
+    raise SystemExit("run-context metadata must be an object")
+provenance=metadata.get("candidate")
+if not isinstance(provenance,dict):
+    raise SystemExit("run-context metadata.candidate is required")
+if provenance.get("candidate_id") != expected_id:
+    raise SystemExit("run-context candidate ID mismatch")
+variant=provenance.get("variant")
+bundle=provenance.get("bundle_sha256")
+if not isinstance(variant,str) or not variant:
+    raise SystemExit("run-context candidate variant is required")
+if not isinstance(bundle,str) or len(bundle) != 64:
+    raise SystemExit("run-context candidate bundle_sha256 is required")
+if metric_candidate.get("artifact_sha256") != bundle:
+    raise SystemExit("metrics candidate identity must equal run-context candidate bundle SHA")
 print(run["run_id"])
-print(expected)
-print(identity_kind)
-print(runtime_variant or "")
+print(bundle)
+print(variant)
 print(run.get("model_id") or "")
 print(evaluation_id or "")
 print(run.get("provider_id") or "")
@@ -85,12 +85,11 @@ PY
 )
 RUN_ID="${RUN_VALUES[0]}"
 EXPECTED_SHA256="${RUN_VALUES[1]}"
-IDENTITY_KIND="${RUN_VALUES[2]}"
-RUNTIME_VARIANT="${RUN_VALUES[3]}"
-MODEL_ID="${RUN_VALUES[4]}"
-EVALUATION_ID="${RUN_VALUES[5]}"
-PROVIDER_ID="${RUN_VALUES[6]}"
-REVISION_BUNDLE_SHA256="${RUN_VALUES[7]}"
+RUNTIME_VARIANT="${RUN_VALUES[2]}"
+MODEL_ID="${RUN_VALUES[3]}"
+EVALUATION_ID="${RUN_VALUES[4]}"
+PROVIDER_ID="${RUN_VALUES[5]}"
+REVISION_BUNDLE_SHA256="${RUN_VALUES[6]}"
 
 BUCKET="${HF_BUCKET#hf://buckets/}"; BUCKET="${BUCKET%/}"
 MODEL_REPO="${HF_MODEL_REPO#hf://models/}"; MODEL_REPO="${MODEL_REPO#hf://}"; MODEL_REPO="${MODEL_REPO%/}"
@@ -99,55 +98,50 @@ MODEL_REPO="${HF_MODEL_REPO#hf://models/}"; MODEL_REPO="${MODEL_REPO#hf://}"; MO
 STAGING="$ROOT/.ci/promotion"
 CANDIDATE_ROOT="$STAGING/candidate"
 RELEASE_ROOT="$STAGING/release"
-rm -rf "$STAGING"; mkdir -p "$CANDIDATE_ROOT" "$RELEASE_ROOT"
+rm -rf "$STAGING"
+mkdir -p "$CANDIDATE_ROOT" "$RELEASE_ROOT"
 REMOTE="hf://buckets/${BUCKET}/candidates/${CANDIDATE_ID}"
 log "Fetching $REMOTE"
 hf buckets sync --token "$HF_TOKEN" "$REMOTE" "$CANDIDATE_ROOT"
+printf '%s\n' "$CANDIDATE_ID" > "$CANDIDATE_ROOT/.candidate-id"
 
-ACTUAL_SHA256="$(run_project_python - "$CANDIDATE_ROOT" "$CANDIDATE_ID" "$IDENTITY_KIND" "$RUNTIME_VARIANT" <<'PY'
+ACTUAL_SHA256="$(run_project_python - "$CANDIDATE_ROOT" "$CANDIDATE_ID" "$RUNTIME_VARIANT" <<'PY'
 import sys
 from pathlib import Path
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
-root,candidate_id,identity_kind,runtime_variant=sys.argv[1:]
-candidate=CandidateArtifacts.load(
-    root,
-    variant=runtime_variant or None,
-    repository_root=Path.cwd(),
-)
+root,candidate_id,runtime_variant=sys.argv[1:]
+candidate=CandidateArtifacts.load(root,variant=runtime_variant,repository_root=Path.cwd())
 if candidate.candidate_id != candidate_id:
-    raise SystemExit("downloaded metadata candidate_id does not match requested candidate")
+    raise SystemExit("downloaded candidate identity does not match requested candidate")
 validate_candidate_runtime_contract(candidate)
-if identity_kind == "variant_bundle":
-    print(candidate.bundle_sha256)
-else:
-    artifact=candidate.primary_artifact
-    print(artifact.sha256 or artifact.computed_sha256())
+print(candidate.bundle_sha256)
 PY
 )"
-[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || fail "Candidate identity mismatch: expected=$EXPECTED_SHA256 actual=$ACTUAL_SHA256"
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || fail "Candidate bundle mismatch: expected=$EXPECTED_SHA256 actual=$ACTUAL_SHA256"
 
 cp -R "$CANDIDATE_ROOT/." "$RELEASE_ROOT/"
+rm -f "$RELEASE_ROOT/.candidate-id"
 mkdir -p "$RELEASE_ROOT/release"
 cp "$RUN_CONTEXT" "$RELEASE_ROOT/release/run-context.json"
 cp "$METRICS" "$RELEASE_ROOT/release/metrics.json"
 PROMOTION="$RELEASE_ROOT/release/promotion.json"
-python - "$PROMOTION" "$CANDIDATE_ID" "$RUN_ID" "$MODEL_ID" "$EXPECTED_SHA256" "$IDENTITY_KIND" "$RUNTIME_VARIANT" "$REVISION_BUNDLE_SHA256" "$EVALUATION_ID" "$PROVIDER_ID" "$BUCKET" "$MODEL_REPO" <<'PY'
-import json, sys
-from datetime import datetime, timezone
+python - "$PROMOTION" "$CANDIDATE_ID" "$RUN_ID" "$MODEL_ID" "$EXPECTED_SHA256" "$RUNTIME_VARIANT" "$REVISION_BUNDLE_SHA256" "$EVALUATION_ID" "$PROVIDER_ID" "$BUCKET" "$MODEL_REPO" <<'PY'
+import json,sys
+from datetime import datetime,timezone
 from pathlib import Path
 (
- destination,candidate_id,run_id,model_id,candidate_sha,identity_kind,runtime_variant,
+ destination,candidate_id,run_id,model_id,candidate_sha,runtime_variant,
  revision_sha,evaluation_id,provider_id,bucket,model_repo
 )=sys.argv[1:]
 value={
  "schema_version":3,
  "candidate_id":candidate_id,
- "runtime_variant":runtime_variant or None,
+ "runtime_variant":runtime_variant,
  "validated_run_id":run_id,
  "model_id":model_id,
  "candidate_sha256":candidate_sha,
- "candidate_identity_kind":identity_kind,
+ "candidate_identity_kind":"variant_bundle",
  "revision_bundle_sha256":revision_sha or None,
  "evaluation_id":evaluation_id,
  "provider_id":provider_id,
@@ -172,14 +166,12 @@ pipeline_tag: automatic-speech-recognition
 Validated ASR ONNX candidate promoted from the development Bucket.
 
 - Candidate: \`${CANDIDATE_ID}\`
-- Runtime variant: \`${RUNTIME_VARIANT:-legacy}\`
+- Runtime variant: \`${RUNTIME_VARIANT}\`
 - Validated run: \`${RUN_ID}\`
-- Candidate SHA-256 (${IDENTITY_KIND}): \`${EXPECTED_SHA256}\`
+- Candidate bundle SHA-256: \`${EXPECTED_SHA256}\`
 - Evaluation: \`${EVALUATION_ID}\`
 - Provider: \`${PROVIDER_ID}\`
 - Revision bundle: \`${REVISION_BUNDLE_SHA256}\`
-
-See \`release/run-context.json\`, \`release/metrics.json\`, and \`release/promotion.json\`.
 EOF
 fi
 
@@ -194,12 +186,4 @@ MODEL_REPO_PATH="${HF_MODEL_REPO_PATH:-.}"
 hf upload "$MODEL_REPO" "$RELEASE_ROOT" "$MODEL_REPO_PATH" --token "$HF_TOKEN"
 hf buckets cp --token "$HF_TOKEN" "$PROMOTION" "hf://buckets/${BUCKET}/runs/${RUN_ID}/promotion.json"
 
-cat <<EOF
-Promotion completed.
-Candidate: ${CANDIDATE_ID}
-Runtime variant: ${RUNTIME_VARIANT:-legacy}
-Run: ${RUN_ID}
-Candidate SHA-256 (${IDENTITY_KIND}): ${EXPECTED_SHA256}
-Source: ${REMOTE}
-Destination: ${MODEL_REPO}/${MODEL_REPO_PATH}
-EOF
+log "Promotion completed: ${CANDIDATE_ID} ${RUNTIME_VARIANT} ${EXPECTED_SHA256} -> ${MODEL_REPO}/${MODEL_REPO_PATH}"

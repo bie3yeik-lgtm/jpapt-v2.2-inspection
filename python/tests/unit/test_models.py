@@ -35,7 +35,7 @@ def test_manifest_filters_accepts_boundaries() -> None:
 
     assert filters.accepts(1.0)
     assert filters.accepts(1.5)
-    assert filters.accepts(2.0)
+    assert not filters.accepts(2.0)
     assert not filters.accepts(0.9)
     assert not filters.accepts(2.1)
 

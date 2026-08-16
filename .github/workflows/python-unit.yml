@@ -1,0 +1,46 @@
+name: Python Unit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "config/**"
+      - "evaluation/**"
+      - "python/**"
+      - "scripts/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "config/**"
+      - "evaluation/**"
+      - "python/**"
+      - "scripts/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[datasets,onnx,dev]"
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q python/tests/unit

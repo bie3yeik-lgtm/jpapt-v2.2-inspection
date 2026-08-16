@@ -1,23 +1,20 @@
 # Candidate Metadata
 
-## 方針
+## 目的
 
-`candidates/<candidate-id>/metadata.json` は、人間が必要最小限の情報だけを記述する入力ファイルとします。
+`metadata.json` は **人間がcandidateの構成を指定する最小入力**です。
 
-人間が書くのは次の2種類だけです。
+人間が決めるのは次だけです。
 
 ```text
 profile_set
 variant -> artifact role/path
+必要な場合だけ tokenizer/processor path
 ```
 
-必要ならtokenizer/processorの相対pathだけ追加できます。
+SHA-256、file size、candidate ID、catalog fingerprint、decoder/profile、tensor I/O、token ID、state/KV metadataは書きません。コードが実artifact・catalog・model/tokenizer configから取得します。
 
-採番、SHA-256、file size、catalog fingerprint、tensor I/O、token ID、decoder設定など、ファイル・Git・catalog・model configから取得できる値は手書きしません。これらは後段のコードで検査・補完し、`run-context.json`などの生成物へ保存します。
-
----
-
-## 最小形
+## Canonical form
 
 Parakeet:
 
@@ -61,80 +58,95 @@ Whisper:
 }
 ```
 
-JSON Schema:
+Schema:
 
 ```text
 evaluation/schemas/candidate-metadata.schema.json
 ```
 
----
+## 自動解決される値
 
-## 書かない値
+`CandidateArtifacts.load()` は次を生成・検証します。
 
 ```text
-schema_version
 candidate_id
+    Bucketから取得した場合 .candidate-id
+    それ以外はcandidate directory名
+
 catalog id / SHA-256
-decoder
-profile id
-artifact_contract
-features
-artifact SHA-256
-artifact size
-input/output tensor names
-blank/bos/eos/prompt token IDs
-TDT durations
-predictor state shapes/dtypes
-KV-cache names
+    config/asr-catalog.json
+
+profile / decoder / artifact contract / features
+    profile_set + variant + ASR runtime catalog
+
+artifact SHA-256 / size
+    実ファイル
+
+tensor I/O / predictor state / KV-cache names
+    ONNX graph inspection
+
+blank/bos/eos/prompt token IDs / generation parameters
+    ONNX metadata + vocabulary + generated model/tokenizer config
 ```
 
-理由:
+導出できないruntime-critical値は推測しません。candidate validationを失敗させます。
+
+## Tokenizer path
+
+既定配置なら `tokenizer` は省略できます。
+
+Vocabulary profileでは次を探索します。
 
 ```text
-candidate_id          -> directory名 / allocatorから取得
-catalog fingerprint   -> Git/configから取得
-artifact SHA/size     -> fileから計算
-decoder/profile       -> profile_set + variant + asr-catalogから解決
-tensor binding        -> ONNX graphから検査
-token IDs             -> tokenizer/model configから検査
-state/KV情報          -> graph/model configから検査
+tokenizer/vocabulary.json
+vocabulary.json
+tokenizer/vocab.json
+vocab.json
+tokenizer/tokens.json
+tokens.json
 ```
 
-「人間が決める値」と「機械が観測できる値」を同じJSONへ手入力させないことを優先します。
+Transformers processorでは `tokenizer/`, `processor/`, candidate rootにある既知configを探索します。
 
----
+配置が曖昧な場合だけ `tokenizer` を明示してください。
 
-## Candidate tree
+## Candidate lifecycle
 
 ```text
-candidates/<candidate-id>/
-├── README.md
-├── metadata.json
-├── tokenizer/
-└── <variant artifacts>
+artifact export
+    ↓
+finalize_candidate_variant()
+    ↓
+minimal metadata.json生成
+    ↓
+ONNX/tokenizer inspection
+    ↓
+runtime contract validation
+    ↓
+hf-push-candidate.sh
+    ↓
+全variantを再検証
+    ↓
+Central Allocatorでcandidate ID採番
+    ↓
+candidates/<candidate-id>/へupload
 ```
 
-`candidate-id`はCentral Allocatorがdirectory名として決定するため、metadata.jsonへ再記述しません。
+採番後も `metadata.json` は書き換えません。candidate IDの正本はBucket directory名です。
 
----
-
-## Runtime選択
-
-variant名は`config/asr-catalog.json`のprofile setへ対応します。
+取得時:
 
 ```text
-profile_set = parakeet-tdt-ctc-v1
-ctc -> ctc-v1
-tdt -> tdt-v1
+hf-fetch-candidate.sh
+    ↓
+.candidate-id をlocal candidate rootへmaterialize
 ```
 
-metadata.jsonへdecoder/profileの意味を複製しません。
-
----
+これにより、同じminimal metadataをlocal export時とBucket取得後の両方で使えます。
 
 ## Generated provenance
 
-後段コードはmetadataと実artifactを読み、必要な値を検査してrun provenanceへ保存します。
+評価時には `CandidateArtifacts.provenance_dict()` が次を生成し、`run-context.json`へsnapshotします。
 
 ```text
 candidate_id
@@ -144,17 +156,24 @@ resolved profile
 decoder
 artifact contract
 catalog fingerprint
-artifact SHA-256 / size
-variant bundle SHA
-resolved graph/tokenizer bindings
+artifact path / SHA-256 / size
+variant bundle SHA-256
+tokenizer identity
+resolved runtime contract
+features
 ```
 
-これらは再現性には必要ですが、人間入力には不要です。
-
----
+これらは再現性のため必要ですが、人間入力ではありません。
 
 ## Compatibility
 
-candidate metadata v1/v2の読み取り互換は削除しました。旧schemaを維持する要件はありません。
+次はサポートしません。
 
-現在のschemaは「v3を継承した次版」ではなく、不要なversion field自体を人間入力から外したcanonical contractとして扱います。実装側のloader/generatorは後続作業でこのschemaへ合わせます。
+```text
+candidate metadata schema v1/v2
+旧verbose schema v3
+runtime-contract.json の手書き
+metadata.json 内の candidate_id / catalog SHA / hash / bindings
+```
+
+入力形式を一つに固定し、人間が同期しなければならない情報を増やさないことを優先します。
