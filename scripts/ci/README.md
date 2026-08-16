@@ -3,25 +3,25 @@
 This directory contains thin CI-facing wrappers only for responsibilities that
 have not yet moved into the canonical Rust crates.
 
-Stable model-independent validation belongs in Rust. Evaluation result and
-revision-bundle validation are both provided by `asr-contracts` and must not be
-reintroduced as Python business logic.
+Stable model-independent validation, revision selection, project configuration
+resolution, and Rust evaluator run-context construction belong in Rust.
+`asr-contracts` is the canonical authority for these contracts and they must not
+be reintroduced as Python business logic.
 
-Current Python migration boundaries are configuration/candidate preparation,
-dataset acquisition/materialization where Hugging Face `datasets` is required,
-and run-context construction. These wrappers must not duplicate production
-runtime or validation behavior.
+The remaining Python migration boundaries are candidate preparation and dataset
+acquisition/materialization where Hugging Face `datasets` is required. These
+wrappers must not duplicate production runtime, configuration, revision, or
+validation behavior.
 
 Representative files:
 
 ```text
 scripts/ci/
 ├── README.md
-├── validate-revisions.sh   # thin exec wrapper around Rust asr-contracts
-└── make-run-context.py
+└── validate-revisions.sh   # thin exec wrapper around Rust asr-contracts
 ```
 
-Canonical validation commands:
+Canonical Rust commands include:
 
 ```bash
 cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
@@ -29,14 +29,22 @@ cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
 
 cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
   validate-revisions --root .ci/hf/config/revisions
+
+cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+  build-run-context \
+  --repository-root . \
+  --model <model-id> \
+  --provider <provider-id> \
+  --evaluation <evaluation-id> \
+  --environment <environment-id> \
+  --revisions .ci/hf/config/revisions \
+  --candidate-contract .ci/candidate-contract.json \
+  --output .ci/run-context.json
 ```
 
-`hf-fetch-revisions.sh` also uses `asr-contracts resolve-config` and
-`validate-revisions`; it no longer performs JSON parsing through Python.
+`hf-fetch-revisions.sh` uses `asr-contracts resolve-config` and
+`validate-revisions`; it does not perform revision JSON parsing through Python.
 
-Remaining Python preparation wrappers should run through the locked project
-environment until their Rust replacements land:
-
-```bash
-uv run python scripts/ci/make-run-context.py ...
-```
+Python helpers that remain because they cross a Python-native ecosystem boundary
+should run through the locked project environment until that boundary can be
+reduced further.
