@@ -1,6 +1,5 @@
 name: Initialize HF Bucket
 
-# Integration probe generation: 3
 on:
   workflow_dispatch:
     inputs:
@@ -45,24 +44,12 @@ on:
         description: "Must exactly equal <bucket_id>:<model_repo>"
         required: true
         type: string
-  # One-shot branch-only integration probe. Removed after gawohok7/ci-test succeeds.
-  push:
-    branches: [agent/hf-bucket-init]
-    paths:
-      - ".github/workflows/hf-bucket-init.yml"
-      - "rust/crates/asr-eval/src/bucket_init.rs"
-      - "rust/crates/asr-eval/src/cli.rs"
-      - "rust/crates/asr-eval/src/lib.rs"
-      - "rust/crates/asr-eval/src/main.rs"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust/crates/asr-eval/Cargo.toml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: hf-bucket-init-${{ github.event_name == 'push' && 'gawohok7-ci-test' || inputs.bucket_id }}
+  group: hf-bucket-init-${{ inputs.bucket_id }}
   cancel-in-progress: false
 
 jobs:
@@ -71,16 +58,16 @@ jobs:
     timeout-minutes: 30
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      BUCKET_ID: ${{ github.event_name == 'push' && 'gawohok7/ci-test' || inputs.bucket_id }}
-      MODEL_REPO: ${{ github.event_name == 'push' && 'kotoba-tech/kotoba-whisper-v2.0' || inputs.model_repo }}
-      MODEL_REVISION: ${{ github.event_name == 'push' && 'main' || inputs.model_revision }}
-      EXPECTED_TASK: ${{ github.event_name == 'push' && 'automatic-speech-recognition' || inputs.expected_task }}
-      EXPECTED_LIBRARY: ${{ github.event_name == 'push' && 'transformers' || inputs.expected_library }}
-      EXPECTED_LANGUAGE: ${{ github.event_name == 'push' && 'ja' || inputs.expected_language }}
-      EXPECTED_LICENSE: ${{ github.event_name == 'push' && 'apache-2.0' || inputs.expected_license }}
-      EXPECTED_ARCHITECTURE: ${{ github.event_name == 'push' && 'whisper' || inputs.expected_architecture }}
-      PROFILE_SET: ${{ github.event_name == 'push' && 'whisper-autoregressive-v1' || inputs.profile_set }}
-      CONFIRMATION: ${{ github.event_name == 'push' && 'gawohok7/ci-test:kotoba-tech/kotoba-whisper-v2.0' || inputs.confirmation }}
+      BUCKET_ID: ${{ inputs.bucket_id }}
+      MODEL_REPO: ${{ inputs.model_repo }}
+      MODEL_REVISION: ${{ inputs.model_revision }}
+      EXPECTED_TASK: ${{ inputs.expected_task }}
+      EXPECTED_LIBRARY: ${{ inputs.expected_library }}
+      EXPECTED_LANGUAGE: ${{ inputs.expected_language }}
+      EXPECTED_LICENSE: ${{ inputs.expected_license }}
+      EXPECTED_ARCHITECTURE: ${{ inputs.expected_architecture }}
+      PROFILE_SET: ${{ inputs.profile_set }}
+      CONFIRMATION: ${{ inputs.confirmation }}
     steps:
       - uses: actions/checkout@v7
 
