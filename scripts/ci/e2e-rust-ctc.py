@@ -40,6 +40,9 @@ def prepare(contract_path: Path, output: Path) -> None:
     primary = artifacts.get("primary")
     if not isinstance(primary, dict):
         raise RuntimeError("candidate contract must contain primary artifact")
+    catalog = contract.get("catalog")
+    if not isinstance(catalog, dict):
+        raise RuntimeError("candidate contract must contain catalog identity")
     model_path = candidate_root / str(primary["path"])
     if not model_path.is_file():
         raise RuntimeError(f"candidate primary artifact is missing: {model_path}")
@@ -88,11 +91,53 @@ def prepare(contract_path: Path, output: Path) -> None:
             "provider_available": False,
         },
         "revisions": {
-            "reference": {"document_sha256": ZERO_SHA256},
-            "evaluation_schema": {"document_sha256": ZERO_SHA256},
-            "datasets": {"document_sha256": ZERO_SHA256},
-            "runtime": {"document_sha256": ZERO_SHA256},
+            "config_version": "unversioned",
             "bundle_sha256": ZERO_SHA256,
+            "runtime": {
+                "document_sha256": ZERO_SHA256,
+                "catalog": {
+                    "id": str(catalog["id"]),
+                    "sha256": str(catalog["sha256"]),
+                },
+                "profile_set": str(contract["profile_set"]),
+            },
+            "reference": {
+                "document_sha256": ZERO_SHA256,
+                "development_artifact": {
+                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
+                    "revision": "public-e2e",
+                },
+                "upstream": {
+                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
+                    "revision": "public-e2e",
+                },
+                "tokenizer": {
+                    "repo_id": "TKU410410103/wav2vec2-base-japanese-asr",
+                    "revision": "public-e2e",
+                },
+                "reference_id": "public-model-ctc-reference",
+                "reference_revision": "public-e2e",
+                "canonical_framework": "transformers",
+            },
+            "evaluation_schema": {
+                "document_sha256": ZERO_SHA256,
+                "schema_id": "public-model-e2e-smoke",
+                "schema_revision": "public-e2e",
+            },
+            "datasets": {
+                "document_sha256": ZERO_SHA256,
+                "entries": [
+                    {
+                        "id": "jsut-basic5000",
+                        "repo_id": "japanese-asr/ja_asr.jsut_basic5000",
+                        "revision": "public-e2e",
+                        "subset": "default",
+                        "split": "sample",
+                        "sha256": ZERO_SHA256,
+                        "manifest": "sample.flac",
+                    }
+                ],
+            },
         },
         "config": {
             "resolved": {
