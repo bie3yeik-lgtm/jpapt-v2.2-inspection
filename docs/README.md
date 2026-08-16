@@ -1,6 +1,6 @@
 # ドキュメント一覧
 
-本ディレクトリは、NeMoとTransformersを別々の運用体系として説明せず、共通ASR開発基盤を先に定義し、framework・runtime profile・Execution Provider固有差分だけを必要な文書へ閉じ込める方針で統一しています。
+本ディレクトリはNeMoとTransformersを別々の運用体系として説明せず、共通ASR開発基盤を先に定義し、framework・runtime profile・Execution Provider固有差分だけを必要な文書へ閉じ込める方針で統一しています。
 
 ## 最初に読む文書
 
@@ -28,12 +28,12 @@
 
 ---
 
-## 共通ライフサイクル
+# 共通ライフサイクル
 
 ```text
 Target
   ↓ profile_set
-ASR Catalog
+ASR Runtime Catalog
   ↓ runtime_variant
 Runtime Profile
   ↓
@@ -54,35 +54,51 @@ Benchmark / Acceptance
 Promotion
 ```
 
-NeMo/TransformersやCTC/TDT/Whisper autoregressiveの違いはBucket treeの違いではありません。中央ASR catalogのruntime profileとreference/runtime adapterの違いとして扱います。
+NeMo/TransformersやCTC/TDT/Whisper autoregressiveの違いはBucket treeの違いではありません。runtime profileとreference/runtime adapterの違いとして扱います。
 
 ---
 
-## 共通用語
+# 2つの中央catalog
 
-### ASR Catalog
+## ASR Runtime Catalog
 
 ```text
 config/asr-catalog.json
 ```
 
-再利用可能な、
+再利用可能なruntime semanticsを管理します。
 
 ```text
-ID prefix
 decoder profile
 artifact contract
-required artifact roles
+required/optional artifact roles
 tokenizer kind
-required runtime features
-profile set / runtime variant
+runtime feature requirements
+profile set / variant mapping
+default variant
 ```
 
-を集約するSource of Truthです。
+## HF Allocation Catalog
 
-### Runtime Profile
+```text
+config/hf-allocation-catalog.json
+```
 
-例えば、
+採番表示名だけを管理します。
+
+```text
+candidate prefix
+experiment prefix
+config prefix
+```
+
+この2つを分離することで、`cpu-full-eval`等の命名変更だけでASR runtime catalog SHAが変化することを防ぎます。
+
+---
+
+# 共通用語
+
+## Runtime Profile
 
 ```text
 ctc-v1
@@ -90,15 +106,11 @@ tdt-v1
 whisper-autoregressive-v1
 ```
 
-です。
+candidate固有tensor bindingではなく、そのruntimeが要求する共通contractです。
 
-candidate固有のtensor bindingではなく、「そのruntimeが何を要求するか」を表します。
+## Profile Set
 
-### Profile Set
-
-1 target/candidateが利用できるruntime profileの集合です。
-
-例:
+1 target/candidateが利用できるruntime profile集合です。
 
 ```text
 parakeet-tdt-ctc-v1
@@ -106,9 +118,9 @@ parakeet-tdt-ctc-v1
     tdt -> tdt-v1
 ```
 
-CTC/TDTを切り替えてもJSONを書き換えません。
+CTC/TDTを切り替えるためにJSONを書き換えません。
 
-### Runtime Variant
+## Runtime Variant
 
 profile set内で実際に選択するkeyです。
 
@@ -120,7 +132,7 @@ whisper
 
 CLI/Actionsで選択し、run-contextへsnapshotします。
 
-### Target
+## Target
 
 論理的なmodel開発対象です。
 
@@ -131,11 +143,9 @@ canonical framework
 runtime profile set
 ```
 
-を表します。
+storage routingはTarget identityではなく、実行時に`HF_TARGETS_JSON`から解決します。
 
-storage routingそのものはTarget identityではなく、実行時に`HF_TARGETS_JSON`から解決します。
-
-### Config Version
+## Config Version
 
 ```text
 config-NNNNNN
@@ -150,30 +160,26 @@ datasets-lock.json
 runtime.json
 ```
 
-### Candidate
+## Candidate
 
-正式評価対象としてBucketへ保存されたdeployment artifact bundleです。
+正式評価対象のdeployment artifact bundleです。schema-v3では同一candidateにCTC/TDT等の複数variantを保持できます。
 
-schema-v3では同一candidateにCTC/TDT等の複数variantを保持できます。
-
-### Experiment / Run
+## Experiment / Run
 
 ```text
-Experiment
-    複数runを束ねる論理的な試行単位
-
-Run
-    1環境・1provider・1runtime variantの具体的execution
+Experiment  複数runを束ねる論理的な試行単位
+Run         1環境・1provider・1runtime variantの具体的execution
 ```
 
 ---
 
-## JSON/TOML正規化
-
-同じ意味を複数ファイルへコピーしません。
+# JSON/TOML正規化
 
 ```text
-Reusable policy / semantics
+Allocation naming policy
+    config/hf-allocation-catalog.json
+
+Reusable runtime semantics
     config/asr-catalog.json
 
 Model provenance
@@ -185,7 +191,7 @@ Evaluation policy
 Dataset provenance
     datasets-lock.json
 
-Config -> runtime family relation
+Immutable runtime family lock
     runtime.json
 
 Artifact-specific facts
@@ -199,22 +205,50 @@ Actual execution snapshot
 
 ---
 
-## Storage routingと履歴
+# CTC/TDT切替
 
-`HF_TARGETS_JSON` は現在時点のrouting snapshotです。同一snapshot内では `HF_BUCKET` は一意ですが、targetとBucketの対応は将来変更できます。
+Parakeetのconfig/candidateを書き換えません。
 
 ```text
-現在のrouting      HF_TARGETS_JSON
-実行時routing      run-context.json.metadata
-model provenance   reference.json
-runtime semantics  runtime.json + locked catalog SHA
+ASR_RUNTIME_VARIANT=ctc
 ```
 
-過去runの再現では現在のRepository VariableからBucketを推測せず、run-contextに保存されたsnapshotを使用します。
+または、
+
+```text
+ASR_RUNTIME_VARIANT=tdt
+```
+
+を選択します。
+
+```text
+Target profile_set
+    ↓
+ASR runtime catalog
+    ↓ variant
+resolved runtime profile
+    ↓
+Candidate variants.<variant>
+```
 
 ---
 
-## 自動採番
+# Storage routingと履歴
+
+`HF_TARGETS_JSON`は現在routing snapshotです。同一snapshot内では`HF_BUCKET`は一意ですが、targetとBucketの対応は将来変更できます。
+
+```text
+現在routing          HF_TARGETS_JSON
+実行時routing        run-context.json.metadata
+model provenance     reference.json
+runtime semantics    runtime.json + ASR runtime catalog SHA
+```
+
+過去runの再現では現在のRepository VariableからBucketを推測せず、run-contextのsnapshotを使用します。
+
+---
+
+# 自動採番
 
 candidate、experiment、config versionの数値suffixは人間が決めません。
 
@@ -224,28 +258,28 @@ Repo B ─┼─> Central Allocator -> HF Bucket
 Repo C ─┘
 ```
 
-prefix文字列もWorkflowへ分散させません。
+workflowはraw prefixではなくsemantic allocation keyを渡します。
 
 ```text
 experiment.cpu_full
-        ↓ ASR Catalog
+        ↓ HF Allocation Catalog
 cpu-full-eval
         ↓ allocator
 cpu-full-eval-000123
 ```
 
-採番のたびにBucketルート`README.md`のmanaged blockも更新されます。
+採番のたびにBucket root `README.md` のmanaged blockも更新されます。
 
 ---
 
-## Evaluator capability
+# Evaluator capability
 
-workflowはCTC/TDT/Whisperを条件分岐しません。
+workflowはCTC/TDT/Whisper固有条件を持ちません。
 
 ```text
-Runtime Profile requirement
+Runtime Profile requirements
         ↓
-Candidate binding
+Candidate bindings
         ↓
 Evaluator capability
         ↓
@@ -266,6 +300,6 @@ Rust ONNX
     Whisper                 capability未開放
 ```
 
-TDT/Whisperについてはruntime抽象とsynthetic contract testは存在しますが、実candidateに対するNeMo/Transformers canonical parityは別途integration validationが必要です。
+TDT/Whisperはruntime抽象とsynthetic contract testを持ちますが、実candidateに対するcanonical NeMo/Transformers parityはintegration validationが必要です。
 
-この「実装能力の差」をBucket構造やJSON schemaの差として表現しないことが、本ドキュメント体系の基本方針です。
+この実装能力差をBucket treeやJSON schemaの差として表現しないことが基本方針です。
