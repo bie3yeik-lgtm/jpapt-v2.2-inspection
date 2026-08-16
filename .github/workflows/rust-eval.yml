@@ -23,13 +23,24 @@ on:
         default: smoke
         type: choice
         options: [smoke, parity, coreml-parity, full]
+      strict_provider:
+        description: "Disable CPU fallback for accelerator proof runs"
+        required: false
+        default: true
+        type: boolean
+      optimization_level:
+        description: "ORT graph optimization level"
+        required: false
+        default: configured
+        type: choice
+        options: [configured, disable, basic, extended, all]
 
 permissions:
   contents: read
   actions: write
 
 concurrency:
-  group: rust-eval-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}-${{ inputs.evaluation }}
+  group: rust-eval-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}-${{ inputs.evaluation }}-${{ inputs.strict_provider }}-${{ inputs.optimization_level }}
   cancel-in-progress: true
 
 env:
@@ -81,6 +92,11 @@ jobs:
             environment: windows
             provider: cpu
             features: cpu
+          - name: windows-directml
+            os: windows-latest
+            environment: windows
+            provider: directml
+            features: cpu,directml
           - name: macos-cpu
             os: macos-15
             environment: macos
@@ -138,11 +154,11 @@ jobs:
           fi
           python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
 
-      - name: Prepare directories and revision locks
+      - name: Prepare revision locks and candidate
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .ci/hf/config/revisions .ci/candidate .cache/evaluation/audio "results/${{ matrix.name }}"
+          mkdir -p .ci/hf/config/revisions .cache/evaluation/audio "results/${{ matrix.name }}"
           echo "HF_HOME=$(pwd)/.cache/huggingface" >> "$GITHUB_ENV"
           bash scripts/hf/hf-fetch-revisions.sh
           python scripts/ci/validate-revisions.py \
@@ -157,7 +173,7 @@ jobs:
             --expected-decoder "${EXPECTED_DECODER}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
-      - name: Validate Rust evaluator and candidate capability
+      - name: Validate Rust evaluator capability
         shell: bash
         run: |
           set -euo pipefail
@@ -168,7 +184,7 @@ jobs:
             --provider "${{ matrix.provider }}" \
             --candidate-dir .ci/candidate
 
-      - name: Resolve selected candidate variant
+      - name: Generate strict candidate execution contract
         id: candidate
         shell: bash
         run: |
@@ -176,9 +192,10 @@ jobs:
           python scripts/ci/resolve-candidate-artifacts.py \
             --candidate-dir .ci/candidate \
             --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --contract-out .ci/candidate-contract.json \
             --github-output "${GITHUB_OUTPUT}"
           [[ "${{ inputs.candidate_id }}" == "${{ steps.candidate.outputs.candidate_id }}" ]] || {
-            echo "::error::candidate_id input does not match metadata.json"
+            echo "::error::candidate input does not match materialized candidate identity"
             exit 1
           }
           [[ "${EXPECTED_RUNTIME_PROFILE}" == "${{ steps.candidate.outputs.runtime_profile }}" ]] || {
@@ -186,7 +203,7 @@ jobs:
             exit 1
           }
           [[ "${{ steps.candidate.outputs.tokenizer_kind }}" == "vocabulary" ]] || {
-            echo "::error::Rust CTC evaluator requires the selected profile tokenizer kind to be vocabulary"
+            echo "::error::Rust CTC evaluator requires a vocabulary tokenizer"
             exit 1
           }
 
@@ -202,11 +219,32 @@ jobs:
             --revisions .ci/hf/config/revisions \
             --output .ci/resolved-manifest.json
 
+      - name: Build canonical Rust run context
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(
+            --provider "${{ matrix.provider }}"
+            --evaluation "${{ inputs.evaluation }}"
+            --environment "${{ matrix.environment }}"
+            --model-config "${HF_TARGET_ID}"
+            --candidate-dir .ci/candidate
+            --runtime-variant "${ASR_RUNTIME_VARIANT}"
+            --experiment-id "${EXPERIMENT_ID}"
+            --revisions .ci/hf/config/revisions
+            --optimization-level "${{ inputs.optimization_level }}"
+            --output .ci/run-context.json
+          )
+          if [[ "${{ inputs.strict_provider }}" == "true" && "${{ matrix.provider }}" != "cpu" ]]; then
+            ARGS+=(--strict-provider)
+          fi
+          python scripts/ci/prepare-rust-run-context.py "${ARGS[@]}"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build Rust evaluator
         shell: bash
-        run: cargo build --release -p asr-eval --no-default-features --features "${{ matrix.features }}"
+        run: cargo build --locked --release -p asr-eval --no-default-features --features "${{ matrix.features }}"
 
       - name: Evaluate with Rust
         shell: bash
@@ -216,15 +254,9 @@ jobs:
           [[ "${{ runner.os }}" == "Windows" ]] && BIN="target/release/asr-eval.exe"
           "$BIN" evaluate \
             --provider "${{ matrix.provider }}" \
-            --model "${{ steps.candidate.outputs.primary_artifact }}" \
-            --candidate-dir .ci/candidate \
-            --candidate-id "${{ inputs.candidate_id }}" \
-            --experiment-id "${EXPERIMENT_ID}" \
-            --vocabulary "${{ steps.candidate.outputs.tokenizer_path }}" \
+            --candidate-contract .ci/candidate-contract.json \
+            --run-context .ci/run-context.json \
             --resolved-manifest .ci/resolved-manifest.json \
-            --evaluation "${{ inputs.evaluation }}" \
-            --model-id "${HF_TARGET_ID}" \
-            --revisions .ci/hf/config/revisions \
             --output "results/${{ matrix.name }}"
 
       - name: Validate shared JSON contracts
