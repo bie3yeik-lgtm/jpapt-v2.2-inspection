@@ -173,13 +173,15 @@ jobs:
       - name: Resolve request with Rust contract
         id: resolve
         shell: bash
+        env:
+          DEFAULT_NAMESPACE: ${{ steps.namespace.outputs.value }}
         run: |
           set -euo pipefail
           cargo run --quiet --locked -p asr-contracts --bin asr-candidate-request -- \
             resolve \
             --inputs-json "$(cat /tmp/request.json)" \
             --config-json "$(cat /tmp/source.json)" \
-            --default-namespace "${{ steps.namespace.outputs.value }}" \
+            --default-namespace "$DEFAULT_NAMESPACE" \
             --registry-owner "$GITHUB_REPOSITORY_OWNER" \
             --github-output "$GITHUB_OUTPUT"
 
@@ -187,51 +189,85 @@ jobs:
         id: estimate
         env:
           GH_TOKEN: ${{ github.token }}
+          SUITE: ${{ steps.resolve.outputs.suite }}
+          EXECUTOR: ${{ steps.resolve.outputs.executor }}
+          ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
         run: |
           python scripts/ci/estimate-candidate-runtime.py \
             --repository "$GITHUB_REPOSITORY" \
-            --suite "${{ steps.resolve.outputs.suite }}" \
-            --executor "${{ steps.resolve.outputs.executor }}" \
-            --environment "${{ steps.resolve.outputs.environment }}" \
+            --suite "$SUITE" \
+            --executor "$EXECUTOR" \
+            --environment "$ENVIRONMENT" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Write normalized plan
         shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
+          CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          DATASET_SOURCE: ${{ steps.resolve.outputs.dataset_source }}
+          DATASET_ID: ${{ steps.resolve.outputs.dataset_id }}
+          SUITE: ${{ steps.resolve.outputs.suite }}
+          EXECUTOR: ${{ steps.resolve.outputs.executor }}
+          ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
+          PROVIDER: ${{ steps.resolve.outputs.provider }}
+          ESTIMATE_METHOD: ${{ steps.estimate.outputs.method }}
+          ESTIMATE_SAMPLES: ${{ steps.estimate.outputs.samples }}
+          ESTIMATE_MINUTES: ${{ steps.estimate.outputs.estimate_minutes }}
+          ESTIMATE_P50: ${{ steps.estimate.outputs.p50_minutes }}
+          ESTIMATE_P90: ${{ steps.estimate.outputs.p90_minutes }}
+          EXECUTE: ${{ steps.inputs.outputs.execute }}
         run: |
+          candidate="${CANDIDATE_ID:-latest}"
+          dataset="${DATASET_ID:-bucket-default}"
           {
             echo '## Candidate request plan'
             echo
-            echo '- source: `${{ steps.resolve.outputs.source_repository }}`'
-            echo '- bucket: `${{ steps.resolve.outputs.hf_bucket }}`'
-            echo '- candidate: `${{ steps.resolve.outputs.candidate_id || 'latest' }}`'
-            echo '- package: `${{ steps.resolve.outputs.image }}`'
-            echo '- dataset: `${{ steps.resolve.outputs.dataset_source }}` / `${{ steps.resolve.outputs.dataset_id || 'bucket-default' }}`'
-            echo '- suite/backend: `${{ steps.resolve.outputs.suite }}` / `${{ steps.resolve.outputs.executor }}` / `${{ steps.resolve.outputs.environment }}`'
-            echo '- provider: `${{ steps.resolve.outputs.provider }}`'
-            echo '- estimate method: `${{ steps.estimate.outputs.method }}` (`${{ steps.estimate.outputs.samples }}` samples)'
-            echo '- estimated upper-bound runtime: **~${{ steps.estimate.outputs.estimate_minutes }} min**'
-            if [[ '${{ steps.estimate.outputs.method }}' == historical ]]; then
-              echo '- observed p50 / p90: `${{ steps.estimate.outputs.p50_minutes }}` / `${{ steps.estimate.outputs.p90_minutes }}` min'
+            printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
+            printf -- '- bucket: `%s`\n' "$HF_BUCKET"
+            printf -- '- candidate: `%s`\n' "$candidate"
+            printf -- '- package: `%s`\n' "$IMAGE"
+            printf -- '- dataset: `%s` / `%s`\n' "$DATASET_SOURCE" "$dataset"
+            printf -- '- suite/backend: `%s` / `%s` / `%s`\n' "$SUITE" "$EXECUTOR" "$ENVIRONMENT"
+            printf -- '- provider: `%s`\n' "$PROVIDER"
+            printf -- '- estimate method: `%s` (`%s` samples)\n' "$ESTIMATE_METHOD" "$ESTIMATE_SAMPLES"
+            printf -- '- estimated upper-bound runtime: **~%s min**\n' "$ESTIMATE_MINUTES"
+            if [[ "$ESTIMATE_METHOD" == historical ]]; then
+              printf -- '- observed p50 / p90: `%s` / `%s` min\n' "$ESTIMATE_P50" "$ESTIMATE_P90"
             fi
-            echo '- execute: `${{ steps.inputs.outputs.execute }}`'
+            printf -- '- execute: `%s`\n' "$EXECUTE"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build normalized workflow dispatch body
         id: body
         shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
+          CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
+          PACKAGE_NAME: ${{ steps.resolve.outputs.package_name }}
+          DATASET_SOURCE: ${{ steps.resolve.outputs.dataset_source }}
+          DATASET_ID: ${{ steps.resolve.outputs.dataset_id }}
+          SUITE: ${{ steps.resolve.outputs.suite }}
+          EXECUTOR: ${{ steps.resolve.outputs.executor }}
+          ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
+          HF_FLAVOR: ${{ steps.resolve.outputs.hf_flavor }}
+          HF_JOBS_IMAGE: ${{ steps.resolve.outputs.hf_jobs_image }}
         run: |
           jq -nc \
-            --arg source_repository '${{ steps.resolve.outputs.source_repository }}' \
-            --arg hf_bucket '${{ steps.resolve.outputs.hf_bucket }}' \
-            --arg candidate_id '${{ steps.resolve.outputs.candidate_id }}' \
-            --arg package_name '${{ steps.resolve.outputs.package_name }}' \
-            --arg dataset_source '${{ steps.resolve.outputs.dataset_source }}' \
-            --arg dataset_id '${{ steps.resolve.outputs.dataset_id }}' \
-            --arg suite '${{ steps.resolve.outputs.suite }}' \
-            --arg executor '${{ steps.resolve.outputs.executor }}' \
-            --arg environment '${{ steps.resolve.outputs.environment }}' \
-            --arg hf_flavor '${{ steps.resolve.outputs.hf_flavor }}' \
-            --arg hf_jobs_image '${{ steps.resolve.outputs.hf_jobs_image }}' \
+            --arg source_repository "$SOURCE_REPOSITORY" \
+            --arg hf_bucket "$HF_BUCKET" \
+            --arg candidate_id "$CANDIDATE_ID" \
+            --arg package_name "$PACKAGE_NAME" \
+            --arg dataset_source "$DATASET_SOURCE" \
+            --arg dataset_id "$DATASET_ID" \
+            --arg suite "$SUITE" \
+            --arg executor "$EXECUTOR" \
+            --arg environment "$ENVIRONMENT" \
+            --arg hf_flavor "$HF_FLAVOR" \
+            --arg hf_jobs_image "$HF_JOBS_IMAGE" \
             '{ref:"main",inputs:{source_repository:$source_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:$dataset_source,dataset_id:$dataset_id,suite:$suite,executor:$executor,environment:$environment,hf_flavor:$hf_flavor,hf_jobs_image:$hf_jobs_image,dry_run:false}}' \
             > /tmp/body.json
           echo "body=$(cat /tmp/body.json)" >> "$GITHUB_OUTPUT"
