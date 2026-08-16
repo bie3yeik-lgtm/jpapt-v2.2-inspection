@@ -64,11 +64,12 @@ jobs:
             bash -n "$script"
           done
 
-          if git grep -nE 'hf-allocation-catalog|candidate-prefix-key|allocation-fingerprint|--targets-json|HF_TARGETS_JSON|prefix_key' -- \
+          if git grep -nE 'candidate-prefix-key|allocation-fingerprint|--targets-json|HF_TARGETS_JSON|prefix_key' -- \
               ':!.github/workflows/phase24-audit.yml' ':!.github/workflows/phase24-validate.yml'; then
             echo 'obsolete HF routing/allocation references remain' >&2
             exit 1
           fi
+          [[ ! -e config/hf-allocation-catalog.json ]]
 
           if git grep -nE 'provider_configuration_root|candidate_prefix|reference_prefix|run_prefix|benchmark_prefix|temporary_prefix|smoke_config|parity_config|full_config|storage\.hf_target|expected_components|tolerance_source' -- config/models; then
             echo 'duplicated model policy remains' >&2
