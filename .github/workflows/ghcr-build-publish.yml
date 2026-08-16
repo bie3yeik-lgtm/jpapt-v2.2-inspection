@@ -1,0 +1,169 @@
+name: GHCR Build and Publish
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "docker/**"
+      - ".github/workflows/ghcr-build-publish.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/ghcr-build-publish.yml"
+
+concurrency:
+  group: ghcr-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover Docker packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: matrix
+        name: Build Docker package matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          entries='[]'
+          while IFS= read -r dockerfile; do
+            context="$(dirname "$dockerfile")"
+            package="$(sed -n 's/^LABEL io\.jpapt\.ghcr\.package="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            role="$(sed -n 's/^LABEL io\.jpapt\.role="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            [[ -n "$package" ]] || { echo "::error::$dockerfile lacks io.jpapt.ghcr.package"; exit 1; }
+            [[ -n "$source_repo" ]] || { echo "::error::$dockerfile lacks io.jpapt.source.repo_id"; exit 1; }
+            [[ -n "$role" ]] || { echo "::error::$dockerfile lacks io.jpapt.role"; exit 1; }
+            namespace="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+            image="ghcr.io/${namespace}/${package}"
+            item="$(jq -cn --arg context "$context" --arg dockerfile "$dockerfile" --arg package "$package" --arg image "$image" --arg source_repo "$source_repo" --arg role "$role" '{context:$context,dockerfile:$dockerfile,package:$package,image:$image,source_repo:$source_repo,role:$role}')"
+            entries="$(jq -c --argjson item "$item" '. + [$item]' <<<"$entries")"
+          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
+          [[ "$(jq 'length' <<<"$entries")" -gt 0 ]] || { echo "::error::No docker/*/Dockerfile found"; exit 1; }
+          printf 'matrix=%s\n' "$(jq -c '{include:.}' <<<"$entries")" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.package }}
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT || github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: build
+        name: Build and publish immutable environment
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: |
+            ${{ matrix.image }}:latest
+            ${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.jpapt.source.repo_id=${{ matrix.source_repo }}
+            io.jpapt.role=${{ matrix.role }}
+          cache-from: type=gha,scope=${{ matrix.package }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.package }}
+
+      - name: Resolve evaluated image reference
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ref="${{ matrix.image }}:${{ github.sha }}"
+            digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$ref" 2>/dev/null | sed -n 's/.*@//p')"
+            if [[ -z "$digest" ]]; then
+              image_id="$(docker image inspect --format '{{.Id}}' "$ref")"
+              digest="${image_id#sha256:}"
+              digest="sha256:${digest}"
+            fi
+          else
+            digest="${{ steps.build.outputs.digest }}"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid image digest: $digest"; exit 1; }
+            ref="${{ matrix.image }}@${digest}"
+            docker pull "$ref"
+          fi
+          echo "reference=$ref" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify OCI/project labels and reference imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ steps.image.outputs.reference }}"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.repo_id" }}' "$ref")" = "${{ matrix.source_repo }}"
+          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.role" }}' "$ref")" = "${{ matrix.role }}"
+          docker run --rm "$ref" python - <<'PY'
+          import json
+          import nemo
+          import onnx
+          import onnxruntime
+          import torch
+          import huggingface_hub
+          print(json.dumps({
+              "nemo": nemo.__version__,
+              "torch": torch.__version__,
+              "cuda_available": torch.cuda.is_available(),
+              "onnx": onnx.__version__,
+              "onnxruntime": onnxruntime.__version__,
+              "huggingface_hub": huggingface_hub.__version__,
+          }, sort_keys=True))
+          assert onnxruntime.__version__ == "1.28.0"
+          assert huggingface_hub.__version__ == "1.24.0"
+          PY
+
+      - name: Attest pushed image
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Write build provenance
+        shell: bash
+        run: |
+          mkdir -p .ci/ghcr
+          jq -n \
+            --arg image "${{ matrix.image }}" \
+            --arg digest "${{ steps.image.outputs.digest }}" \
+            --arg dockerfile "${{ matrix.dockerfile }}" \
+            --arg source_repo "${{ matrix.source_repo }}" \
+            --arg role "${{ matrix.role }}" \
+            --arg git_commit "${GITHUB_SHA}" \
+            '{schema_version:1,image:$image,digest:$digest,dockerfile:$dockerfile,source_repo:$source_repo,role:$role,git_commit:$git_commit}' \
+            > .ci/ghcr/build.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-build-${{ matrix.package }}
+          path: .ci/ghcr/build.json
+          retention-days: 14
+          if-no-files-found: error
