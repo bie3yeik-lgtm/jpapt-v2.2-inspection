@@ -595,6 +595,81 @@ Prefer tests that exercise real typed contracts, actual artifact integrity, stri
 
 Real-model evidence and synthetic/unit evidence must be distinguished in documentation and pull-request claims.
 
+## Work history and audit trail
+
+Every substantive repository task must maintain an auditable work record under:
+
+```text
+docs/work_history/
+```
+
+Work-history files use the exact naming convention:
+
+```text
+yyyymmddhhMMss-{workSurveyName}.md
+```
+
+where:
+
+- `yyyymmddhhMMss` is the timestamp when that work record is started;
+- `workSurveyName` is a concise kebab-case name identifying the task or investigation.
+
+The primary purposes of work history are:
+
+1. **resumability** — another developer, agent, or later session must be able to continue the work without reconstructing the entire prior conversation;
+2. **auditability** — reviewers must be able to trace what was requested, what was done, why important decisions were made, and how the work progressed.
+
+Each work-history document must contain at least these sections:
+
+```text
+## 作業依頼内容
+## 作業概要
+## 作業判断
+## 作業過程
+```
+
+The sections are interpreted as follows:
+
+- **作業依頼内容** records the original task, relevant constraints, target repositories/models/Buckets/providers, and any explicit user requirements.
+- **作業概要** summarizes scope, files/systems affected, and the current or final state.
+- **作業判断** records important design choices, rejected alternatives, safety decisions, evidence boundaries, and the reasoning behind destructive or strict contract changes.
+- **作業過程** records the chronological implementation path, important commits/PRs/workflow runs, failures encountered, corrections made, validation evidence, and remaining work.
+
+For long-running or multi-stage work, do not wait until completion to write the history. Create the work-history file near the start of the task and update it when material decisions, failures, external-state changes, or validation results occur.
+
+A work-history record should make an interrupted task resumable. When relevant, record:
+
+```text
+current branch / pull request
+latest important commit
+completed items
+unfinished items
+last verified CI / Hugging Face state
+known blockers or connector/service failures
+the next concrete action
+```
+
+Do not invent unavailable values merely to make the record look complete. Mark states as unverified, unknown, blocked, or unavailable when that is the actual evidence state.
+
+A work-history document is an audit/handoff record, **not** the canonical implementation contract. Code, schemas, generated contracts, source-controlled configuration, and `AGENTS.md` remain authoritative for their respective domains. When a work-history statement becomes stale, update the active work record or create a new work record for a distinct later task rather than treating historical prose as runtime truth.
+
+Continue updating the same work-history file while the task remains the same work unit. Do not create a new file for every commit. Start a new file when the request or investigation has materially changed into a distinct work survey.
+
+Audit records should preserve consequential failures and negative efidence, including when applicable:
+
+- why a destructive redesign was selected;
+- schema or contract migrations;
+- provider registration without execution proof;
+- provider fallback or assignment failures;
+- Hugging Face / GitHub / GHCR service or connector failures;
+- distinction between synthetic/unit evidence and real-model evidence;
+- creation and removal of temporary workflows;
+- explicit decisions not to guess checkpoint-derived values or quality thresholds.
+
+Never place secrets, tokens, credentials, or unnecessary personal data in `docs/work_history/`.
+
+`docs/work_history/` is append-oriented historical evidence. Existing work-history records should not be destructively rewritten to conceal prior decisions or failures. Corrections should preserve the audit trail by clearly noting what was corrected and why.
+
 ## Development direction
 
 The evaluator should evolve toward higher fidelity to the original source-model implementation while keeping the deployed ONNX/Rust path reproducible across environments.
