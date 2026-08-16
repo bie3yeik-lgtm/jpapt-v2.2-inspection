@@ -62,20 +62,27 @@ revision policyやlegacy modeはありません。すべてのtargetが同じstr
 
 ## Validate HF Layout
 
-`Validate HF Layout` は処理を3つに分離しています。
+PR/push時はRepository内のcontractだけを検証します。実HF Bucketのrevision metadataは読みません。
 
 ```text
-local-contracts
-  -> source-controlled config / schema / testsを検証
-  -> config/hf-targets/*.tomlからtarget matrixを生成
-
-workflow_dispatch
-  -> validate-selected
-  -> 指定hf_bucketをstrictに検証
-
 pull_request / push
-  -> validate-targets
-  -> source-controlled targetを自動matrixで確認
+  -> local-contracts
+  -> source-controlled config/schema/scriptsを検証
+  -> synthetic fixtureでstrict revision loaderをテスト
+  -> config/hf-targets/*.tomlを検証
+```
+
+実HF Bucketを検証するのは手動実行時だけです。
+
+```text
+workflow_dispatch
+  -> local-contracts
+  -> validate-selected
+  -> hf_bucketを解決
+  -> remote revision filesを取得
+  -> strict RevisionBundle validation
+  -> target identity validation
+  -> Bucket directory validation
 ```
 
 手動実行:
@@ -87,9 +94,7 @@ Actions
   -> hf_bucket
 ```
 
-手動選択では、Bucketのrevision metadataが新contractまたはtarget identityと一致しない場合は失敗します。
-
-PR/pushの自動matrixは外部Bucket driftをwarningとして報告します。target一覧はYAMLに固定せず `config/hf-targets/*.toml` から生成されるため、新しいsource-controlled targetを追加する際にmatrix一覧を編集する必要はありません。
+Bucket側の`reference.json`がまだ新contractへ移行されていない期間は、PR/push CIには影響しません。移行後に手動`Validate HF Layout`を実行して実値を検証します。
 
 ## Revision fetch/validation
 
@@ -101,7 +106,7 @@ config/revisions/evaluation-schema.json
 config/revisions/datasets-lock.json
 ```
 
-取得後は必ず現在のPython環境から `RevisionBundle` loaderを実行します。以前のように`uv`が存在しないためproject-level validationをskipする動作はありません。
+取得後は必ずproject `RevisionBundle` loaderを実行します。`uv`があれば`uv run python`、なければactive `python`を使用しますが、validation自体をskipする経路はありません。
 
 その後 `validate-revisions.py` が選択targetとのidentityを照合します。
 
@@ -144,7 +149,7 @@ decoders
 }
 ```
 
-旧`model`形式、`model_id`/`model_revision`、`decorders`、単数`decoder`は受理されません。Bucket側を新形式へ移行してから手動`Validate HF Layout`を実行してください。
+旧`model`形式、`model_id`/`model_revision`、`decorders`、単数`decoder`、旧形式と新形式の混在は受理されません。
 
 ## CPU Full Evaluation
 
@@ -159,7 +164,7 @@ candidate_id
 
 ```text
 Bucket解決
- -> revision fetch + strict schema validation
+ -> revision fetch + strict validation
  -> target identity validation
  -> decoder compatibility check
  -> candidate取得
