@@ -42,6 +42,25 @@ fn revision_context(revisions:&RevisionBundleData)->serde_json::Value {
     })
 }
 
+fn run_metadata(experiment_id: Option<&str>) -> serde_json::Value {
+    let mut metadata = serde_json::Map::new();
+    if let Some(id) = experiment_id {
+        metadata.insert("experiment_id".into(), serde_json::Value::String(id.to_owned()));
+    }
+    for (key, env_name) in [
+        ("hf_target_id", "HF_TARGET_ID"),
+        ("hf_bucket", "HF_BUCKET"),
+        ("hf_model_repo", "HF_MODEL_REPO"),
+    ] {
+        if let Ok(value) = std::env::var(env_name) {
+            if !value.is_empty() {
+                metadata.insert(key.into(), serde_json::Value::String(value));
+            }
+        }
+    }
+    serde_json::Value::Object(metadata)
+}
+
 pub fn build_run_context(
     model: &Path,
     model_id: &str,
@@ -63,11 +82,6 @@ pub fn build_run_context(
         provider,
         &sha[..8]
     );
-
-    let metadata=match experiment_id {
-        Some(id)=>serde_json::json!({"experiment_id":id}),
-        None=>serde_json::json!({})
-    };
 
     Ok(serde_json::json!({
         "schema_version": 1,
@@ -130,6 +144,6 @@ pub fn build_run_context(
                 }
             }
         },
-        "metadata": metadata
+        "metadata": run_metadata(experiment_id)
     }))
 }
