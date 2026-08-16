@@ -1,196 +1,187 @@
-# ONNX Export
+# ONNX ExportとCandidate生成
 
-## Purpose
+## 基本方針
 
-ONNX is a deployment artifact, not the canonical source representation.
-The canonical source/reference framework is selected by the HF target profile.
-
-```text
-pinned target
-    ↓
-canonical framework/reference
-    ↓
-ONNX export
-    ↓
-structural validation
-    ↓
-candidate
-```
-
-Current examples include NeMo/Parakeet and Transformers/Whisper.
-
-## Pinned source revisions
-
-Export must use the exact identities from:
+ONNXはcanonical sourceではなくdeployment artifactです。Export元はtargetの`reference.json`で固定された`upstream`と`tokenizer`です。
 
 ```text
-.ci/hf/config/revisions/reference.json
+Versioned Config
+  ↓
+Upstream + Tokenizer
+  ↓
+Framework-specific Export Adapter
+  ↓
+Local Export
+  ↓
+Candidate Publish
 ```
 
-which is downloaded from:
+NeMo/Transformersで異なるのはexport adapterとgraph構成であり、candidate lifecycleは同じです。
+
+## 使用するrevision
+
+`.ci/hf/config/revisions/reference.json`から次を使います。
 
 ```text
-hf://buckets/<HF_BUCKET>/config/revisions/reference.json
+upstream.repo_id / revision
+tokenizer.repo_id / revision
+reference.canonical_framework
+reference.revision
+decoders
 ```
 
-The fields have distinct meanings:
+`development_artifact.revision`はexport元checkpointではありません。これはdevelopment artifact Model Repo側のsnapshotを表します。
+
+floatingな`main`、`latest`、暗黙HEADをcanonical exportに使用しないでください。
+
+## Framework差分
+
+### NeMo / Parakeet
+
+代表的にはNeMo modelを固定revisionでloadし、CTC/TDT向けgraphを生成します。
+
+CTCでは単一primary ONNX artifactで成立する場合があります。
 
 ```text
-development_artifact.revision  revision of generated deployment-artifact repo
-upstream.revision              source checkpoint revision used for export
- tokenizer.revision            tokenizer/processor revision
-reference.revision             canonical reference implementation/artifact revision
+model.onnx
+metadata.json
+vocabulary.json
 ```
 
-Do not export from a floating `main`, `latest`, or implicit HEAD revision.
-Do not use `development_artifact.revision` as a substitute for the upstream
-checkpoint revision.
+TDTではpredictor/joint等のruntime contractを追加で考慮する必要があります。
 
-## Audio/frontend boundary
+### Transformers / Whisper
 
-The common input boundary is:
+Transformers modelとprocessor/tokenizerをそれぞれ固定revisionでloadします。
+
+Whisperは複数graphになることがあります。
+
+```text
+encoder.onnx
+decoder.onnx
+decoder_with_past.onnx
+metadata.json
+tokenizer/
+```
+
+複数graphの役割はファイル名だけに依存せず、candidate metadataで明示してください。
+
+## Audio / Frontend境界
+
+共通入力:
 
 ```text
 CanonicalAudio
-float32
-mono
-16000 Hz
+float32 / mono / 16 kHz
 ```
 
-Framework/model-specific frontend logic begins after this boundary.
+frontendをONNX外に置くかgraph内に含めるかはcandidate runtime contractの一部です。
 
-Two export strategies are supported conceptually.
-
-### Frontend outside ONNX
+### Frontend外部
 
 ```text
 CanonicalAudio
-    ↓
-standalone framework frontend
-    ↓
+  ↓
+frontend
+  ↓
 features
-    ↓
-model ONNX
+  ↓
+ONNX
 ```
 
-This is useful when frontend parity must be inspected independently.
-
-### Frontend inside ONNX
+### Frontend内包
 
 ```text
-CanonicalAudio waveform
-    ↓
+CanonicalAudio
+  ↓
 frontend + model ONNX
 ```
 
-This simplifies deployment but moves frontend compatibility into the graph.
+どちらを採用しても、reference/candidate parityで同じ境界を比較できるようmetadataへ記録します。
 
-## Export adapters
+## Local exportと正式Candidate ID
 
-The export layer should dispatch by the selected target/framework rather than
-assuming NeMo globally.
-
-```text
-python/src/parakeet_onnx/export/
-├── ctc.py
-├── tdt.py
-├── metadata.py
-└── validate.py
-```
-
-Architecture-specific adapters may additionally exist for Transformers/Whisper.
-
-Responsibilities:
-
-- load the exact `upstream` revision
-- load the exact `tokenizer` revision
-- create the requested decoder-specific graph(s)
-- write candidate metadata with provenance
-- validate ONNX structure and runtime contract
-
-## Candidate staging
-
-Exports first go to disposable local staging:
+ローカルexport時点では人間がcandidate連番を決めません。
 
 ```text
-tmp/export/<candidate-id>/
-├── model.onnx
-├── metadata.json
-└── tokenizer/
+tmp/export/work/
 ```
 
-After local validation they may be uploaded to:
+metadataのcandidate IDは暫定`unallocated`でも構いません。
+
+正式IDはBucket publish時に発行します。
+
+```bash
+HF_BUCKET=owner/dev-bucket \
+HF_TARGET_ID=<target-id> \
+  bash scripts/hf/hf-push-candidate.sh ./tmp/export/work
+```
+
+生成例:
 
 ```text
-hf://buckets/<HF_BUCKET>/candidates/<candidate-id>/
+<target-or-purpose>-candidate-000002
 ```
 
-Do not write development candidates directly to the final Model Repo.
+採番は`candidates/`全体の最大suffix+1です。
 
 ## Candidate metadata
 
-Candidate metadata must identify the primary artifact and preserve source
-provenance. If multiple ONNX files exist, the primary artifact must be explicit.
-
-```json
-{
-  "schema_version": 1,
-  "candidate": {
-    "candidate_id": "ctc-0007",
-    "primary_artifact": "model.onnx"
-  }
-}
-```
-
-## Validation checkpoints
-
-At minimum:
+metadataは少なくとも次を表現できる必要があります。
 
 ```text
-1. graph loads
-2. graph passes structural validation
-3. CPUExecutionProvider session creates where applicable
-4. input/output contract matches metadata
-5. frontend parity passes where frontend is external
-6. architecture-specific intermediate parity is within threshold
-7. decoder/token/text parity meets target rules
-8. run-context records exact revision identities
+candidate_id
+primary artifact
+artifact roles
+decoder
+artifact SHA-256
+runtime input/output contract
 ```
 
-## Dynamic shapes
+複数graphの場合も1つのcandidate IDの下へまとめます。
 
-Audio ASR inputs are variable length. Preserve dynamic time dimensions where
-required rather than producing OS-specific model files by default.
-Provider-specific incompatibilities should be treated as provider/runtime issues
-before introducing multiple model artifacts.
+## Validation
 
-## Numerical parity
-
-Do not judge export correctness only by final transcript. Compare meaningful
-architecture-specific intermediate checkpoints before token/text metrics.
-
-## Artifact SHA-256
-
-The candidate ONNX SHA-256 is part of the run identity. Promotion requires the
-artifact SHA evaluated by the accepted run to match the artifact being
-promoted.
-
-## Release
+Candidate publish前後に確認する代表項目:
 
 ```text
-candidate
-    ↓
-smoke
-    ↓
-parity
-    ↓
-full
-    ↓
-acceptance
-    ↓
-scripts/hf/hf-promote-model.sh
-    ↓
+ONNX structural validation
+artifact SHA-256
+input/output contract
+CPU session creation where applicable
+reference parity checkpoint
+decoder/token/text parity
+config version / revision provenance
+```
+
+最終transcript一致だけでconversion correctnessを判断しないでください。
+
+## Dynamic shape
+
+ASRは可変長入力を扱うため、必要なtime dimensionはdynamicに保ちます。Provider固有問題が出た場合、まずgraph/operator/provider compatibilityを調査し、安易にOSごとの別モデルへ分岐しないことを基本とします。
+
+## 現在の実装状況
+
+- NeMo/Parakeet CTC: 現在の主要runtime/evaluation path
+- Parakeet TDT: target contractはあるがruntime実装は未完成
+- Transformers/Whisper: reference/config/storageは対応、autoregressive ONNX evaluatorは未完成
+
+したがって、Whisper candidateを保存するBucket構造は既に共通化されていますが、評価runtimeがCTCと同等に完成しているわけではありません。
+
+## Promotion
+
+```text
+Candidate
+  ↓
+Experiment / Run
+  ↓
+Smoke / Parity / Full
+  ↓
+Acceptance
+  ↓
+Artifact SHA一致確認
+  ↓
 HF Model Repo
 ```
 
-The Model Repo is not a development scratch location.
+Exporterから直接Model Repoへreleaseしません。
