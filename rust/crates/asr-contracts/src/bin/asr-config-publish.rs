@@ -97,14 +97,18 @@ fn prepare_bundle(
     staging: &Path,
     profile_set: &str,
 ) -> Result<PrepareSummary> {
-    let repository_root = repository_root.canonicalize().map_err(|source| ContractError::Io {
-        path: repository_root.to_path_buf(),
-        source,
-    })?;
-    let source = source.canonicalize().map_err(|source_error| ContractError::Io {
-        path: source.to_path_buf(),
-        source: source_error,
-    })?;
+    let repository_root = repository_root
+        .canonicalize()
+        .map_err(|source| ContractError::Io {
+            path: repository_root.to_path_buf(),
+            source,
+        })?;
+    let source = source
+        .canonicalize()
+        .map_err(|source_error| ContractError::Io {
+            path: source.to_path_buf(),
+            source: source_error,
+        })?;
     if !source.is_dir() {
         return Err(ContractError::validation(format!(
             "config source is not a directory: {}",
@@ -127,11 +131,15 @@ fn prepare_bundle(
         .get("catalog_id")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ContractError::validation("config/asr-catalog.json catalog_id is required"))?;
+        .ok_or_else(|| {
+            ContractError::validation("config/asr-catalog.json catalog_id is required")
+        })?;
     let profile_sets = catalog_object
         .get("profile_sets")
         .and_then(Value::as_object)
-        .ok_or_else(|| ContractError::validation("config/asr-catalog.json profile_sets must be an object"))?;
+        .ok_or_else(|| {
+            ContractError::validation("config/asr-catalog.json profile_sets must be an object")
+        })?;
     if !profile_sets.contains_key(profile_set) {
         return Err(ContractError::validation(format!(
             "unknown profile set {profile_set:?}"
@@ -143,7 +151,11 @@ fn prepare_bundle(
         path: staging.to_path_buf(),
         source,
     })?;
-    for filename in ["reference.json", "evaluation-schema.json", "datasets-lock.json"] {
+    for filename in [
+        "reference.json",
+        "evaluation-schema.json",
+        "datasets-lock.json",
+    ] {
         let source_path = source.join(filename);
         if !source_path.is_file() {
             return Err(ContractError::validation(format!(
@@ -246,8 +258,9 @@ fn read_json(path: &Path) -> Result<Value> {
 }
 
 fn canonical_sha256(value: &Value) -> Result<String> {
-    let bytes = serde_json::to_vec(value)
-        .map_err(|error| ContractError::validation(format!("failed to canonicalize JSON: {error}")))?;
+    let bytes = serde_json::to_vec(value).map_err(|error| {
+        ContractError::validation(format!("failed to canonicalize JSON: {error}"))
+    })?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
