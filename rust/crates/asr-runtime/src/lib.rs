@@ -10,3 +10,11 @@ pub use metadata::model_metadata::{
 };
 pub use providers::ProviderKind;
 pub use session::{InferenceOutput, OrtCtcSession, SessionConfig, SessionTuning};
+
+/// Returns the build information reported by the ONNX Runtime library linked
+/// through `ort`, including the runtime version, source revision, and compile
+/// flags. Persist this value as execution evidence rather than inferring the
+/// backend version from Cargo metadata.
+pub fn ort_build_info() -> &'static str {
+    ort::info()
+}
