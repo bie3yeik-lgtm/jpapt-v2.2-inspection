@@ -1,0 +1,34 @@
+name: Fix work history policy typo
+
+on:
+  push:
+    branches:
+      - agent/nemo-onnx-asr-quality
+    paths:
+      - .github/workflows/_fix-work-history-policy-typo.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/nemo-onnx-asr-quality
+      - name: Fix typo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'from pathlib import Path; p=Path("AGENTS.md"); t=p.read_text(encoding="utf-8"); assert t.count("negative efidence")==1; p.write_text(t.replace("negative efidence", "negative evidence"), encoding="utf-8")'
+      - name: Commit typo fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add AGENTS.md
+          git diff --cached --check
+          git commit -m "Fix work history policy wording"
+          git push origin HEAD:agent/nemo-onnx-asr-quality
