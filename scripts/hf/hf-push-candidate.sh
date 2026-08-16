@@ -15,6 +15,7 @@ SOURCE="${1:-}"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
+command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 command -v gh >/dev/null 2>&1 || fail "gh CLI is unavailable; central allocation requires GitHub access"
 
 SOURCE="$(python - "$SOURCE" <<'PY'
@@ -31,11 +32,10 @@ run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
 
-readarray -t META_VALUES < <(run_project_python - "$SOURCE" <<'PY'
+PROFILE_SET="$(run_project_python - "$SOURCE" <<'PY'
 import json
 import sys
 from pathlib import Path
-from parakeet_onnx.config.allocation_catalog import load_repository_allocation_catalog
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
@@ -62,13 +62,10 @@ for variant in variants:
         f"{candidate.bundle_sha256}",
         file=sys.stderr,
     )
-allocation_catalog=load_repository_allocation_catalog(Path.cwd())
 print(profile_set_id)
-print(allocation_catalog.candidate_prefix_key(profile_set_id))
 PY
-)
-PROFILE_SET="${META_VALUES[0]}"
-PREFIX_KEY="${META_VALUES[1]}"
+)"
+PREFIX_KEY="$(cargo run --quiet --locked -p asr-hf -- candidate-prefix-key "$PROFILE_SET")"
 
 CANDIDATE_ID="$(
   CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= \
