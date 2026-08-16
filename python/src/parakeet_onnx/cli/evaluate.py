@@ -22,30 +22,21 @@ def _resolve_under_root(root: Path, value: str | Path) -> Path:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parakeet-onnx-evaluate",
-        description=(
-            "Evaluate a minimal candidate. Runtime semantics are resolved from the "
-            "pinned runtime catalog and ONNX/tokenizer inspection."
-        ),
+        description="Evaluate a minimal candidate through the strict typed execution contract.",
     )
-    parser.add_argument("--provider", required=True)
+    parser.add_argument("--provider", required=True, choices=("cpu", "cuda", "directml", "coreml"))
     parser.add_argument("--candidate-dir", type=Path, required=True)
+    parser.add_argument("--runtime-variant")
+    parser.add_argument("--candidate-id")
+    parser.add_argument("--experiment-id")
     parser.add_argument(
-        "--runtime-variant",
-        default=None,
-        help="Variant key such as ctc, tdt, or whisper; defaults to catalog default.",
+        "--evaluation",
+        default="smoke",
+        choices=("smoke", "parity", "coreml-parity", "full"),
     )
-    parser.add_argument(
-        "--candidate-id",
-        default=None,
-        help="Optional assertion against the fetched Bucket identity (.candidate-id).",
-    )
-    parser.add_argument("--experiment-id", default=None)
-    parser.add_argument("--evaluation", default="smoke")
-    parser.add_argument("--environment", default=None)
+    parser.add_argument("--environment", choices=("linux", "windows", "macos"))
     parser.add_argument("--model-config", default="parakeet-tdt_ctc-0.6b-ja")
-    parser.add_argument(
-        "--revisions", type=Path, default=Path(".ci/hf/config/revisions")
-    )
+    parser.add_argument("--revisions", type=Path, default=Path(".ci/hf/config/revisions"))
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -79,8 +70,7 @@ def main() -> int:
     if candidate.profile_set_id != revisions.runtime.profile_set_id:
         raise SystemExit(
             "candidate/config profile-set mismatch: "
-            f"candidate={candidate.profile_set_id!r}, "
-            f"config={revisions.runtime.profile_set_id!r}"
+            f"candidate={candidate.profile_set_id!r}, config={revisions.runtime.profile_set_id!r}"
         )
     if candidate.profile_id != expected_profile_id:
         raise SystemExit(
@@ -95,11 +85,7 @@ def main() -> int:
 
     materializer_root = _resolve_under_root(
         config.repository_root,
-        str(
-            config.environment.get(
-                "path.materialized_audio_cache", ".cache/evaluation/audio"
-            )
-        ),
+        str(config.environment.get("path.materialized_audio_cache", ".cache/evaluation/audio")),
     )
     hf_cache = _resolve_under_root(
         config.repository_root,
@@ -116,10 +102,7 @@ def main() -> int:
         expected_sample_count=config.evaluation.expected_sample_count,
     )
 
-    metadata: dict[str, object] = {
-        "candidate": candidate.provenance_dict(),
-        "runtime_variant": candidate.variant,
-    }
+    metadata: dict[str, object] = {}
     experiment_id = args.experiment_id or os.environ.get("EXPERIMENT_ID")
     if experiment_id:
         metadata["experiment_id"] = experiment_id
@@ -132,13 +115,10 @@ def main() -> int:
         if value:
             metadata[key] = value
 
-    primary = candidate.primary_artifact
     context = build_run_context(
         config=config,
         revisions=revisions,
-        candidate_path=primary.path,
-        candidate_id=candidate.candidate_id,
-        artifact_role=primary.role,
+        candidate=candidate,
         metadata=metadata,
     )
     evaluator = create_python_evaluator(

@@ -1,4 +1,8 @@
-"""Framework-neutral Hugging Face revision-lock loading."""
+"""Strict four-document revision loading.
+
+The lock bundle remains human-authored JSON, but every execution snapshot is
+materialized as the same non-null typed contract consumed by Rust.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +14,29 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from parakeet_onnx.config.catalog import AsrCatalog, AsrCatalogError, load_repository_catalog
+from parakeet_onnx.contracts import (
+    CatalogReference,
+    DatasetRevisionEntry,
+    DatasetsRevisionSnapshot,
+    EvaluationSchemaRevisionSnapshot,
+    ReferenceRevisionSnapshot,
+    RepoRevisionIdentity,
+    RevisionSnapshot,
+    RuntimeRevisionSnapshot,
+)
 
 
 class RevisionError(RuntimeError):
-    """Raised when revision metadata is missing, invalid, or incompatible."""
+    pass
+
+
+_CONFIG_VERSION_RE = re.compile(r"^config-\d{6}$")
+
+
+def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -29,38 +52,48 @@ def _load_json(path: Path) -> dict[str, Any]:
         raise RevisionError(
             f"{path.name}: schema_version must equal 1; got {value.get('schema_version')!r}"
         )
+    if _contains_null(value):
+        raise RevisionError(f"{path.name}: null values are not allowed in revision documents")
     return value
 
 
-def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+def _contains_null(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, Mapping):
+        return any(_contains_null(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_null(item) for item in value)
+    return False
 
 
-def _load_config_version(root: Path) -> str | None:
+def _load_config_version(root: Path) -> str:
     path = root.parent / "resolved.json"
     if not path.is_file():
-        return None
+        raise RevisionError(
+            "resolved.json is required next to revisions/; unversioned revision bundles are unsupported"
+        )
     value = _load_json(path)
     config_version = value.get("config_version")
-    if not isinstance(config_version, str) or re.fullmatch(
-        r"config-\d{6}", config_version
-    ) is None:
+    if (
+        not isinstance(config_version, str)
+        or _CONFIG_VERSION_RE.fullmatch(config_version) is None
+    ):
         raise RevisionError(
             f"{path.name}: config_version must match config-NNNNNN; got {config_version!r}"
         )
     return config_version
 
 
-def _reject_keys(
-    source: Mapping[str, Any], keys: tuple[str, ...], *, document: str
+def _reject_unknown(
+    source: Mapping[str, Any],
+    allowed: set[str],
+    *,
+    document: str,
 ) -> None:
-    present = [key for key in keys if key in source]
-    if present:
-        raise RevisionError(
-            f"{document}: unsupported fields are present: {present!r}."
-        )
+    unknown = sorted(set(source) - allowed)
+    if unknown:
+        raise RevisionError(f"{document}: unsupported fields are present: {unknown!r}")
 
 
 def _require_mapping(
@@ -68,32 +101,35 @@ def _require_mapping(
 ) -> Mapping[str, Any]:
     value = source.get(key)
     if not isinstance(value, Mapping):
-        raise RevisionError(f"{document}: {key!r} must be an object.")
+        raise RevisionError(f"{document}: {key!r} must be an object")
     return value
 
 
-def _require_string(
+def _require_string(source: Mapping[str, Any], key: str, *, document: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RevisionError(f"{document}: {key!r} must be a non-empty string")
+    return value.strip()
+
+
+def _optional_string(
     source: Mapping[str, Any], key: str, *, document: str
-) -> str:
-    value = source.get(key)
-    if not isinstance(value, str) or not value:
-        raise RevisionError(f"{document}: {key!r} must be a non-empty string.")
-    return value
-
-
-def _optional_string(source: Mapping[str, Any], key: str) -> str | None:
-    value = source.get(key)
-    if value is None:
+) -> str | None:
+    if key not in source:
         return None
-    if not isinstance(value, str) or not value:
-        raise RevisionError(f"{key!r} must be a non-empty string when present.")
-    return value
+    value = source[key]
+    if not isinstance(value, str) or not value.strip():
+        raise RevisionError(
+            f"{document}: {key!r} must be a non-empty string when present"
+        )
+    return value.strip()
 
 
-def _require_identity(
+def _identity(
     raw: Mapping[str, Any], key: str, *, document: str
 ) -> tuple[str, str]:
     value = _require_mapping(raw, key, document=document)
+    _reject_unknown(value, {"repo_id", "revision"}, document=f"{document}.{key}")
     return (
         _require_string(value, "repo_id", document=f"{document}.{key}"),
         _require_string(value, "revision", document=f"{document}.{key}"),
@@ -132,8 +168,15 @@ class RuntimeRevision:
         cls, document: RevisionDocument, *, catalog: AsrCatalog
     ) -> "RuntimeRevision":
         raw = document.raw
-        _reject_keys(raw, ("decoder", "decoders", "decorders"), document=document.name)
+        _reject_unknown(
+            raw,
+            {"schema_version", "catalog", "profile_set"},
+            document=document.name,
+        )
         catalog_raw = _require_mapping(raw, "catalog", document=document.name)
+        _reject_unknown(
+            catalog_raw, {"id", "sha256"}, document=f"{document.name}.catalog"
+        )
         catalog_id = _require_string(
             catalog_raw, "id", document=f"{document.name}.catalog"
         )
@@ -157,7 +200,7 @@ class RuntimeRevision:
         return cls(
             document=document,
             catalog_id=catalog_id,
-            catalog_sha256=catalog_sha,
+            catalog_sha256=catalog_sha.lower(),
             profile_set_id=profile_set_id,
             variants=dict(profile_set.variants),
             default_variant=profile_set.default_variant,
@@ -193,32 +236,32 @@ class ReferenceRevision:
     @classmethod
     def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
         raw = document.raw
-        _reject_keys(
+        _reject_unknown(
             raw,
-            (
-                "model",
-                "model_id",
-                "model_revision",
-                "tokenizer_revision",
-                "reference_id",
-                "reference_revision",
-                "canonical_framework",
-                "decoder",
-                "decoders",
-                "decorders",
-            ),
+            {
+                "schema_version",
+                "development_artifact",
+                "upstream",
+                "tokenizer",
+                "reference",
+            },
             document=document.name,
         )
-        development_repo_id, development_revision = _require_identity(
+        development_repo_id, development_revision = _identity(
             raw, "development_artifact", document=document.name
         )
-        upstream_repo_id, upstream_revision = _require_identity(
+        upstream_repo_id, upstream_revision = _identity(
             raw, "upstream", document=document.name
         )
-        tokenizer_repo_id, tokenizer_revision = _require_identity(
+        tokenizer_repo_id, tokenizer_revision = _identity(
             raw, "tokenizer", document=document.name
         )
         reference = _require_mapping(raw, "reference", document=document.name)
+        _reject_unknown(
+            reference,
+            {"id", "revision", "canonical_framework"},
+            document=f"{document.name}.reference",
+        )
         return cls(
             document=document,
             development_artifact_repo_id=development_repo_id,
@@ -248,14 +291,17 @@ class EvaluationSchemaRevision:
     schema_revision: str
 
     @classmethod
-    def from_document(cls, document: RevisionDocument) -> "EvaluationSchemaRevision":
+    def from_document(
+        cls, document: RevisionDocument
+    ) -> "EvaluationSchemaRevision":
         raw = document.raw
-        _reject_keys(
-            raw,
-            ("schema_id", "schema_revision", "decoder", "decoders", "decorders"),
-            document=document.name,
+        _reject_unknown(
+            raw, {"schema_version", "schema"}, document=document.name
         )
         schema = _require_mapping(raw, "schema", document=document.name)
+        _reject_unknown(
+            schema, {"id", "revision"}, document=f"{document.name}.schema"
+        )
         return cls(
             document=document,
             schema_id=_require_string(
@@ -276,7 +322,6 @@ class DatasetLockEntry:
     split: str | None
     sha256: str | None
     manifest: str | None
-    raw: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,32 +331,44 @@ class DatasetLock:
 
     @classmethod
     def from_document(cls, document: RevisionDocument) -> "DatasetLock":
-        raw_datasets = document.raw.get("datasets")
+        raw = document.raw
+        _reject_unknown(raw, {"schema_version", "datasets"}, document=document.name)
+        raw_datasets = raw.get("datasets")
         if not isinstance(raw_datasets, list):
-            raise RevisionError(f"{document.name}: 'datasets' must be a JSON array.")
+            raise RevisionError(f"{document.name}: 'datasets' must be a JSON array")
         entries: list[DatasetLockEntry] = []
         for index, item in enumerate(raw_datasets):
             if not isinstance(item, dict):
                 raise RevisionError(
-                    f"{document.name}: datasets[{index}] must be an object."
+                    f"{document.name}: datasets[{index}] must be an object"
                 )
+            _reject_unknown(
+                item,
+                {"id", "repo_id", "revision", "subset", "split", "sha256", "manifest"},
+                document=f"{document.name}.datasets[{index}]",
+            )
             entries.append(
                 DatasetLockEntry(
                     id=_require_string(item, "id", document=document.name),
                     repo_id=_require_string(item, "repo_id", document=document.name),
                     revision=_require_string(item, "revision", document=document.name),
-                    subset=_optional_string(item, "subset"),
-                    split=_optional_string(item, "split"),
-                    sha256=_optional_string(item, "sha256"),
-                    manifest=_optional_string(item, "manifest"),
-                    raw=dict(item),
+                    subset=_optional_string(
+                        item, "subset", document=f"{document.name}.datasets[{index}]"
+                    ),
+                    split=_optional_string(
+                        item, "split", document=f"{document.name}.datasets[{index}]"
+                    ),
+                    sha256=_optional_string(
+                        item, "sha256", document=f"{document.name}.datasets[{index}]"
+                    ),
+                    manifest=_optional_string(
+                        item, "manifest", document=f"{document.name}.datasets[{index}]"
+                    ),
                 )
             )
         ids = [entry.id for entry in entries]
         if len(ids) != len(set(ids)):
-            raise RevisionError(
-                f"{document.name}: duplicate dataset IDs are not allowed."
-            )
+            raise RevisionError(f"{document.name}: duplicate dataset IDs are not allowed")
         return cls(document=document, datasets=tuple(entries))
 
     def get(self, dataset_id: str) -> DatasetLockEntry:
@@ -329,7 +386,7 @@ class RevisionBundle:
     evaluation_schema: EvaluationSchemaRevision
     datasets: DatasetLock
     runtime: RuntimeRevision
-    config_version: str | None = None
+    config_version: str
 
     @property
     def sha256(self) -> str:
@@ -343,58 +400,75 @@ class RevisionBundle:
             digest.update(document.sha256.encode("ascii"))
         return digest.hexdigest()
 
+    def snapshot(self) -> RevisionSnapshot:
+        entries: list[DatasetRevisionEntry] = []
+        for entry in self.datasets.datasets:
+            if entry.sha256 is None:
+                raise RevisionError(
+                    f"datasets-lock entry {entry.id!r} requires sha256 before execution"
+                )
+            if entry.manifest is None:
+                raise RevisionError(
+                    f"datasets-lock entry {entry.id!r} requires manifest before execution"
+                )
+            entries.append(
+                DatasetRevisionEntry(
+                    id=entry.id,
+                    repo_id=entry.repo_id,
+                    revision=entry.revision,
+                    subset=entry.subset or "default",
+                    split=entry.split or "default",
+                    sha256=entry.sha256,
+                    manifest=entry.manifest,
+                )
+            )
+        value = RevisionSnapshot(
+            config_version=self.config_version,
+            bundle_sha256=self.sha256,
+            runtime=RuntimeRevisionSnapshot(
+                document_sha256=self.runtime.document.sha256,
+                catalog=CatalogReference(
+                    id=self.runtime.catalog_id,
+                    sha256=self.runtime.catalog_sha256,
+                ),
+                profile_set=self.runtime.profile_set_id,
+            ),
+            reference=ReferenceRevisionSnapshot(
+                document_sha256=self.reference.document.sha256,
+                development_artifact=RepoRevisionIdentity(
+                    repo_id=self.reference.development_artifact_repo_id,
+                    revision=self.reference.development_artifact_revision,
+                ),
+                upstream=RepoRevisionIdentity(
+                    repo_id=self.reference.upstream_repo_id,
+                    revision=self.reference.upstream_revision,
+                ),
+                tokenizer=RepoRevisionIdentity(
+                    repo_id=self.reference.tokenizer_repo_id,
+                    revision=self.reference.tokenizer_revision,
+                ),
+                reference_id=self.reference.reference_id,
+                reference_revision=self.reference.reference_revision,
+                canonical_framework=self.reference.canonical_framework,
+            ),
+            evaluation_schema=EvaluationSchemaRevisionSnapshot(
+                document_sha256=self.evaluation_schema.document.sha256,
+                schema_id=self.evaluation_schema.schema_id,
+                schema_revision=self.evaluation_schema.schema_revision,
+            ),
+            datasets=DatasetsRevisionSnapshot(
+                document_sha256=self.datasets.document.sha256,
+                entries=tuple(entries),
+            ),
+        )
+        try:
+            value.validate()
+        except Exception as exc:
+            raise RevisionError(str(exc)) from exc
+        return value
+
     def to_dict(self) -> dict[str, Any]:
-        reference = self.reference
-        return {
-            "config_version": self.config_version,
-            "bundle_sha256": self.sha256,
-            "runtime": {
-                "document_sha256": self.runtime.document.sha256,
-                "catalog": {
-                    "id": self.runtime.catalog_id,
-                    "sha256": self.runtime.catalog_sha256,
-                },
-                "profile_set": self.runtime.profile_set_id,
-            },
-            "reference": {
-                "document_sha256": reference.document.sha256,
-                "development_artifact": {
-                    "repo_id": reference.development_artifact_repo_id,
-                    "revision": reference.development_artifact_revision,
-                },
-                "upstream": {
-                    "repo_id": reference.upstream_repo_id,
-                    "revision": reference.upstream_revision,
-                },
-                "tokenizer": {
-                    "repo_id": reference.tokenizer_repo_id,
-                    "revision": reference.tokenizer_revision,
-                },
-                "reference_id": reference.reference_id,
-                "reference_revision": reference.reference_revision,
-                "canonical_framework": reference.canonical_framework,
-            },
-            "evaluation_schema": {
-                "document_sha256": self.evaluation_schema.document.sha256,
-                "schema_id": self.evaluation_schema.schema_id,
-                "schema_revision": self.evaluation_schema.schema_revision,
-            },
-            "datasets": {
-                "document_sha256": self.datasets.document.sha256,
-                "entries": [
-                    {
-                        "id": entry.id,
-                        "repo_id": entry.repo_id,
-                        "revision": entry.revision,
-                        "subset": entry.subset,
-                        "split": entry.split,
-                        "sha256": entry.sha256,
-                        "manifest": entry.manifest,
-                    }
-                    for entry in self.datasets.datasets
-                ],
-            },
-        }
+        return self.snapshot().to_dict()
 
 
 class RevisionLoader:
@@ -420,7 +494,6 @@ class RevisionLoader:
                 path=self.root / self.DATASETS_LOCK_FILE,
             )
         )
-
         runtime_path = self.root / self.RUNTIME_FILE
         if not runtime_path.is_file():
             raise RevisionError(
@@ -434,12 +507,6 @@ class RevisionLoader:
             RevisionDocument.load(name=self.RUNTIME_FILE, path=runtime_path),
             catalog=catalog,
         )
-
-        if "decoders" in reference_document.raw or "decoders" in evaluation_document.raw:
-            raise RevisionError(
-                "reference.json and evaluation-schema.json must not repeat decoder declarations"
-            )
-
         return RevisionBundle(
             reference=ReferenceRevision.from_document(reference_document),
             evaluation_schema=EvaluationSchemaRevision.from_document(evaluation_document),

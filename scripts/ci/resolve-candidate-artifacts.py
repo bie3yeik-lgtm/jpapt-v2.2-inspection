@@ -6,23 +6,20 @@ import json
 from pathlib import Path
 import sys
 
+from parakeet_onnx.contracts import reject_nulls
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Resolve one minimal candidate runtime variant into generated CI outputs."
+        description="Resolve a minimal candidate into one generated execution contract."
     )
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--runtime-variant")
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     parser.add_argument("--github-output", type=Path)
-    parser.add_argument(
-        "--contract-out",
-        type=Path,
-        help="Write the generated execution contract consumed by the Rust evaluator.",
-    )
+    parser.add_argument("--contract-out", type=Path)
     return parser
 
 
@@ -30,6 +27,9 @@ def _execution_contract(candidate: CandidateArtifacts) -> dict[str, object]:
     value = candidate.provenance_dict()
     value["schema_version"] = 1
     value["candidate_root"] = str(candidate.root)
+    if value.get("tokenizer") is None:
+        value.pop("tokenizer", None)
+    reject_nulls(value)
     return value
 
 
@@ -42,7 +42,8 @@ def main() -> int:
             repository_root=args.repository_root,
         )
         validate_candidate_runtime_contract(candidate)
-    except (CandidateMetadataError, KeyError, TypeError, ValueError) as exc:
+        contract = _execution_contract(candidate)
+    except (CandidateMetadataError, KeyError, TypeError, ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
@@ -70,13 +71,7 @@ def main() -> int:
     if args.contract_out is not None:
         args.contract_out.parent.mkdir(parents=True, exist_ok=True)
         args.contract_out.write_text(
-            json.dumps(
-                _execution_contract(candidate),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
+            json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         values["candidate_contract"] = str(args.contract_out.resolve())
