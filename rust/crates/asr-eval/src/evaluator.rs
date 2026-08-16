@@ -10,9 +10,10 @@ use asr_runtime::{
 use crate::{
     EvalError, Result,
     benchmark::{BenchmarkInput, ProviderTelemetry, SampleAggregate, build_benchmark},
+    capsule::write_onnx_evaluation_capsule,
     decoding::ctc::Vocabulary,
     manifest::load_resolved_manifest,
-    writer::{ensure_dir, write_json, write_jsonl},
+    writer::{ensure_dir, write_json},
 };
 
 #[derive(Debug, Clone)]
@@ -73,15 +74,8 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
     for sample in &manifest.samples {
         let started = Instant::now();
         let result = (|| -> Result<serde_json::Value> {
-            let audio_path = sample.audio_path.as_deref().ok_or_else(|| {
-                EvalError::InvalidInput(format!(
-                    "resolved sample {} has no materialized audio_path",
-                    sample.id
-                ))
-            })?;
-
             let decode_started = Instant::now();
-            let decoded = decode_audio(audio_path)?;
+            let decoded = decode_audio(&sample.audio_path)?;
             let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
 
             let resample_started = Instant::now();
@@ -184,7 +178,7 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
                         "index": sample.row_index,
                         "audio_sha256": sample.audio_sha256,
                         "audio_duration_sec": sample.duration_sec,
-                        "sample_rate_hz": sample.sample_rate_hz.unwrap_or(16_000),
+                        "sample_rate_hz": sample.sample_rate_hz,
                         "reference_text": sample.transcription
                     },
                     "execution": {
@@ -231,12 +225,10 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
         .to_owned(),
     );
 
-    write_json(&options.output.join("run-context.json"), &run_context)?;
-    write_jsonl(&options.output.join("samples.jsonl"), &results)?;
     let provider_name = options.provider.to_string();
     let benchmark = build_benchmark(BenchmarkInput {
         run_context: &run_context,
-        manifest: &manifest.manifest_path,
+        manifest: &manifest.input_id,
         expected: manifest.expected_sample_count,
         session_creation_ms,
         provider: &provider_name,
@@ -244,7 +236,10 @@ pub fn evaluate(options: EvaluateOptions) -> Result<serde_json::Value> {
         provider_telemetry: telemetry,
         aggregate: &aggregate,
     });
+
+    write_json(&options.output.join("run-context.json"), &run_context)?;
     write_json(&options.output.join("metrics.json"), &benchmark)?;
+    write_onnx_evaluation_capsule(&options.output, &run_context, &manifest, &results, &benchmark)?;
     Ok(benchmark)
 }
 
@@ -254,66 +249,29 @@ fn validate_execution_inputs(
     provider: ProviderKind,
     model_path: &std::path::Path,
 ) -> Result<()> {
-    if context
-        .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(2)
-    {
-        return Err(EvalError::InvalidInput(
-            "Rust evaluator requires run-context schema_version 2".into(),
-        ));
+    if context.get("schema_version").and_then(serde_json::Value::as_u64) != Some(2) {
+        return Err(EvalError::InvalidInput("Rust evaluator requires run-context schema_version 2".into()));
     }
     let provider_id = provider.to_string();
-    if context
-        .get("provider_id")
-        .and_then(serde_json::Value::as_str)
-        != Some(provider_id.as_str())
-    {
-        return Err(EvalError::InvalidInput(
-            "run-context provider_id does not match requested provider".into(),
-        ));
+    if context.get("provider_id").and_then(serde_json::Value::as_str) != Some(provider_id.as_str()) {
+        return Err(EvalError::InvalidInput("run-context provider_id does not match requested provider".into()));
     }
     let provenance = &context["metadata"]["candidate"];
     for (name, actual, expected) in [
-        (
-            "candidate_id",
-            provenance["candidate_id"].as_str(),
-            Some(candidate.candidate_id.as_str()),
-        ),
-        (
-            "variant",
-            provenance["variant"].as_str(),
-            Some(candidate.variant.as_str()),
-        ),
-        (
-            "profile",
-            provenance["profile"].as_str(),
-            Some(candidate.profile.as_str()),
-        ),
-        (
-            "bundle_sha256",
-            provenance["bundle_sha256"].as_str(),
-            Some(candidate.bundle_sha256.as_str()),
-        ),
+        ("candidate_id", provenance["candidate_id"].as_str(), Some(candidate.candidate_id.as_str())),
+        ("variant", provenance["variant"].as_str(), Some(candidate.variant.as_str())),
+        ("profile", provenance["profile"].as_str(), Some(candidate.profile.as_str())),
+        ("bundle_sha256", provenance["bundle_sha256"].as_str(), Some(candidate.bundle_sha256.as_str())),
     ] {
         if actual != expected {
-            return Err(EvalError::InvalidInput(format!(
-                "run-context candidate {name} does not match generated candidate contract"
-            )));
+            return Err(EvalError::InvalidInput(format!("run-context candidate {name} does not match generated candidate contract")));
         }
     }
     let artifact_path = context["artifact"]["path"]
         .as_str()
         .ok_or_else(|| EvalError::InvalidInput("run-context artifact.path is missing".into()))?;
-    if !artifact_path.ends_with(
-        model_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default(),
-    ) {
-        return Err(EvalError::InvalidInput(
-            "run-context artifact path does not match selected primary artifact".into(),
-        ));
+    if !artifact_path.ends_with(model_path.file_name().and_then(|value| value.to_str()).unwrap_or_default()) {
+        return Err(EvalError::InvalidInput("run-context artifact path does not match selected primary artifact".into()));
     }
     Ok(())
 }
@@ -346,11 +304,7 @@ fn finalized_provider_telemetry(
     }
 }
 
-fn sample_provider(
-    provider: ProviderKind,
-    strict_provider: bool,
-    success: bool,
-) -> serde_json::Value {
+fn sample_provider(provider: ProviderKind, strict_provider: bool, success: bool) -> serde_json::Value {
     let proven = provider == ProviderKind::Cpu || strict_provider;
     serde_json::json!({
         "requested": provider.to_string(),
