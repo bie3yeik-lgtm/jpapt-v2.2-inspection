@@ -261,7 +261,7 @@ loaderでは `subset` / `split` / `sha256` / `manifest` 自体はoptionalです�
 
 **分類:** generated
 
-**生成:** `scripts/ci/write-runtime-lock.py` / `hf-push-config-version.sh`
+**生成:** Rust `asr-config-publish prepare`（`hf-push-config-version.sh` から呼び出し）
 
 **配置:** `config/versions/config-NNNNNN/runtime.json`
 
