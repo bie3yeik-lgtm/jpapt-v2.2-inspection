@@ -12,6 +12,11 @@ on:
         description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
         required: true
         type: string
+      runtime_variant:
+        description: "Runtime variant from the target profile set (blank = catalog default)"
+        required: false
+        default: ""
+        type: string
       evaluation:
         description: "Evaluation suite"
         required: false
@@ -24,7 +29,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: rust-eval-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.evaluation }}
+  group: rust-eval-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}-${{ inputs.evaluation }}
   cancel-in-progress: true
 
 env:
@@ -44,6 +49,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Install project for catalog resolution
+        run: python -m pip install -e ".[dev]"
       - id: allocate
         name: Allocate ID through central allocator
         shell: bash
@@ -51,9 +58,10 @@ jobs:
           HF_BUCKET: ${{ inputs.hf_bucket }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           EVALUATION_ID: ${{ inputs.evaluation }}
+          ASR_RUNTIME_VARIANT: ${{ inputs.runtime_variant }}
         run: |
           set -euo pipefail
-          ID="$(bash scripts/hf/hf-allocate-id.sh experiments rust-eval)"
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments experiment.rust_eval)"
           echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "Experiment: ${ID}"
 
@@ -92,6 +100,9 @@ jobs:
       EXPECTED_UPSTREAM_REPO_ID: ""
       EXPECTED_TOKENIZER_REPO_ID: ""
       EXPECTED_FRAMEWORK: ""
+      HF_PROFILE_SET: ""
+      ASR_RUNTIME_VARIANT: ""
+      EXPECTED_RUNTIME_PROFILE: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
@@ -110,17 +121,22 @@ jobs:
           python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
 
-      - name: Resolve HF Bucket
+      - name: Resolve HF Bucket and runtime variant
         id: hf
         shell: bash
         run: |
           set -euo pipefail
           [[ -n "${HF_TARGETS_JSON:-}" ]] || { echo "::error::HF_TARGETS_JSON is required."; exit 1; }
-          python scripts/ci/resolve-hf-target.py \
-            --bucket "${{ inputs.hf_bucket }}" \
-            --targets-json "${HF_TARGETS_JSON}" \
-            --github-env "${GITHUB_ENV}" \
+          ARGS=(
+            --bucket "${{ inputs.hf_bucket }}"
+            --targets-json "${HF_TARGETS_JSON}"
+            --github-env "${GITHUB_ENV}"
             --github-output "${GITHUB_OUTPUT}"
+          )
+          if [[ -n "${{ inputs.runtime_variant }}" ]]; then
+            ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
+          fi
+          python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
 
       - name: Prepare directories and revision locks
         shell: bash
@@ -135,6 +151,9 @@ jobs:
             --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}" \
             --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}" \
             --expected-framework "${EXPECTED_FRAMEWORK}" \
+            --expected-profile-set "${HF_PROFILE_SET}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
+            --expected-runtime-profile "${EXPECTED_RUNTIME_PROFILE}" \
             --expected-decoder "${EXPECTED_DECODER}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
 
@@ -145,23 +164,29 @@ jobs:
           python scripts/ci/validate-evaluator-capability.py \
             --evaluator rust-onnx \
             --decoder "${EXPECTED_DECODER}" \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --provider "${{ matrix.provider }}" \
             --candidate-dir .ci/candidate
 
-      - name: Resolve candidate metadata
+      - name: Resolve selected candidate variant
         id: candidate
         shell: bash
         run: |
           set -euo pipefail
           python scripts/ci/resolve-candidate-artifacts.py \
             --candidate-dir .ci/candidate \
+            --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --github-output "${GITHUB_OUTPUT}"
           [[ "${{ inputs.candidate_id }}" == "${{ steps.candidate.outputs.candidate_id }}" ]] || {
             echo "::error::candidate_id input does not match metadata.json"
             exit 1
           }
+          [[ "${EXPECTED_RUNTIME_PROFILE}" == "${{ steps.candidate.outputs.runtime_profile }}" ]] || {
+            echo "::error::candidate runtime profile does not match resolved target profile"
+            exit 1
+          }
           [[ "${{ steps.candidate.outputs.tokenizer_kind }}" == "vocabulary" ]] || {
-            echo "::error::Rust CTC evaluator requires tokenizer.kind=vocabulary"
+            echo "::error::Rust CTC evaluator requires the selected profile tokenizer kind to be vocabulary"
             exit 1
           }
 
@@ -213,7 +238,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: rust-eval-${{ steps.hf.outputs.target_id }}-${{ matrix.name }}-${{ inputs.candidate_id }}
+          name: rust-eval-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ matrix.name }}-${{ inputs.candidate_id }}
           path: results/${{ matrix.name }}
           retention-days: 7
           if-no-files-found: warn
