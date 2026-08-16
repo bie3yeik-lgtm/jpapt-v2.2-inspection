@@ -35,8 +35,8 @@ jobs:
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Allocate ID through central allocator
@@ -71,10 +71,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -151,7 +151,7 @@ jobs:
             --decoder "${EXPECTED_DECODER}"
 
       - name: Cache model and evaluation assets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .cache/huggingface
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload lightweight GitHub artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ inputs.candidate_id }}
           path: |
