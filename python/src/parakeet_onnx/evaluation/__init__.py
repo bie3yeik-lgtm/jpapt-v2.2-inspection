@@ -15,6 +15,14 @@ from .capsule_reader import (
     read_experiment_capsule,
     validate_experiment_capsule,
 )
+from .capsule_streaming_writer import (
+    CAPSULE_PARQUET_COMPRESSION,
+    CAPSULE_PARQUET_COMPRESSION_LEVEL,
+    CAPSULE_PARQUET_WRITER_VERSION,
+    StreamingExperimentCapsuleWriter,
+    capsule_arrow_schema,
+    write_capsule_row_batches,
+)
 from .factory import EvaluatorBuildRequest, create_python_evaluator
 from .metrics import (
     CorpusErrorAccumulator,
@@ -45,6 +53,9 @@ from .writer import BenchmarkWriter, SampleResultWriter, write_benchmark
 __all__ = [
     "AggregateResult",
     "BenchmarkWriter",
+    "CAPSULE_PARQUET_COMPRESSION",
+    "CAPSULE_PARQUET_COMPRESSION_LEVEL",
+    "CAPSULE_PARQUET_WRITER_VERSION",
     "CapsuleArtifact",
     "CapsuleArtifactError",
     "CapsuleDiagnostic",
@@ -65,7 +76,9 @@ __all__ = [
     "PythonAsrEvaluator",
     "PythonCtcEvaluator",
     "SampleResultWriter",
+    "StreamingExperimentCapsuleWriter",
     "aggregate_sample_results",
+    "capsule_arrow_schema",
     "character_error_rate",
     "create_python_evaluator",
     "edit_distance",
@@ -80,4 +93,5 @@ __all__ = [
     "validate_sample_result",
     "word_error_rate",
     "write_benchmark",
+    "write_capsule_row_batches",
 ]
