@@ -42,6 +42,13 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _generated_candidate_contract(candidate: CandidateArtifacts) -> dict[str, object]:
+    contract = candidate.provenance_dict()
+    contract["schema_version"] = 1
+    contract["candidate_root"] = str(candidate.root)
+    return contract
+
+
 def _apply_runtime_overrides(
     context: dict[str, object],
     *,
@@ -144,7 +151,7 @@ def main() -> int:
     validate_candidate_runtime_contract(candidate)
 
     metadata: dict[str, object] = {
-        "candidate": candidate.provenance_dict(),
+        "candidate": _generated_candidate_contract(candidate),
         "runtime_variant": candidate.variant,
         "runtime_profile": candidate.profile_id,
     }
@@ -185,8 +192,6 @@ def main() -> int:
     _normalize_rust_only_optionals(context)
     _reject_nulls(context)
 
-    # The shared schema remains a compatibility floor; Rust applies the stronger
-    # no-null/type/invariant contract again when the evaluator starts.
     validate_run_context(context)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
