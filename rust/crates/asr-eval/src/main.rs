@@ -14,11 +14,11 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Evaluate(args) => {
             let provider = ProviderKind::from_str(&args.provider)?;
-            RunContextV2::load(&args.run_context)?;
+            let run_context = RunContextV2::load(&args.run_context)?;
             let result = evaluate(EvaluateOptions {
                 provider,
                 candidate_contract: args.candidate_contract,
-                run_context: args.run_context,
+                run_context,
                 resolved_manifest: args.resolved_manifest,
                 output: args.output,
             })?;
