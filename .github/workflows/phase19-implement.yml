@@ -25,6 +25,8 @@ jobs:
 
           root = Path('.')
           matrix_provider = '$' + '{{ matrix.provider }}'
+          expected_decoder = '$' + '{EXPECTED_DECODER}'
+          runtime_variant = '$' + '{ASR_RUNTIME_VARIANT}'
 
           def replace_regex(path: str, pattern: str, replacement: str) -> None:
               p = root / path
@@ -34,13 +36,13 @@ jobs:
                   raise SystemExit(f'{path}: expected exactly one replacement target, got {count}')
               p.write_text(updated, encoding='utf-8')
 
-          cpu_replacement = '''      - name: Resolve candidate execution contract
+          cpu_replacement = f'''      - name: Resolve candidate execution contract
                 shell: bash
                 run: |
                   set -euo pipefail
                   python scripts/ci/resolve-candidate-artifacts.py \\
                     --candidate-dir .ci/candidate \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --runtime-variant "{runtime_variant}" \\
                     --contract-out .ci/candidate-contract.json
 
               - name: Validate evaluator and candidate capability
@@ -49,8 +51,8 @@ jobs:
                   set -euo pipefail
                   cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
                     --evaluator python-onnx \\
-                    --decoder "${EXPECTED_DECODER}" \\
-                    --runtime-variant "${ASR_RUNTIME_VARIANT}" \\
+                    --decoder "{expected_decoder}" \\
+                    --runtime-variant "{runtime_variant}" \\
                     --provider cpu \\
                     --candidate-contract .ci/candidate-contract.json
 
@@ -67,7 +69,7 @@ jobs:
                   set -euo pipefail
                   python scripts/ci/resolve-candidate-artifacts.py \\
                     --candidate-dir .ci/candidate \\
-                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
+                    --runtime-variant "{runtime_variant}" \\
                     --contract-out .ci/candidate-contract.json
               - name: Validate evaluator and candidate capability
                 shell: bash
@@ -75,8 +77,8 @@ jobs:
                   set -euo pipefail
                   cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
                     --evaluator python-onnx \\
-                    --decoder "${{EXPECTED_DECODER}}" \\
-                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
+                    --decoder "{expected_decoder}" \\
+                    --runtime-variant "{runtime_variant}" \\
                     --provider "{matrix_provider}" \\
                     --candidate-contract .ci/candidate-contract.json
           '''
@@ -98,8 +100,8 @@ jobs:
                   set -euo pipefail
                   cargo run --quiet --locked -p asr-contracts --bin asr-evaluator-policy -- \\
                     --evaluator rust-onnx \\
-                    --decoder "${{EXPECTED_DECODER}}" \\
-                    --runtime-variant "${{ASR_RUNTIME_VARIANT}}" \\
+                    --decoder "{expected_decoder}" \\
+                    --runtime-variant "{runtime_variant}" \\
                     --provider "{matrix_provider}" \\
                     --candidate-contract .ci/candidate-contract.json
 
