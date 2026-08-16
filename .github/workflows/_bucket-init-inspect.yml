@@ -1,0 +1,36 @@
+name: Bucket Init Read-Only Inspect
+
+on:
+  push:
+    branches: [agent/hf-bucket-init]
+    paths:
+      - ".github/workflows/_bucket-init-inspect.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Inspect ci-test without writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "huggingface_hub==1.24.0"
+          echo '=== info ==='
+          hf buckets info gawohok7/ci-test
+          echo '=== recursive JSON listing ==='
+          hf buckets list gawohok7/ci-test -R --format json
+          echo '=== manifest if present ==='
+          if hf buckets cp hf://buckets/gawohok7/ci-test/bucket-manifest.json - > /tmp/bucket-manifest.json 2>/tmp/cp.err; then
+            cat /tmp/bucket-manifest.json
+          else
+            cat /tmp/cp.err
+            echo 'manifest absent'
+          fi
