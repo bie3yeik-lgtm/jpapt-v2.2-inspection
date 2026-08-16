@@ -9,7 +9,6 @@ on:
       - ".github/workflows/provider-strict-probes.yml"
       - "scripts/ci/e2e-provider-ctc.py"
       - "scripts/ci/prepare-provider-run-context.py"
-      - "scripts/ci/prepare-rust-run-context.py"
       - "scripts/ci/resolve-candidate-artifacts.py"
       - "rust/**"
       - "Cargo.toml"
