@@ -9,7 +9,7 @@ import sys
 # Project policy. Cache restore/save are optional actions, but when they are
 # used they must follow the same v6 major as actions/cache.
 REQUIRED = {
-    "actions/checkout": "v6",
+    "actions/checkout": "v7",
     "actions/setup-python": "v7",
     "actions/upload-artifact": "v7",
     "actions/cache": "v6",
