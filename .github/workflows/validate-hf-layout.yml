@@ -60,6 +60,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install locked Python project
         shell: bash
@@ -83,7 +84,7 @@ jobs:
           set -euo pipefail
           python scripts/dev/verify-python-first.py
           python scripts/dev/doctor.py
-          python scripts/ci/validate-hf-targets.py
+          cargo run --quiet --locked -p asr-hf -- validate-targets
           python scripts/ci/validate-github-action-versions.py
           python scripts/ci/resolve-asr-catalog.py fingerprint catalog_id
           python scripts/ci/resolve-asr-catalog.py fingerprint sha256
