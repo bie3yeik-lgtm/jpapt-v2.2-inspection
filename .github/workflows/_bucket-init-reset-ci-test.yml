@@ -70,7 +70,7 @@ jobs:
           PY
 
           while IFS= read -r path; do
-            hf buckets rm "gawohok7/ci-test/$path"
+            hf buckets rm "gawohok7/ci-test/$path" --yes
           done <<'EOF'
           README.md
           benchmarks/README.md
