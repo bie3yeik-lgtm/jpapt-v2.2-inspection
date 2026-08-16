@@ -121,6 +121,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install Python project
         shell: bash
         run: |
@@ -208,12 +209,13 @@ jobs:
             --experiment-id "${EXPERIMENT_ID}" \
             --revisions .ci/hf/config/revisions \
             --output "results/${{ matrix.result_name }}"
-      - name: Validate result contract
+      - name: Validate result contract with Rust
         if: always()
         shell: bash
         run: |
           if [[ -f "results/${{ matrix.result_name }}/run-context.json" ]]; then
-            python scripts/ci/validate-result.py "results/${{ matrix.result_name }}"
+            cargo run --quiet --locked -p asr-contracts --bin asr-contracts -- \
+              validate-run "results/${{ matrix.result_name }}"
           fi
       - name: Upload run to HF Bucket
         if: always()
