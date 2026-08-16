@@ -16,7 +16,7 @@ Variable:
 HF_TARGETS_JSON
 ```
 
-推奨値:
+例:
 
 ```json
 {
@@ -63,6 +63,7 @@ hf_bucket
   -> canonical framework
   -> decoder
   -> revision policy
+  -> target固有 model config
 ```
 
 ## Validate HF Layout
@@ -83,7 +84,9 @@ Actions
   -> hf_bucket
 ```
 
-PR/pushでは既知targetをmatrixで検証します。未初期化targetは自動検証では警告扱い、手動選択ではstrictです。
+手動選択はstrictです。選択したBucketのrevision metadataがsource-controlled target contractと一致しない場合は失敗します。
+
+PR/pushの自動target matrixではremote metadata driftをwarningとして報告します。これにより外部Bucketの更新不整合だけでRepositoryのコード変更全体をブロックせず、必要な場合は手動`Validate HF Layout`でstrict validationできます。
 
 ## CPU Full Evaluation
 
@@ -99,11 +102,14 @@ candidate_id
 ```text
 Bucket解決
  -> revision validation
+ -> decoder compatibility check
  -> candidate取得
  -> reference取得
- -> Linux CPU full evaluation
+ -> target固有 model config で Linux CPU full evaluation
  -> run/benchmark upload
 ```
+
+現在のPython ONNX evaluatorは`PythonCtcEvaluator` / `OrtCtcRunner`を使用するCTC-only実装です。そのため`whisper_autoregressive`等の非CTC targetを選択した場合、Bucket/revision解決後に明示的なdecoder compatibility errorで停止します。
 
 ## Cross Platform ONNX Parity
 
@@ -123,6 +129,8 @@ Windows CPU
 macOS CPU
 macOS CoreML
 ```
+
+解決した`HF_TARGET_ID`を`--model-config`としてPython evaluatorへ渡します。現行runtimeはCTC-onlyのため、非CTC targetはinference開始前に明示的に停止します。
 
 artifact名には解決後のtarget idを使用するため、Bucket文字列に含まれる`/`をartifact名へ直接持ち込みません。
 
@@ -144,6 +152,8 @@ Windows CPU
 macOS CPU
 macOS CoreML
 ```
+
+`prepare-rust-manifest.py`にも解決済み`HF_TARGET_ID`を`--model-config`として渡すため、dataset materializationも選択targetのmodel configを使用します。
 
 Rust evaluatorは現在CTC-onlyです。したがってKotoba Whisper Bucketのように`whisper_autoregressive`を要求するtargetも選択・revision検証までは可能ですが、inference前に明示的なdecoder compatibility errorで停止します。
 
