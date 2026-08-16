@@ -1,55 +1,86 @@
 # Multi-framework ASR targets
 
-This repository supports more than one canonical ASR framework while keeping
-the same evaluation datasets, manifests, provider configs, result schemas, and
-Hugging Face storage lifecycle.
+This repository supports multiple canonical ASR frameworks while sharing the
+evaluation dataset, manifest, provider, result-schema, and Hugging Face storage
+lifecycle.
 
-## Supported target profiles
+## Target/storage mapping
 
-Static target profiles live under `config/hf-targets/`.
+Static model semantics remain in `config/hf-targets/*.toml`, while GitHub
+Actions storage selection is controlled by the repository variable
+`HF_TARGETS_JSON`.
 
-| Target | Canonical upstream | Framework | Revision contract | Default decoder | HF Model Repo | HF Bucket |
-|---|---|---|---|---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja` | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `nemo` | `legacy` | `ctc` | `gawohok7/jpapt-v2.2-dev` | `gawohok7/jpapt-v2.2-dev-bucket` |
-| `kotoba-whisper-v1.0` | `kotoba-tech/kotoba-whisper-v1.0` | `transformers` | `strict` | `whisper_autoregressive` | `gawohok7/tf-v1-onnx-dev` | `gawohok7/tf-v1-onnx-dev-bucket` |
+Recommended value:
 
-Both targets use `datasets_policy = "shared-default"`. The existing JSUT,
-Common Voice, and ReazonSpeech evaluation dataset locks/manifests therefore
-remain the evaluation corpus contract.
-
-## Upstream identity versus development artifact identity
-
-Two model identities are intentionally kept separate:
-
-```text
-canonical upstream model
-        -> framework reference behavior
-        -> ONNX export source
-
-HF development model repo
-        -> generated candidate/release artifact identity
-        -> reference.json model.repo_id
+```json
+{
+  "kotoba-whisper-v1.0": {
+    "HF_BUCKET": "gawohok7/tf-v1-onnx-dev-bucket",
+    "HF_MODEL_REPO": "gawohok7/tf-v1-onnx-dev"
+  },
+  "parakeet-tdt_ctc-0.6b-ja": {
+    "HF_BUCKET": "gawohok7/jpapt-v2.2-dev-bucket",
+    "HF_MODEL_REPO": "gawohok7/jpapt-v2.2-dev"
+  }
+}
 ```
 
-For example:
+`HF_BUCKET` values must be unique. `scripts/ci/resolve-hf-target.py` can resolve
+in both directions:
 
 ```text
-Parakeet upstream:  nvidia/parakeet-tdt_ctc-0.6b-ja
-Parakeet dev repo:  gawohok7/jpapt-v2.2-dev
-
-Whisper upstream:   kotoba-tech/kotoba-whisper-v1.0
-Whisper dev repo:   gawohok7/tf-v1-onnx-dev
+target id -> HF_BUCKET / HF_MODEL_REPO
+HF_BUCKET -> target id -> framework / decoder / storage
 ```
 
-The canonical upstream is declared in `config/models/*.toml` and
-`config/hf-targets/*.toml`. `reference.json model.repo_id` identifies the
-selected development model repository whose generated artifacts are being
-validated. This follows the contract already used by the existing Parakeet
-Bucket.
+The Bucket-to-target direction requires `HF_TARGETS_JSON`; it intentionally does
+not guess from static TOML storage.
+
+## GitHub Actions Bucket selection
+
+The following manual workflows expose `hf_bucket`:
+
+```text
+Validate HF Layout
+CPU Full Evaluation
+Cross Platform ONNX Parity
+Rust Cross Platform Evaluation
+```
+
+Enter one of the `HF_BUCKET` values present in `vars.HF_TARGETS_JSON`, for
+example:
+
+```text
+gawohok7/jpapt-v2.2-dev-bucket
+gawohok7/tf-v1-onnx-dev-bucket
+```
+
+GitHub Actions does not support generating `workflow_dispatch` choice options
+dynamically from a repository variable. Therefore `hf_bucket` is a string input,
+but the workflow validates it against `HF_TARGETS_JSON` before any HF access.
+An unknown Bucket fails with the currently configured Bucket values in the error
+message.
+
+The resolver exports:
+
+```text
+HF_TARGET_ID
+HF_BUCKET
+HF_MODEL_REPO
+EXPECTED_DEVELOPMENT_REPO_ID
+EXPECTED_UPSTREAM_REPO_ID
+EXPECTED_TOKENIZER_REPO_ID
+EXPECTED_FRAMEWORK
+EXPECTED_DECODER
+ALLOW_LEGACY_REVISION_METADATA
+```
+
+This keeps storage routing dynamic while framework/decoder semantics remain
+source-controlled.
 
 ## Revision documents
 
-Every initialized target Bucket uses:
+Every initialized target Bucket contains:
 
 ```text
 config/revisions/
@@ -58,21 +89,29 @@ config/revisions/
 └── datasets-lock.json
 ```
 
-### New strict Transformers reference example
+## `reference.json`: explicit revision identities
 
-For the Kotoba Whisper target, the intended `reference.json` shape is:
+New strict targets must separate three independent identities. Do not overload a
+single `model.revision` field.
 
 ```json
 {
   "schema_version": 1,
-  "model": {
+  "development_artifact": {
     "repo_id": "gawohok7/tf-v1-onnx-dev",
-    "revision": "<DEVELOPMENT_ARTIFACT_REVISION>",
-    "tokenizer_revision": "<PINNED_UPSTREAM_OR_ARTIFACT_REVISION>"
+    "revision": "<DEVELOPMENT_ARTIFACT_COMMIT_SHA>"
+  },
+  "upstream": {
+    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
+    "revision": "<UPSTREAM_MODEL_COMMIT_SHA>"
+  },
+  "tokenizer": {
+    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
+    "revision": "<TOKENIZER_OR_PROCESSOR_COMMIT_SHA>"
   },
   "reference": {
     "id": "transformers-reference-v1",
-    "revision": "<REFERENCE_ARTIFACT_REVISION>",
+    "revision": "<REFERENCE_IMPLEMENTATION_OR_ARTIFACT_REVISION>",
     "canonical_framework": "transformers"
   },
   "decoders": {
@@ -82,28 +121,78 @@ For the Kotoba Whisper target, the intended `reference.json` shape is:
 }
 ```
 
-The canonical export/reference source remains
-`kotoba-tech/kotoba-whisper-v1.0`; it is not replaced by the development repo.
+The three identities mean:
 
-### Existing Parakeet legacy compatibility
+| Field | Meaning |
+|---|---|
+| `development_artifact` | The HF Model Repo that contains generated ONNX/deployment artifacts and the exact artifact revision under validation. |
+| `upstream` | The canonical source checkpoint used to generate/reference the artifact. |
+| `tokenizer` | The exact tokenizer/processor source and revision used for decoding/preprocessing. |
 
-The current Parakeet Bucket predates explicit `canonical_framework` and decoder
-metadata in `reference.json`. Its target profile therefore declares:
+For the current Kotoba target:
 
-```toml
-[reference]
-canonical_framework = "nemo"
-revision_contract = "legacy"
+```text
+development_artifact.repo_id = gawohok7/tf-v1-onnx-dev
+upstream.repo_id             = kotoba-tech/kotoba-whisper-v1.0
+tokenizer.repo_id            = kotoba-tech/kotoba-whisper-v1.0
 ```
 
-Legacy mode means missing framework/decoder fields are tolerated during the
-migration. If those fields are present, they must still be compatible with the
-target. New targets should use `revision_contract = "strict"`.
+These revisions are deliberately independent. They may currently resolve to the
+same commit for upstream/tokenizer, but the contract does not assume that.
 
-### Decoder declarations
+## Legacy Parakeet compatibility
 
-Decoder declarations are framework-neutral. The revision loader accepts both
-simple IDs and structured entries:
+The existing Parakeet Bucket predates the explicit identity split and may still
+contain:
+
+```json
+{
+  "model": {
+    "repo_id": "gawohok7/jpapt-v2.2-dev",
+    "revision": "<DEVELOPMENT_ARTIFACT_REVISION>",
+    "tokenizer_revision": "<LEGACY_TOKENIZER_REVISION>"
+  }
+}
+```
+
+The Parakeet target therefore keeps `revision_contract = "legacy"`. The loader
+maps legacy `model.repo_id` / `model.revision` to the new development-artifact
+identity internally and preserves `model_id` / `model_revision` properties only
+as backward-compatible aliases.
+
+Legacy mode also allows upstream/tokenizer/framework/decoder identity to be
+missing. If a legacy field is present, it must still match the selected target.
+New strict targets must use the explicit `development_artifact`, `upstream`, and
+`tokenizer` objects.
+
+## Revision validation
+
+`validate-revisions.py` now validates each identity independently:
+
+```bash
+python scripts/ci/validate-revisions.py \
+  --root .ci/hf/config/revisions \
+  --expected-development-repo-id gawohok7/tf-v1-onnx-dev \
+  --expected-upstream-repo-id kotoba-tech/kotoba-whisper-v1.0 \
+  --expected-tokenizer-repo-id kotoba-tech/kotoba-whisper-v1.0 \
+  --expected-framework transformers \
+  --expected-decoder whisper_autoregressive
+```
+
+`--expected-model-id` remains a hidden compatibility alias for
+`--expected-development-repo-id`; new workflow code must use the explicit name.
+
+For legacy targets only:
+
+```text
+--allow-legacy-metadata
+```
+
+permits missing split identities and old framework/decoder metadata.
+
+## Decoder declarations
+
+Decoder declarations remain framework-neutral:
 
 ```json
 {
@@ -118,117 +207,31 @@ simple IDs and structured entries:
 }
 ```
 
-For compatibility with older metadata, the misspelling `decorders` is also
-accepted on input, but normalized code and new documents should always use
-`decoders`.
+The legacy misspelling `decorders` is accepted on input, but all new metadata
+must use `decoders`.
 
-The loader checks that decoders required by `reference.json` are allowed by
-`evaluation-schema.json` whenever both documents declare them.
+## Evaluation behavior by target
 
-## Validate HF Layout
+The Python evaluation workflows can resolve any target configured in
+`HF_TARGETS_JSON`; runtime support still depends on the model implementation.
 
-The workflow supports manual target selection:
+The Rust evaluator is currently CTC-first. `rust-eval.yml` therefore resolves
+any selected Bucket, validates its revision identity, and then explicitly fails
+before inference when the resolved target requires a decoder other than `ctc`.
+For example, selecting the Kotoba Whisper Bucket currently produces a clear
+`whisper_autoregressive` compatibility error rather than attempting to run a CTC
+runtime against a Whisper graph.
 
-```text
-Actions
-  -> Validate HF Layout
-  -> Run workflow
-  -> target
-```
+## Dataset policy
 
-Available values:
+Both current targets use `datasets_policy = "shared-default"`. Existing JSUT,
+Common Voice, and ReazonSpeech locks/manifests therefore remain the evaluation
+corpus contract; switching Bucket/model target does not silently switch the
+evaluation dataset.
 
-```text
-repository-vars
-parakeet-tdt_ctc-0.6b-ja
-kotoba-whisper-v1.0
-```
+## Current target summary
 
-`repository-vars` preserves the original behavior. Named targets instead load
-Bucket, Model Repo, framework, decoder, and revision-contract policy from
-`config/hf-targets/<target>.toml`.
-
-On pull requests and pushes, a target matrix also probes both configured
-Buckets. An initialized target is fully validated. An uninitialized target is
-reported as a warning so adding a new target profile does not make every PR
-fail before its remote revision files have been bootstrapped.
-
-Manual validation of a named target remains strict: if its revision bundle is
-missing or invalid, the manually requested run fails.
-
-### Current Kotoba Whisper Bucket state
-
-At the time this target was added, `gawohok7/tf-v1-onnx-dev-bucket` did not yet
-contain:
-
-```text
-config/revisions/reference.json
-config/revisions/evaluation-schema.json
-config/revisions/datasets-lock.json
-```
-
-Therefore automatic PR validation reports the target as configured but
-uninitialized. Before strict manual validation can pass, those three documents
-must be populated. `datasets-lock.json` should reuse the same dataset contract
-as the existing project rather than introducing a Whisper-specific evaluation
-corpus.
-
-## Transformers reference adapter
-
-The optional canonical reference layer is:
-
-```text
-python/src/parakeet_onnx/reference/transformers.py
-```
-
-Install it with:
-
-```bash
-pip install -e ".[transformers]"
-```
-
-It loads pinned revisions through:
-
-```text
-AutoProcessor.from_pretrained(...)
-AutoModelForSpeechSeq2Seq.from_pretrained(...)
-model.generate(...)
-processor.batch_decode(...)
-```
-
-For `kotoba-whisper-v1.0`, the model config specifies Japanese transcription:
-
-```text
-language = ja
-task     = transcribe
-```
-
-This is the canonical pre-ONNX reference boundary. ONNX Runtime remains the
-deployment runtime.
-
-## Scope
-
-Implemented:
-
-- framework-neutral HF revision parsing
-- `nemo` and `transformers` canonical framework identities
-- framework-neutral decoder declarations
-- structured/legacy decoder metadata compatibility
-- reference/evaluation-schema decoder compatibility checks
-- per-target `legacy` / `strict` revision policies
-- static Parakeet and Kotoba Whisper HF target profiles
-- `kotoba-whisper-v1.0` model configuration
-- reuse of existing evaluation datasets/manifests
-- target-aware `Validate HF Layout`
-- pinned Transformers speech-seq2seq reference adapter
-
-Not implemented by this change:
-
-- automatic Whisper ONNX export
-- Rust Whisper autoregressive generation
-- Rust KV-cache controller
-- automatic mutation/bootstrap of private HF Bucket revision documents
-
-Those are later runtime/export stages. The current Rust evaluator remains
-CTC-first and must not be treated as a Whisper autoregressive runtime simply
-because the storage/reference layer is now framework-neutral.
+| Target | Canonical upstream | Framework | Contract | Default decoder | HF Model Repo | HF Bucket |
+|---|---|---|---|---|---|---|
+| `parakeet-tdt_ctc-0.6b-ja` | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `nemo` | legacy | `ctc` | `gawohok7/jpapt-v2.2-dev` | `gawohok7/jpapt-v2.2-dev-bucket` |
+| `kotoba-whisper-v1.0` | `kotoba-tech/kotoba-whisper-v1.0` | `transformers` | strict | `whisper_autoregressive` | `gawohok7/tf-v1-onnx-dev` | `gawohok7/tf-v1-onnx-dev-bucket` |
