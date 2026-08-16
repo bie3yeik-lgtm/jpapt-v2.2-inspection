@@ -1,0 +1,38 @@
+name: Parquet Completion Lock Refresh
+
+on:
+  pull_request:
+    paths:
+      - "rust/crates/asr-eval/Cargo.toml"
+      - "rust/crates/asr-capsule/**"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/parquet-completion-phase9'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Commit refreshed lockfile when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "Refresh Cargo.lock for capsule integration"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
