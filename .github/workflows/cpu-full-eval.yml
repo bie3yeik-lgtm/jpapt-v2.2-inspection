@@ -120,7 +120,7 @@ jobs:
           if [[ -n "${{ inputs.runtime_variant }}" ]]; then
             ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
           fi
-          python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-hf -- resolve-target "${ARGS[@]}"
 
       - name: Validate GitHub configuration
         shell: bash

@@ -60,6 +60,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install locked Python project
         shell: bash
@@ -83,7 +84,7 @@ jobs:
           set -euo pipefail
           python scripts/dev/verify-python-first.py
           python scripts/dev/doctor.py
-          python scripts/ci/validate-hf-targets.py
+          cargo run --quiet --locked -p asr-hf -- validate-targets
           python scripts/ci/validate-github-action-versions.py
           python scripts/ci/resolve-asr-catalog.py fingerprint catalog_id
           python scripts/ci/resolve-asr-catalog.py fingerprint sha256
@@ -99,7 +100,6 @@ jobs:
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py \
-            python/tests/unit/test_hf_target_bucket_resolution.py \
             python/tests/unit/test_hf_sequence_id.py \
             python/tests/unit/test_candidate_artifacts.py \
             python/tests/unit/test_manifest.py \
@@ -190,7 +190,7 @@ jobs:
           if [[ -n "${{ inputs.runtime_variant }}" ]]; then
             ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
           fi
-          python scripts/ci/resolve-hf-target.py "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-hf -- resolve-target "${ARGS[@]}"
 
       - name: Validate GitHub HF configuration
         shell: bash
