@@ -1,6 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -48,10 +48,17 @@ pub struct BucketManifest {
     pub source_model: ModelManifest,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModelCardMetadata {
+    task: String,
+    library: String,
+    language: String,
+    license: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct BucketInfo {
     id: String,
-    #[serde(default)]
     total_files: u64,
 }
 
@@ -131,39 +138,6 @@ fn exact_string(value: &Value, key: &str, context: &str) -> Result<String> {
         .with_context(|| format!("{context}.{key} must be a non-empty string"))
 }
 
-fn card_string(value: &Value, key: &str) -> Result<String> {
-    let card = value
-        .get("cardData")
-        .and_then(Value::as_object)
-        .context("model manifest cardData must be an object")?;
-    card.get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .with_context(|| format!("model manifest cardData.{key} must be a non-empty string"))
-}
-
-fn card_language(value: &Value) -> Result<String> {
-    let raw = value
-        .get("cardData")
-        .and_then(Value::as_object)
-        .and_then(|card| card.get("language"))
-        .context("model manifest cardData.language is required")?;
-    match raw {
-        Value::String(language) if !language.trim().is_empty() => Ok(language.clone()),
-        Value::Array(values) if values.len() == 1 => values[0]
-            .as_str()
-            .filter(|language| !language.trim().is_empty())
-            .map(ToOwned::to_owned)
-            .context(
-                "model manifest cardData.language must contain exactly one non-empty language",
-            ),
-        _ => bail!(
-            "model manifest cardData.language must be one string or a single-element string array"
-        ),
-    }
-}
-
 fn model_architecture(value: &Value) -> Result<String> {
     value
         .get("config")
@@ -175,27 +149,162 @@ fn model_architecture(value: &Value) -> Result<String> {
         .context("model manifest config.model_type is required")
 }
 
-fn parse_model_manifest(value: &Value, revision_requested: &str) -> Result<ModelManifest> {
-    let manifest = ModelManifest {
-        repo_id: exact_string(value, "id", "model manifest")?,
-        revision_requested: revision_requested.to_owned(),
-        revision_resolved: exact_string(value, "sha", "model manifest")?,
-        task: exact_string(value, "pipeline_tag", "model manifest")?,
-        library: exact_string(value, "library_name", "model manifest")?,
-        language: card_language(value)?,
-        license: card_string(value, "license")?,
-        architecture: model_architecture(value)?,
-    };
+fn unquote_yaml_scalar(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    ensure!(!trimmed.is_empty(), "Model Card metadata value must not be empty");
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+    {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        ensure!(
+            !inner.contains('\\'),
+            "escaped YAML scalars are unsupported in strict Model Card metadata"
+        );
+        ensure!(!inner.trim().is_empty(), "Model Card metadata value must not be empty");
+        return Ok(inner.to_owned());
+    }
     ensure!(
-        manifest.revision_resolved.len() >= 40
-            && manifest
-                .revision_resolved
-                .chars()
-                .all(|c| c.is_ascii_hexdigit()),
-        "model manifest sha is not an immutable hexadecimal revision: {}",
-        manifest.revision_resolved
+        !trimmed.starts_with('[') && !trimmed.starts_with('{'),
+        "inline YAML collections are unsupported in strict Model Card metadata"
     );
-    Ok(manifest)
+    Ok(trimmed.to_owned())
+}
+
+fn parse_model_card_metadata(text: &str) -> Result<ModelCardMetadata> {
+    let mut lines = text.lines();
+    ensure!(
+        lines.next().is_some_and(|line| line.trim() == "---"),
+        "README.md must begin with YAML Model Card front matter"
+    );
+
+    let wanted = ["license", "language", "pipeline_tag", "library_name"];
+    let wanted_set: BTreeSet<&str> = wanted.into_iter().collect();
+    let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut current_key: Option<String> = None;
+    let mut closed = false;
+
+    for raw_line in lines {
+        if raw_line.trim() == "---" {
+            closed = true;
+            break;
+        }
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if !raw_line.starts_with(char::is_whitespace) && !trimmed.starts_with("- ") {
+            let (key, remainder) = trimmed
+                .split_once(':')
+                .context("invalid top-level YAML line in Model Card front matter")?;
+            let key = key.trim();
+            ensure!(!key.is_empty(), "empty Model Card metadata key");
+            current_key = Some(key.to_owned());
+            if wanted_set.contains(key) {
+                ensure!(
+                    !values.contains_key(key),
+                    "duplicate Model Card metadata key: {key}"
+                );
+                values.insert(key.to_owned(), Vec::new());
+                if !remainder.trim().is_empty() {
+                    values
+                        .get_mut(key)
+                        .expect("inserted key")
+                        .push(unquote_yaml_scalar(remainder)?);
+                }
+            }
+            continue;
+        }
+
+        if let Some(item) = trimmed.strip_prefix("- ") {
+            let key = current_key
+                .as_deref()
+                .context("Model Card list item has no parent key")?;
+            if wanted_set.contains(key) {
+                values
+                    .get_mut(key)
+                    .context("Model Card list key was not initialized")?
+                    .push(unquote_yaml_scalar(item)?);
+            }
+            continue;
+        }
+
+        if current_key
+            .as_deref()
+            .is_some_and(|key| wanted_set.contains(key))
+        {
+            bail!("nested YAML is unsupported for execution-critical Model Card metadata");
+        }
+    }
+
+    ensure!(closed, "README.md Model Card front matter has no closing --- delimiter");
+
+    fn exactly_one(values: &BTreeMap<String, Vec<String>>, key: &str) -> Result<String> {
+        let items = values
+            .get(key)
+            .with_context(|| format!("Model Card front matter is missing required key {key:?}"))?;
+        ensure!(
+            items.len() == 1,
+            "Model Card metadata {key:?} must contain exactly one value; observed={items:?}"
+        );
+        validate_nonempty(&format!("Model Card {key}"), &items[0])?;
+        Ok(items[0].clone())
+    }
+
+    Ok(ModelCardMetadata {
+        task: exactly_one(&values, "pipeline_tag")?,
+        library: exactly_one(&values, "library_name")?,
+        language: exactly_one(&values, "language")?,
+        license: exactly_one(&values, "license")?,
+    })
+}
+
+fn fetch_model_card(repo: &str, resolved_revision: &str) -> Result<ModelCardMetadata> {
+    let root = std::env::temp_dir().join(format!("asr-eval-model-card-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root)?;
+    let local_dir = root.to_string_lossy();
+    let result = run_hf(&[
+        "download",
+        repo,
+        "README.md",
+        "--revision",
+        resolved_revision,
+        "--local-dir",
+        &local_dir,
+        "--quiet",
+    ]);
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&root);
+        return Err(error);
+    }
+    let readme = root.join("README.md");
+    let text = fs::read_to_string(&readme)
+        .with_context(|| format!("failed to read immutable Model Card {}", readme.display()))?;
+    let parsed = parse_model_card_metadata(&text);
+    let _ = fs::remove_dir_all(&root);
+    parsed
+}
+
+fn parse_model_info(
+    value: &Value,
+    revision_requested: &str,
+) -> Result<(String, String, String, String, String)> {
+    let repo_id = exact_string(value, "id", "model manifest")?;
+    let revision_resolved = exact_string(value, "sha", "model manifest")?;
+    ensure!(
+        revision_resolved.len() >= 40
+            && revision_resolved.chars().all(|c| c.is_ascii_hexdigit()),
+        "model manifest sha is not an immutable hexadecimal revision: {revision_resolved}"
+    );
+    Ok((
+        repo_id,
+        revision_requested.to_owned(),
+        revision_resolved,
+        exact_string(value, "pipeline_tag", "model manifest")?,
+        exact_string(value, "library_name", "model manifest")?,
+    ))
 }
 
 fn fetch_model_manifest(repo: &str, revision: &str) -> Result<ModelManifest> {
@@ -206,40 +315,43 @@ fn fetch_model_manifest(repo: &str, revision: &str) -> Result<ModelManifest> {
         "--revision",
         revision,
         "--expand",
-        "sha,library_name,pipeline_tag,cardData,config",
+        "sha,library_name,pipeline_tag,config",
         "--format",
         "json",
     ])?;
-    parse_model_manifest(&value, revision)
+    let (repo_id, revision_requested, revision_resolved, api_task, api_library) =
+        parse_model_info(&value, revision)?;
+    let architecture = model_architecture(&value)?;
+    let card = fetch_model_card(repo, &revision_resolved)?;
+    ensure!(
+        card.task == api_task,
+        "Hub manifest and immutable Model Card disagree on pipeline/task: api={api_task:?}, card={:?}",
+        card.task
+    );
+    ensure!(
+        card.library == api_library,
+        "Hub manifest and immutable Model Card disagree on library: api={api_library:?}, card={:?}",
+        card.library
+    );
+    Ok(ModelManifest {
+        repo_id,
+        revision_requested,
+        revision_resolved,
+        task: card.task,
+        library: card.library,
+        language: card.language,
+        license: card.license,
+        architecture,
+    })
 }
 
 fn validate_model_manifest(manifest: &ModelManifest, options: &BucketInitOptions) -> Result<()> {
     let checks = [
-        (
-            "repo_id",
-            manifest.repo_id.as_str(),
-            options.model_repo.as_str(),
-        ),
-        (
-            "task",
-            manifest.task.as_str(),
-            options.expected_task.as_str(),
-        ),
-        (
-            "library",
-            manifest.library.as_str(),
-            options.expected_library.as_str(),
-        ),
-        (
-            "language",
-            manifest.language.as_str(),
-            options.expected_language.as_str(),
-        ),
-        (
-            "license",
-            manifest.license.as_str(),
-            options.expected_license.as_str(),
-        ),
+        ("repo_id", manifest.repo_id.as_str(), options.model_repo.as_str()),
+        ("task", manifest.task.as_str(), options.expected_task.as_str()),
+        ("library", manifest.library.as_str(), options.expected_library.as_str()),
+        ("language", manifest.language.as_str(), options.expected_language.as_str()),
+        ("license", manifest.license.as_str(), options.expected_license.as_str()),
         (
             "architecture",
             manifest.architecture.as_str(),
@@ -298,10 +410,7 @@ fn initialize_staging(root: &Path, manifest: &BucketManifest) -> Result<()> {
     )?;
     for (path, title) in [
         ("config/README.md", "Configuration"),
-        (
-            "config/versions/README.md",
-            "Immutable configuration versions",
-        ),
+        ("config/versions/README.md", "Immutable configuration versions"),
         ("candidates/README.md", "Write-once candidate prefixes"),
         ("experiments/README.md", "Experiment allocation records"),
         ("runs/README.md", "Evaluation runs"),
@@ -368,7 +477,7 @@ fn verify_remote_manifest(
     run_hf(&["buckets", "cp", &remote, &destination_arg])?;
     let actual: BucketManifest = serde_json::from_slice(&fs::read(&destination)?)?;
     ensure!(
-        actual.source_model.revision_resolved == expected.source_model.revision_resolved
+        actual.source_model == expected.source_model
             && actual.bucket_id == expected.bucket_id
             && actual.profile_set == expected.profile_set,
         "remote bucket manifest does not match initialized manifest"
@@ -454,33 +563,53 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn manifest_json() -> Value {
+    fn model_info_json() -> Value {
         json!({
             "id": "kotoba-tech/kotoba-whisper-v2.0",
             "sha": "0123456789abcdef0123456789abcdef01234567",
             "library_name": "transformers",
             "pipeline_tag": "automatic-speech-recognition",
-            "cardData": {"language": "ja", "license": "apache-2.0"},
             "config": {"model_type": "whisper"}
         })
     }
 
+    const CARD: &str = r#"---
+license: apache-2.0
+language:
+- ja
+pipeline_tag: automatic-speech-recognition
+library_name: transformers
+tags:
+- whisper
+- audio
+---
+# Kotoba Whisper v2.0
+"#;
+
     #[test]
     fn parses_expected_kotoba_manifest_shape() {
-        let manifest = parse_model_manifest(&manifest_json(), "main").unwrap();
-        assert_eq!(manifest.repo_id, "kotoba-tech/kotoba-whisper-v2.0");
-        assert_eq!(manifest.task, "automatic-speech-recognition");
-        assert_eq!(manifest.library, "transformers");
-        assert_eq!(manifest.language, "ja");
-        assert_eq!(manifest.license, "apache-2.0");
-        assert_eq!(manifest.architecture, "whisper");
+        let (repo, requested, resolved, task, library) =
+            parse_model_info(&model_info_json(), "main").unwrap();
+        let card = parse_model_card_metadata(CARD).unwrap();
+        assert_eq!(repo, "kotoba-tech/kotoba-whisper-v2.0");
+        assert_eq!(requested, "main");
+        assert_eq!(resolved, "0123456789abcdef0123456789abcdef01234567");
+        assert_eq!(task, card.task);
+        assert_eq!(library, card.library);
+        assert_eq!(card.language, "ja");
+        assert_eq!(card.license, "apache-2.0");
+        assert_eq!(model_architecture(&model_info_json()).unwrap(), "whisper");
     }
 
     #[test]
     fn rejects_multi_language_card_for_single_language_initializer() {
-        let mut value = manifest_json();
-        value["cardData"]["language"] = json!(["ja", "en"]);
-        assert!(parse_model_manifest(&value, "main").is_err());
+        let card = CARD.replace("- ja\n", "- ja\n- en\n");
+        assert!(parse_model_card_metadata(&card).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_model_card_front_matter() {
+        assert!(parse_model_card_metadata("# no front matter\n").is_err());
     }
 
     #[test]
