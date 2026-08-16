@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
-    #[error("candidate metadata is missing: {0}")]
+    #[error("generated candidate contract is missing: {0}")]
     MetadataMissing(PathBuf),
-    #[error("invalid candidate metadata: {0}")]
+    #[error("invalid generated candidate contract: {0}")]
     InvalidMetadata(String),
     #[error("model file is missing: {0}")]
     ModelMissing(PathBuf),
@@ -14,6 +14,8 @@ pub enum RuntimeError {
     ProviderConfiguration(String),
     #[error("unsupported runtime contract: {0}")]
     UnsupportedContract(String),
+    #[error("non-finite values detected in runtime tensor: {0}")]
+    NonFiniteTensor(String),
     #[error("ONNX Runtime error: {0}")]
     Ort(#[from] ort::Error),
 }
