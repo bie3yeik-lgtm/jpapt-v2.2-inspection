@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use asr_eval::bucket_init::{BucketInitOptions, initialize_bucket};
 use asr_eval::evaluator::{EvaluateOptions, evaluate};
 use asr_eval::run_context::RunContextV2;
 use asr_eval::{Cli, Command};
@@ -27,6 +28,22 @@ fn main() -> anyhow::Result<()> {
             if result["acceptance"]["passed"] == false {
                 std::process::exit(1);
             }
+        }
+        Command::BucketInit(args) => {
+            let manifest = initialize_bucket(BucketInitOptions {
+                bucket_id: args.bucket_id,
+                model_repo: args.model_repo,
+                model_revision: args.model_revision,
+                expected_task: args.expected_task,
+                expected_library: args.expected_library,
+                expected_language: args.expected_language,
+                expected_license: args.expected_license,
+                expected_architecture: args.expected_architecture,
+                profile_set: args.profile_set,
+                confirmation: args.confirmation,
+                apply: args.apply,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
         }
     }
     Ok(())
