@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from parakeet_onnx.config import resolve_config
@@ -157,6 +158,14 @@ def main() -> int:
     metadata: dict[str, str] = {}
     if args.experiment_id:
         metadata["experiment_id"] = args.experiment_id
+    for key, env_name in (
+        ("hf_target_id", "HF_TARGET_ID"),
+        ("hf_bucket", "HF_BUCKET"),
+        ("hf_model_repo", "HF_MODEL_REPO"),
+    ):
+        value = os.environ.get(env_name)
+        if value:
+            metadata[key] = value
 
     context = build_run_context(
         config=config,
