@@ -18,10 +18,11 @@
 
 ## 作業概要
 
-- `docs/work_history/` の最初の記録として本ファイルを追加する。
-- `AGENTS.md` にwork historyの恒久運用ルールを追記する。
-- 記録は作業完了後に一括生成するだけではなく、長時間・多段階作業では重要な判断や状態変化ごとに更新する。
+- `docs/work_history/` の最初の記録として本ファイルを追加した。
+- `AGENTS.md` にwork historyの恒久運用ルールを追記した。
+- 記録は作業完了後に一括生成するだけではなく、長時間・多段階作業では重要な判断や状態変化ごとに更新する方針とした。
 - work historyは実装コードやschemaの正本ではなく、再開・監査のための時系列説明資料として扱う。
+- 現在のbranchは `agent/nemo-onnx-asr-quality`、関連PRはdraft PR #29である。
 
 ## 作業判断
 
@@ -79,10 +80,21 @@ work historyでは結果だけでなく、重要な判断理由と失敗経路�
 
 秘密情報、token、credential、不要な個人情報は記録しない。
 
+### 5. work history自体の扱い
+
+`docs/work_history/` はappend-orientedなhistorical evidenceとして扱う。過去の判断や失敗を隠すために既存記録を破壊的に書き換えない。訂正が必要な場合は、何を訂正したかと理由が追跡できる形で修正する。
+
+またwork historyはruntime truthではない。実装・schema・generated contract・source-controlled config・`AGENTS.md`がそれぞれの正本であり、work historyはhandoff/auditを支援する記録である。
+
 ## 作業過程
 
 1. 現行 `AGENTS.md` を確認し、同ファイルがrepository constitutionかつ唯一の破壊的変更禁止ファイルとして既に定義されていることを確認した。
 2. work historyルールはこのconstitutionへ追加するべき恒久運用ルールと判断した。
-3. `docs/work_history/` はGitが空directoryを保持できないため、本作業自体の記録である本ファイルを最初のentryとして作成した。
-4. 次に `AGENTS.md` へ命名規則、4必須区分、逐次更新、handoff/audit目的、未検証事項を正直に残す規則を追記する。
-5. 追記完了後は通常CIを確認し、PRは明示指示がない限りdraftのまま維持する。
+3. `docs/work_history/` はGitが空directoryを保持できないため、本作業自体の記録である `20260816235400-work-history-policy.md` を最初のentryとして作成した。作成commitは `f3651df6320b1f9b7e5d068e56ff47f2ba63e5d8`。
+4. `AGENTS.md` へ、命名規則、4必須区分、逐次更新、handoff/audit目的、未検証事項を正直に残す規則、audit recordの非破壊性を追記した。
+5. constitution追記のため一時workflow `_append-work-history-rule.yml` を使用した。run `31954175168` はSUCCESSし、bot commit `1fa5156ab9e24d4ab78ae811316ea0f67cb37075` で `AGENTS.md` が更新された。
+6. 追記後の確認で `negative efidence` という綴り誤りを検出した。意味上のルール変更は行わず、1語のみ `negative evidence` へ訂正した。
+7. 訂正用一時workflow `_fix-work-history-policy-typo.yml` のrun `31954230379` はSUCCESSした。
+8. 2つの一時workflowは恒久APIにしないというrepository ruleに従って双方とも削除した。最後の削除commitは `b4f188bd76c11e5e33df8de50ad2706e40b0ee9e`。
+9. `AGENTS.md` 上で `## Work history and audit trail` 節が存在し、`docs/work_history/`、命名規則、必須4区分、resumability/auditability、逐次更新、未検証値を推測しないこと、secretを記録しないこと、append-oriented audit evidenceであることを確認した。
+10. 本ファイルを現在の状態へ更新した。次に最新headの通常CIを確認する。PR #29は明示指示がないためdraftのまま維持する。
