@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -18,7 +19,7 @@ pub fn collection_prefix(collection: &str) -> Result<&'static str> {
 
 pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
     validate_prefix(prefix)?;
-    let maximum = maximum_root_sequence(listing);
+    let maximum = maximum_collection_sequence(listing);
     let next = maximum
         .checked_add(1)
         .ok_or_else(|| contract("six-digit HF sequence space is exhausted"))?;
@@ -28,15 +29,48 @@ pub fn next_sequence_id(prefix: &str, listing: &str) -> Result<String> {
     Ok(format!("{prefix}-{next:06}"))
 }
 
-fn maximum_root_sequence(listing: &str) -> u32 {
+fn maximum_collection_sequence(listing: &str) -> u32 {
     listing
         .lines()
-        .filter_map(|raw| {
-            let root = raw.trim().split('/').next()?.trim_end_matches('/');
-            sequence_suffix(root)
-        })
+        .flat_map(sequence_candidates_from_path)
         .max()
         .unwrap_or(0)
+}
+
+fn sequence_candidates_from_path(raw: &str) -> Vec<u32> {
+    let parts = raw
+        .trim()
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return Vec::new();
+    }
+
+    let mut values = Vec::with_capacity(2);
+    if let Some(sequence) = sequence_suffix(parts[0].trim_end_matches('/')) {
+        values.push(sequence);
+    }
+
+    // Historical Buckets placed allocation directories one level below a
+    // runtime variant (for example ctc/candidate-000001 and ctc/exp-000001).
+    // Count those allocation IDs so the canonical namespace never reuses a
+    // historical numeric identity. Arbitrary nested artifact filenames are not
+    // considered allocation IDs.
+    if let Some(second) = parts.get(1)
+        && is_legacy_allocation_id(second)
+        && let Some(sequence) = sequence_suffix(second)
+    {
+        values.push(sequence);
+    }
+    values
+}
+
+fn is_legacy_allocation_id(value: &str) -> bool {
+    ["candidate-", "exp-", "experiment-", "config-"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
 }
 
 fn sequence_suffix(value: &str) -> Option<u32> {
@@ -54,12 +88,23 @@ pub struct CandidateLocation {
     pub legacy: bool,
 }
 
-pub fn latest_candidate_location(
+pub fn candidate_location(
     listing: &str,
+    requested_id: Option<&str>,
     runtime_variant: Option<&str>,
 ) -> Result<CandidateLocation> {
-    let mut canonical = Vec::<(u32, String)>::new();
-    let mut legacy = Vec::<(u32, String, String)>::new();
+    let requested_id = requested_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(id) = requested_id {
+        validate_candidate_id(id)?;
+    }
+
+    let requested_variant = runtime_variant
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut canonical = BTreeSet::<String>::new();
+    let mut legacy = BTreeSet::<(String, String)>::new();
 
     for raw in listing.lines() {
         let value = raw.trim().trim_start_matches('/');
@@ -68,35 +113,52 @@ pub fn latest_candidate_location(
         }
         let parts = value.split('/').collect::<Vec<_>>();
         let first = parts.first().copied().unwrap_or_default();
-        if let Some(sequence) = candidate_sequence(first) {
-            canonical.push((sequence, first.to_owned()));
+        if candidate_sequence(first).is_some() {
+            canonical.insert(first.to_owned());
             continue;
         }
         if parts.len() >= 2 {
             let variant = first;
             let id = parts[1];
-            if let Some(sequence) = candidate_sequence(id) {
-                legacy.push((sequence, variant.to_owned(), id.to_owned()));
+            if candidate_sequence(id).is_some() {
+                legacy.insert((variant.to_owned(), id.to_owned()));
             }
         }
     }
 
-    if let Some((_, id)) = canonical.into_iter().max_by_key(|(sequence, _)| *sequence) {
+    if let Some(id) = requested_id {
+        if canonical.contains(id) {
+            return Ok(CandidateLocation {
+                id: id.to_owned(),
+                relative_path: id.to_owned(),
+                legacy: false,
+            });
+        }
+        let matches = legacy
+            .iter()
+            .filter(|(variant, candidate_id)| {
+                candidate_id == id
+                    && requested_variant.is_none_or(|expected| variant == expected)
+            })
+            .collect::<Vec<_>>();
+        return resolve_legacy_exact(id, requested_variant, matches);
+    }
+
+    if let Some(id) = canonical
+        .iter()
+        .max_by_key(|id| candidate_sequence(id).unwrap_or(0))
+    {
         return Ok(CandidateLocation {
+            id: id.clone(),
             relative_path: id.clone(),
-            id,
             legacy: false,
         });
     }
 
-    let requested_variant = runtime_variant
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
     let candidates = legacy
-        .into_iter()
-        .filter(|(_, variant, _)| requested_variant.is_none_or(|expected| variant == expected))
+        .iter()
+        .filter(|(variant, _)| requested_variant.is_none_or(|expected| variant == expected))
         .collect::<Vec<_>>();
-
     if candidates.is_empty() {
         return Err(contract(match requested_variant {
             Some(variant) => format!(
@@ -105,28 +167,69 @@ pub fn latest_candidate_location(
             None => "bucket contains no canonical candidate-* allocation; a runtime variant is required to resolve a legacy candidate".to_owned(),
         }));
     }
+    ensure_legacy_variant_is_unambiguous(requested_variant, &candidates)?;
 
-    if requested_variant.is_none() {
-        let variants = candidates
-            .iter()
-            .map(|(_, variant, _)| variant.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        if variants.len() > 1 {
-            return Err(contract(format!(
-                "legacy candidate layout is ambiguous across variants {variants:?}; provide runtime variant"
-            )));
-        }
-    }
-
-    let (_, variant, id) = candidates
+    let (variant, id) = candidates
         .into_iter()
-        .max_by_key(|(sequence, _, _)| *sequence)
+        .max_by_key(|(_, id)| candidate_sequence(id).unwrap_or(0))
         .expect("non-empty candidate list");
     Ok(CandidateLocation {
         relative_path: format!("{variant}/{id}"),
-        id,
+        id: id.clone(),
         legacy: true,
     })
+}
+
+fn resolve_legacy_exact(
+    requested_id: &str,
+    requested_variant: Option<&str>,
+    matches: Vec<&(String, String)>,
+) -> Result<CandidateLocation> {
+    if matches.is_empty() {
+        return Err(contract(match requested_variant {
+            Some(variant) => format!(
+                "candidate {requested_id:?} was not found canonically or under legacy variant {variant:?}"
+            ),
+            None => format!(
+                "candidate {requested_id:?} was not found canonically; provide runtime variant if it exists in a legacy layout"
+            ),
+        }));
+    }
+    ensure_legacy_variant_is_unambiguous(requested_variant, &matches)?;
+    let (variant, id) = matches[0];
+    Ok(CandidateLocation {
+        relative_path: format!("{variant}/{id}"),
+        id: id.clone(),
+        legacy: true,
+    })
+}
+
+fn ensure_legacy_variant_is_unambiguous(
+    requested_variant: Option<&str>,
+    candidates: &[&(String, String)],
+) -> Result<()> {
+    if requested_variant.is_some() {
+        return Ok(());
+    }
+    let variants = candidates
+        .iter()
+        .map(|(variant, _)| variant.as_str())
+        .collect::<BTreeSet<_>>();
+    if variants.len() > 1 {
+        return Err(contract(format!(
+            "legacy candidate layout is ambiguous across variants {variants:?}; provide runtime variant"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_candidate_id(value: &str) -> Result<()> {
+    if candidate_sequence(value).is_none() {
+        return Err(contract(format!(
+            "candidate id must use candidate-NNNNNN format; got {value:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn candidate_sequence(value: &str) -> Option<u32> {
@@ -200,7 +303,7 @@ pub fn write_allocation_readme(
     }
     lines.extend([
         String::new(),
-        "prefixはcollectionから決定されます。連番はcollection全体の最大6桁suffix + 1です。".to_owned(),
+        "prefixはcollectionから決定されます。連番はcanonicalとhistorical layoutを合わせた最大6桁suffix + 1です。".to_owned(),
         "新規allocationはcanonical layoutへだけ書き込み、variant配下の旧candidate layoutは読み取りfallbackに限定されます。".to_owned(),
     ]);
     let path = output.as_ref().to_path_buf();
@@ -246,11 +349,16 @@ mod tests {
     }
 
     #[test]
-    fn prefixes_share_collection_sequence() {
-        let listing = "old-prefix-000001/README.md\ncandidate-000004/README.md\nexperiment-000003/README.md\n";
+    fn historical_nested_ids_reserve_sequence_numbers() {
+        let listing = "ctc/candidate-000004/metadata.json\ntdt/candidate-000002/metadata.json\n";
         assert_eq!(
             next_sequence_id("candidate", listing).unwrap(),
             "candidate-000005"
+        );
+        let experiments = "ctc/exp-000003/run.json\ntdt/exp-000001/run.json\n";
+        assert_eq!(
+            next_sequence_id("experiment", experiments).unwrap(),
+            "experiment-000004"
         );
     }
 
@@ -264,10 +372,10 @@ mod tests {
     }
 
     #[test]
-    fn canonical_candidate_wins_over_legacy() {
+    fn canonical_candidate_wins_over_legacy_for_latest() {
         let listing = "ctc/candidate-000009/metadata.json\ncandidate-000003/metadata.json\n";
         assert_eq!(
-            latest_candidate_location(listing, Some("ctc")).unwrap(),
+            candidate_location(listing, None, Some("ctc")).unwrap(),
             CandidateLocation {
                 id: "candidate-000003".to_owned(),
                 relative_path: "candidate-000003".to_owned(),
@@ -277,13 +385,13 @@ mod tests {
     }
 
     #[test]
-    fn legacy_candidate_is_variant_scoped() {
-        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000004/metadata.json\nctc/candidate-000003/metadata.json\n";
+    fn requested_legacy_candidate_is_resolved_by_variant() {
+        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000001/metadata.json\n";
         assert_eq!(
-            latest_candidate_location(listing, Some("ctc")).unwrap(),
+            candidate_location(listing, Some("candidate-000001"), Some("ctc")).unwrap(),
             CandidateLocation {
-                id: "candidate-000003".to_owned(),
-                relative_path: "ctc/candidate-000003".to_owned(),
+                id: "candidate-000001".to_owned(),
+                relative_path: "ctc/candidate-000001".to_owned(),
                 legacy: true,
             }
         );
@@ -291,7 +399,7 @@ mod tests {
 
     #[test]
     fn ambiguous_legacy_candidate_requires_variant() {
-        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000002/metadata.json\n";
-        assert!(latest_candidate_location(listing, None).is_err());
+        let listing = "ctc/candidate-000001/metadata.json\ntdt/candidate-000001/metadata.json\n";
+        assert!(candidate_location(listing, Some("candidate-000001"), None).is_err());
     }
 }
