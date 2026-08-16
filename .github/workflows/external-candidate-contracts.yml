@@ -14,6 +14,7 @@ on:
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
+      - scripts/ci/normalize-candidate-request.py
       - scripts/ci/run-candidate-package-evaluation.sh
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   pull_request:
@@ -27,6 +28,7 @@ on:
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
+      - scripts/ci/normalize-candidate-request.py
       - scripts/ci/run-candidate-package-evaluation.sh
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   workflow_dispatch:
@@ -83,7 +85,8 @@ jobs:
           python -m py_compile \
             scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/estimate-candidate-runtime.py \
-            scripts/ci/generic-candidate-evaluate.py
+            scripts/ci/generic-candidate-evaluate.py \
+            scripts/ci/normalize-candidate-request.py
 
       - name: Test Rust candidate request contract
         run: cargo test --locked -p asr-contracts --bin asr-candidate-request
