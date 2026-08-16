@@ -1,0 +1,77 @@
+name: GHCR Contract Validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "config/hf-targets/**"
+      - "config/models/**"
+      - "config/asr-catalog.json"
+      - "rust/crates/asr-hf/**"
+      - "scripts/ci/resolve-ghcr-matrix.sh"
+      - ".github/workflows/ghcr-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "config/hf-targets/**"
+      - "config/models/**"
+      - "config/asr-catalog.json"
+      - "rust/crates/asr-hf/**"
+      - "scripts/ci/resolve-ghcr-matrix.sh"
+      - ".github/workflows/ghcr-*.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate resolver and Dockerfile contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/resolve-ghcr-matrix.sh
+          mkdir -p .ci/ghcr-contracts
+          bash scripts/ci/resolve-ghcr-matrix.sh | tee .ci/ghcr-contracts/matrix.json
+          jq -e '.include | length > 0' .ci/ghcr-contracts/matrix.json >/dev/null
+
+          while IFS= read -r dockerfile; do
+            context="$(dirname "$dockerfile")"
+            config="$context/config.json"
+            source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            framework="$(sed -n 's/^LABEL io\.jpapt\.source\.framework="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            package="$(sed -n 's/^LABEL io\.jpapt\.ghcr\.package="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            role="$(sed -n 's/^LABEL io\.jpapt\.role="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
+            [[ -n "$source_repo" && -n "$framework" && -n "$package" && -n "$role" ]]
+            [[ -f "$config" ]] || { echo "::error::$context/config.json is required"; exit 1; }
+            test "$(jq -er '.source.repo_id' "$config")" = "$source_repo"
+            test "$(jq -er '.source.framework' "$config")" = "$framework"
+          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
+
+      - name: Validate repository target policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p asr-hf -- validate-targets
+          cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-contract-matrix
+          path: .ci/ghcr-contracts/matrix.json
+          retention-days: 7
+          if-no-files-found: error
