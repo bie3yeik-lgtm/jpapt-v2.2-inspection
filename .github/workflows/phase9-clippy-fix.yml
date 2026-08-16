@@ -2,9 +2,11 @@ name: Phase9 Clippy Fix
 
 on:
   push:
-    branches: [agent/rust-hf-allocation-phase9]
+    branches:
+      - agent/rust-hf-allocation-phase9
     paths:
-      - ".github/workflows/phase9-clippy-fix.yml"
+      - scripts/ci/phase9-structure-readme.py
+      - .github/workflows/phase9-clippy-fix.yml
 
 permissions:
   contents: write
@@ -19,52 +21,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
-      - name: Structure allocation README input
-        shell: python
+      - name: Apply refactor
+        run: python scripts/ci/phase9-structure-readme.py
+      - name: Validate
         run: |
-          from pathlib import Path
-          p=Path('rust/crates/asr-hf/src/allocation.rs')
-          s=p.read_text()
-          old='''pub fn write_allocation_readme(\n    output: impl AsRef<Path>,\n    allocation_id: &str,\n    collection: &str,\n    bucket: &str,\n    prefix_key: &str,\n    prefix: &str,\n    sequence: &str,\n    allocated_at: &str,\n    metadata_json: &str,\n) -> Result<()> {\n    validate_prefix(prefix)?;\n    for (name, value) in [\n        ("allocation_id", allocation_id),\n        ("collection", collection),\n        ("bucket", bucket),\n        ("prefix_key", prefix_key),\n        ("sequence", sequence),\n        ("allocated_at", allocated_at),\n    ] {'''
-          new='''#[derive(Debug, Clone)]\npub struct AllocationReadme<'a> {\n    pub allocation_id: &'a str,\n    pub collection: &'a str,\n    pub bucket: &'a str,\n    pub prefix_key: &'a str,\n    pub prefix: &'a str,\n    pub sequence: &'a str,\n    pub allocated_at: &'a str,\n    pub metadata_json: &'a str,\n}\n\npub fn write_allocation_readme(output: impl AsRef<Path>, input: &AllocationReadme<'_>) -> Result<()> {\n    validate_prefix(input.prefix)?;\n    for (name, value) in [\n        ("allocation_id", input.allocation_id),\n        ("collection", input.collection),\n        ("bucket", input.bucket),\n        ("prefix_key", input.prefix_key),\n        ("sequence", input.sequence),\n        ("allocated_at", input.allocated_at),\n    ] {'''
-          if old not in s: raise SystemExit('allocation function marker not found')
-          s=s.replace(old,new)
-          s=s.replace('let metadata: Value = serde_json::from_str(metadata_json)?;', 'let metadata: Value = serde_json::from_str(input.metadata_json)?;')
-          for name in ['allocation_id','collection','bucket','prefix_key','prefix','sequence','allocated_at']:
-              s=s.replace('{'+name+'}', '{input.'+name+'}')
-          p.write_text(s)
-
-          p=Path('rust/crates/asr-hf/src/main.rs')
-          s=p.read_text()
-          s=s.replace('load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,', 'AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,')
-          old='''        } => write_allocation_readme(\n            output,\n            &allocation_id,\n            &collection,\n            &bucket,\n            &prefix_key,\n            &prefix,\n            &sequence,\n            &allocated_at,\n            &metadata_json,\n        )?,'''
-          new='''        } => write_allocation_readme(\n            output,\n            &AllocationReadme {\n                allocation_id: &allocation_id,\n                collection: &collection,\n                bucket: &bucket,\n                prefix_key: &prefix_key,\n                prefix: &prefix,\n                sequence: &sequence,\n                allocated_at: &allocated_at,\n                metadata_json: &metadata_json,\n            },\n        )?,'''
-          if old not in s: raise SystemExit('main call marker not found')
-          p.write_text(s.replace(old,new))
-
-          p=Path('rust/crates/asr-hf/tests/allocation.rs')
-          s=p.read_text()
-          s=s.replace('load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,', 'AllocationReadme, load_repository_allocation_catalog, next_sequence_id, write_allocation_readme,')
-          old='''    write_allocation_readme(\n        &path,\n        "rust-eval-000042",\n        "experiments",\n        "owner/bucket",\n        "experiment.rust_eval",\n        "rust-eval",\n        "000042",\n        "2026-08-17T00:00:00Z",\n        r#"{\\"zeta\\":\\"last\\",\\"alpha\\":\\"first\\"}"#,\n    )'''
-          # The raw string has no escaping in source; use a span replacement instead.
-          start=s.index('    write_allocation_readme(\n        &path,')
-          end=s.index('    .unwrap();', start)
-          replacement='''    write_allocation_readme(\n        &path,\n        &AllocationReadme {\n            allocation_id: "rust-eval-000042",\n            collection: "experiments",\n            bucket: "owner/bucket",\n            prefix_key: "experiment.rust_eval",\n            prefix: "rust-eval",\n            sequence: "000042",\n            allocated_at: "2026-08-17T00:00:00Z",\n            metadata_json: r#"{\\"zeta\\":\\"last\\",\\"alpha\\":\\"first\\"}"#,\n        },\n    )\n'''
-          # correct escaped test raw string after replacement
-          replacement=replacement.replace(r'r#"{\\"zeta\\":\\"last\\",\\"alpha\\":\\"first\\"}"#', 'r#"{"zeta":"last","alpha":"first"}"#')
-          s=s[:start]+replacement+s[end:]
-          p.write_text(s)
-      - name: Format and validate
-        shell: bash
-        run: |
-          set -euo pipefail
           cargo fmt --all
           cargo clippy --locked -p asr-hf --all-targets -- -D warnings
           cargo test --locked -p asr-hf
-      - name: Commit fix
-        shell: bash
+      - name: Commit
         run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add rust/crates/asr-hf
