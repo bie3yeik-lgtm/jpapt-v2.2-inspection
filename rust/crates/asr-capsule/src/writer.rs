@@ -175,7 +175,7 @@ pub fn write_capsule(path: impl AsRef<Path>, run_id: &str, rows: &[CapsuleRow]) 
     let result = (|| -> Result<()> {
         let properties = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
-            .set_max_row_group_row_count(DEFAULT_ROW_GROUP_SIZE)
+            .set_max_row_group_row_count(Some(DEFAULT_ROW_GROUP_SIZE))
             .build();
         let file = File::create(&temporary)?;
         let mut writer =
