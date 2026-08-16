@@ -2,7 +2,7 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use asr_hf::allocation::{
-    AllocationReadme, collection_prefix, latest_candidate_location, next_sequence_id,
+    AllocationReadme, candidate_location, collection_prefix, next_sequence_id,
     write_allocation_readme,
 };
 
@@ -30,10 +30,21 @@ fn collection_sequence_is_shared_across_historical_prefixes() {
 }
 
 #[test]
-fn historical_directory_advances_canonical_sequence() {
+fn nested_legacy_ids_reserve_canonical_numbers() {
+    let candidates = [
+        "ctc/candidate-000001/metadata.json",
+        "tdt/candidate-000004/metadata.json",
+    ]
+    .join("\n");
     assert_eq!(
-        next_sequence_id("experiment", "structure-example-000001/README.md\n").unwrap(),
-        "experiment-000002"
+        next_sequence_id("candidate", &candidates).unwrap(),
+        "candidate-000005"
+    );
+
+    let experiments = ["ctc/exp-000002/run.json", "tdt/exp-000006/run.json"].join("\n");
+    assert_eq!(
+        next_sequence_id("experiment", &experiments).unwrap(),
+        "experiment-000007"
     );
 }
 
@@ -51,10 +62,23 @@ fn canonical_candidate_location_has_priority() {
         "candidate-000003/metadata.json",
     ]
     .join("\n");
-    let location = latest_candidate_location(&listing, Some("ctc")).unwrap();
+    let location = candidate_location(&listing, None, Some("ctc")).unwrap();
     assert_eq!(location.id, "candidate-000003");
     assert_eq!(location.relative_path, "candidate-000003");
     assert!(!location.legacy);
+}
+
+#[test]
+fn exact_legacy_candidate_location_survives_id_only_transport() {
+    let listing = [
+        "ctc/candidate-000001/metadata.json",
+        "tdt/candidate-000001/metadata.json",
+    ]
+    .join("\n");
+    let location = candidate_location(&listing, Some("candidate-000001"), Some("ctc")).unwrap();
+    assert_eq!(location.id, "candidate-000001");
+    assert_eq!(location.relative_path, "ctc/candidate-000001");
+    assert!(location.legacy);
 }
 
 #[test]
@@ -65,7 +89,7 @@ fn legacy_candidate_location_is_read_only_variant_fallback() {
         "ctc/candidate-000003/metadata.json",
     ]
     .join("\n");
-    let location = latest_candidate_location(&listing, Some("ctc")).unwrap();
+    let location = candidate_location(&listing, None, Some("ctc")).unwrap();
     assert_eq!(location.id, "candidate-000003");
     assert_eq!(location.relative_path, "ctc/candidate-000003");
     assert!(location.legacy);
