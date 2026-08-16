@@ -15,14 +15,10 @@ PREFIX_KEY="${2:-}"
 [[ -n "$PREFIX_KEY" ]] || fail "allocation prefix key is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
-command -v cargo >/dev/null 2>&1 || fail "cargo is required"
 command -v python >/dev/null 2>&1 || fail "python is required for the temporary request envelope boundary"
 
-# Validate the semantic key locally before dispatching so typo requests never
-# consume a central sequence number. Allocation policy is Rust-owned.
-cargo run --quiet --locked -p asr-hf -- allocation-prefix "$PREFIX_KEY" >/dev/null \
-  || fail "unknown allocation prefix key: $PREFIX_KEY"
-
+# Prefix semantics are validated by the central allocator through the canonical
+# Rust allocation catalog before any sequence number is reserved.
 if [[ -z "${GH_TOKEN:-}" && -n "${HF_ALLOCATOR_GITHUB_TOKEN:-}" ]]; then
   export GH_TOKEN="$HF_ALLOCATOR_GITHUB_TOKEN"
 fi
