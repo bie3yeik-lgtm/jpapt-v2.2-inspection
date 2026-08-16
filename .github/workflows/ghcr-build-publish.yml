@@ -118,7 +118,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          load: false
           tags: |
             ${{ matrix.image }}:latest
             ${{ matrix.image }}:${{ github.sha }}
@@ -130,50 +130,27 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.package }}
           cache-to: type=gha,mode=max,scope=${{ matrix.package }}
 
-      - name: Resolve evaluated image reference
+      - name: Resolve published image identity
         id: image
         shell: bash
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            ref="${{ matrix.image }}:${{ github.sha }}"
-            image_id="$(docker image inspect --format '{{.Id}}' "$ref")"
-            digest="${image_id#sha256:}"
-            digest="sha256:${digest}"
+            # PR builds are intentionally not exported to the Docker daemon.
+            # Compatibility smoke runs inside the Dockerfile during Buildx.
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "digest=${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+            echo "reference=${{ matrix.image }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
           else
-            digest="${{ steps.build.outputs.digest }}"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid image digest: $digest"; exit 1; }
-            ref="${{ matrix.image }}@${digest}"
-            docker pull "$ref"
+            [[ "$BUILD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::Invalid published image digest: $BUILD_DIGEST"; exit 1;
+            }
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$BUILD_DIGEST" >> "$GITHUB_OUTPUT"
+            echo "reference=${{ matrix.image }}@${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
           fi
-          echo "reference=$ref" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Verify OCI/project labels and reference imports
-        shell: bash
-        run: |
-          set -euo pipefail
-          ref="${{ steps.image.outputs.reference }}"
-          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.source.repo_id" }}' "$ref")" = "${{ matrix.source_repo }}"
-          test "$(docker inspect --format '{{ index .Config.Labels "io.jpapt.role" }}' "$ref")" = "${{ matrix.role }}"
-          docker run --rm -i "$ref" python - <<'PY'
-          import json
-          import nemo
-          import onnx
-          import onnxruntime
-          import torch
-          import huggingface_hub
-          print(json.dumps({
-              "nemo": nemo.__version__,
-              "torch": torch.__version__,
-              "cuda_available": torch.cuda.is_available(),
-              "onnx": onnx.__version__,
-              "onnxruntime": onnxruntime.__version__,
-              "huggingface_hub": huggingface_hub.__version__,
-          }, sort_keys=True))
-          assert onnxruntime.__version__ == "1.28.0"
-          assert huggingface_hub.__version__ == "1.24.0"
-          PY
 
       - name: Attest pushed image
         if: github.event_name != 'pull_request'
@@ -185,16 +162,21 @@ jobs:
 
       - name: Write build provenance
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           mkdir -p .ci/ghcr
           jq -n \
             --arg image "${{ matrix.image }}" \
-            --arg digest "${{ steps.image.outputs.digest }}" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg reference "${{ steps.image.outputs.reference }}" \
+            --argjson published "${{ steps.image.outputs.published }}" \
             --arg dockerfile "${{ matrix.dockerfile }}" \
             --arg source_repo "${{ matrix.source_repo }}" \
             --arg role "${{ matrix.role }}" \
             --arg git_commit "${GITHUB_SHA}" \
-            '{schema_version:1,image:$image,digest:$digest,dockerfile:$dockerfile,source_repo:$source_repo,role:$role,git_commit:$git_commit}' \
+            '{schema_version:2,image:$image,reference:$reference,published:$published,dockerfile:$dockerfile,source_repo:$source_repo,role:$role,git_commit:$git_commit}
+             + if $digest == "" then {} else {digest:$digest} end' \
             > .ci/ghcr/build.json
 
       - uses: actions/upload-artifact@v7
