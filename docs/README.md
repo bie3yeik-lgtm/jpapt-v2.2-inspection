@@ -10,7 +10,7 @@
 4. [multi-framework-asr.md](./multi-framework-asr.md) — CTC / TDT / Whisperのruntime profile
 5. [onnx-export.md](./onnx-export.md) — export/finalizeとcandidate生成
 6. [evaluation.md](./evaluation.md) — manifest、run-context、評価
-7. [hf-layout.md](./hf-layout.md) / [hf-bucket-operations.md](./hf-bucket-operations.md) — HF Bucket運用
+7. [hf-layout.md](./hf-layout.md) / [hf-bucket-operations.md](./hf-bucket-operations.md) / [hf-bucket-initialization.md](./hf-bucket-initialization.md) — HF Bucket構造・初期化・運用
 8. [github-actions.md](./github-actions.md) — CI / evaluation workflow
 9. [rust-first.md](./rust-first.md) — Rust evaluatorの現在範囲
 
