@@ -60,12 +60,24 @@ jobs:
           printf '%s\n' \
             'ctc/candidate-000001/metadata.json' \
             'tdt/candidate-000004/metadata.json' > "$tmp/legacy.txt"
+          [[ "$(cargo run --quiet --locked -p asr-hf -- next-sequence-id --prefix candidate --listing "$tmp/legacy.txt")" == candidate-000005 ]]
           cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
             --listing "$tmp/legacy.txt" --runtime-variant ctc \
             | tee "$tmp/legacy.out"
           grep -q '^candidate_id=candidate-000001$' "$tmp/legacy.out"
           grep -q '^relative_path=ctc/candidate-000001$' "$tmp/legacy.out"
           grep -q '^legacy=true$' "$tmp/legacy.out"
+
+          printf '%s\n' \
+            'ctc/candidate-000001/metadata.json' \
+            'tdt/candidate-000001/metadata.json' > "$tmp/exact-legacy.txt"
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$tmp/exact-legacy.txt" \
+            --candidate-id candidate-000001 \
+            --runtime-variant ctc \
+            | tee "$tmp/exact-legacy.out"
+          grep -q '^relative_path=ctc/candidate-000001$' "$tmp/exact-legacy.out"
+          grep -q '^legacy=true$' "$tmp/exact-legacy.out"
 
           printf '%s\n' \
             'ctc/candidate-000009/metadata.json' \
@@ -91,7 +103,7 @@ jobs:
           PY
           rm -rf "$tmp"
 
-      - name: Validate live Bucket candidate fallback
+      - name: Validate live Bucket migration behavior
         if: env.HF_TOKEN != ''
         shell: bash
         run: |
@@ -99,12 +111,17 @@ jobs:
           listing="$(mktemp)"
           trap 'rm -f "$listing"' EXIT
           hf buckets list --token "$HF_TOKEN" "hf://buckets/${HF_BUCKET}/candidates" -R -q > "$listing"
-          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
-            --listing "$listing" --runtime-variant ctc \
-            | tee /tmp/live-candidate.out
-          grep -q '^candidate_id=candidate-000001$' /tmp/live-candidate.out
+          summary="$(cargo run --quiet --locked -p asr-hf -- resolve-candidate-location --listing "$listing" --runtime-variant ctc)"
+          printf '%s\n' "$summary" | tee /tmp/live-candidate.out
+          candidate_id="$(printf '%s\n' "$summary" | sed -n 's/^candidate_id=//p')"
           grep -q '^relative_path=ctc/candidate-000001$' /tmp/live-candidate.out
           grep -q '^legacy=true$' /tmp/live-candidate.out
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$listing" \
+            --candidate-id "$candidate_id" \
+            --runtime-variant ctc \
+            | grep -q '^relative_path=ctc/candidate-000001$'
+          [[ "$(cargo run --quiet --locked -p asr-hf -- next-sequence-id --prefix candidate --listing "$listing")" == candidate-000002 ]]
 
       - name: Commit normalized Rust source
         shell: bash
