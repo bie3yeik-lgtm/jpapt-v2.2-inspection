@@ -1,0 +1,92 @@
+name: NeMo Quality Identity Patch
+
+on:
+  push:
+    branches:
+      - agent/nemo-onnx-asr-quality
+    paths:
+      - .github/workflows/_nemo-quality-identity-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/nemo-onnx-asr-quality
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Expose validated NeMo source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/asr-eval/src/nemo_onnx.rs')
+          s = p.read_text()
+          anchor = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredScope {
+    Ctc,
+    Tdt,
+}
+'''
+          insert = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredScope {
+    Ctc,
+    Tdt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NemoSourceIdentity {
+    pub repo_id: String,
+    pub revision_resolved: String,
+    pub model_file: String,
+    pub model_file_sha256: String,
+}
+'''
+          assert anchor in s
+          s = s.replace(anchor, insert, 1)
+          anchor2 = '''#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationReport {
+    schema_version: u32,
+    profile_id: String,
+    source: Source,
+    environment: Environment,
+    resolved_model: ResolvedModel,
+    frontend: Frontend,
+    artifacts: Vec<Artifact>,
+    gates: Gates,
+    obstacles: Vec<Obstacle>,
+}
+'''
+          insert2 = anchor2 + '''
+impl ValidationReport {
+    pub fn source_identity(&self) -> NemoSourceIdentity {
+        NemoSourceIdentity {
+            repo_id: self.source.repo_id.clone(),
+            revision_resolved: self.source.revision_resolved.clone(),
+            model_file: self.source.model_file.clone(),
+            model_file_sha256: self.source.model_file_sha256.clone(),
+        }
+    }
+}
+'''
+          assert anchor2 in s
+          p.write_text(s.replace(anchor2, insert2, 1))
+          PY
+          cargo fmt --all
+          cargo test --locked -p asr-eval --no-default-features --features cpu
+      - name: Commit source identity API
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/asr-eval/src/nemo_onnx.rs
+          git commit -m "Expose validated NeMo source identity"
+          git push origin HEAD:agent/nemo-onnx-asr-quality
