@@ -2,6 +2,8 @@
 
 本リポジトリのHF連携workflowは、Repository Variable `HF_TARGETS_JSON` を基準にASR targetを解決します。
 
+詳細なBucket運用仕様は `docs/hf-bucket-operations.md` を参照してください。
+
 ## Repository settings
 
 Secret:
@@ -44,112 +46,129 @@ Cross Platform ONNX Parity
 Rust Cross Platform Evaluation
 ```
 
-GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できません。そのため`hf_bucket`は文字列入力です。ただし入力値は実行開始直後に`HF_TARGETS_JSON`と照合され、不明なBucketは拒否されます。
-
-内部では次の順で解決します。
+GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できないため、`hf_bucket`は文字列入力です。実行時に`HF_TARGETS_JSON`と照合し、不明なBucketは拒否します。
 
 ```text
 hf_bucket
   -> vars.HF_TARGETS_JSON
   -> target id
   -> HF_MODEL_REPO
-  -> canonical framework
-  -> decoder
-  -> target固有 model config
+  -> framework / decoder / model config
 ```
 
-revision policyやlegacy modeはありません。すべてのtargetが同じstrict revision contractを使用します。
+## Versioned config
 
-## Validate HF Layout
-
-PR/push時はRepository内のcontractだけを検証します。実HF Bucketのrevision metadataは読みません。
+Bucketのrevision設定は直下上書きではなく、次の構造を使用します。
 
 ```text
-pull_request / push
-  -> local-contracts
-  -> source-controlled config/schema/scriptsを検証
-  -> synthetic fixtureでstrict revision loaderをテスト
-  -> config/hf-targets/*.tomlを検証
+config/current.json
+config/versions/config-NNNNNN/
+  reference.json
+  evaluation-schema.json
+  datasets-lock.json
 ```
 
-実HF Bucketを検証するのは手動実行時だけです。
-
-```text
-workflow_dispatch
-  -> local-contracts
-  -> validate-selected
-  -> hf_bucketを解決
-  -> remote revision filesを取得
-  -> strict RevisionBundle validation
-  -> target identity validation
-  -> Bucket directory validation
-```
-
-手動実行:
-
-```text
-Actions
-  -> Validate HF Layout
-  -> Run workflow
-  -> hf_bucket
-```
-
-Bucket側の`reference.json`がまだ新contractへ移行されていない期間は、PR/push CIには影響しません。移行後に手動`Validate HF Layout`を実行して実値を検証します。
-
-## Revision fetch/validation
-
-`hf-fetch-revisions.sh` は次の3ファイルを取得します。
-
-```text
-config/revisions/reference.json
-config/revisions/evaluation-schema.json
-config/revisions/datasets-lock.json
-```
-
-取得後は必ずproject `RevisionBundle` loaderを実行します。`uv`があれば`uv run python`、なければactive `python`を使用しますが、validation自体をskipする経路はありません。
-
-その後 `validate-revisions.py` が選択targetとのidentityを照合します。
-
-```text
-development_artifact.repo_id
-upstream.repo_id
-tokenizer.repo_id
-reference.canonical_framework
-decoders
-```
-
-## reference.json
-
-全targetで以下の3 identityが必須です。
+通常workflowでは `config/current.json` の `config_version` を読みます。
 
 ```json
 {
   "schema_version": 1,
-  "development_artifact": {
-    "repo_id": "gawohok7/tf-v1-onnx-dev",
-    "revision": "<artifact-sha>"
-  },
-  "upstream": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<upstream-sha>"
-  },
-  "tokenizer": {
-    "repo_id": "kotoba-tech/kotoba-whisper-v1.0",
-    "revision": "<tokenizer-sha>"
-  },
-  "reference": {
-    "id": "transformers-reference-v1",
-    "revision": "<reference-revision>",
-    "canonical_framework": "transformers"
-  },
-  "decoders": {
-    "supported": ["whisper_autoregressive"],
-    "default": "whisper_autoregressive"
-  }
+  "config_version": "config-000002"
 }
 ```
 
-旧`model`形式、`model_id`/`model_revision`、`decorders`、単数`decoder`、旧形式と新形式の混在は受理されません。
+過去runを再現する場合は環境変数で明示できます。
+
+```text
+HF_CONFIG_VERSION=config-000002
+```
+
+`hf-fetch-revisions.sh` は選択されたversionを `.ci/hf/config/resolved.json` に保存し、`run-context.json.revisions.config_version`にも伝播させます。
+
+## Validate HF Layout
+
+PR/push時はRepository内のcontractだけを検証し、mutableな実Bucket状態には依存しません。
+
+```text
+pull_request / push
+  -> local-contracts
+  -> source-controlled config/schema/scripts
+  -> synthetic revision fixtures
+  -> ID allocator unit tests
+```
+
+手動実行時だけ実Bucketをstrictに確認します。
+
+```text
+workflow_dispatch
+  -> hf_bucket解決
+  -> config/current.json取得
+  -> config/versions/<config_version>/取得
+  -> strict RevisionBundle validation
+  -> target identity validation
+  -> required Bucket layout validation
+```
+
+required collectionsには次を含みます。
+
+```text
+benchmarks
+runs
+candidates
+experiments
+reference
+scripts
+tmp
+```
+
+## 自動採番
+
+`candidate_id` と `experiment_id` の新規発行は人間が番号を決めません。
+
+```text
+<prefix>-NNNNNN
+```
+
+数値suffixはcollection全体の既存最大値+1です。prefix別カウンタではありません。
+
+例:
+
+```text
+experiments/
+  cpu-full-eval-000002
+  graph-optimization-000003
+  rust-eval-000007
+```
+
+次に`cpu-full-eval`を発行しても `cpu-full-eval-000008` です。
+
+採番直後に `README.md` を作成してパスをmaterializeし、prefix・sequence・target・candidate・GitHub run等を記録します。
+
+### concurrency
+
+`list -> max + 1` のraceを避けるため、採番jobのみBucket単位で直列化します。
+
+```yaml
+concurrency:
+  group: hf-experiment-id-${{ inputs.hf_bucket }}
+  cancel-in-progress: false
+```
+
+重いmatrix evaluationは採番終了後に並列実行されます。
+
+## candidate_id入力の意味
+
+評価workflowの `candidate_id` は残しますが、これは採番ではありません。
+
+```text
+新しいcandidateを作る
+  -> hf-push-candidate.sh が自動採番
+
+既存candidateを評価する
+  -> workflow input candidate_id で対象を明示
+```
+
+評価時に「最新candidate」を暗黙選択するとrerunの対象が変わるため、既存artifact選択は明示的に維持します。
 
 ## CPU Full Evaluation
 
@@ -160,22 +179,21 @@ hf_bucket
 candidate_id
 ```
 
-処理:
+内部フロー:
 
 ```text
-Bucket解決
- -> revision fetch + strict validation
- -> target identity validation
- -> decoder compatibility check
- -> candidate取得
- -> reference取得
- -> target固有 model config で Linux CPU full evaluation
- -> run/benchmark upload
+allocate-experiment
+  -> cpu-full-eval-NNNNNN
+  -> README reservation
+
+Linux CPU evaluation
+  -> current config version取得
+  -> strict revision validation
+  -> candidate取得
+  -> evaluation
+  -> run-context.metadata.experiment_id
+  -> runs / benchmarks
 ```
-
-同じ`candidate_id`でもBucketが異なる評価を互いに衝突させないよう、concurrency keyには`hf_bucket`も含めます。
-
-現在のPython ONNX evaluatorはCTC-only実装です。`whisper_autoregressive`等の非CTC targetを選択した場合、revision検証後に明示的なdecoder compatibility errorで停止します。
 
 ## Cross Platform ONNX Parity
 
@@ -187,16 +205,13 @@ candidate_id
 evaluation = smoke | parity | coreml-parity
 ```
 
-matrix:
+1回のworkflow全体に、例えば次を1つ発行します。
 
 ```text
-Linux CPU
-Windows CPU
-macOS CPU
-macOS CoreML
+cross-platform-parity-000023
 ```
 
-解決した`HF_TARGET_ID`を`--model-config`としてPython evaluatorへ渡します。concurrency keyにも`hf_bucket`を含めるため、target間でrunが誤ってcancelされません。
+Linux CPU / Windows CPU / macOS CPU / macOS CoreML matrixは同じexperiment IDを共有し、それぞれ独立したrun IDを持ちます。
 
 ## Rust Cross Platform Evaluation
 
@@ -208,21 +223,38 @@ candidate_id
 evaluation = smoke | parity | coreml-parity | full
 ```
 
-matrix:
+1回のworkflowに次のようなexperiment IDを発行します。
 
 ```text
-Linux CPU
-Windows CPU
-macOS CPU
-macOS CoreML
+rust-eval-000024
 ```
 
-`prepare-rust-manifest.py`にも解決済み`HF_TARGET_ID`を`--model-config`として渡します。Rust evaluatorは現在CTC-onlyなので、非CTC targetはrevision検証後に明示的に停止します。
+Rust evaluatorも `config_version` とstrict revision identityをrun-contextへ記録し、`--experiment-id`でexperimentを関連付けます。
+
+## reference.json
+
+全targetで以下を独立して固定します。
+
+```text
+development_artifact
+upstream
+tokenizer
+reference
+decoders
+```
+
+Bucket名は`reference.json`には記録せず、routingは`HF_TARGETS_JSON`のみで管理します。
 
 ## Rust CI / Release
 
-`rust-ci.yml` はHF target選択を必要としません。Linux CPU / Windows DirectML / macOS CoreML featureのcompile/testを行います。
+`rust-ci.yml` はHF targetを必要とせず、Linux CPU / Windows DirectML / macOS CoreML featureをcompile/testします。
 
-`rust-release.yml` もHF storageを参照せず、`v*` tagまたは手動tag入力からLinux/Windows/macOS向け`asr-eval` binaryと`SHA256SUMS`をGitHub Releaseへ公開します。
+`rust-release.yml` もHF storageから独立し、GitHub Release用binaryを生成します。
 
-詳細なrevision contractは `docs/multi-framework-asr.md` を参照してください。
+## 関連文書
+
+```text
+docs/hf-bucket-operations.md  # 他repoにも移植可能な完全運用仕様
+docs/hf-layout.md             # このrepoのcanonical tree
+docs/multi-framework-asr.md   # ASR target/revision contract
+```
