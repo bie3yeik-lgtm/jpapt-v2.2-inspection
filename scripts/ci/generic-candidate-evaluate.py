@@ -30,6 +30,13 @@ def write_report(path: Path, report: dict) -> None:
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
+def session_options(provider: str, allow_fallback: bool) -> ort.SessionOptions:
+    options = ort.SessionOptions()
+    if provider != "CPUExecutionProvider" and not allow_fallback:
+        options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+    return options
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--candidate-dir", default="/opt/jpapt/candidate")
@@ -42,7 +49,7 @@ def main() -> int:
     p.add_argument(
         "--allow-provider-fallback",
         action="store_true",
-        help="Allow CPU fallback when the requested provider is unavailable. Disabled by default so provider probes remain truthful.",
+        help="Allow CPU fallback when the requested provider is unavailable or cannot execute the graph. Disabled by default.",
     )
     args = p.parse_args()
 
@@ -67,6 +74,7 @@ def main() -> int:
             "requested_provider_available": False,
             "provider": None,
             "provider_fallback": False,
+            "cpu_ep_fallback_disabled": args.provider != "CPUExecutionProvider",
             "available_providers": available,
             "platform": {
                 "system": platform.system(),
@@ -83,6 +91,7 @@ def main() -> int:
         write_report(output, report)
         return 3
 
+    strict_cpu_fallback_disabled = provider != "CPUExecutionProvider" and not args.allow_provider_fallback
     report = {
         "schema_version": 2,
         "suite": args.suite,
@@ -90,6 +99,7 @@ def main() -> int:
         "requested_provider_available": requested_provider_available,
         "provider": provider,
         "provider_fallback": provider != args.provider,
+        "cpu_ep_fallback_disabled": strict_cpu_fallback_disabled,
         "available_providers": available,
         "platform": {
             "system": platform.system(),
@@ -106,7 +116,27 @@ def main() -> int:
     sessions = []
     for model in models:
         started = time.perf_counter()
-        sess = ort.InferenceSession(str(model), providers=[provider])
+        try:
+            sess = ort.InferenceSession(
+                str(model),
+                sess_options=session_options(provider, args.allow_provider_fallback),
+                providers=[provider],
+            )
+        except Exception as exc:
+            report["models"].append(
+                {
+                    "path": str(model.relative_to(candidate)),
+                    "load_seconds": time.perf_counter() - started,
+                    "passed": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            report["passed"] = False
+            report["failure"] = "STRICT_PROVIDER_SESSION_CREATION_FAILED"
+            write_report(output, report)
+            return 5
+
         elapsed = time.perf_counter() - started
         active_providers = sess.get_providers()
         if provider not in active_providers and not args.allow_provider_fallback:
@@ -117,6 +147,7 @@ def main() -> int:
             {
                 "path": str(model.relative_to(candidate)),
                 "load_seconds": elapsed,
+                "passed": provider in active_providers or args.allow_provider_fallback,
                 "active_providers": active_providers,
                 "inputs": [{"name": x.name, "shape": x.shape, "type": x.type} for x in sess.get_inputs()],
                 "outputs": [{"name": x.name, "shape": x.shape, "type": x.type} for x in sess.get_outputs()],
