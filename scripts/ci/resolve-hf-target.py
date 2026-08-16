@@ -159,9 +159,6 @@ def main() -> int:
         "EXPECTED_TOKENIZER_REPO_ID": target.upstream_repo_id,
         "EXPECTED_FRAMEWORK": target.canonical_framework,
         "EXPECTED_DECODER": target.default_decoder,
-        "ALLOW_LEGACY_REVISION_METADATA": (
-            "true" if target.allow_legacy_revision_metadata else "false"
-        ),
         "HF_TARGET_ID": target.id,
     }
 
