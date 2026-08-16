@@ -655,7 +655,7 @@ A work-history document is an audit/handoff record, **not** the canonical implem
 
 Continue updating the same work-history file while the task remains the same work unit. Do not create a new file for every commit. Start a new file when the request or investigation has materially changed into a distinct work survey.
 
-Audit records should preserve consequential failures and negative efidence, including when applicable:
+Audit records should preserve consequential failures and negative evidence, including when applicable:
 
 - why a destructive redesign was selected;
 - schema or contract migrations;
