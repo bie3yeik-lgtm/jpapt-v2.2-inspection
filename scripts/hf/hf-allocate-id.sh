@@ -26,11 +26,8 @@ REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
 
 listing="$(mktemp)"
 readme="$(mktemp)"
-trap 'rm -f "$listing" "$readme"' EXIT
+trap 'rm -f "$listing" "$readme" "${listing}.err"' EXIT
 
-# A missing/empty collection is equivalent to an empty listing. Other failures
-# should still surface, so only tolerate the exact empty-list case produced by
-# a collection with no objects.
 if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q >"$listing" 2>"${listing}.err"; then
   if grep -qiE 'not found|does not exist|no files|empty' "${listing}.err"; then
     : >"$listing"
@@ -39,7 +36,6 @@ if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q >"$listing" 2>"${l
     fail "failed to list ${REMOTE_ROOT}"
   fi
 fi
-rm -f "${listing}.err"
 
 ID="$(python scripts/ci/next-hf-sequence-id.py --prefix "$PREFIX" --listing "$listing")"
 SEQUENCE="${ID##*-}"
@@ -56,14 +52,18 @@ six-digit sequence in \`${COLLECTION}/\` plus one.
 - sequence: \`${SEQUENCE}\`
 - allocated_at: \`${CREATED_AT}\`
 - target_id: \`${HF_TARGET_ID:-unknown}\`
+- candidate_id: \`${CANDIDATE_ID:-not-applicable}\`
+- evaluation_id: \`${EVALUATION_ID:-not-applicable}\`
+- provider_id: \`${PROVIDER_ID:-not-applicable}\`
 - github_run_id: \`${GITHUB_RUN_ID:-local}\`
+- github_run_attempt: \`${GITHUB_RUN_ATTEMPT:-local}\`
 
 The numeric suffix is machine-managed. Do not manually renumber or reuse it.
 The prefix is descriptive only and does not define an independent sequence.
 EOF
 
-# Writing README.md makes the logical directory exist in object storage and
-# documents/reserves the allocated ID in the Hub UI.
+# README.md both reserves the allocated object prefix and documents it in the
+# Hugging Face Bucket UI.
 hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md"
 
 log "Allocated ${COLLECTION}/${ID}"
