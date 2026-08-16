@@ -20,8 +20,6 @@ Windows
 macOS Apple Silicon
 ```
 
-環境ごとの主な役割は次です。
-
 | 環境 | 主な用途 |
 |---|---|
 | Linux / WSL2 | canonical reference、Docker、CPU、CUDA、export |
@@ -44,7 +42,7 @@ Windows:
 scripts/dev/setup.ps1
 ```
 
-Pythonはuv/mise管理環境を使い、global packageへ依存しないでください。
+Pythonはuv/mise管理環境を使います。
 
 ```bash
 mise exec -- uv run python scripts/dev/doctor.py
@@ -52,24 +50,29 @@ mise exec -- uv run python scripts/dev/doctor.py
 
 ## 開発対象の選び方
 
-modelの意味は`config/models/`、HF targetの意味は`config/hf-targets/`にあります。
+modelの意味:
 
 ```text
 config/models/
-  parakeet-tdt_ctc-0.6b-ja.toml
-  kotoba-whisper-v1.0.toml
-  ...
+```
 
+HF targetの意味:
+
+```text
 config/hf-targets/
-  parakeet-tdt_ctc-0.6b-ja.toml
-  kotoba-whisper-v1.0.toml
+```
+
+Evaluator実装能力:
+
+```text
+config/evaluators/
 ```
 
 GitHub Actionsのstorage routingは`HF_TARGETS_JSON`から解決します。
 
-## Revision config取得
+Targetはmodel/framework/decoderの論理対象であり、現在のBucket名そのものをidentityにはしません。
 
-Bucketはversioned configを使います。
+## Revision config取得
 
 ```text
 config/current.json
@@ -83,14 +86,14 @@ config/versions/config-NNNNNN/
 bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-過去versionを再現:
+過去version:
 
 ```bash
 HF_CONFIG_VERSION=config-000023 \
   bash scripts/hf/hf-fetch-revisions.sh
 ```
 
-ローカルには次へ展開されます。
+ローカル展開:
 
 ```text
 .ci/hf/config/
@@ -100,6 +103,26 @@ HF_CONFIG_VERSION=config-000023 \
     evaluation-schema.json
     datasets-lock.json
 ```
+
+## 新しいConfig Versionをpublishする
+
+```bash
+bash scripts/hf/hf-push-config-version.sh <local-config-dir>
+```
+
+このscriptは3 JSONを検証した後、中央Allocatorから次の`config-NNNNNN`を取得します。番号を手入力しません。
+
+```text
+strict validation
+  ↓
+central allocator reservation
+  ↓
+revision JSON upload
+  ↓
+config/current.json update
+```
+
+他Repositoryから利用する場合は中央Allocator Repositoryへアクセス可能な`HF_ALLOCATOR_GITHUB_TOKEN`が必要です。
 
 ## DatasetとAudio
 
@@ -117,42 +140,82 @@ ResolvedDatasetSample.audio_path
 CanonicalAudio(float32/mono/16kHz)
 ```
 
-model-specific frontendはCanonicalAudio以降に限定します。
+model-specific frontendはCanonicalAudio以降です。
 
 ## Canonical reference
 
 Reference実装はtargetに応じて変わります。
 
-- NeMo target: NeMo adapter
-- Transformers target: Transformers adapter
+```text
+NeMo target          -> NeMo adapter
+Transformers target  -> Transformers adapter
+```
 
-重要なのはframework名ではなく、`reference.json`で固定されたupstream/tokenizer/reference revisionを使うことです。
+`reference.json`で固定されたupstream/tokenizer/reference revisionを使います。
 
 ## Export
 
-export結果はまずローカルの一時領域へ作成します。
+export結果はまずローカル一時領域へ作成します。
 
 ```text
 tmp/export/<work-dir>/
 ```
 
-ローカルexport時点では正式candidate IDを人間が決めません。正式IDはBucketへpublishするときに自動採番します。
-
-```bash
-bash scripts/hf/hf-push-candidate.sh ./tmp/export/work
-```
-
-採番形式:
+この段階では正式candidate IDは不要です。
 
 ```text
-<prefix>-NNNNNN
+candidate_id = unallocated
 ```
 
-数値suffixは`candidates/`全体の既存最大値+1です。
+正式publish:
+
+```bash
+bash scripts/hf/hf-push-candidate.sh ./tmp/export/work [prefix]
+```
+
+内部:
+
+```text
+central allocatorへcandidate ID要求
+  ↓
+Bucket上README予約
+  ↓
+metadata.jsonへcandidate_id反映
+  ↓
+artifact upload
+```
+
+## 中央Allocatorを直接利用する
+
+通常はpublish/evaluation scriptから自動利用されます。必要な場合の公開clientは:
+
+```bash
+HF_BUCKET=owner/bucket \
+  bash scripts/hf/hf-request-id.sh experiments my-experiment
+```
+
+`hf-allocate-id.sh`を直接呼んでも、中央workflow外ではこのclientへ転送されます。
+
+複数Repositoryで同じBucketを利用するときも、各Repoで独自に`max+1`を計算してはいけません。
+
+詳細: [`central-allocator.md`](./central-allocator.md)
+
+## BucketルートREADME
+
+中央Allocatorが番号を予約するたびにBucketルートREADMEのmanaged blockが更新されます。
+
+```text
+candidates 現在番号
+experiments 現在番号
+config 現在番号
+直近の採番
+```
+
+ここに表示される番号は「予約済み最大値」です。後続publish失敗時も再利用しません。
 
 ## Evaluation
 
-既存candidateを評価するときだけ`candidate_id`を明示します。これは採番ではなく、再現性のためのartifact選択です。
+既存candidateを評価するときだけ`candidate_id`を明示します。これは採番ではなく再現性のためのartifact selectionです。
 
 ```bash
 bash scripts/hf/hf-fetch-candidate.sh <candidate-id>
@@ -169,11 +232,28 @@ python -m parakeet_onnx.cli.evaluate \
   --output results/run
 ```
 
-現状のPython/Rust evaluatorはCTC中心であり、Whisper autoregressive candidateの実評価は未実装です。revision/layout/referenceの共通化とは区別してください。
+## Evaluator capability
+
+workflowや運用scriptで`decoder == ctc`のような分岐を増やしません。
+
+```bash
+python scripts/ci/validate-evaluator-capability.py \
+  --evaluator python-onnx \
+  --decoder <resolved-decoder>
+```
+
+現在の宣言:
+
+```text
+python-onnx -> ctc
+rust-onnx   -> ctc
+```
+
+Whisper autoregressiveやTDTを実装した後は、runtime adapterと`config/evaluators/*.toml`を拡張します。
 
 ## ExperimentとRun
 
-評価workflow開始時にexperiment IDを自動発行します。
+評価workflow開始時にexperiment IDを中央Allocatorが発行します。
 
 ```text
 cpu-full-eval-NNNNNN
@@ -194,6 +274,8 @@ resolved manifest / revision bundle / candidate
   ↓
 Rust runtime + decoder + metrics
 ```
+
+Rust runtimeが対応するdecoderは`config/evaluators/rust-onnx.toml`で宣言します。
 
 ## キャッシュと生成物
 
@@ -220,11 +302,19 @@ target/
 2. dataset/audioを解決
 3. canonical referenceを生成
 4. export
-5. candidateを自動採番してpublish
-6. smoke/parity/full評価
-7. provider差分を確認
-8. acceptance確認
-9. Model Repoへpromotion
+5. central allocator経由でcandidateをpublish
+6. evaluator capabilityを確認
+7. smoke/parity/full評価
+8. provider差分を確認
+9. acceptance確認
+10. Model Repoへpromotion
 ```
 
-framework固有の手順は`docs/multi-framework-asr.md`と`docs/onnx-export.md`を参照してください。
+関連文書:
+
+```text
+docs/multi-framework-asr.md
+docs/onnx-export.md
+docs/central-allocator.md
+docs/github-actions.md
+```
