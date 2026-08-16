@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/candidate-metadata.schema.json",
+  "title": "ASR ONNX Candidate Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "decoder",
+    "artifact_contract",
+    "artifacts",
+    "runtime_contract",
+    "features"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 2},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "decoder": {
+      "type": "string",
+      "enum": ["ctc", "tdt", "whisper_autoregressive"]
+    },
+    "artifact_contract": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/artifact"}
+    },
+    "runtime_contract": {"$ref": "#/$defs/runtimeContract"},
+    "tokenizer": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/tokenizer"}
+      ]
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"}
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "tokenizer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["vocabulary", "transformers_processor"]
+        },
+        "path": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtimeContract": {
+      "type": "object",
+      "required": ["decoder", "input_kind", "io", "decoder_config"],
+      "properties": {
+        "decoder": {
+          "type": "string",
+          "enum": ["ctc", "tdt", "whisper_autoregressive"]
+        },
+        "input_kind": {
+          "type": "string",
+          "enum": ["canonical_waveform", "features"]
+        },
+        "io": {"type": "object"},
+        "decoder_config": {"type": "object"}
+      },
+      "additionalProperties": true
+    }
+  }
+}
