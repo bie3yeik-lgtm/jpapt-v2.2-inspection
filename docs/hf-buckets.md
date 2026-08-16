@@ -76,6 +76,7 @@ hf://buckets/<namespace>/<bucket>/
 │       ├── run-context.json
 │       ├── metrics.json
 │       ├── samples.jsonl
+│       ├── run.parquet
 │       └── promotion.json        # promotion後のみ
 └── benchmarks/
     └── parakeet-candidate-000003/
@@ -121,6 +122,7 @@ hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/
 │       ├── run-context.json
 │       ├── metrics.json
 │       ├── samples.jsonl
+│       ├── run.parquet
 │       └── promotion.json
 └── benchmarks/
     └── parakeet-candidate-000124/
@@ -153,7 +155,8 @@ hf://buckets/gawohok7/tf-v1-onnx-dev-bucket/
 │   └── <run-id>/
 │       ├── run-context.json
 │       ├── metrics.json
-│       └── samples.jsonl
+│       ├── samples.jsonl
+│       └── run.parquet
 └── benchmarks/
     └── whisper-candidate-000042/
         └── directml/<run-id>.json
@@ -205,15 +208,26 @@ experiment.rust_eval             -> rust-eval
 
 ## 8. `runs/`
 
-runは最低限次の3ファイルを持ちます。
+runは最低限次の4ファイルを持ちます。
 
 ```text
 run-context.json
 metrics.json
 samples.jsonl
+run.parquet
 ```
 
-`hf-push-run.sh` は `run-context.json.run_id` と `metrics.json.run_id` の一致を確認し、project schema validation後に `runs/<run-id>/` へsyncします。
+`run.parquet` は ExperimentCapsuleV1 のdurable analytical representationです。現在は同一flat schema上に `manifest` / `sample` / `metric` / `artifact` / `diagnostic` recordを保持します。
+
+- `manifest`: run-contextとbenchmark provenance
+- `sample`: per-sample ASR結果
+- `metric`: cross-run集計向けnumeric metric
+- `artifact`: 小さなembedded artifactまたはHF Bucket等のexternal immutable artifact参照
+- `diagnostic`: provider fallback、parity、frontend/runtime等の小さな構造化診断
+
+大きなONNX model、external data、audio corpus、大規模traceはParquet payloadへ複製せず、`artifact` recordからimmutable URI・SHA-256・sizeを参照します。
+
+`hf-push-run.sh` はJSON/JSONL schemaに加えて `run.parquet` のExperimentCapsuleV1整合性、run ID、sample数を検証してから `runs/<run-id>/` へdirectory syncします。run upload wrapperでは `--delete` を使用しません。
 
 promotion成功後は同じrunへ `promotion.json` を追加します。
 
@@ -234,7 +248,7 @@ Bucket:
 - development artifact
 - mutable current pointer
 - immutable-by-policy config/candidate IDs
-- raw run history
+- raw run history + ExperimentCapsuleV1
 - benchmark index
 
 Model Repo:
