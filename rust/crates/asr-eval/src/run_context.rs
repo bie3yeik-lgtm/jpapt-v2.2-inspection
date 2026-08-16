@@ -102,7 +102,10 @@ impl RunContextV2 {
             ("artifact.path", self.artifact.path.as_str()),
             ("artifact.sha256", self.artifact.sha256.as_str()),
             ("artifact.candidate_id", self.artifact.candidate_id.as_str()),
-            ("artifact.artifact_role", self.artifact.artifact_role.as_str()),
+            (
+                "artifact.artifact_role",
+                self.artifact.artifact_role.as_str(),
+            ),
             ("git.repository", self.git.repository.as_str()),
             ("git.commit", self.git.commit.as_str()),
             ("git.ref", self.git.git_ref.as_str()),
@@ -112,14 +115,29 @@ impl RunContextV2 {
             ("host.python_version", self.host.python_version.as_str()),
             ("host.implementation", self.host.implementation.as_str()),
             ("host.github_runner_os", self.host.github_runner_os.as_str()),
-            ("host.github_runner_arch", self.host.github_runner_arch.as_str()),
+            (
+                "host.github_runner_arch",
+                self.host.github_runner_arch.as_str(),
+            ),
             ("host.github_run_id", self.host.github_run_id.as_str()),
-            ("host.github_run_attempt", self.host.github_run_attempt.as_str()),
-            ("runtime.implementation", self.runtime.implementation.as_str()),
+            (
+                "host.github_run_attempt",
+                self.host.github_run_attempt.as_str(),
+            ),
+            (
+                "runtime.implementation",
+                self.runtime.implementation.as_str(),
+            ),
             ("runtime.backend", self.runtime.backend.as_str()),
-            ("runtime.backend_version", self.runtime.backend_version.as_str()),
+            (
+                "runtime.backend_version",
+                self.runtime.backend_version.as_str(),
+            ),
             ("runtime.provider_id", self.runtime.provider_id.as_str()),
-            ("runtime.provider_ort_name", self.runtime.provider_ort_name.as_str()),
+            (
+                "runtime.provider_ort_name",
+                self.runtime.provider_ort_name.as_str(),
+            ),
         ] {
             require_nonempty(name, value)?;
         }
@@ -174,19 +192,23 @@ impl RunContextV2 {
         let candidate_value = self.metadata.get("candidate").ok_or_else(|| {
             EvalError::InvalidInput("run-context metadata.candidate is required".into())
         })?;
-        let candidate: GeneratedCandidateContract = serde_json::from_value(candidate_value.clone())?;
+        let candidate: GeneratedCandidateContract =
+            serde_json::from_value(candidate_value.clone())?;
         candidate.validate()?;
         if candidate.candidate_id != self.artifact.candidate_id {
             return Err(EvalError::InvalidInput(
-                "run-context artifact.candidate_id must match metadata.candidate.candidate_id".into(),
+                "run-context artifact.candidate_id must match metadata.candidate.candidate_id"
+                    .into(),
             ));
         }
         let primary = candidate.artifacts.get("primary").ok_or_else(|| {
             EvalError::InvalidInput("run-context candidate has no primary artifact".into())
         })?;
-        if primary.sha256 != self.artifact.sha256 || primary.size_bytes != self.artifact.size_bytes {
+        if primary.sha256 != self.artifact.sha256 || primary.size_bytes != self.artifact.size_bytes
+        {
             return Err(EvalError::InvalidInput(
-                "run-context artifact identity must match metadata.candidate primary artifact".into(),
+                "run-context artifact identity must match metadata.candidate primary artifact"
+                    .into(),
             ));
         }
         Ok(())
@@ -268,8 +290,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_sha256() {
-        let error = validate_sha256("artifact.sha256", "not-a-sha")
-            .expect_err("invalid sha must fail");
+        let error =
+            validate_sha256("artifact.sha256", "not-a-sha").expect_err("invalid sha must fail");
         assert!(error.to_string().contains("64-character SHA-256"));
     }
 
