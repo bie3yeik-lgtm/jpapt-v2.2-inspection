@@ -8,7 +8,7 @@
 HF_TOKEN
 ```
 
-中央Allocatorを他Repositoryから利用する場合のSecret:
+他Repositoryから中央Allocatorを利用する場合:
 
 ```text
 HF_ALLOCATOR_GITHUB_TOKEN
@@ -20,24 +20,22 @@ Repository Variable:
 HF_TARGETS_JSON
 ```
 
-`HF_TARGETS_JSON`は現在時点のstorage routingです。
+`HF_TARGETS_JSON`は現在時点のstorage routingだけを表します。
 
 ```json
 {
   "target-a": {
     "HF_BUCKET": "owner/bucket-a",
     "HF_MODEL_REPO": "owner/model-a"
-  },
-  "target-b": {
-    "HF_BUCKET": "owner/bucket-b",
-    "HF_MODEL_REPO": "owner/model-b"
   }
 }
 ```
 
-同一snapshot内では`HF_BUCKET`は一意です。ただし将来、容量・用途・migrationの都合でroutingを変更できます。
+同一snapshot内では`HF_BUCKET`は一意です。将来の容量・用途・migrationによるrouting変更は許容します。
 
-## 主要workflow
+---
+
+# 主要workflow
 
 ```text
 Validate HF Layout
@@ -47,11 +45,11 @@ Cross Platform ONNX Parity
 Rust Cross Platform Evaluation
 ```
 
-`HF Central Sequence Allocator`は直接人間が番号を決めるためのworkflowではなく、他のworkflow/scriptから呼ばれる中央採番サービスです。
+---
 
-## Target解決
+# Target / Runtime Variant解決
 
-`scripts/ci/resolve-hf-target.py`が次を解決します。
+`scripts/ci/resolve-hf-target.py`はtargetとruntime variantを同時に解決します。
 
 ```text
 HF_TARGET_ID
@@ -61,38 +59,64 @@ EXPECTED_DEVELOPMENT_REPO_ID
 EXPECTED_UPSTREAM_REPO_ID
 EXPECTED_TOKENIZER_REPO_ID
 EXPECTED_FRAMEWORK
+HF_PROFILE_SET
+ASR_RUNTIME_VARIANT
+EXPECTED_RUNTIME_PROFILE
 EXPECTED_DECODER
 ```
 
-現在snapshot内のBucket重複は不正です。過去snapshotとの割当変更は許容します。
+解決経路:
 
-GitHub ActionsはRepository Variableから`workflow_dispatch`のchoice一覧を動的生成できないため、`hf_bucket`はstring inputです。実行時に`HF_TARGETS_JSON`と照合します。
+```text
+HF_TARGETS_JSON
+    ↓ storage routing
+HF target TOML
+    ↓ runtime.profile_set
+config/asr-catalog.json
+    ↓ runtime_variant
+runtime profile / decoder
+```
 
-## Versioned Config
+CTC/TDTを選択するためにJSONを書き換えません。workflow input `runtime_variant`を変更します。空の場合はprofile setの`default_variant`です。
 
-正規経路:
+---
+
+# Versioned Config
 
 ```text
 config/current.json
   ↓
 config/versions/config-NNNNNN/
-  ↓
-reference.json
-evaluation-schema.json
-datasets-lock.json
+  ├── reference.json
+  ├── evaluation-schema.json
+  ├── datasets-lock.json
+  └── runtime.json
 ```
 
-`hf-fetch-revisions.sh`が選択versionを`.ci/hf/config/revisions/`へmaterializeし、`.ci/hf/config/resolved.json`へ解決結果を保存します。
+`runtime.json`はASR runtime catalog id/SHAとprofile setだけをpinします。
 
-過去versionの再現:
+```json
+{
+  "schema_version": 1,
+  "catalog": {
+    "id": "asr-runtime-catalog-v1",
+    "sha256": "<ASR_RUNTIME_CATALOG_SHA256>"
+  },
+  "profile_set": "parakeet-tdt-ctc-v1"
+}
+```
+
+`reference.json`/`evaluation-schema.json`へdecoder一覧を重複記述しません。
+
+過去version再現:
 
 ```text
 HF_CONFIG_VERSION=config-000023
 ```
 
-新しい`config-NNNNNN`の番号も中央Allocatorが発行します。
+---
 
-## Central Sequence Allocator
+# Central Sequence Allocator
 
 採番対象:
 
@@ -102,183 +126,149 @@ experiments
 config
 ```
 
-公開入口:
+prefix policyのSource of Truth:
 
 ```text
-scripts/hf/hf-request-id.sh
-scripts/hf/hf-allocate-id.sh  # 通常実行では中央clientへ転送
+config/hf-allocation-catalog.json
 ```
 
-中央workflowだけが実際の:
+workflow/scriptはraw prefixではなくsemantic keyを使用します。
 
 ```text
-list -> max suffix + 1 -> README reservation
+experiment.cpu_full
+experiment.cross_platform_parity
+experiment.rust_eval
+config.version
+```
+
+中央workflowだけが、
+
+```text
+list -> max suffix + 1 -> reservation -> root README update
 ```
 
 を実行します。
 
-### グローバル排他
-
-複数Repositoryが同じBucketを利用してもraceしないよう、中央Allocator Repository上でBucket単位に直列化します。
-
-```yaml
-concurrency:
-  group: hf-central-sequence-${{ inputs.hf_bucket }}
-  cancel-in-progress: false
-```
-
-評価workflow側に個別の採番concurrencyを置く必要はありません。
-
-### 認証
-
-このRepository内部のworkflowでは:
-
-```yaml
-GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
-```
-
-を使います。
-
-別Repositoryから中央Allocatorを呼ぶ場合は、中央Repositoryへworkflow dispatch/read・artifact readできる `HF_ALLOCATOR_GITHUB_TOKEN` を呼出元に設定します。
-
-### BucketルートREADME更新
-
-中央Allocatorは採番後にBucketルートの:
+`allocation.json`には、
 
 ```text
-README.md
+allocation catalog id/SHA
+prefix key
+resolved prefix
+allocated ID
+Bucket/collection
 ```
 
-へmanaged blockを更新します。
-
-記録内容:
-
-```text
-最終更新時刻
-直近の採番ID
-candidatesの現在最大番号
-experimentsの現在最大番号
-configの現在最大番号
-```
-
-番号は「publish成功済み最大値」ではなく「Allocatorが予約した最大値」です。採番後の処理が失敗しても番号は再利用しません。
+をsnapshotします。
 
 詳細は [`central-allocator.md`](./central-allocator.md) を参照してください。
 
-## Validate HF Layout
+---
 
-### PR / push
+# Candidate
 
-remote Bucketに依存せずRepository内だけを検証します。
-
-```text
-source-controlled config
-schema
-scripts shell syntax
-synthetic revision fixture
-sequence allocator unit test
-evaluator capability unit test
-```
-
-### workflow_dispatch
-
-手動実行時だけ実Bucketをstrict validationします。
+新規candidateはschema-v3です。
 
 ```text
-hf_bucket入力
-  ↓
-target解決
-  ↓
-config/current.json
-  ↓
-selected config version
-  ↓
-RevisionBundle validation
-  ↓
-target identity validation
-  ↓
-required directory validation
+metadata.catalog
+metadata.profile_set
+metadata.variants
 ```
 
-Required lifecycle collections:
+workflowはONNX filenameやdecoder layoutを推測しません。
 
 ```text
-experiments
-candidates
-reference
-runs
-benchmarks
-scripts
-tmp
+candidate metadata
+    ↓ CandidateArtifacts
+runtime variant selection
+    ↓
+Factory / Runtime Registry
 ```
 
-## Evaluator capability
+`candidate_id` workflow inputは採番ではなく、既存のどのcandidateを評価するかの指定です。
 
-workflowは `EXPECTED_DECODER == ctc` のようなarchitecture固有条件を直接持ちません。
+新規candidate publish:
 
-能力宣言:
+```text
+hf-push-candidate.sh
+    ↓ schema/catalog/全variant validation
+Central Allocator
+    ↓
+candidate ID reservation
+    ↓
+Bucket upload
+```
+
+---
+
+# Evaluator capability
+
+workflowは`EXPECTED_DECODER == ctc`等のarchitecture固有条件を持ちません。
 
 ```text
 config/evaluators/python-onnx.toml
 config/evaluators/rust-onnx.toml
 ```
 
-検証:
+と、
 
 ```text
 scripts/ci/validate-evaluator-capability.py
 ```
 
-実行フロー:
+で検証します。
+
+現在:
 
 ```text
-target解決
-  ↓
-EXPECTED_DECODER
-  ↓
-evaluator capability validation
-  ↓
-evaluation runtime
+Python ONNX
+  ctc                     対応
+  tdt                     対応contract/runtime実装済み
+  whisper_autoregressive  対応contract/runtime実装済み
+
+Rust ONNX
+  ctc                     対応
+  tdt                     capability未開放
+  whisper_autoregressive  capability未開放
 ```
 
-現在はPython/Rustとも`ctc`のみをsupported decoderとして宣言しています。TDTやWhisper autoregressive実装を追加するときは、workflowへ条件式を追加せずcapability定義とruntime adapterを拡張します。
+TDT/Whisperの実candidate parityは別途integration validationが必要です。
 
-## Candidate ID
+---
 
-評価workflowの`candidate_id` inputは残します。これは採番ではなく、既存のどのimmutable candidateを評価するかを指定するためです。
-
-新規candidate:
+# CPU Full Evaluation
 
 ```text
-hf-push-candidate.sh
-  -> central allocator
-  -> candidate ID reservation
-  -> artifact upload
-```
-
-## CPU Full Evaluation
-
-```text
-existing candidateを指定
+candidate_id + runtime_variant
   ↓
-central allocatorでexperiment ID発行
+experiment.cpu_fullを中央Allocatorへ要求
   ↓
-target/config version解決
+target/routing/profile解決
   ↓
-revision validation
+4-file config fetch + validation
   ↓
-python-onnx capability validation
+candidate metadata/profile/capability validation
   ↓
-candidate/reference取得
+Python Factory / Runtime Registry
   ↓
 Linux CPU full evaluation
   ↓
 run + benchmark upload
 ```
 
-## Cross Platform ONNX Parity
+---
 
-1 workflow runに1つの`cross-platform-parity-NNNNNN`を中央Allocatorで発行し、matrix全体で共有します。
+# Cross Platform ONNX Parity
+
+1 workflow runに1つのexperiment IDを発行しmatrix全体で共有します。
+
+```text
+experiment.cross_platform_parity
+        ↓
+cross-platform-parity-NNNNNN
+```
+
+標準matrix:
 
 ```text
 Linux CPU
@@ -287,35 +277,81 @@ macOS CPU
 macOS CoreML
 ```
 
-各matrix jobは独立run IDを持ちます。
+各jobは独立run IDを持ちます。
 
-## Rust Cross Platform Evaluation
+---
 
-1つの`rust-eval-NNNNNN`を中央Allocatorで発行します。Rust evaluatorのdecoder対応可否も`rust-onnx` capability contractで検証します。
+# Rust Cross Platform Evaluation
 
-## Rust CI / Release
+```text
+experiment.rust_eval
+    ↓
+rust-eval-NNNNNN
+```
 
-`rust-ci.yml`はHF storage routingとは独立したcompile/test workflowです。
+Rust evaluatorが選択variantを処理できるかは`rust-onnx` capabilityで拒否/許可します。workflow側にCTC固有if文を置きません。
 
-`rust-release.yml`もHF Model Repoへのpromotionとは別で、Rust binaryのGitHub Releaseを担当します。
+---
 
-## Routing変更後の過去run
+# Validate HF Layout
 
-現在の`HF_TARGETS_JSON`から過去runのBucketを推測しません。
+PR/pushではremote Bucketを変更せずsource-controlled contractを検証します。
+
+```text
+HF target profiles
+ASR runtime catalog
+HF allocation catalog
+candidate schema/runtime resolver
+revision normalization
+sequence allocator unit tests
+evaluator capability
+GitHub Action version policy
+shell syntax
+```
+
+workflow_dispatch時のみ実Bucketを読み、
+
+```text
+config/current.json
+selected config-NNNNNN
+4 JSON
+required lifecycle directories
+```
+
+を検証します。
+
+---
+
+# GitHub Action version policy
+
+固定値:
+
+```text
+actions/checkout@v7
+actions/setup-python@v7
+actions/upload-artifact@v7
+actions/cache@v6
+actions/cache/restore@v6   when used
+actions/cache/save@v6      when used
+```
+
+`scripts/ci/validate-github-action-versions.py`が全workflowを検査します。
+
+詳細は [`github-actions-version-policy.md`](./github-actions-version-policy.md) を参照してください。
+
+---
+
+# 過去run再現
+
+現在の`HF_TARGETS_JSON`から過去runのBucket/runtimeを推測しません。
 
 ```text
 run-context.metadata.hf_bucket
 run-context.metadata.hf_target_id
 run-context.metadata.hf_model_repo
+run-context.metadata.candidate.variant/profile
 run-context.revisions.config_version
+run-context.revisions.runtime.catalog
 ```
 
-を使います。
-
-関連文書:
-
-```text
-docs/central-allocator.md
-docs/hf-routing-snapshots.md
-docs/hf-bucket-operations.md
-```
+を使用します。
