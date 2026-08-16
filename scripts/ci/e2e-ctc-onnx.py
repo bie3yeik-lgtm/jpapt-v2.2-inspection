@@ -82,6 +82,7 @@ torch.onnx.export(
     },
     opset_version=17,
     do_constant_folding=True,
+    dynamo=False,
 )
 onnx.checker.check_model(onnx.load(onnx_path, load_external_data=False))
 
