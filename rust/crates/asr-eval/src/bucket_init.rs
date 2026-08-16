@@ -36,6 +36,7 @@ pub struct BucketInitOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModelManifest {
     pub repo_id: String,
     pub revision_requested: String,
@@ -48,6 +49,7 @@ pub struct ModelManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BucketManifest {
     pub schema_version: u32,
     pub bucket_id: String,
@@ -436,9 +438,18 @@ fn decode_bucket_listing(value: Value) -> Result<Vec<BucketListEntry>> {
     Ok(entries)
 }
 
-fn list_bucket_files(bucket_id: &str) -> Result<Vec<BucketListEntry>> {
-    let value = json_output(&["buckets", "list", bucket_id, "-R", "--format", "json"])?;
+fn decode_bucket_listing_output(stdout: &[u8]) -> Result<Vec<BucketListEntry>> {
+    if stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Vec::new());
+    }
+    let value: Value = serde_json::from_slice(stdout)
+        .context("hf buckets list did not return valid JSON or empty output")?;
     decode_bucket_listing(value)
+}
+
+fn list_bucket_files(bucket_id: &str) -> Result<Vec<BucketListEntry>> {
+    let output = run_hf(&["buckets", "list", bucket_id, "-R", "--format", "json"])?;
+    decode_bucket_listing_output(&output.stdout)
 }
 
 fn require_empty_bucket(bucket_id: &str) -> Result<()> {
@@ -709,5 +720,16 @@ tags:
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].path, "README.md");
         assert_eq!(entries[1].path, "config/README.md");
+    }
+
+    #[test]
+    fn empty_bucket_listing_accepts_empty_stdout() {
+        assert!(decode_bucket_listing_output(b"").unwrap().is_empty());
+        assert!(decode_bucket_listing_output(b"  \n\t").unwrap().is_empty());
+    }
+
+    #[test]
+    fn nonempty_invalid_bucket_listing_is_rejected() {
+        assert!(decode_bucket_listing_output(b"not-json").is_err());
     }
 }
