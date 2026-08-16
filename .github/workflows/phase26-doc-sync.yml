@@ -1,0 +1,66 @@
+name: Phase 26 Docs Sync
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/ghcr-ci-phase25]
+    paths:
+      - ".github/workflows/phase26-doc-sync.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/ghcr-ci-phase25
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Synchronize concurrency documentation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("docs/ghcr-ci.md"): [
+                  (
+                      "The workflow also uses `cancel-in-progress: false`. A docs-only synchronize event must not cancel an already-running legitimate Docker build before the lightweight gate has a chance to skip itself.",
+                      "Concurrency is scoped to the heavyweight `build` job rather than the whole workflow. Docs-only synchronize runs never enter that concurrency group, while a newer real Docker build for the same package can cancel an obsolete build job."
+                  ),
+              ],
+              Path("docs/github-actions.md"): [
+                  (
+                      "heavy buildは `cancel-in-progress: false` です。無関係な後続PR synchronizeで実行中の正当なDocker buildをキャンセルしないためです。",
+                      "concurrencyはworkflow全体ではなくheavy `build` jobだけに設定します。docs-only synchronizeはgroupへ入らず実行中buildを妨害しません。一方、新しい実Docker変更による同一package buildは旧build jobをcancelできます。"
+                  ),
+              ],
+              Path("docs/github-actions-ux.md"): [
+                  (
+                      "cause another expensive image rebuild. Other synchronize commits finish at the lightweight gate.",
+                      "cause another expensive image rebuild. Other synchronize commits finish at the lightweight gate.\n\nConcurrency is also scoped to the actual image-build job instead of the whole workflow. This prevents a docs-only synchronize run from canceling an in-flight build before the gate can skip, while still allowing a newer real image build for the same package to replace an obsolete one."
+                  ),
+              ],
+          }
+
+          for path, pairs in replacements.items():
+              text = path.read_text()
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f"expected text not found in {path}: {old}")
+                  text = text.replace(old, new)
+              path.write_text(text)
+          PY
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/ghcr-ci.md docs/github-actions.md docs/github-actions-ux.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Document GHCR job-level concurrency"
+          git push origin HEAD:agent/ghcr-ci-phase25
