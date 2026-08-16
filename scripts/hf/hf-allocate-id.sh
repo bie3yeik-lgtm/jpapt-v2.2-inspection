@@ -24,6 +24,18 @@ BUCKET="${BUCKET%/}"
 [[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
 REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
 
+if [[ -z "${HF_TARGET_ID:-}" && -n "${HF_TARGETS_JSON:-}" ]]; then
+  HF_TARGET_ID="$(python - "$BUCKET" <<'PY'
+import json, os, sys
+bucket=sys.argv[1]
+raw=json.loads(os.environ["HF_TARGETS_JSON"])
+matches=[target for target,value in raw.items() if isinstance(value,dict) and value.get("HF_BUCKET")==bucket]
+if len(matches)==1: print(matches[0])
+PY
+)"
+  export HF_TARGET_ID
+fi
+
 listing="$(mktemp)"
 readme="$(mktemp)"
 trap 'rm -f "$listing" "$readme" "${listing}.err"' EXIT
@@ -62,8 +74,6 @@ The numeric suffix is machine-managed. Do not manually renumber or reuse it.
 The prefix is descriptive only and does not define an independent sequence.
 EOF
 
-# README.md both reserves the allocated object prefix and documents it in the
-# Hugging Face Bucket UI.
 hf buckets cp --token "$HF_TOKEN" "$readme" "${REMOTE_ROOT}/${ID}/README.md"
 
 log "Allocated ${COLLECTION}/${ID}"
