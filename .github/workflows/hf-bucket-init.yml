@@ -1,6 +1,6 @@
 name: Initialize HF Bucket
 
-# Integration probe generation: 2
+# Integration probe generation: 3
 on:
   workflow_dispatch:
     inputs:
