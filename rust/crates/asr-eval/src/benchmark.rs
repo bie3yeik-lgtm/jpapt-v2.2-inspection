@@ -8,6 +8,10 @@ pub struct SampleAggregate {
     pub cer_sum: f64,
     pub wer_sum: f64,
     pub timing_ms: Vec<f64>,
+    pub audio_decode_ms: f64,
+    pub resample_ms: f64,
+    pub decoder_ms: f64,
+    pub postprocess_ms: f64,
     pub inference_ms: f64,
 }
 
@@ -19,20 +23,50 @@ impl Default for SampleAggregate {
             total_audio: 0.0,
             cer_sum: 0.0,
             wer_sum: 0.0,
-            timing_ms: vec![],
+            timing_ms: Vec::new(),
+            audio_decode_ms: 0.0,
+            resample_ms: 0.0,
+            decoder_ms: 0.0,
+            postprocess_ms: 0.0,
             inference_ms: 0.0,
         }
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderTelemetry {
+    pub registered: bool,
+    pub used: Option<bool>,
+    pub fallback_detected: Option<bool>,
+    pub fallback_only: Option<bool>,
+    pub assigned_nodes: Option<u64>,
+    pub fallback_nodes: Option<u64>,
+}
+
 impl SampleAggregate {
-    pub fn add_success(&mut self, duration: f64, cer: f64, wer: f64, total_ms: f64, inference_ms: f64) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_success(
+        &mut self,
+        duration: f64,
+        cer: f64,
+        wer: f64,
+        total_ms: f64,
+        audio_decode_ms: f64,
+        resample_ms: f64,
+        inference_ms: f64,
+        decoder_ms: f64,
+        postprocess_ms: f64,
+    ) {
         self.successful += 1;
         self.total_audio += duration;
         self.cer_sum += cer;
         self.wer_sum += wer;
         self.timing_ms.push(total_ms);
+        self.audio_decode_ms += audio_decode_ms;
+        self.resample_ms += resample_ms;
         self.inference_ms += inference_ms;
+        self.decoder_ms += decoder_ms;
+        self.postprocess_ms += postprocess_ms;
     }
 
     pub fn add_failure(&mut self) {
@@ -42,13 +76,12 @@ impl SampleAggregate {
 
 pub fn build_benchmark(
     run_context: &serde_json::Value,
-    candidate_id: Option<&str>,
-    model_id: &str,
-    evaluation: &str,
     manifest: &str,
     expected: usize,
+    session_creation_ms: f64,
     provider: &str,
     provider_ort: &str,
+    provider_telemetry: ProviderTelemetry,
     agg: &SampleAggregate,
 ) -> serde_json::Value {
     let dist = distribution(&agg.timing_ms);
@@ -61,18 +94,25 @@ pub fn build_benchmark(
         vec!["sample_execution".to_string()]
     };
 
+    let candidate = &run_context["metadata"]["candidate"];
+    let candidate_id = candidate["candidate_id"].clone();
+    let model_id = run_context["model_id"].clone();
+    let bundle_sha256 = candidate["bundle_sha256"].clone();
+    let artifact_size_bytes = run_context["artifact"]["size_bytes"].clone();
+    let decoder = candidate["decoder"].clone();
+
     serde_json::json!({
         "schema_version": 1,
         "run_id": run_context["run_id"],
         "candidate": {
             "candidate_id": candidate_id,
             "model_id": model_id,
-            "artifact_sha256": run_context["artifact"]["sha256"],
-            "artifact_size_bytes": run_context["artifact"]["size_bytes"],
-            "decoder": "ctc"
+            "artifact_sha256": bundle_sha256,
+            "artifact_size_bytes": artifact_size_bytes,
+            "decoder": decoder
         },
         "evaluation": {
-            "suite": evaluation,
+            "suite": run_context["evaluation_id"],
             "manifest": manifest,
             "expected_sample_count": expected,
             "reference_revision_sha256": run_context["revisions"]["reference"]["document_sha256"],
@@ -83,7 +123,7 @@ pub fn build_benchmark(
         "runtime": {
             "implementation": "rust",
             "backend": "onnxruntime",
-            "backend_version": null,
+            "backend_version": run_context["runtime"]["backend_version"],
             "environment_id": run_context["environment_id"],
             "provider_id": provider,
             "provider_ort_name": provider_ort,
@@ -104,7 +144,7 @@ pub fn build_benchmark(
         },
         "performance": {
             "load_ms": null,
-            "session_creation_ms": null,
+            "session_creation_ms": session_creation_ms,
             "total_processing_ms": total_ms,
             "rtf": if agg.total_audio > 0.0 { Some(total_ms / 1000.0 / agg.total_audio) } else { None },
             "per_sample": {
@@ -117,12 +157,12 @@ pub fn build_benchmark(
                 "max_ms": dist.max_ms
             },
             "components": {
-                "audio_decode_ms": null,
-                "resample_ms": null,
+                "audio_decode_ms": if agg.successful > 0 { Some(agg.audio_decode_ms / n) } else { None },
+                "resample_ms": if agg.successful > 0 { Some(agg.resample_ms / n) } else { None },
                 "frontend_ms": null,
                 "encoder_ms": null,
-                "decoder_ms": null,
-                "postprocess_ms": null,
+                "decoder_ms": if agg.successful > 0 { Some(agg.decoder_ms / n) } else { None },
+                "postprocess_ms": if agg.successful > 0 { Some(agg.postprocess_ms / n) } else { None },
                 "inference_ms": if agg.successful > 0 { Some(agg.inference_ms / n) } else { None }
             }
         },
@@ -146,12 +186,12 @@ pub fn build_benchmark(
         },
         "provider": {
             "requested": provider,
-            "registered": true,
-            "execution_proven": agg.successful > 0,
-            "fallback_detected": null,
-            "fallback_only": null,
-            "assigned_nodes": null,
-            "fallback_nodes": null
+            "registered": provider_telemetry.registered,
+            "execution_proven": provider_telemetry.used,
+            "fallback_detected": provider_telemetry.fallback_detected,
+            "fallback_only": provider_telemetry.fallback_only,
+            "assigned_nodes": provider_telemetry.assigned_nodes,
+            "fallback_nodes": provider_telemetry.fallback_nodes
         },
         "acceptance": {
             "passed": passed,
