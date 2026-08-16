@@ -1,5 +1,5 @@
-use crate::{CanonicalAudio, Result};
 use super::{FeatureBatch, Frontend};
+use crate::{CanonicalAudio, Result};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParakeetFrontendConfig {
@@ -7,7 +7,11 @@ pub struct ParakeetFrontendConfig {
 }
 
 impl Default for ParakeetFrontendConfig {
-    fn default() -> Self { Self { sample_rate_hz: 16_000 } }
+    fn default() -> Self {
+        Self {
+            sample_rate_hz: 16_000,
+        }
+    }
 }
 
 /// Runtime frontend for candidates that embed preprocessing in the ONNX graph.
@@ -17,6 +21,10 @@ pub struct WaveformFrontend;
 
 impl Frontend for WaveformFrontend {
     fn extract(&self, audio: &CanonicalAudio) -> Result<FeatureBatch> {
-        Ok(FeatureBatch { values: audio.waveform.clone(), shape: vec![1, audio.waveform.len()], length: audio.waveform.len() as i64 })
+        Ok(FeatureBatch {
+            values: audio.waveform.clone(),
+            shape: vec![1, audio.waveform.len()],
+            length: audio.waveform.len() as i64,
+        })
     }
 }

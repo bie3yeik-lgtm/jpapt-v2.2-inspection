@@ -432,22 +432,76 @@ def _inspect_whisper_decoder(graph: GraphInfo, *, allow_past: bool) -> dict[str,
     excluded = {input_ids.name}
     if encoder_hidden is not None:
         excluded.add(encoder_hidden.name)
-    past_inputs = tuple(item.name for item in graph.inputs if item.name not in excluded)
-    if past_inputs and not allow_past:
+
+    past_inputs: list[str] = []
+    auxiliary_inputs: list[dict[str, Any]] = []
+    for item in graph.inputs:
+        if item.name in excluded:
+            continue
+        aux_kind = _whisper_aux_kind(item.name)
+        if aux_kind is not None:
+            auxiliary_inputs.append(
+                {
+                    "name": item.name,
+                    "kind": aux_kind,
+                    "dtype": item.dtype,
+                    "rank": len(item.shape),
+                }
+            )
+            continue
+        if allow_past and _is_whisper_cache_tensor(item.name, past=True):
+            past_inputs.append(item.name)
+            continue
         raise CandidateInspectionError(
-            "initial Whisper decoder exposes past inputs; use it as decoder_with_past instead"
+            f"Whisper decoder input {item.name!r} is neither a supported auxiliary input nor an exact past-cache tensor"
         )
+
     logits = _best_tensor(graph.outputs, ("logits", "output"), prefer_float=True)
-    past_outputs = [item.name for item in graph.outputs if item.name != logits.name]
-    result: dict[str, Any] = {"input_ids": input_ids.name, "logits_output": logits.name}
+    past_outputs: list[str] = []
+    for item in graph.outputs:
+        if item.name == logits.name:
+            continue
+        if _is_whisper_cache_tensor(item.name, past=False):
+            past_outputs.append(item.name)
+            continue
+        raise CandidateInspectionError(
+            f"Whisper decoder output {item.name!r} is neither logits nor an exact present-cache tensor"
+        )
+
+    result: dict[str, Any] = {
+        "input_ids": input_ids.name,
+        "logits_output": logits.name,
+    }
     if encoder_hidden is not None:
         result["encoder_hidden_states"] = encoder_hidden.name
+    if auxiliary_inputs:
+        result["auxiliary_inputs"] = auxiliary_inputs
     if past_inputs:
-        result["past_inputs"] = list(past_inputs)
+        result["past_inputs"] = past_inputs
     if past_outputs:
         result["past_outputs"] = past_outputs
     return result
 
+
+def _whisper_aux_kind(name: str) -> str | None:
+    lowered = name.lower()
+    if "cache_position" in lowered:
+        return "cache_position"
+    if "position_ids" in lowered or lowered.endswith("position_id"):
+        return "position_ids"
+    if "attention_mask" in lowered:
+        return "attention_mask"
+    return None
+
+
+def _is_whisper_cache_tensor(name: str, *, past: bool) -> bool:
+    lowered = name.lower()
+    if "cache_position" in lowered:
+        return False
+    markers = ("past", "past_key_values") if past else ("present", "present_key_values")
+    if not any(marker in lowered for marker in markers):
+        return False
+    return any(marker in lowered for marker in ("key", "value", "cache"))
 
 def _infer_blank_id(
     sources: Sequence[Mapping[str, Any]],

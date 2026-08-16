@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -17,7 +18,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-variant")
     parser.add_argument("--repository-root", type=Path, default=Path("."))
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--contract-out",
+        type=Path,
+        help="Write the generated execution contract consumed by the Rust evaluator.",
+    )
     return parser
+
+
+def _execution_contract(candidate: CandidateArtifacts) -> dict[str, object]:
+    value = candidate.provenance_dict()
+    value["schema_version"] = 1
+    value["candidate_root"] = str(candidate.root)
+    return value
 
 
 def main() -> int:
@@ -53,6 +66,20 @@ def main() -> int:
     if candidate.tokenizer is not None:
         values["tokenizer_kind"] = candidate.tokenizer.kind
         values["tokenizer_path"] = str(candidate.tokenizer.path)
+
+    if args.contract_out is not None:
+        args.contract_out.parent.mkdir(parents=True, exist_ok=True)
+        args.contract_out.write_text(
+            json.dumps(
+                _execution_contract(candidate),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        values["candidate_contract"] = str(args.contract_out.resolve())
 
     if args.github_output is not None:
         with args.github_output.open("a", encoding="utf-8") as handle:

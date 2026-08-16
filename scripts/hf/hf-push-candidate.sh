@@ -25,13 +25,12 @@ PY
 )"
 metadata="$SOURCE/metadata.json"
 [[ -s "$metadata" ]] || fail "minimal metadata.json is required before candidate allocation"
+[[ ! -e "$SOURCE/.candidate-id" ]] || fail "refusing to republish a materialized candidate containing .candidate-id"
 
 run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
 
-# Validate the exact human-authored schema and derive every generated runtime
-# fact before consuming a durable sequence number.
 readarray -t META_VALUES < <(run_project_python - "$SOURCE" <<'PY'
 import json
 import sys
@@ -76,11 +75,44 @@ CANDIDATE_ID="$(
   bash scripts/hf/hf-request-id.sh candidates "$PREFIX_KEY"
 )"
 REMOTE="hf://buckets/${HF_BUCKET#hf://buckets/}/candidates/${CANDIDATE_ID}"
+PLAN="$(mktemp -t hf-candidate-plan.XXXXXX.jsonl)"
+trap 'rm -f "$PLAN"' EXIT
 
-# candidate_id is intentionally NOT written into metadata.json. The durable ID
-# is the containing Bucket directory. hf-fetch-candidate.sh materializes it as
-# .candidate-id when a candidate is downloaded for execution.
-hf buckets sync --token "$HF_TOKEN" "$SOURCE" "$REMOTE"
+# Candidate prefixes are semantically immutable. Generate a plan first and
+# reject any operation other than a fresh upload. This prevents a recycled ID
+# or accidental rerun from silently updating an existing durable candidate.
+hf buckets sync \
+  --token "$HF_TOKEN" \
+  "$SOURCE" \
+  "$REMOTE" \
+  --plan "$PLAN"
+
+python - "$PLAN" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path=Path(sys.argv[1])
+actions=[]
+for line in path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    item=json.loads(line)
+    action=item.get("action")
+    if action is not None:
+        actions.append(str(action).lower())
+if not actions:
+    raise SystemExit("candidate sync plan contains no file operations")
+unsafe=sorted({action for action in actions if action != "upload"})
+if unsafe:
+    raise SystemExit(
+        "candidate prefix is not write-once clean; unexpected sync actions: "
+        + ", ".join(unsafe)
+    )
+print(f"validated fresh candidate plan: {len(actions)} uploads")
+PY
+
+hf buckets sync --token "$HF_TOKEN" --apply "$PLAN"
 
 log "Candidate ID: $CANDIDATE_ID"
 log "Profile set: $PROFILE_SET"

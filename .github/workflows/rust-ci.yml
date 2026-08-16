@@ -19,6 +19,17 @@ permissions:
   contents: read
 
 jobs:
+  formatting:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
   check:
     name: ${{ matrix.name }}
     strategy:
@@ -40,7 +51,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt,clippy
+          components: clippy
       - name: Cache cargo and ort
         uses: actions/cache@v6
         with:
@@ -50,31 +61,15 @@ jobs:
             ~/.cache/ort.pyke.io
             target
           key: rust-${{ matrix.name }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust/crates/**/Cargo.toml') }}
+      - name: Verify lockfile
+        shell: bash
+        run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
       - name: Cargo check
         shell: bash
-        run: cargo check --workspace --no-default-features --features "${{ matrix.features }}"
+        run: cargo check --locked --workspace --no-default-features --features "${{ matrix.features }}"
+      - name: Clippy
+        shell: bash
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features "${{ matrix.features }}" -- -D warnings
       - name: Unit tests
         shell: bash
-        run: cargo test --workspace --no-default-features --features "${{ matrix.features }}"
-      - name: Export resolved Cargo.lock
-        if: matrix.name == 'linux-cpu'
-        uses: actions/upload-artifact@v7
-        with:
-          name: resolved-cargo-lock
-          path: Cargo.lock
-          retention-days: 1
-          if-no-files-found: error
-
-  formatting:
-    name: rustfmt advisory
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check formatting
-        continue-on-error: true
-        run: |
-          cargo fmt --all -- --check
-          echo "Formatting differences are advisory during the Rust-first migration."
+        run: cargo test --locked --workspace --no-default-features --features "${{ matrix.features }}"

@@ -16,6 +16,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "config/**"
       - "evaluation/**"
       - "python/src/parakeet_onnx/**"
@@ -27,6 +29,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "config/**"
       - "evaluation/**"
       - "python/src/parakeet_onnx/**"
@@ -57,13 +61,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python project
+      - name: Install locked Python project
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[datasets,onnx,dev]"
-          python -c "import parakeet_onnx"
+          python -m pip install --disable-pip-version-check uv
+          uv lock --check
+          uv sync --locked --extra datasets --extra onnx --extra hf --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python - <<'PY'
+          import huggingface_hub
+          import onnxruntime as ort
+          import parakeet_onnx
+          assert ort.__version__ == "1.28.0"
+          assert huggingface_hub.__version__ == "1.24.0"
+          PY
 
       - name: Validate source-controlled contracts
         shell: bash
@@ -81,6 +93,7 @@ jobs:
           bash -n scripts/hf/hf-request-id.sh
           bash -n scripts/hf/hf-update-root-readme.sh
           bash -n scripts/hf/hf-push-candidate.sh
+          bash -n scripts/hf/hf-fetch-candidate.sh
           bash -n scripts/hf/hf-push-config-version.sh
           bash -n scripts/hf/hf-promote-candidate.sh
           python -m pytest -q \
@@ -95,7 +108,8 @@ jobs:
             python/tests/unit/test_tdt_decoder.py \
             python/tests/unit/test_whisper_runtime_contract.py \
             python/tests/unit/test_runtime_registry.py \
-            python/tests/unit/test_evaluator_capability.py
+            python/tests/unit/test_evaluator_capability.py \
+            python/tests/unit/test_ort_optimizer_canary.py
 
       - name: List source-controlled catalogs, profiles, targets and evaluators
         shell: bash
@@ -149,14 +163,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install target validation tools
+      - name: Install locked target validation tools
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-          python -m pip install --upgrade huggingface_hub
-          hf --version
+          python -m pip install --disable-pip-version-check uv
+          uv lock --check
+          uv sync --locked --extra hf --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/hf --version
 
       - name: Resolve selected HF Bucket and runtime variant
         shell: bash

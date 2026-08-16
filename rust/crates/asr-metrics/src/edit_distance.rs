@@ -1,6 +1,10 @@
 pub fn edit_distance<T: Eq>(reference: &[T], hypothesis: &[T]) -> usize {
-    if reference.is_empty() { return hypothesis.len(); }
-    if hypothesis.is_empty() { return reference.len(); }
+    if reference.is_empty() {
+        return hypothesis.len();
+    }
+    if hypothesis.is_empty() {
+        return reference.len();
+    }
     let mut previous: Vec<usize> = (0..=hypothesis.len()).collect();
     for (i, r) in reference.iter().enumerate() {
         let mut current = Vec::with_capacity(hypothesis.len() + 1);

@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "config/**"
       - "evaluation/**"
       - "python/**"
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "config/**"
       - "evaluation/**"
       - "python/**"
@@ -33,14 +37,27 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install project
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Sync authoritative environment
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[datasets,onnx,dev]"
+          uv lock --check
+          uv sync --locked --extra datasets --extra onnx --extra dev
+      - name: Verify runtime pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import onnxruntime as ort
+          if ort.__version__ != "1.28.0":
+              raise SystemExit(f"unexpected onnxruntime version: {ort.__version__}")
+          print(f"onnxruntime={ort.__version__}")
+          print(f"providers={ort.get_available_providers()}")
+          PY
       - name: Run unit tests
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -q python/tests/unit
+          uv run python -m pytest -q python/tests/unit
