@@ -72,7 +72,8 @@ jobs:
           python -m pytest -q \
             python/tests/unit/test_revisions_multiframework.py \
             python/tests/unit/test_revision_decoder_shapes.py \
-            python/tests/unit/test_hf_target_bucket_resolution.py
+            python/tests/unit/test_hf_target_bucket_resolution.py \
+            python/tests/unit/test_hf_sequence_id.py
 
       - name: List source-controlled HF targets
         shell: bash
@@ -80,7 +81,6 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-
           targets = sorted(path.stem for path in Path("config/hf-targets").glob("*.toml"))
           if not targets:
               raise SystemExit("No config/hf-targets/*.toml files were found.")
@@ -143,12 +143,13 @@ jobs:
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
 
-      - name: Fetch and validate revision locks
+      - name: Fetch and validate current revision configuration
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/hf/config/revisions
           bash scripts/hf/hf-fetch-revisions.sh
+          cat .ci/hf/config/resolved.json
           python scripts/ci/validate-revisions.py \
             --root .ci/hf/config/revisions \
             --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}" \
@@ -157,12 +158,17 @@ jobs:
             --expected-framework "${EXPECTED_FRAMEWORK}" \
             --expected-decoder "${EXPECTED_DECODER}"
 
-      - name: Validate required HF Bucket directories
+      - name: Validate required HF Bucket layout
         shell: bash
         run: |
           set -euo pipefail
           BUCKET="hf://buckets/${HF_BUCKET}"
-          for dir in benchmarks runs candidates reference scripts tmp; do
+          hf buckets list "${BUCKET}/config/current.json" >/dev/null
+          CONFIG_VERSION="$(python -c 'import json; print(json.load(open(".ci/hf/config/resolved.json"))["config_version"])')"
+          for file in reference.json evaluation-schema.json datasets-lock.json; do
+            hf buckets list "${BUCKET}/config/versions/${CONFIG_VERSION}/${file}" >/dev/null
+          done
+          for dir in benchmarks runs candidates experiments reference scripts tmp; do
             echo "Checking ${BUCKET}/${dir}/"
             hf buckets list "${BUCKET}/${dir}" >/dev/null
           done
