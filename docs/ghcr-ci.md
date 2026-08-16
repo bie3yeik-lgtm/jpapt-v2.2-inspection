@@ -140,26 +140,60 @@ Triggers:
 - manual dispatch;
 - external repository dispatch through `repository-dispatch.yml`.
 
-Behavior:
+### Build contract
+
+Environment import/version smoke is part of the Dockerfile itself. The final build stage imports NeMo/PyTorch/ONNX/ORT/HF and asserts the repository-pinned ORT/HF versions. A build cannot succeed if that environment contract is broken.
+
+This is deliberate: a heavyweight image does not need to be exported to the runner's Docker daemon solely to execute a post-build import test.
+
+### PR behavior
 
 ```text
-scan docker/*/Dockerfile
-    ↓
-read io.jpapt.ghcr.package label
-    ↓
+PR event
+  ↓
+compare previous PR head -> current PR head
+  ↓
+Docker/build-workflow changed?
+  ├─ no  -> finish after lightweight gate
+  └─ yes -> Buildx build
+              ↓
+            Dockerfile-integrated import/version smoke
+              ↓
+            GHA build cache
+              ↓
+            lightweight provenance artifact
+```
+
+PR builds use:
+
+```text
+push = false
+load = false
+```
+
+The large image is therefore not copied from BuildKit into the Docker daemon merely for smoke validation.
+
+`pull_request.paths` evaluates the PR change set, which can cause the workflow to be started again after unrelated later commits. The explicit previous-head/current-head gate suppresses the expensive build on those synchronize events.
+
+The workflow also uses `cancel-in-progress: false`. A docs-only synchronize event must not cancel an already-running legitimate Docker build before the lightweight gate has a chance to skip itself.
+
+### main/manual behavior
+
+```text
 Buildx build
-    ↓
-PR: build/load only
-main/manual: repository-token login + push GHCR tags
-    ↓
-resolve image digest
-    ↓
-label/import smoke
-    ↓
+  ↓
+Dockerfile-integrated import/version smoke
+  ↓
+repository-token GHCR push
+  ↓
+validate returned sha256 digest
+  ↓
 GitHub artifact attestation
-    ↓
+  ↓
 14-day build provenance artifact
 ```
+
+A just-pushed heavyweight image is **not** pulled back by this workflow. Registry-object verification is owned by `ghcr-audit.yml`, and actual digest-pinned execution is owned by `ghcr-evaluate.yml`. This avoids paying for a redundant pull while keeping those checks in dedicated lanes.
 
 Published aliases:
 
@@ -288,9 +322,10 @@ This is the fast gate before the heavyweight image build/evaluation lanes. It ve
 - the matching `HF_TARGETS_JSON` route agrees with repository routing;
 - repository HF target validation succeeds;
 - GitHub Action version policy succeeds;
-- every workflow is reachable through the repository-dispatch router.
+- every workflow is reachable through the repository-dispatch router;
+- Rust can parse all current `workflow_dispatch` contracts and resolve a defaulted GHCR evaluation request.
 
-The last invariant is enforced by requiring `workflow_dispatch` on every workflow other than the router, and `repository_dispatch` on `.github/workflows/repository-dispatch.yml`.
+Dispatch reachability and input policy are enforced through `asr-workflow-dispatch`, not through a second hand-maintained workflow catalog.
 
 ## 9. Repository dispatch
 
@@ -300,7 +335,9 @@ Every workflow is externally reachable through:
 event_type = jpapt.workflow
 ```
 
-The router accepts the target workflow filename, target ref, and the same input object used by that workflow's `workflow_dispatch` contract. See [repository-dispatch.md](./repository-dispatch.md).
+The router accepts the target workflow filename/alias, target ref, and the same input object used by that workflow's `workflow_dispatch` contract. Rust reads the workflow YAML and applies required/default/type/choice validation before the router calls the GitHub workflow-dispatch API.
+
+See [repository-dispatch.md](./repository-dispatch.md) and [github-actions-ux.md](./github-actions-ux.md).
 
 This keeps repository-dispatch parsing centralized rather than duplicating `client_payload` handling across all workflow YAML files.
 
@@ -338,7 +375,7 @@ onnxruntime == 1.28.0
 huggingface_hub == 1.24.0
 ```
 
-The image must not bake `HF_TOKEN`, GHCR credentials, candidate IDs, or mutable HF revisions into a layer.
+The final Docker build step imports the required runtime modules and asserts these pins. The image must not bake `HF_TOKEN`, GHCR credentials, candidate IDs, or mutable HF revisions into a layer.
 
 ## 12. Operational failure interpretation
 
@@ -353,13 +390,17 @@ Likely causes:
 
 An extra variable-only target is a warning rather than a runtime target.
 
+### Build fails during environment smoke
+
+The base image or project-side package layer does not satisfy the declared NeMo/ONNX/ORT/HF environment contract. This is a build failure, not an evaluator failure.
+
 ### GHCR login/pull fails
 
 Verify that the package grants this repository GitHub Actions access and that the job declares the appropriate `packages: read` or `packages: write` permission. GHCR workflows do not fall back to a PAT.
 
 ### Image identity fails
 
-The package tag points at an image that was not built from the current Docker contract, or an old package version predates the mandatory labels. Run `GHCR Build and Publish`, then evaluate the newly pushed digest.
+The package tag points at an image that was not built from the current Docker contract, or an old package version predates the mandatory labels. Run `GHCR Build and Publish`, then audit/evaluate the newly pushed digest.
 
 ### Evaluation fails but image audit passes
 
@@ -376,13 +417,13 @@ When changing a Docker reference environment:
 ```text
 Dockerfile change
   ↓
-PR build smoke
+PR Buildx smoke (no daemon export)
   ↓
 merge
   ↓
 GHCR push + digest + attestation
   ↓
-automatic GHCR CPU evaluation
+registry audit / automatic GHCR CPU evaluation
   ↓
 HF Bucket run/benchmark evidence
   ↓
