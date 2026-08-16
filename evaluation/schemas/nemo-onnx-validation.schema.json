@@ -55,17 +55,32 @@
       "required": ["architecture", "supported_decoders", "default_decoder", "sample_rate_hz", "n_mels", "normalize", "dither", "xscaling", "tokenizer_type", "vocab_size", "ctc_blank_id", "tdt_durations"],
       "properties": {
         "architecture": {"const": "hybrid_fastconformer_tdt_ctc"},
-        "supported_decoders": {"type": "array", "uniqueItems": true, "minItems": 2, "contains": {"const": "ctc"}},
+        "supported_decoders": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 2,
+          "maxItems": 2,
+          "allOf": [
+            {"contains": {"const": "ctc"}},
+            {"contains": {"const": "tdt"}}
+          ]
+        },
         "default_decoder": {"const": "tdt"},
         "sample_rate_hz": {"const": 16000},
         "n_mels": {"type": "integer", "minimum": 1},
         "normalize": {"type": "string", "minLength": 1},
         "dither": {"type": "number", "minimum": 0},
         "xscaling": {"type": "boolean"},
-        "tokenizer_type": {"type": "string", "minLength": 1},
-        "vocab_size": {"type": "integer", "minimum": 2},
-        "ctc_blank_id": {"type": "integer", "minimum": 0},
-        "tdt_durations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}}
+        "tokenizer_type": {"const": "sentencepiece"},
+        "vocab_size": {"const": 3072},
+        "ctc_blank_id": {"type": "integer", "minimum": 3072},
+        "tdt_durations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "contains": {"const": 0},
+          "items": {"type": "integer", "minimum": 0, "maximum": 4}
+        }
       }
     },
     "frontend": {
@@ -106,6 +121,7 @@
     "obstacles": {
       "type": "array",
       "minItems": 15,
+      "maxItems": 15,
       "items": {
         "type": "object",
         "additionalProperties": false,
