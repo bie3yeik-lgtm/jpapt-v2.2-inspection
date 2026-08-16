@@ -10,7 +10,7 @@ on:
       - "config/asr-catalog.json"
       - "rust/crates/asr-hf/**"
       - "scripts/ci/resolve-ghcr-matrix.sh"
-      - ".github/workflows/ghcr-*.yml"
+      - ".github/workflows/**"
   push:
     branches: [main]
     paths:
@@ -20,7 +20,7 @@ on:
       - "config/asr-catalog.json"
       - "rust/crates/asr-hf/**"
       - "scripts/ci/resolve-ghcr-matrix.sh"
-      - ".github/workflows/ghcr-*.yml"
+      - ".github/workflows/**"
 
 permissions:
   contents: read
@@ -62,12 +62,32 @@ jobs:
             test "$(jq -er '.source.framework' "$config")" = "$framework"
           done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
 
-      - name: Validate repository target policy
+      - name: Validate repository target and Actions policy
         shell: bash
         run: |
           set -euo pipefail
           cargo run --quiet --locked -p asr-hf -- validate-targets
           cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
+
+      - name: Validate repository-dispatch coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          router=.github/workflows/repository-dispatch.yml
+          [[ -f "$router" ]] || { echo "::error::repository dispatch router is required"; exit 1; }
+          grep -qE '^[[:space:]]{2}repository_dispatch:' "$router" || {
+            echo "::error::$router must expose repository_dispatch"; exit 1;
+          }
+
+          missing=0
+          while IFS= read -r workflow; do
+            [[ "$workflow" == "$router" ]] && continue
+            if ! grep -qE '^[[:space:]]{2}workflow_dispatch:' "$workflow"; then
+              echo "::error::$workflow must expose workflow_dispatch for repository-dispatch routing"
+              missing=1
+            fi
+          done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print | sort)
+          (( missing == 0 )) || exit 1
 
       - uses: actions/upload-artifact@v7
         with:
