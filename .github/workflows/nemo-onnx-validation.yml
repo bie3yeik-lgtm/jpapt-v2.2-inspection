@@ -1,0 +1,107 @@
+name: Validate NeMo ONNX Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket_id:
+        description: "HF Bucket containing the export evidence bundle"
+        required: true
+        default: "gawohok7/jpapt-v2.2-dev-bucket"
+        type: string
+      bundle_prefix:
+        description: "Bucket-relative immutable validation bundle prefix"
+        required: true
+        type: string
+      require:
+        description: "Required acceptance scope"
+        required: true
+        default: "ctc"
+        type: choice
+        options:
+          - ctc
+          - tdt
+      confirmation:
+        description: "Must equal <bucket_id>:<bundle_prefix>:<require>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nemo-onnx-validation-${{ inputs.bucket_id }}-${{ inputs.bundle_prefix }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      BUCKET_ID: ${{ inputs.bucket_id }}
+      BUNDLE_PREFIX: ${{ inputs.bundle_prefix }}
+      REQUIRED_SCOPE: ${{ inputs.require }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${HF_TOKEN:-}" || { echo "HF_TOKEN secret is required"; exit 1; }
+          [[ "$BUCKET_ID" == */* ]] || { echo "bucket_id must use namespace/name"; exit 1; }
+          [[ -n "$BUNDLE_PREFIX" ]] || { echo "bundle_prefix is required"; exit 1; }
+          [[ "$BUNDLE_PREFIX" != /* && "$BUNDLE_PREFIX" != *".."* && "$BUNDLE_PREFIX" != *"\\"* ]] || {
+            echo "unsafe bundle_prefix"; exit 1;
+          }
+          expected="${BUCKET_ID}:${BUNDLE_PREFIX}:${REQUIRED_SCOPE}"
+          [[ "$CONFIRMATION" == "$expected" ]] || {
+            echo "confirmation mismatch; expected exactly: $expected"; exit 1;
+          }
+
+      - name: Install pinned Hugging Face CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "huggingface_hub==1.24.0"
+          hf version
+
+      - name: Verify Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          cargo fmt --all -- --check
+          cargo test --locked -p asr-eval --no-default-features --features cpu
+          cargo build --locked --release -p asr-eval --no-default-features --features cpu
+
+      - name: Fetch immutable evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .ci/nemo-onnx-bundle
+          mkdir -p .ci/nemo-onnx-bundle
+          remote="hf://buckets/${BUCKET_ID}/${BUNDLE_PREFIX}"
+          hf buckets sync --token "$HF_TOKEN" "$remote" .ci/nemo-onnx-bundle
+          test -s .ci/nemo-onnx-bundle/nemo-onnx-validation.json || {
+            echo "nemo-onnx-validation.json is missing"; exit 1;
+          }
+          find .ci/nemo-onnx-bundle -type f -print | sort
+
+      - name: Validate bundle with release Rust CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/asr-eval nemo-onnx-validate \
+            --report .ci/nemo-onnx-bundle/nemo-onnx-validation.json \
+            --bundle-root .ci/nemo-onnx-bundle \
+            --require "$REQUIRED_SCOPE"
