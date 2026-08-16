@@ -31,6 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cargo generate-lockfile
           cargo fmt --all
           cargo clippy --locked -p asr-hf --all-targets -- -D warnings
           cargo test --locked -p asr-hf
@@ -123,16 +124,16 @@ jobs:
             | grep -q '^relative_path=ctc/candidate-000001$'
           [[ "$(cargo run --quiet --locked -p asr-hf -- next-sequence-id --prefix candidate --listing "$listing")" == candidate-000002 ]]
 
-      - name: Commit normalized Rust source
+      - name: Commit normalized source and lockfile
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add rust/crates/asr-hf
+          git add Cargo.lock rust/crates/asr-hf
           if git diff --cached --quiet; then
             echo 'already normalized'
           else
-            git commit -m 'Normalize simplified HF policy'
+            git commit -m 'Normalize simplified HF policy and lockfile'
             git push origin HEAD:agent/review-minimal-json-bucket-phase24
           fi
