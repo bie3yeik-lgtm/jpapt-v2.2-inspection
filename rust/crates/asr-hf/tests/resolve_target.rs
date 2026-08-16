@@ -51,9 +51,7 @@ fn source_controlled_bucket_selects_target() {
 fn bucket_uri_is_normalized_for_selection() {
     let resolved = resolve_target(&ResolveTargetOptions {
         repository_root: repository_root(),
-        selector: TargetSelector::Bucket(
-            "hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/".into(),
-        ),
+        selector: TargetSelector::Bucket("hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/".into()),
         runtime_variant: None,
     })
     .expect("bucket URI must resolve");
@@ -88,5 +86,9 @@ fn unknown_bucket_is_rejected() {
         runtime_variant: None,
     })
     .expect_err("unknown bucket must fail");
-    assert!(error.to_string().contains("is not assigned by config/hf-targets"));
+    assert!(
+        error
+            .to_string()
+            .contains("is not assigned by config/hf-targets")
+    );
 }

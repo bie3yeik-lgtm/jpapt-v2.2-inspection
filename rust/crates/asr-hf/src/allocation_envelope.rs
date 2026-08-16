@@ -159,7 +159,11 @@ fn require_nonempty(name: &str, value: &str) -> Result<()> {
 }
 
 fn insert_nonempty(values: &mut BTreeMap<String, String>, key: &str, value: &Option<String>) {
-    if let Some(value) = value.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         values.insert(key.to_owned(), value.to_owned());
     }
 }

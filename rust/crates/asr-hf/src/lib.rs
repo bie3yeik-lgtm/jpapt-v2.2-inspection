@@ -145,9 +145,7 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
     let target: TargetDocument = load_toml(&target_path)?;
     validate_target_document(&target_path, &target)?;
 
-    let model_path = root
-        .join("config/models")
-        .join(format!("{target_id}.toml"));
+    let model_path = root.join("config/models").join(format!("{target_id}.toml"));
     let model: toml::Value = load_toml(&model_path)?;
     if model
         .get("schema_version")
