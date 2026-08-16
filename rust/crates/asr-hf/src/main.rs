@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 
 use asr_hf::{ResolveTargetOptions, TargetSelector, append_github_file, resolve_target};
@@ -30,6 +31,10 @@ enum Command {
         github_output: Option<PathBuf>,
         #[arg(long)]
         shell: bool,
+    },
+    ValidateTargets {
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
     },
 }
 
@@ -77,6 +82,41 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 for (key, value) in resolved.environment_values() {
                     println!("{key}={value}");
                 }
+            }
+        }
+        Command::ValidateTargets { repository_root } => {
+            let root = repository_root.canonicalize()?;
+            let target_root = root.join("config/hf-targets");
+            if !target_root.is_dir() {
+                return Err(format!("{} is missing", target_root.display()).into());
+            }
+            let mut paths = fs::read_dir(&target_root)?
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("toml"))
+                .collect::<Vec<_>>();
+            paths.sort();
+            if paths.is_empty() {
+                return Err("config/hf-targets contains no TOML target definitions".into());
+            }
+            for path in paths {
+                let target_id = path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .ok_or("HF target filename is not valid UTF-8")?;
+                let resolved = resolve_target(&ResolveTargetOptions {
+                    repository_root: root.clone(),
+                    selector: TargetSelector::Id(target_id.to_owned()),
+                    runtime_variant: None,
+                    targets_json: None,
+                })?;
+                println!(
+                    "OK {}: {} -> profile_set={} -> {} / {}",
+                    resolved.target_id,
+                    resolved.expected_upstream_repo_id,
+                    resolved.profile_set,
+                    resolved.hf_model_repo,
+                    resolved.hf_bucket
+                );
             }
         }
     }
