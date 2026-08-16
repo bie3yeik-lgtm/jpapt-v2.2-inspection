@@ -17,7 +17,7 @@ Representative files:
 ```text
 scripts/ci/
 ├── README.md
-├── validate-revisions.py   # deprecated compatibility exec shim only
+├── validate-revisions.sh   # thin exec wrapper around Rust asr-contracts
 └── make-run-context.py
 ```
 
