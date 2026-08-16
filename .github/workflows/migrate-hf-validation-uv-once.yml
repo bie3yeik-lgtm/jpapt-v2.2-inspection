@@ -1,0 +1,65 @@
+name: Migrate HF Validation UV Once
+
+on:
+  push:
+    branches:
+      - agent/rust-hf-destructive-optimization
+    paths:
+      - ".github/workflows/migrate-hf-validation-uv-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/rust-hf-destructive-optimization
+      - name: Rewrite HF validation environment setup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/validate-hf-layout.yml')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '      - ".github/workflows/**"\n      - "config/**"',
+              '      - ".github/workflows/**"\n      - "pyproject.toml"\n      - "uv.lock"\n      - "config/**"',
+          )
+          old = '''      - name: Install Python project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[datasets,onnx,dev]"
+          python -c "import parakeet_onnx"
+'''
+          new = '''      - name: Install locked Python project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check uv
+          uv lock --check
+          uv sync --locked --extra datasets --extra onnx --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -c "import onnxruntime as ort; import parakeet_onnx; assert ort.__version__ == '1.28.0'"
+'''
+          if old not in text:
+              raise SystemExit('expected install block not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/validate-hf-layout.yml
+          git commit -m "Run HF validation from authoritative uv lock"
+          git push origin HEAD:agent/rust-hf-destructive-optimization
