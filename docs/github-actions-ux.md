@@ -98,6 +98,8 @@ docker/**
 
 cause another expensive image rebuild. Other synchronize commits finish at the lightweight gate.
 
+Concurrency is also scoped to the actual image-build job instead of the whole workflow. This prevents a docs-only synchronize run from canceling an in-flight build before the gate can skip, while still allowing a newer real image build for the same package to replace an obsolete one.
+
 ### Immutable execution identity
 
 GHCR evaluations resolve human-friendly tags to an OCI digest before execution. The digest, not `latest`, is recorded as the environment identity.

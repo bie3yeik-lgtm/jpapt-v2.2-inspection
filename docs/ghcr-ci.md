@@ -175,7 +175,7 @@ The large image is therefore not copied from BuildKit into the Docker daemon mer
 
 `pull_request.paths` evaluates the PR change set, which can cause the workflow to be started again after unrelated later commits. The explicit previous-head/current-head gate suppresses the expensive build on those synchronize events.
 
-The workflow also uses `cancel-in-progress: false`. A docs-only synchronize event must not cancel an already-running legitimate Docker build before the lightweight gate has a chance to skip itself.
+Concurrency is scoped to the heavyweight `build` job rather than the whole workflow. Docs-only synchronize runs never enter that concurrency group, while a newer real Docker build for the same package can cancel an obsolete build job.
 
 ### main/manual behavior
 

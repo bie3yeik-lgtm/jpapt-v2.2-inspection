@@ -274,7 +274,7 @@ Dockerfile / build workflowに差分なし
   -> Buildx
 ```
 
-heavy buildは `cancel-in-progress: false` です。無関係な後続PR synchronizeで実行中の正当なDocker buildをキャンセルしないためです。
+concurrencyはworkflow全体ではなくheavy `build` jobだけに設定します。docs-only synchronizeはgroupへ入らず実行中buildを妨害しません。一方、新しい実Docker変更による同一package buildは旧build jobをcancelできます。
 
 ### PR Buildx
 
