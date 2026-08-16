@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from parakeet_onnx.config import resolve_config
 from parakeet_onnx.evaluation import validate_run_context
@@ -16,7 +17,7 @@ from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Generate the canonical run-context snapshot for the Rust evaluator."
+        description="Generate the strict canonical run-context snapshot for the Rust evaluator."
     )
     p.add_argument("--provider", required=True)
     p.add_argument("--evaluation", required=True)
@@ -73,6 +74,59 @@ def _apply_runtime_overrides(
     }
 
 
+def _normalize_rust_only_optionals(context: dict[str, Any]) -> None:
+    """Normalize semantic optionals without inventing execution evidence."""
+    host = context["host"]
+    if not isinstance(host, dict):
+        raise RuntimeError("run-context host must be an object")
+    host["github_runner_os"] = host.get("github_runner_os") or "local"
+    host["github_runner_arch"] = host.get("github_runner_arch") or "local"
+    host["github_run_id"] = host.get("github_run_id") or "local"
+    host["github_run_attempt"] = host.get("github_run_attempt") or "local"
+
+    revisions = context["revisions"]
+    if not isinstance(revisions, dict):
+        raise RuntimeError("run-context revisions must be an object")
+    if revisions.get("config_version") is None:
+        revisions["config_version"] = "unversioned"
+    datasets = revisions.get("datasets")
+    if isinstance(datasets, dict):
+        entries = datasets.get("entries")
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise RuntimeError("run-context dataset revision entry must be an object")
+                entry["subset"] = entry.get("subset") or "default"
+                entry["split"] = entry.get("split") or "default"
+                entry["manifest"] = entry.get("manifest") or "unmaterialized"
+                if entry.get("sha256") is None:
+                    raise RuntimeError(
+                        "Rust run-context requires datasets.entries[].sha256; identity is unknown"
+                    )
+
+
+def _require_concrete_git_identity(context: dict[str, Any]) -> None:
+    git = context["git"]
+    if not isinstance(git, dict):
+        raise RuntimeError("run-context git must be an object")
+    for key in ("repository", "commit", "ref", "dirty"):
+        if git.get(key) is None:
+            raise RuntimeError(
+                f"Rust run-context requires concrete git.{key}; refusing unknown identity"
+            )
+
+
+def _reject_nulls(value: Any, path: str = "$") -> None:
+    if value is None:
+        raise RuntimeError(f"Rust run-context must not contain null: {path}")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_nulls(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_nulls(item, f"{path}[{index}]")
+
+
 def main() -> int:
     args = parser().parse_args()
     config = resolve_config(
@@ -117,16 +171,22 @@ def main() -> int:
     context["runtime"] = {
         "implementation": "rust",
         "backend": "onnxruntime",
-        "backend_version": None,
+        "backend_version": "resolved-by-rust-runtime",
         "provider_id": config.provider.id,
         "provider_ort_name": config.provider.ort_name,
-        "provider_available": None,
+        "provider_available": False,
     }
     _apply_runtime_overrides(
         context,
         strict_provider=args.strict_provider,
         optimization_level=args.optimization_level,
     )
+    _require_concrete_git_identity(context)
+    _normalize_rust_only_optionals(context)
+    _reject_nulls(context)
+
+    # The shared schema remains a compatibility floor; Rust applies the stronger
+    # no-null/type/invariant contract again when the evaluator starts.
     validate_run_context(context)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
