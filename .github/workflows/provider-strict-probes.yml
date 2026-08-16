@@ -95,46 +95,21 @@ jobs:
           exit "$status"
       - name: Classify strict CoreML readiness
         if: always()
-        shell: python
+        shell: bash
         env:
           COREML_OUTCOME: ${{ steps.coreml.outcome }}
           COREML_EXIT_CODE: ${{ steps.coreml.outputs.exit_code }}
         run: |
-          import json, os
-          from pathlib import Path
-          root = Path('.ci/provider-probe')
-          metrics_path = root / 'results' / 'metrics.json'
-          stderr_path = root / 'coreml.stderr.txt'
-          stderr = stderr_path.read_text(errors='replace') if stderr_path.is_file() else ''
-          result = {
-              'provider': 'coreml',
-              'runner': 'macos-14-arm64',
-              'strict_provider_mode': True,
-              'cpu_fallback_allowed': False,
-              'step_outcome': os.environ.get('COREML_OUTCOME', 'unknown'),
-              'exit_code': os.environ.get('COREML_EXIT_CODE', ''),
-              'execution_proven': False,
-              'classification': 'unknown_failure',
-          }
-          if metrics_path.is_file():
-              metrics = json.loads(metrics_path.read_text())
-              provider = metrics.get('provider', {})
-              result['telemetry'] = provider
-              if provider.get('execution_proven') is True and provider.get('fallback_detected') is False:
-                  result['execution_proven'] = True
-                  result['classification'] = 'strict_execution_proven'
-          if not result['execution_proven'] and (
-              'assigned to the default CPU EP' in stderr
-              and 'fallback to CPU EP has been explicitly disabled' in stderr
-          ):
-              result['classification'] = 'strict_rejected_cpu_assigned_nodes'
-          (root / 'coreml-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
-          print(json.dumps(result, indent=2))
-          if result['classification'] not in {
-              'strict_execution_proven',
-              'strict_rejected_cpu_assigned_nodes',
-          }:
-              raise SystemExit('CoreML readiness failed for an unclassified reason')
+          set -euo pipefail
+          ARGS=(
+            --provider coreml
+            --root .ci/provider-probe
+            --step-outcome "${COREML_OUTCOME:-unknown}"
+          )
+          if [[ -n "${COREML_EXIT_CODE:-}" ]]; then
+            ARGS+=(--exit-code "${COREML_EXIT_CODE}")
+          fi
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-readiness -- "${ARGS[@]}"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -196,31 +171,21 @@ jobs:
           exit "$status"
       - name: Record truthful DirectML readiness result
         if: always()
-        shell: python
+        shell: bash
         env:
           DML_OUTCOME: ${{ steps.dml.outcome }}
           DML_EXIT_CODE: ${{ steps.dml.outputs.exit_code }}
         run: |
-          import json, os
-          from pathlib import Path
-          root = Path('.ci/provider-probe')
-          metrics_path = root / 'results' / 'metrics.json'
-          result = {
-              'provider': 'directml',
-              'runner': 'windows-latest',
-              'strict_provider_mode': True,
-              'cpu_fallback_allowed': False,
-              'step_outcome': os.environ.get('DML_OUTCOME'),
-              'exit_code': os.environ.get('DML_EXIT_CODE'),
-              'execution_proven': False,
-          }
-          if metrics_path.is_file():
-              metrics = json.loads(metrics_path.read_text())
-              provider = metrics.get('provider', {})
-              result['telemetry'] = provider
-              result['execution_proven'] = provider.get('execution_proven') is True
-          (root / 'directml-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
-          print(json.dumps(result, indent=2))
+          set -euo pipefail
+          ARGS=(
+            --provider directml
+            --root .ci/provider-probe
+            --step-outcome "${DML_OUTCOME:-unknown}"
+          )
+          if [[ -n "${DML_EXIT_CODE:-}" ]]; then
+            ARGS+=(--exit-code "${DML_EXIT_CODE}")
+          fi
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-readiness -- "${ARGS[@]}"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
