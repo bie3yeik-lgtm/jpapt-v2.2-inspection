@@ -16,7 +16,7 @@
   - tokenizer kind
   - feature capability
   - profile set / variant mapping
-- `config/hf-allocation-catalog.json`
+- HF allocation namingはcollectionから導出し、prefix catalogは保持しません。
   - candidate / experiment / config versionの採番prefix
 - `config/hf-targets/*.toml`
   - upstream、framework、profile set、実HF Bucket、Model Repo

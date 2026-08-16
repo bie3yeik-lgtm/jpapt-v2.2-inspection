@@ -4,7 +4,6 @@ use std::path::Path;
 
 use asr_hf::{HfError, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -74,10 +73,6 @@ pub struct AllocationResponse<'a> {
     pub allocation_id: &'a str,
     pub bucket: &'a str,
     pub collection: &'a str,
-    pub catalog_id: &'a str,
-    pub catalog_sha256: &'a str,
-    pub prefix_key: &'a str,
-    pub resolved_prefix: &'a str,
 }
 
 pub fn write_allocation_response(
@@ -85,70 +80,27 @@ pub fn write_allocation_response(
     response: &AllocationResponse<'_>,
 ) -> Result<()> {
     validate_response_fields(response)?;
-
-    let mut catalog = BTreeMap::<String, Value>::new();
-    catalog.insert(
-        "id".to_owned(),
-        Value::String(response.catalog_id.to_owned()),
-    );
-    catalog.insert(
-        "sha256".to_owned(),
-        Value::String(response.catalog_sha256.to_owned()),
-    );
-
-    let mut root = BTreeMap::<String, Value>::new();
-    root.insert(
-        "allocation_catalog".to_owned(),
-        serde_json::to_value(catalog)?,
-    );
-    root.insert(
-        "bucket".to_owned(),
-        Value::String(response.bucket.to_owned()),
-    );
-    root.insert(
-        "collection".to_owned(),
-        Value::String(response.collection.to_owned()),
-    );
-    root.insert(
-        "id".to_owned(),
-        Value::String(response.allocation_id.to_owned()),
-    );
-    root.insert(
-        "prefix_key".to_owned(),
-        Value::String(response.prefix_key.to_owned()),
-    );
-    root.insert(
-        "request_id".to_owned(),
-        Value::String(response.request_id.to_owned()),
-    );
-    root.insert(
-        "resolved_prefix".to_owned(),
-        Value::String(response.resolved_prefix.to_owned()),
-    );
-    root.insert("schema_version".to_owned(), Value::from(3_u64));
-
+    let stored = StoredAllocationResponse {
+        schema_version: 4,
+        request_id: response.request_id.to_owned(),
+        id: response.allocation_id.to_owned(),
+        bucket: response.bucket.to_owned(),
+        collection: response.collection.to_owned(),
+    };
     let path = output.as_ref().to_path_buf();
-    let mut encoded = serde_json::to_string_pretty(&root)?;
+    let mut encoded = serde_json::to_string_pretty(&stored)?;
     encoded.push('\n');
     fs::write(&path, encoded).map_err(|source| HfError::Io { path, source })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct StoredAllocationResponse {
     schema_version: u32,
     request_id: String,
     id: String,
     bucket: String,
     collection: String,
-    allocation_catalog: StoredAllocationCatalog,
-    prefix_key: String,
-    resolved_prefix: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct StoredAllocationCatalog {
-    id: String,
-    sha256: String,
 }
 
 pub fn read_allocation_response_id(path: impl AsRef<Path>) -> Result<String> {
@@ -158,9 +110,9 @@ pub fn read_allocation_response_id(path: impl AsRef<Path>) -> Result<String> {
         source,
     })?;
     let response: StoredAllocationResponse = serde_json::from_slice(&bytes)?;
-    if response.schema_version != 3 {
+    if response.schema_version != 4 {
         return Err(contract(format!(
-            "allocation response schema_version must be 3, got {}",
+            "allocation response schema_version must be 4, got {}",
             response.schema_version
         )));
     }
@@ -169,16 +121,6 @@ pub fn read_allocation_response_id(path: impl AsRef<Path>) -> Result<String> {
         ("id", response.id.as_str()),
         ("bucket", response.bucket.as_str()),
         ("collection", response.collection.as_str()),
-        (
-            "allocation_catalog.id",
-            response.allocation_catalog.id.as_str(),
-        ),
-        (
-            "allocation_catalog.sha256",
-            response.allocation_catalog.sha256.as_str(),
-        ),
-        ("prefix_key", response.prefix_key.as_str()),
-        ("resolved_prefix", response.resolved_prefix.as_str()),
     ] {
         require_nonempty(name, value)?;
     }
@@ -192,10 +134,6 @@ fn validate_response_fields(response: &AllocationResponse<'_>) -> Result<()> {
         ("id", response.allocation_id),
         ("bucket", response.bucket),
         ("collection", response.collection),
-        ("allocation_catalog.id", response.catalog_id),
-        ("allocation_catalog.sha256", response.catalog_sha256),
-        ("prefix_key", response.prefix_key),
-        ("resolved_prefix", response.resolved_prefix),
     ] {
         require_nonempty(name, value)?;
     }
@@ -221,7 +159,11 @@ fn require_nonempty(name: &str, value: &str) -> Result<()> {
 }
 
 fn insert_nonempty(values: &mut BTreeMap<String, String>, key: &str, value: &Option<String>) {
-    if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(value) = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         values.insert(key.to_owned(), value.to_owned());
     }
 }

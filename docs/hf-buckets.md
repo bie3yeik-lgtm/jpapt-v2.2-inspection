@@ -43,7 +43,7 @@ hf://buckets/<namespace>/<bucket>/
 │           ├── datasets-lock.json
 │           └── runtime.json
 ├── candidates/
-│   ├── parakeet-candidate-000003/
+│   ├── candidate-000003/
 │   │   ├── README.md
 │   │   ├── metadata.json
 │   │   ├── ctc/
@@ -54,7 +54,7 @@ hf://buckets/<namespace>/<bucket>/
 │   │   │   └── joint.onnx
 │   │   └── tokenizer/
 │   │       └── vocabulary.json
-│   └── whisper-candidate-000004/
+│   └── candidate-000004/
 │       ├── README.md
 │       ├── metadata.json
 │       ├── encoder.onnx
@@ -65,11 +65,11 @@ hf://buckets/<namespace>/<bucket>/
 │           ├── preprocessor_config.json
 │           └── ...
 ├── experiments/
-│   ├── cpu-full-eval-000005/
+│   ├── experiment-000005/
 │   │   └── README.md
-│   ├── cross-platform-parity-000006/
+│   ├── experiment-000006/
 │   │   └── README.md
-│   └── rust-eval-000007/
+│   └── experiment-000007/
 │       └── README.md
 ├── runs/
 │   └── 20260816T120000Z-parakeet-tdt-ctc-0.6b-ja-linux-cpu-full-12345678-abcd1234/
@@ -79,7 +79,7 @@ hf://buckets/<namespace>/<bucket>/
 │       ├── run.parquet
 │       └── promotion.json        # promotion後のみ
 └── benchmarks/
-    └── parakeet-candidate-000003/
+    └── candidate-000003/
         ├── cpu/
         │   └── <run-id>.json
         ├── cuda/
@@ -107,7 +107,7 @@ hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/
 │           ├── datasets-lock.json
 │           └── runtime.json
 ├── candidates/
-│   └── parakeet-candidate-000124/
+│   └── candidate-000124/
 │       ├── README.md
 │       ├── metadata.json
 │       ├── ctc/model.onnx
@@ -116,7 +116,7 @@ hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/
 │       ├── tdt/joint.onnx
 │       └── tokenizer/vocabulary.json
 ├── experiments/
-│   └── rust-eval-000125/README.md
+│   └── experiment-000125/README.md
 ├── runs/
 │   └── <run-id>/
 │       ├── run-context.json
@@ -125,7 +125,7 @@ hf://buckets/gawohok7/jpapt-v2.2-dev-bucket/
 │       ├── run.parquet
 │       └── promotion.json
 └── benchmarks/
-    └── parakeet-candidate-000124/
+    └── candidate-000124/
         └── cpu/<run-id>.json
 ```
 
@@ -144,7 +144,7 @@ hf://buckets/gawohok7/tf-v1-onnx-dev-bucket/
 │           ├── datasets-lock.json
 │           └── runtime.json
 ├── candidates/
-│   └── whisper-candidate-000042/
+│   └── candidate-000042/
 │       ├── README.md
 │       ├── metadata.json
 │       ├── encoder.onnx
@@ -158,7 +158,7 @@ hf://buckets/gawohok7/tf-v1-onnx-dev-bucket/
 │       ├── samples.jsonl
 │       └── run.parquet
 └── benchmarks/
-    └── whisper-candidate-000042/
+    └── candidate-000042/
         └── directml/<run-id>.json
 ```
 
@@ -183,26 +183,21 @@ runtime.json
 
 ## 6. `candidates/`
 
-candidate IDは `config/hf-allocation-catalog.json` に従って中央Allocatorが採番します。
+candidate IDは中央Allocatorがcanonical/historical layout双方の最大6桁suffixを見て `candidate-NNNNNN` を自動採番します。prefix設定JSONは不要です。candidate IDを省略したreadではcanonical `candidates/candidate-NNNNNN` の最新値を優先し、canonicalが存在しない既存Bucketに限って `<variant>/candidate-NNNNNN` をread-only fallbackとして解決します。
 
-現在のprefix:
+canonical IDはprofile setに依存せず次の1形式です。profile/variantはcandidate metadataとASR catalogから解決します。
 
 ```text
-candidate.parakeet-tdt-ctc-v1  -> parakeet-candidate
-candidate.whisper-autoregressive-v1 -> whisper-candidate
+candidate-NNNNNN
 ```
+
+旧Bucketの `ctc/candidate-NNNNNN` / `tdt/candidate-NNNNNN` はread-only fallbackとしてのみ扱い、新規publishでは生成しません。
 
 publish時は `hf buckets sync --plan` の結果を確認し、fresh upload以外のoperationが必要なら拒否します。candidate IDを再利用して既存artifactを上書きする運用はしません。
 
 ## 7. `experiments/`
 
-experiment IDも中央Allocator管理です。
-
-```text
-experiment.cpu_full              -> cpu-full-eval
-experiment.cross_platform_parity -> cross-platform-parity
-experiment.rust_eval             -> rust-eval
-```
+experiment IDも中央Allocator管理で、workflow種別に依存しない `experiment-NNNNNN` を採番します。workflow種別やevaluation identityは生成metadata側で保持し、ID prefixへ埋め込みません。
 
 現状、AllocatorのREADMEがnamespace reservationの最小artifactです。workflowが追加artifactを置く場合も同じexperiment ID配下を使います。
 

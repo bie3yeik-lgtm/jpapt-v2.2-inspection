@@ -17,10 +17,6 @@ on:
         required: true
         type: choice
         options: [candidates, experiments, config]
-      prefix_key:
-        description: "Semantic allocation prefix key from config/hf-allocation-catalog.json"
-        required: true
-        type: string
       metadata_json:
         description: "Optional allocation provenance JSON"
         required: false
@@ -57,14 +53,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}" "${{ inputs.prefix_key }}")"
-          PREFIX="$(cargo run --quiet --locked -p asr-hf -- allocation-prefix "${{ inputs.prefix_key }}")"
-          CATALOG_ID="$(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id)"
-          CATALOG_SHA="$(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256)"
+          ID="$(bash scripts/hf/hf-allocate-id.sh "${{ inputs.collection }}")"
           echo "id=${ID}" >> "${GITHUB_OUTPUT}"
-          echo "prefix=${PREFIX}" >> "${GITHUB_OUTPUT}"
-          echo "allocation_catalog_id=${CATALOG_ID}" >> "${GITHUB_OUTPUT}"
-          echo "allocation_catalog_sha256=${CATALOG_SHA}" >> "${GITHUB_OUTPUT}"
       - name: Update Bucket root allocator status
         shell: bash
         env:
@@ -82,11 +72,7 @@ jobs:
             --request-id "${{ inputs.request_id }}" \
             --allocation-id "${{ steps.allocate.outputs.id }}" \
             --bucket "${HF_BUCKET}" \
-            --collection "${{ inputs.collection }}" \
-            --catalog-id "${{ steps.allocate.outputs.allocation_catalog_id }}" \
-            --catalog-sha256 "${{ steps.allocate.outputs.allocation_catalog_sha256 }}" \
-            --prefix-key "${{ inputs.prefix_key }}" \
-            --resolved-prefix "${{ steps.allocate.outputs.prefix }}"
+            --collection "${{ inputs.collection }}"
       - name: Publish allocation response
         uses: actions/upload-artifact@v7
         with:

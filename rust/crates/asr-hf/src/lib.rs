@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HfError {
@@ -85,50 +84,27 @@ pub struct ResolveTargetOptions {
     pub repository_root: PathBuf,
     pub selector: TargetSelector,
     pub runtime_variant: Option<String>,
-    pub targets_json: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TargetDocument {
     schema_version: u32,
-    target: TargetIdentity,
-    upstream: UpstreamIdentity,
-    reference: ReferenceIdentity,
     runtime: RuntimeIdentity,
     storage: StorageIdentity,
-    evaluation: EvaluationIdentity,
 }
 
 #[derive(Debug, Deserialize)]
-struct TargetIdentity {
-    id: String,
-    model_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpstreamIdentity {
-    repo_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReferenceIdentity {
-    canonical_framework: String,
-}
-
-#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeIdentity {
     profile_set: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StorageIdentity {
     bucket: String,
     model_repo: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct EvaluationIdentity {
-    datasets_policy: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,12 +125,6 @@ struct ProfileSet {
     default_variant: String,
 }
 
-#[derive(Debug, Clone)]
-struct Route {
-    bucket: String,
-    model_repo: String,
-}
-
 pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget> {
     let root = options
         .repository_root
@@ -163,10 +133,9 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
             path: options.repository_root.clone(),
             source,
         })?;
-    let routes = parse_routes(options.targets_json.as_deref())?;
     let target_id = match &options.selector {
         TargetSelector::Id(value) => require_nonempty("target id", value)?.to_owned(),
-        TargetSelector::Bucket(bucket) => target_from_bucket(bucket, &routes)?,
+        TargetSelector::Bucket(bucket) => target_from_bucket(&root, bucket)?,
     };
     validate_identifier(&target_id)?;
 
@@ -174,39 +143,9 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
         .join("config/hf-targets")
         .join(format!("{target_id}.toml"));
     let target: TargetDocument = load_toml(&target_path)?;
-    if target.schema_version != 2 {
-        return Err(contract(format!(
-            "{}: schema_version must equal 2",
-            target_path.display()
-        )));
-    }
-    expect_equal(
-        "target filename",
-        &target_id,
-        "target.id",
-        &target.target.id,
-    )?;
-    for (name, value) in [
-        ("target.model_id", target.target.model_id.as_str()),
-        ("upstream.repo_id", target.upstream.repo_id.as_str()),
-        (
-            "reference.canonical_framework",
-            target.reference.canonical_framework.as_str(),
-        ),
-        ("runtime.profile_set", target.runtime.profile_set.as_str()),
-        ("storage.bucket", target.storage.bucket.as_str()),
-        ("storage.model_repo", target.storage.model_repo.as_str()),
-        (
-            "evaluation.datasets_policy",
-            target.evaluation.datasets_policy.as_str(),
-        ),
-    ] {
-        require_nonempty(name, value)?;
-    }
+    validate_target_document(&target_path, &target)?;
 
-    let model_path = root
-        .join("config/models")
-        .join(format!("{}.toml", target.target.model_id));
+    let model_path = root.join("config/models").join(format!("{target_id}.toml"));
     let model: toml::Value = load_toml(&model_path)?;
     if model
         .get("schema_version")
@@ -219,26 +158,9 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
         )));
     }
     let model_id = toml_string(&model, &["model", "id"], "model.id")?;
-    expect_equal(
-        "target.model_id",
-        &target.target.model_id,
-        "model.id",
-        model_id,
-    )?;
-    let model_upstream = toml_string(&model, &["upstream", "repo_id"], "upstream.repo_id")?;
-    expect_equal(
-        "HF target upstream.repo_id",
-        &target.upstream.repo_id,
-        "model upstream.repo_id",
-        model_upstream,
-    )?;
+    expect_equal("HF target filename", &target_id, "model.id", model_id)?;
+    let upstream_repo_id = toml_string(&model, &["upstream", "repo_id"], "upstream.repo_id")?;
     let framework = toml_string(&model, &["model", "framework"], "model.framework")?;
-    expect_equal(
-        "HF target canonical framework",
-        &target.reference.canonical_framework,
-        "model framework",
-        framework,
-    )?;
 
     let catalog_path = root.join("config/asr-catalog.json");
     let catalog: Catalog = serde_json::from_slice(&read(&catalog_path)?)?;
@@ -259,6 +181,7 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
     let variant = options
         .runtime_variant
         .as_deref()
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(&profile_set.default_variant);
     let profile_id = profile_set.variants.get(variant).ok_or_else(|| {
@@ -275,32 +198,88 @@ pub fn resolve_target(options: &ResolveTargetOptions) -> Result<ResolvedHfTarget
         .decoder;
     require_nonempty("decoder", decoder)?;
 
-    let route = if routes.is_empty() {
-        Route {
-            bucket: target.storage.bucket.clone(),
-            model_repo: target.storage.model_repo.clone(),
-        }
-    } else {
-        routes.get(&target_id).cloned().ok_or_else(|| {
-            contract(format!(
-                "HF target mapping does not contain target {target_id:?}"
-            ))
-        })?
-    };
-
     Ok(ResolvedHfTarget {
         target_id,
-        hf_bucket: route.bucket,
-        hf_model_repo: route.model_repo.clone(),
-        expected_development_repo_id: route.model_repo,
-        expected_upstream_repo_id: target.upstream.repo_id.clone(),
-        expected_tokenizer_repo_id: target.upstream.repo_id,
-        expected_framework: target.reference.canonical_framework,
+        hf_bucket: target.storage.bucket.clone(),
+        hf_model_repo: target.storage.model_repo.clone(),
+        expected_development_repo_id: target.storage.model_repo,
+        expected_upstream_repo_id: upstream_repo_id.to_owned(),
+        expected_tokenizer_repo_id: upstream_repo_id.to_owned(),
+        expected_framework: framework.to_owned(),
         profile_set: target.runtime.profile_set,
         runtime_variant: variant.to_owned(),
         runtime_profile: profile_id.clone(),
         decoder: decoder.clone(),
     })
+}
+
+fn validate_target_document(path: &Path, target: &TargetDocument) -> Result<()> {
+    if target.schema_version != 3 {
+        return Err(contract(format!(
+            "{}: schema_version must equal 3",
+            path.display()
+        )));
+    }
+    for (name, value) in [
+        ("runtime.profile_set", target.runtime.profile_set.as_str()),
+        ("storage.bucket", target.storage.bucket.as_str()),
+        ("storage.model_repo", target.storage.model_repo.as_str()),
+    ] {
+        require_nonempty(name, value)?;
+    }
+    if !target.storage.bucket.contains('/') {
+        return Err(contract(format!(
+            "{}: storage.bucket must use namespace/bucket format",
+            path.display()
+        )));
+    }
+    if !target.storage.model_repo.contains('/') {
+        return Err(contract(format!(
+            "{}: storage.model_repo must use namespace/repository format",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn target_from_bucket(root: &Path, bucket: &str) -> Result<String> {
+    let bucket = require_nonempty("bucket", bucket)?
+        .trim_start_matches("hf://buckets/")
+        .trim_end_matches('/');
+    let target_root = root.join("config/hf-targets");
+    let mut matches = Vec::new();
+    let entries = fs::read_dir(&target_root).map_err(|source| HfError::Io {
+        path: target_root.clone(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| HfError::Io {
+            path: target_root.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let target: TargetDocument = load_toml(&path)?;
+        validate_target_document(&path, &target)?;
+        if target.storage.bucket == bucket {
+            let id = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| contract("HF target filename is not valid UTF-8"))?;
+            matches.push(id.to_owned());
+        }
+    }
+    match matches.as_slice() {
+        [target] => Ok(target.clone()),
+        [] => Err(contract(format!(
+            "HF bucket {bucket:?} is not assigned by config/hf-targets"
+        ))),
+        _ => Err(contract(format!(
+            "HF bucket {bucket:?} is assigned to multiple targets: {matches:?}"
+        ))),
+    }
 }
 
 pub fn append_github_file(path: &Path, values: &[(&str, &str)]) -> Result<()> {
@@ -320,56 +299,6 @@ pub fn append_github_file(path: &Path, values: &[(&str, &str)]) -> Result<()> {
         })?;
     }
     Ok(())
-}
-
-fn parse_routes(raw: Option<&str>) -> Result<BTreeMap<String, Route>> {
-    let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
-        return Ok(BTreeMap::new());
-    };
-    let value: Value = serde_json::from_str(raw)?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| contract("HF target mapping root must be a JSON object"))?;
-    let mut result = BTreeMap::new();
-    let mut buckets = BTreeSet::new();
-    for (target_id, entry) in object {
-        validate_identifier(target_id)?;
-        let entry = entry.as_object().ok_or_else(|| {
-            contract(format!(
-                "HF target mapping entry {target_id:?} must be a JSON object"
-            ))
-        })?;
-        let bucket = json_string(entry.get("HF_BUCKET"), &format!("{target_id}.HF_BUCKET"))?;
-        let model_repo = json_string(
-            entry.get("HF_MODEL_REPO"),
-            &format!("{target_id}.HF_MODEL_REPO"),
-        )?;
-        if !buckets.insert(bucket.clone()) {
-            return Err(contract(format!(
-                "HF_BUCKET {bucket:?} is assigned to multiple targets"
-            )));
-        }
-        result.insert(target_id.clone(), Route { bucket, model_repo });
-    }
-    Ok(result)
-}
-
-fn target_from_bucket(bucket: &str, routes: &BTreeMap<String, Route>) -> Result<String> {
-    require_nonempty("bucket", bucket)?;
-    if routes.is_empty() {
-        return Err(contract(
-            "--bucket requires --targets-json because Bucket-to-target resolution is defined by the routing snapshot",
-        ));
-    }
-    routes
-        .iter()
-        .find_map(|(target, route)| (route.bucket == bucket).then(|| target.clone()))
-        .ok_or_else(|| {
-            contract(format!(
-                "HF_BUCKET {bucket:?} is not present in the current HF target mapping; available={:?}",
-                routes.values().map(|route| &route.bucket).collect::<Vec<_>>()
-            ))
-        })
 }
 
 fn load_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
@@ -397,15 +326,6 @@ fn toml_string<'a>(value: &'a toml::Value, path: &[&str], name: &str) -> Result<
     current
         .as_str()
         .and_then(|value| (!value.trim().is_empty()).then_some(value))
-        .ok_or_else(|| contract(format!("{name} must be a non-empty string")))
-}
-
-fn json_string(value: Option<&Value>, name: &str) -> Result<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
         .ok_or_else(|| contract(format!("{name} must be a non-empty string")))
 }
 

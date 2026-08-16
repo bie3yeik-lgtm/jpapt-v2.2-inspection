@@ -1,14 +1,4 @@
-schema_version = 2
-
-[target]
-id = "kotoba-whisper-v1.0"
-model_id = "kotoba-whisper-v1.0"
-
-[upstream]
-repo_id = "kotoba-tech/kotoba-whisper-v1.0"
-
-[reference]
-canonical_framework = "transformers"
+schema_version = 3
 
 [runtime]
 profile_set = "whisper-autoregressive-v1"
@@ -16,6 +6,3 @@ profile_set = "whisper-autoregressive-v1"
 [storage]
 bucket = "gawohok7/tf-v1-onnx-dev-bucket"
 model_repo = "gawohok7/tf-v1-onnx-dev"
-
-[evaluation]
-datasets_policy = "shared-default"

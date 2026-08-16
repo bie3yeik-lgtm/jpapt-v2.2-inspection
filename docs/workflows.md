@@ -8,7 +8,6 @@ workflowにruntime semanticsを再定義しません。workflowは次のsource o
 
 ```text
 config/asr-catalog.json
-config/hf-allocation-catalog.json
 config/hf-targets/*.toml
 config/models/*.toml
 config/providers/*.toml
@@ -287,7 +286,7 @@ benchmarks/<candidate-id>/cpu/<run-id>.json
 
 ```bash
 scripts/hf/hf-promote-candidate.sh \
-  parakeet-candidate-000124 \
+  candidate-000124 \
   results/<run>
 ```
 
@@ -313,7 +312,7 @@ experiments
 config
 ```
 
-prefixは `config/hf-allocation-catalog.json` のkeyからのみ解決します。
+prefixはcollectionからRustが決定します。workflowはprefix keyを入力せず、candidate IDも省略時は対象Bucketから自動解決します。
 
 採番はcollection内に存在する全prefixの6桁suffixを走査し、最大値+1を採用します。ID suffixを人が選びません。
 

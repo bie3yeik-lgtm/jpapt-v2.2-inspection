@@ -3,10 +3,10 @@ name: Validate HF Layout
 on:
   workflow_dispatch:
     inputs:
-      hf_bucket:
-        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
+      hf_target:
+        description: "Source-controlled HF target ID"
         required: true
-        default: gawohok7/jpapt-v2.2-dev-bucket
+        default: parakeet-tdt_ctc-0.6b-ja
         type: string
       runtime_variant:
         description: "Runtime variant from target profile set (blank = catalog default)"
@@ -43,12 +43,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_bucket || 'local' }}-${{ inputs.runtime_variant || 'default' }}
+  group: validate-hf-layout-${{ github.ref }}-${{ inputs.hf_target || 'local' }}-${{ inputs.runtime_variant || 'default' }}
   cancel-in-progress: true
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
 
 jobs:
   local-contracts:
@@ -88,8 +87,10 @@ jobs:
           cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
           cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint catalog_id
           cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- fingerprint sha256
-          cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id
-          cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix candidates)" == candidate ]]
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix experiments)" == experiment ]]
+          [[ "$(cargo run --quiet --locked -p asr-hf -- allocation-prefix config)" == config ]]
+          [[ ! -e config/hf-allocation-catalog.json ]]
           bash -n scripts/hf/hf-allocate-id.sh
           bash -n scripts/hf/hf-request-id.sh
           bash -n scripts/hf/hf-update-root-readme.sh
@@ -109,11 +110,11 @@ jobs:
             python/tests/unit/test_runtime_registry.py \
             python/tests/unit/test_ort_optimizer_canary.py
 
-      - name: List source-controlled runtime catalogs, targets and evaluators
+      - name: List source-controlled runtime policy
         shell: bash
         run: |
           set -euo pipefail
-          echo "HF allocation catalog: $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint catalog_id) $(cargo run --quiet --locked -p asr-hf -- allocation-fingerprint sha256)"
+          echo "Allocation prefixes are derived: candidates=candidate experiments=experiment config=config"
           cargo run --quiet --locked -p asr-contracts --bin asr-catalog -- summary
           mapfile -t targets < <(find config/hf-targets -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
           mapfile -t evaluators < <(find config/evaluators -maxdepth 1 -type f -name '*.toml' -printf '%f\n' | sed 's/\.toml$//' | sort)
@@ -159,23 +160,19 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           .venv/bin/hf --version
 
-      - name: Resolve selected HF Bucket and runtime variant
+      - name: Resolve selected HF target and runtime variant
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
-            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
-            exit 1
-          }
           ARGS=(
-            --bucket "${{ inputs.hf_bucket }}"
-            --targets-json "${HF_TARGETS_JSON}"
+            resolve-target
+            --target "${{ inputs.hf_target }}"
             --github-env "${GITHUB_ENV}"
           )
           if [[ -n "${{ inputs.runtime_variant }}" ]]; then
             ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
           fi
-          cargo run --quiet --locked -p asr-hf -- resolve-target "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}"
 
       - name: Validate GitHub HF configuration
         shell: bash
@@ -223,3 +220,8 @@ jobs:
             echo "Checking ${BUCKET}/${dir}/"
             hf buckets list "${BUCKET}/${dir}" >/dev/null
           done
+          listing="$(mktemp)"
+          trap 'rm -f "$listing"' EXIT
+          hf buckets list "${BUCKET}/candidates" -R -q > "$listing"
+          cargo run --quiet --locked -p asr-hf -- resolve-candidate-location \
+            --listing "$listing" --runtime-variant "$ASR_RUNTIME_VARIANT"

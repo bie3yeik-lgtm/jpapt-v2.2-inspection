@@ -10,7 +10,7 @@ fail(){ printf '[hf-push-candidate] ERROR: %s\n' "$*" >&2; exit 1; }
 
 SOURCE="${1:-}"
 [[ -d "$SOURCE" ]] || fail "Usage: $0 <candidate-directory>"
-[[ $# -eq 1 ]] || fail "candidate prefixes are centrally managed; do not pass a manual prefix"
+[[ $# -eq 1 ]] || fail "candidate IDs are centrally allocated; do not pass a manual prefix or ID"
 [[ -n "${HF_TOKEN:-}" ]] || fail "HF_TOKEN is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
@@ -28,9 +28,10 @@ run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
 
-# CandidateArtifacts and runtime-contract inspection remain Python-native because they bind
-# directly to the current ML/runtime implementation. Allocation and sync-plan policy are Rust.
-PROFILE_SET="$(run_project_python - "$SOURCE" <<'PY'
+# CandidateArtifacts/ONNX inspection is the remaining Python-native boundary.
+# It validates metadata against the source-controlled runtime catalog, but does
+# not participate in naming or allocation policy.
+run_project_python - "$SOURCE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -60,22 +61,18 @@ for variant in variants:
         f"{candidate.bundle_sha256}",
         file=sys.stderr,
     )
-print(profile_set_id)
 PY
-)"
-PREFIX_KEY="$(cargo run --quiet --locked -p asr-hf -- candidate-prefix-key "$PROFILE_SET")"
 
 CANDIDATE_ID="$(
   CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= \
-  bash scripts/hf/hf-request-id.sh candidates "$PREFIX_KEY"
+  bash scripts/hf/hf-request-id.sh candidates
 )"
 REMOTE="hf://buckets/${HF_BUCKET#hf://buckets/}/candidates/${CANDIDATE_ID}"
 PLAN="$(mktemp -t hf-candidate-plan.XXXXXX.jsonl)"
 trap 'rm -f "$PLAN"' EXIT
 
-# Candidate prefixes are semantically immutable. Generate a plan first and
-# reject any operation other than a fresh upload. This prevents a recycled ID
-# or accidental rerun from silently updating an existing durable candidate.
+# Candidate IDs are immutable. Generate a plan first and reject any operation
+# other than a fresh upload so reruns cannot mutate an existing candidate.
 hf buckets sync \
   --token "$HF_TOKEN" \
   "$SOURCE" \
@@ -96,7 +93,5 @@ log "Validated fresh candidate plan: ${UPLOAD_COUNT} uploads"
 hf buckets sync --token "$HF_TOKEN" --apply "$PLAN"
 
 log "Candidate ID: $CANDIDATE_ID"
-log "Profile set: $PROFILE_SET"
-log "Prefix key: $PREFIX_KEY"
 log "Published: $REMOTE"
 printf '%s\n' "$CANDIDATE_ID"

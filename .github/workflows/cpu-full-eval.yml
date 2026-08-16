@@ -3,14 +3,15 @@ name: CPU Full Evaluation
 on:
   workflow_dispatch:
     inputs:
-      hf_bucket:
-        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
+      hf_target:
+        description: "Source-controlled HF target ID"
         required: true
-        default: gawohok7/jpapt-v2.2-dev-bucket
+        default: parakeet-tdt_ctc-0.6b-ja
         type: string
       candidate_id:
-        description: "Existing HF Bucket candidates/<candidate_id> to evaluate"
-        required: true
+        description: "Optional candidate-NNNNNN (blank = latest candidate in target Bucket)"
+        required: false
+        default: ""
         type: string
       runtime_variant:
         description: "Runtime variant from the target profile set (blank = catalog default)"
@@ -23,41 +24,71 @@ permissions:
   actions: write
 
 concurrency:
-  group: cpu-full-${{ inputs.hf_bucket }}-${{ inputs.candidate_id }}-${{ inputs.runtime_variant || 'default' }}
+  group: cpu-full-${{ inputs.hf_target }}-${{ inputs.candidate_id || 'latest' }}-${{ inputs.runtime_variant || 'default' }}
   cancel-in-progress: false
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
   GH_TOKEN: ${{ secrets.HF_ALLOCATOR_GITHUB_TOKEN || github.token }}
   HF_ALLOCATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
 
 jobs:
   allocate-experiment:
-    name: Allocate experiment ID
+    name: Resolve target/candidate and allocate experiment ID
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       experiment_id: ${{ steps.allocate.outputs.experiment_id }}
+      candidate_id: ${{ steps.candidate.outputs.candidate_id }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install project for catalog resolution
-        run: python -m pip install -e ".[dev]"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Hugging Face CLI
+        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+      - name: Resolve target
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(
+            resolve-target
+            --target "${{ inputs.hf_target }}"
+            --github-env "${GITHUB_ENV}"
+          )
+          if [[ -n "${{ inputs.runtime_variant }}" ]]; then
+            ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
+          fi
+          cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}"
+      - name: Resolve candidate from Bucket
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="${{ inputs.candidate_id }}"
+          if [[ -n "$candidate" ]]; then
+            [[ "$candidate" =~ ^candidate-[0-9]{6}$ ]] || { echo "::error::candidate_id must use candidate-NNNNNN"; exit 1; }
+          else
+            listing="$(mktemp)"
+            trap 'rm -f "$listing"' EXIT
+            hf buckets list --token "$HF_TOKEN" "hf://buckets/${HF_BUCKET}/candidates" -R -q > "$listing"
+            summary="$(cargo run --quiet --locked -p asr-hf -- resolve-candidate-location --listing "$listing" --runtime-variant "$ASR_RUNTIME_VARIANT")"
+            candidate="$(printf '%s\n' "$summary" | sed -n 's/^candidate_id=//p')"
+            legacy="$(printf '%s\n' "$summary" | sed -n 's/^legacy=//p')"
+            [[ "$legacy" != true ]] || echo "::warning::Using legacy Bucket candidate layout for ${candidate}; new candidates are written canonically."
+          fi
+          echo "candidate_id=${candidate}" >> "$GITHUB_OUTPUT"
       - name: Allocate ID through central allocator
         id: allocate
         shell: bash
         env:
-          HF_BUCKET: ${{ inputs.hf_bucket }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_ID: ${{ steps.candidate.outputs.candidate_id }}
           EVALUATION_ID: full
           PROVIDER_ID: cpu
-          ASR_RUNTIME_VARIANT: ${{ inputs.runtime_variant }}
         run: |
           set -euo pipefail
-          ID="$(bash scripts/hf/hf-allocate-id.sh experiments experiment.cpu_full)"
+          ID="$(bash scripts/hf/hf-allocate-id.sh experiments)"
           echo "experiment_id=${ID}" >> "${GITHUB_OUTPUT}"
           echo "Experiment: ${ID}"
 
@@ -78,6 +109,7 @@ jobs:
       EXPECTED_RUNTIME_PROFILE: ""
       EXPECTED_DECODER: ""
       HF_TARGET_ID: ""
+      CANDIDATE_ID: ${{ needs.allocate-experiment.outputs.candidate_id }}
       EXPERIMENT_ID: ${{ needs.allocate-experiment.outputs.experiment_id }}
 
     steps:
@@ -102,25 +134,21 @@ jobs:
           python -c "import parakeet_onnx"
           hf --version
 
-      - name: Resolve HF Bucket and runtime variant
+      - name: Resolve HF target and runtime variant
         id: hf
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
-            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
-            exit 1
-          }
           ARGS=(
-            --bucket "${{ inputs.hf_bucket }}"
-            --targets-json "${HF_TARGETS_JSON}"
+            resolve-target
+            --target "${{ inputs.hf_target }}"
             --github-env "${GITHUB_ENV}"
             --github-output "${GITHUB_OUTPUT}"
           )
           if [[ -n "${{ inputs.runtime_variant }}" ]]; then
             ARGS+=(--runtime-variant "${{ inputs.runtime_variant }}")
           fi
-          cargo run --quiet --locked -p asr-hf -- resolve-target "${ARGS[@]}"
+          cargo run --quiet --locked -p asr-hf -- "${ARGS[@]}"
 
       - name: Validate GitHub configuration
         shell: bash
@@ -136,6 +164,7 @@ jobs:
           echo "Runtime variant: ${ASR_RUNTIME_VARIANT}"
           echo "Runtime profile: ${EXPECTED_RUNTIME_PROFILE}"
           echo "Decoder: ${EXPECTED_DECODER}"
+          echo "Candidate: ${CANDIDATE_ID}"
           echo "Experiment: ${EXPERIMENT_ID}"
 
       - name: Prepare directories
@@ -178,9 +207,7 @@ jobs:
             .ci/candidate
             .ci/reference
           key: >-
-            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{
-              inputs.candidate_id
-            }}-${{
+            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{ needs.allocate-experiment.outputs.candidate_id }}-${{
               hashFiles(
                 '.ci/hf/config/revisions/reference.json',
                 '.ci/hf/config/revisions/evaluation-schema.json',
@@ -191,13 +218,13 @@ jobs:
               )
             }}
           restore-keys: |
-            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{ inputs.candidate_id }}-
+            py-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-ubuntu-${{ runner.arch }}-${{ needs.allocate-experiment.outputs.candidate_id }}-
 
       - name: Fetch candidate
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
+          bash scripts/hf/hf-fetch-candidate.sh "$CANDIDATE_ID"
 
       - name: Resolve candidate execution contract
         shell: bash
@@ -240,7 +267,7 @@ jobs:
             --model-config "${HF_TARGET_ID}" \
             --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --candidate-dir ".ci/candidate" \
-            --candidate-id "${{ inputs.candidate_id }}" \
+            --candidate-id "${CANDIDATE_ID}" \
             --experiment-id "${EXPERIMENT_ID}" \
             --revisions ".ci/hf/config/revisions" \
             --output "results/linux-cpu-full"
@@ -277,7 +304,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ inputs.candidate_id }}
+          name: cpu-full-${{ steps.hf.outputs.target_id }}-${{ steps.hf.outputs.runtime_variant }}-${{ needs.allocate-experiment.outputs.candidate_id }}
           path: |
             results/linux-cpu-full/run-context.json
             results/linux-cpu-full/metrics.json

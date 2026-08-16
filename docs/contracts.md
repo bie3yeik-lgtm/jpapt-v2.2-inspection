@@ -7,7 +7,7 @@
 | 分類 | 例 | 人が編集するか |
 |---|---|---|
 | human-authored | candidate `metadata.json`, revision 3文書 | はい。ただし最小限 |
-| source-controlled | `config/asr-catalog.json`, `config/hf-allocation-catalog.json` | repository変更としてのみ |
+| source-controlled | `config/asr-catalog.json`, `config/hf-targets/*.toml` | repository変更としてのみ |
 | generated | `runtime.json`, `current.json`, `resolved.json`, generated candidate contract, `run-context.json`, `metrics.json`, `promotion.json` | いいえ |
 
 生成値をhuman-authored JSONへコピーして正本を二重化しないことが最重要です。

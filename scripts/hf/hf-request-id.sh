@@ -10,16 +10,13 @@ fail(){ printf '[hf-request-id] ERROR: %s\n' "$*" >&2; exit 1; }
 asr_hf(){ cargo run --quiet --locked -p asr-hf -- "$@"; }
 
 COLLECTION="${1:-}"
-PREFIX_KEY="${2:-}"
 [[ "$COLLECTION" == "candidates" || "$COLLECTION" == "experiments" || "$COLLECTION" == "config" ]] \
   || fail "collection must be 'candidates', 'experiments', or 'config'"
-[[ -n "$PREFIX_KEY" ]] || fail "allocation prefix key is required"
+[[ $# -eq 1 ]] || fail "Usage: $0 <candidates|experiments|config>"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
 command -v cargo >/dev/null 2>&1 || fail "cargo is required for the Rust allocation envelope"
 
-# Prefix semantics are validated by the central allocator through the canonical
-# Rust allocation catalog before any sequence number is reserved.
 if [[ -z "${GH_TOKEN:-}" && -n "${HF_ALLOCATOR_GITHUB_TOKEN:-}" ]]; then
   export GH_TOKEN="$HF_ALLOCATOR_GITHUB_TOKEN"
 fi
@@ -45,14 +42,13 @@ METADATA_JSON="$(asr_hf allocation-metadata \
   --provider-id "${PROVIDER_ID:-}" \
   --runtime-variant "${ASR_RUNTIME_VARIANT:-}")"
 
-log "Dispatching ${COLLECTION}/${PREFIX_KEY} allocation to ${ALLOCATOR_REPOSITORY}"
+log "Dispatching ${COLLECTION} allocation to ${ALLOCATOR_REPOSITORY}"
 gh workflow run "$ALLOCATOR_WORKFLOW" \
   --repo "$ALLOCATOR_REPOSITORY" \
   --ref "$ALLOCATOR_REF" \
   -f "request_id=${REQUEST_ID}" \
   -f "hf_bucket=${HF_BUCKET#hf://buckets/}" \
   -f "collection=${COLLECTION}" \
-  -f "prefix_key=${PREFIX_KEY}" \
   -f "metadata_json=${METADATA_JSON}"
 
 RUN_ID=""

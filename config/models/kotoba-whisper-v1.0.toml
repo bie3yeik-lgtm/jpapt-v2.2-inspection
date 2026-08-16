@@ -31,7 +31,7 @@ allow_floating_revision = false
 runtime = "transformers"
 loader = "AutoModelForSpeechSeq2Seq.from_pretrained"
 processor_loader = "AutoProcessor.from_pretrained"
-model_id = "kotoba-tech/kotoba-whisper-v1.0"
+
 required_before_onnx_validation = true
 
 [audio]
@@ -104,18 +104,6 @@ required_checkpoints = [
     "tokens",
     "transcript",
 ]
-tolerance_source = "evaluation-schema"
-
-[onnx.artifacts]
-# Whisper export commonly requires encoder and autoregressive decoder graphs.
-# Literal filenames and cache tensor names stay in candidate metadata.
-required_roles = [
-    "encoder",
-    "decoder",
-]
-optional_roles = [
-    "decoder_with_past",
-]
 
 [execution]
 supported_providers = [
@@ -125,58 +113,14 @@ supported_providers = [
     "coreml",
 ]
 reference_provider = "cpu"
-provider_configuration_root = "config/providers"
 
 [execution.platforms]
 linux = ["cpu", "cuda"]
 windows = ["cpu", "cuda", "directml"]
 macos = ["cpu", "coreml"]
 
-[evaluation]
-smoke_config = "config/evaluation/smoke.toml"
-parity_config = "config/evaluation/parity.toml"
-full_config = "config/evaluation/full.toml"
-manifest_root = "evaluation/manifests"
-reference_revision = "config/revisions/reference.json"
-evaluation_schema_revision = "config/revisions/evaluation-schema.json"
-datasets_lock_revision = "config/revisions/datasets-lock.json"
-
 [evaluation.reference]
 implementation = "transformers"
-
-[evaluation.metrics]
-quality = ["cer", "wer"]
-performance = [
-    "rtf",
-    "load_ms",
-    "session_creation_ms",
-    "frontend_ms",
-    "encoder_ms",
-    "decoder_ms",
-    "postprocess_ms",
-    "total_inference_ms",
-]
-resources = ["peak_ram_mb"]
-
-[storage]
-store_model_in_git = false
-store_audio_in_git = false
-store_large_tensors_in_git = false
-candidate_storage = "hf_bucket"
-release_storage = "hf_model_repo"
-run_storage = "hf_bucket"
-benchmark_storage = "hf_bucket"
-
-[storage.hf_target]
-bucket = "gawohok7/tf-v1-onnx-dev-bucket"
-model_repo = "gawohok7/tf-v1-onnx-dev"
-
-[storage.hf_bucket]
-candidate_prefix = "candidates"
-reference_prefix = "reference"
-run_prefix = "runs"
-benchmark_prefix = "benchmarks"
-temporary_prefix = "tmp"
 
 [compatibility]
 mlx = false
@@ -192,15 +136,6 @@ cuda_execution_provider = true
 planned = true
 require_python_parity = true
 runtime_complexity = "autoregressive_with_cache"
-expected_components = [
-    "audio",
-    "frontend",
-    "onnx_runtime",
-    "generation_controller",
-    "kv_cache",
-    "tokenizer",
-    "metrics",
-]
 
 [metadata]
 description = """
