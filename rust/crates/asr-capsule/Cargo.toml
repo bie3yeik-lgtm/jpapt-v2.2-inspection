@@ -1,5 +1,5 @@
 [package]
-name = "asr-capsule"
+name = "asr-onnx-capsule"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
