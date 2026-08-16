@@ -31,7 +31,13 @@ fn validates_revision_bundle_against_repository_catalog() {
     let sha = "a".repeat(64);
     fs::write(
         parent.join("resolved.json"),
-        serde_json::to_vec(&json!({"schema_version":1,"config_version":"config-000001"})).unwrap(),
+        serde_json::to_vec(&json!({
+            "schema_version":1,
+            "config_version":"config-000001",
+            "current_version":"config-000001",
+            "selection_source":"current"
+        }))
+        .unwrap(),
     )
     .unwrap();
     fs::write(
