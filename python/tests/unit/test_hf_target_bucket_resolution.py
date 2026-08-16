@@ -51,8 +51,12 @@ def test_bucket_resolves_kotoba_target() -> None:
     assert result.returncode == 0, result.stderr
     assert "HF_TARGET_ID=kotoba-whisper-v1.0" in result.stdout
     assert "HF_MODEL_REPO=gawohok7/tf-v1-onnx-dev" in result.stdout
+    assert "EXPECTED_DEVELOPMENT_REPO_ID=gawohok7/tf-v1-onnx-dev" in result.stdout
     assert "EXPECTED_UPSTREAM_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
     assert "EXPECTED_TOKENIZER_REPO_ID=kotoba-tech/kotoba-whisper-v1.0" in result.stdout
+    assert "EXPECTED_FRAMEWORK=transformers" in result.stdout
+    assert "EXPECTED_DECODER=whisper_autoregressive" in result.stdout
+    assert "LEGACY" not in result.stdout
 
 
 def test_unknown_bucket_is_rejected() -> None:
