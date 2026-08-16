@@ -27,27 +27,56 @@ confirmation
 <bucket_id>:<model_repo>
 ```
 
-## Parakeet標準入力
+## 実E2E済み入力例
 
-`nvidia/parakeet-tdt_ctc-0.6b-ja`を初期化元modelとして使う場合、Model Cardから次を採用する。
+initializerの実Bucket E2Eは`gawohok7/ci-test`と`kotoba-tech/kotoba-whisper-v2.0`で確認している。
 
 ```text
-model_repo             nvidia/parakeet-tdt_ctc-0.6b-ja
+bucket_id              gawohok7/ci-test
+model_repo             kotoba-tech/kotoba-whisper-v2.0
+model_revision         main
 expected_task          automatic-speech-recognition
-expected_library       nemo
+expected_library       transformers
 expected_language      ja
-expected_license       cc-by-4.0
-expected_architecture  parakeet
-profile_set            parakeet-tdt-ctc-v1
+expected_license       apache-2.0
+expected_architecture  whisper
 ```
 
-architectureの具体的照合値はworkflow/CLIが参照するmodel config contractと一致させること。Model Card上の説明文から独自の別名を入力しない。
+workflow内部で`main`をそのまま保存せず、Hub APIでimmutable model commitへ解決してからmanifestを固定する。
+
+## Parakeetについて
+
+`nvidia/parakeet-tdt_ctc-0.6b-ja`のModel Cardからは次を静的に確認できる。
+
+```text
+task      automatic-speech-recognition
+library   nemo
+language  ja
+license   cc-by-4.0
+dataset   reazon-research/reazonspeech
+```
+
+一方、現在のBucket initializerの`expected_architecture`はmodel config/manifest resolverが返す具体値との一致を要求する。NeMo repoに対するarchitecture resolutionを実E2Eで確認していないため、`parakeet`等の文字列を推測して入力例にはしない。
+
+Parakeet用新規Bucketをinitializerで作る場合は、先にNeMo repoからarchitecture evidenceを取得できるようresolverを拡張し、その実値を使ってE2Eを追加する。現在のParakeet開発では既存`gawohok7/jpapt-v2.2-dev-bucket`を使う。
 
 ## Model Cardに要求するmetadata
 
-Bucket initializerは入力をそのまま信用しない。対象repoのmanifest/Model Cardを取得し、少なくともtask/library/language/licenseを照合する。
+Bucket initializerは入力をそのまま信用しない。対象repoのHub manifestとModel Cardを取得し、入力との一致を確認する。
 
-標準Model Card front matter例:
+Transformers系の標準front matter例:
+
+```yaml
+---
+license: apache-2.0
+language:
+  - ja
+pipeline_tag: automatic-speech-recognition
+library_name: transformers
+---
+```
+
+NeMo系Model Card例:
 
 ```yaml
 ---
@@ -59,7 +88,7 @@ library_name: nemo
 ---
 ```
 
-複数languageを曖昧に自動選択しない。必要な値が取れない、入力と不一致、revisionが解決できない場合は初期化を行わない。
+複数languageや欠落metadataを曖昧に自動選択しない。必要な値が取得できない、入力と不一致、revisionが解決できない場合は初期化を行わない。
 
 ## 保守的初期化フロー
 
@@ -95,7 +124,7 @@ remote bucket-manifest.jsonを再読取
 
 ## `total_files`を正本にしない
 
-実E2Eではupload直後に`hf buckets info.total_files=0`が返る一方、recursive listingでは8ファイルが存在するケースを確認した。このためaggregate counterをpostflightの正本にしない。
+実E2Eではupload直後に`hf buckets info.total_files=0`が返る一方、recursive listingでは期待した8ファイルが存在するケースを確認した。このためaggregate counterをpostflightの正本にしない。
 
 remote状態の正本は以下で得る実file listingとする。
 
@@ -103,7 +132,7 @@ remote状態の正本は以下で得る実file listingとする。
 hf buckets list <bucket> -R --format json
 ```
 
-空BucketではJSONの`[]`ではなくempty stdoutになる場合がある。Rust CLIはempty stdoutだけを0 filesとして扱い、非空invalid JSONを空扱いしない。
+空Bucketでは`[]`ではなくempty stdoutになる場合がある。Rust CLIはempty stdoutだけを0 filesとして扱い、非空invalid JSONを空扱いしない。
 
 ## 初期化直後のtree
 
