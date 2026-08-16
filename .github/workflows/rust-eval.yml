@@ -3,10 +3,10 @@ name: Rust Cross Platform Evaluation
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: "HF target id"
+      hf_bucket:
+        description: "HF_BUCKET value from vars.HF_TARGETS_JSON"
         required: true
-        default: parakeet-tdt_ctc-0.6b-ja
+        default: gawohok7/jpapt-v2.2-dev-bucket
         type: string
       candidate_id:
         description: "HF Bucket candidates/<candidate_id>"
@@ -27,6 +27,13 @@ env:
   HF_TARGETS_JSON: ${{ vars.HF_TARGETS_JSON }}
   HF_BUCKET: ""
   HF_MODEL_REPO: ""
+  EXPECTED_DEVELOPMENT_REPO_ID: ""
+  EXPECTED_UPSTREAM_REPO_ID: ""
+  EXPECTED_TOKENIZER_REPO_ID: ""
+  EXPECTED_FRAMEWORK: ""
+  EXPECTED_DECODER: ""
+  ALLOW_LEGACY_REVISION_METADATA: "false"
+  HF_TARGET_ID: ""
 
 jobs:
   evaluate:
@@ -71,13 +78,17 @@ jobs:
           python -m pip install -e ".[datasets,onnx,dev]"
           python -m pip install --upgrade huggingface_hub
 
-      - name: Resolve HF target
+      - name: Resolve HF Bucket
         shell: bash
         run: |
           set -euo pipefail
+          [[ -n "${HF_TARGETS_JSON:-}" ]] || {
+            echo "::error::HF_TARGETS_JSON repository variable is required for Bucket selection."
+            exit 1
+          }
           python scripts/ci/resolve-hf-target.py \
-            --target "${{ inputs.target }}" \
-            --targets-json "${HF_TARGETS_JSON:-}" \
+            --bucket "${{ inputs.hf_bucket }}" \
+            --targets-json "${HF_TARGETS_JSON}" \
             --github-env "${GITHUB_ENV}"
 
       - name: Validate GitHub configuration
@@ -85,8 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN secret is not configured."; exit 1; }
-          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved for ${{ inputs.target }}."; exit 1; }
-          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved for ${{ inputs.target }}."; exit 1; }
+          [[ -n "${HF_BUCKET:-}" ]] || { echo "::error::HF_BUCKET could not be resolved."; exit 1; }
+          [[ -n "${HF_MODEL_REPO:-}" ]] || { echo "::error::HF_MODEL_REPO could not be resolved."; exit 1; }
           echo "HF target: ${HF_TARGET_ID}"
           echo "HF Bucket: ${HF_BUCKET}"
           echo "HF Model Repo: ${HF_MODEL_REPO}"
@@ -102,7 +113,28 @@ jobs:
             "results/${{ matrix.name }}"
           echo "HF_HOME=$(pwd)/.cache/huggingface" >> "$GITHUB_ENV"
           bash scripts/hf/hf-fetch-revisions.sh
+          args=(
+            --root .ci/hf/config/revisions
+            --expected-development-repo-id "${EXPECTED_DEVELOPMENT_REPO_ID}"
+            --expected-upstream-repo-id "${EXPECTED_UPSTREAM_REPO_ID}"
+            --expected-tokenizer-repo-id "${EXPECTED_TOKENIZER_REPO_ID}"
+            --expected-framework "${EXPECTED_FRAMEWORK}"
+            --expected-decoder "${EXPECTED_DECODER}"
+          )
+          if [[ "${ALLOW_LEGACY_REVISION_METADATA}" == "true" ]]; then
+            args+=(--allow-legacy-metadata)
+          fi
+          python scripts/ci/validate-revisions.py "${args[@]}"
           bash scripts/hf/hf-fetch-candidate.sh "${{ inputs.candidate_id }}"
+
+      - name: Verify Rust decoder compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${EXPECTED_DECODER}" != "ctc" ]]; then
+            echo "::error::Rust evaluator currently supports CTC candidates only. Resolved target '${HF_TARGET_ID}' requires decoder '${EXPECTED_DECODER}'."
+            exit 1
+          fi
 
       - name: Materialize locked dataset selection
         shell: bash
@@ -162,7 +194,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rust-eval-${{ inputs.target }}-${{ matrix.name }}-${{ inputs.candidate_id }}
+          name: rust-eval-${{ inputs.hf_bucket }}-${{ matrix.name }}-${{ inputs.candidate_id }}
           path: results/${{ matrix.name }}
           retention-days: 7
           if-no-files-found: warn
