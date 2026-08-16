@@ -33,7 +33,8 @@ hf://buckets/<namespace>/<bucket>/
 │           ├── README.md
 │           ├── reference.json
 │           ├── evaluation-schema.json
-│           └── datasets-lock.json
+│           ├── datasets-lock.json
+│           └── runtime.json
 ├── experiments/
 │   └── <prefix>-NNNNNN/
 │       └── README.md
@@ -102,9 +103,12 @@ README.md
 reference.json
 evaluation-schema.json
 datasets-lock.json
+runtime.json
 ```
 
-`README.md`は中央Allocatorが番号予約時に作成します。canonical revision bundleは3 JSONです。
+`README.md`は中央Allocatorが番号予約時に作成します。canonical revision bundleは4 JSONです。
+
+`runtime.json`はASR runtime catalogのfingerprintと`profile_set`だけを保持し、decoder/profile semanticsそのものは複製しません。
 
 ## 5. Config versionのpublish
 
@@ -112,16 +116,28 @@ datasets-lock.json
 bash scripts/hf/hf-push-config-version.sh <local-config-dir>
 ```
 
+入力directoryには次の3 authored JSONを置きます。
+
+```text
+reference.json
+evaluation-schema.json
+datasets-lock.json
+```
+
 処理順:
 
 ```text
 local 3 JSONをstrict validation
   ↓
+HF target / profile_setを解決
+  ↓
+runtime.jsonを自動生成
+  ↓
 中央Allocatorへconfig version要求
   ↓
 config-NNNNNN/README.md予約
   ↓
-3 JSON upload
+4 JSON upload
   ↓
 全file成功確認
   ↓
@@ -330,6 +346,8 @@ runtime / provider
 evaluation suite
 ```
 
+`run-context.json`はschema v2のみを新規生成します。`revisions.runtime`には`runtime.json`のdocument SHA、catalog id/SHA、`profile_set`だけを保存し、decoder一覧を`reference`や`evaluation_schema`へ再複製しません。
+
 ## 15. Benchmark lifecycle
 
 ```text
@@ -366,10 +384,9 @@ development_artifact  HF Model Repo snapshot
 upstream              source model snapshot
 tokenizer             tokenizer/processor snapshot
 reference             canonical implementation
-decoders              decoder contract
 ```
 
-`HF_BUCKET`は書きません。
+`HF_BUCKET`、decoder、profile、runtime featureは書きません。
 
 ## 18. 過去runの再現
 
@@ -427,6 +444,9 @@ BucketルートREADMEのmanaged blockをAllocatorが更新する
 通常実行はcurrent.jsonに従う
 過去再現はHF_CONFIG_VERSIONで固定できる
 reference.jsonへHF_BUCKETを書かない
+reference.json/evaluation-schema.jsonへdecoderを複製しない
+runtime.jsonをcanonical configで必須とする
+run-context.jsonはschema v2のみを生成する
 runとexperimentを別identityにする
 通常PR CIをmutable remote Bucketに依存させない
 現在HF_TARGETS_JSON内のHF_BUCKETは一意
