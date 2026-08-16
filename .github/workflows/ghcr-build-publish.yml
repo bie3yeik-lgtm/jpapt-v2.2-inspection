@@ -16,7 +16,7 @@ on:
 
 concurrency:
   group: ghcr-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   changes:
