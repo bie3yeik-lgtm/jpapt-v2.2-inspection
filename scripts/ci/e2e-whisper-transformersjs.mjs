@@ -1,21 +1,25 @@
-import { pipeline, read_audio } from "@huggingface/transformers";
+import fs from "node:fs";
+import { pipeline } from "@huggingface/transformers";
 
 const MODEL_ID = process.env.WHISPER_MODEL_ID ?? "onnx-community/whisper-small";
-const AUDIO_URL =
-  process.env.JSUT_SAMPLE_URL ??
-  "https://huggingface.co/datasets/japanese-asr/ja_asr.jsut_basic5000/resolve/main/sample.flac";
+const AUDIO_PATH = process.env.JSUT_PCM_PATH ?? ".ci/jsut-sample.f32";
+
+const raw = fs.readFileSync(AUDIO_PATH);
+if (raw.byteLength === 0 || raw.byteLength % 4 !== 0) {
+  throw new Error(`invalid float32 PCM byte length: ${raw.byteLength}`);
+}
+const audio = new Float32Array(
+  raw.buffer,
+  raw.byteOffset,
+  Math.floor(raw.byteLength / Float32Array.BYTES_PER_ELEMENT),
+);
+if (audio.length === 0 || !audio.every(Number.isFinite)) {
+  throw new Error("JSUT PCM is empty or contains non-finite samples");
+}
 
 const transcriber = await pipeline("automatic-speech-recognition", MODEL_ID, {
   dtype: "q8",
 });
-const audio = await read_audio(AUDIO_URL, 16_000);
-if (!(audio instanceof Float32Array) || audio.length === 0) {
-  throw new Error("JSUT sample did not decode to a non-empty Float32Array");
-}
-if (!audio.every(Number.isFinite)) {
-  throw new Error("JSUT sample contains non-finite audio samples");
-}
-
 const output = await transcriber(audio, {
   language: "japanese",
   task: "transcribe",
@@ -29,7 +33,8 @@ console.log(
   JSON.stringify(
     {
       model_id: MODEL_ID,
-      sample_url: AUDIO_URL,
+      sample_path: AUDIO_PATH,
+      sample_rate_hz: 16000,
       sample_count: audio.length,
       transcript: text,
       backend: "Transformers.js/ONNX Runtime",
