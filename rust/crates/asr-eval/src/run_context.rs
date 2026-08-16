@@ -1,4 +1,8 @@
-use std::{collections::{BTreeMap, BTreeSet}, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use asr_runtime::metadata::model_metadata::GeneratedCandidateContract;
 use serde::{Deserialize, Serialize};
@@ -169,7 +173,10 @@ impl RevisionSnapshot {
         )?;
         validate_repo_revision("revisions.reference.upstream", &self.reference.upstream)?;
         validate_repo_revision("revisions.reference.tokenizer", &self.reference.tokenizer)?;
-        require_nonempty("revisions.reference.reference_id", &self.reference.reference_id)?;
+        require_nonempty(
+            "revisions.reference.reference_id",
+            &self.reference.reference_id,
+        )?;
         require_nonempty(
             "revisions.reference.reference_revision",
             &self.reference.reference_revision,
@@ -245,7 +252,10 @@ impl RunContextV2 {
             ("artifact.path", self.artifact.path.as_str()),
             ("artifact.sha256", self.artifact.sha256.as_str()),
             ("artifact.candidate_id", self.artifact.candidate_id.as_str()),
-            ("artifact.artifact_role", self.artifact.artifact_role.as_str()),
+            (
+                "artifact.artifact_role",
+                self.artifact.artifact_role.as_str(),
+            ),
             ("git.repository", self.git.repository.as_str()),
             ("git.commit", self.git.commit.as_str()),
             ("git.ref", self.git.git_ref.as_str()),
@@ -255,14 +265,29 @@ impl RunContextV2 {
             ("host.python_version", self.host.python_version.as_str()),
             ("host.implementation", self.host.implementation.as_str()),
             ("host.github_runner_os", self.host.github_runner_os.as_str()),
-            ("host.github_runner_arch", self.host.github_runner_arch.as_str()),
+            (
+                "host.github_runner_arch",
+                self.host.github_runner_arch.as_str(),
+            ),
             ("host.github_run_id", self.host.github_run_id.as_str()),
-            ("host.github_run_attempt", self.host.github_run_attempt.as_str()),
-            ("runtime.implementation", self.runtime.implementation.as_str()),
+            (
+                "host.github_run_attempt",
+                self.host.github_run_attempt.as_str(),
+            ),
+            (
+                "runtime.implementation",
+                self.runtime.implementation.as_str(),
+            ),
             ("runtime.backend", self.runtime.backend.as_str()),
-            ("runtime.backend_version", self.runtime.backend_version.as_str()),
+            (
+                "runtime.backend_version",
+                self.runtime.backend_version.as_str(),
+            ),
             ("runtime.provider_id", self.runtime.provider_id.as_str()),
-            ("runtime.provider_ort_name", self.runtime.provider_ort_name.as_str()),
+            (
+                "runtime.provider_ort_name",
+                self.runtime.provider_ort_name.as_str(),
+            ),
         ] {
             require_nonempty(name, value)?;
         }
