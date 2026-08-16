@@ -79,6 +79,7 @@ jobs:
           python -m pip install --upgrade huggingface_hub
 
       - name: Resolve HF Bucket
+        id: hf
         shell: bash
         run: |
           set -euo pipefail
@@ -89,7 +90,8 @@ jobs:
           python scripts/ci/resolve-hf-target.py \
             --bucket "${{ inputs.hf_bucket }}" \
             --targets-json "${HF_TARGETS_JSON}" \
-            --github-env "${GITHUB_ENV}"
+            --github-env "${GITHUB_ENV}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Validate GitHub configuration
         shell: bash
@@ -194,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rust-eval-${{ inputs.hf_bucket }}-${{ matrix.name }}-${{ inputs.candidate_id }}
+          name: rust-eval-${{ steps.hf.outputs.target_id }}-${{ matrix.name }}-${{ inputs.candidate_id }}
           path: results/${{ matrix.name }}
           retention-days: 7
           if-no-files-found: warn
