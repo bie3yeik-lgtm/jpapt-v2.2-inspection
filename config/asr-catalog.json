@@ -54,6 +54,7 @@
   },
   "profile_sets": {
     "parakeet-tdt-ctc-v1": {
+      "candidate_prefix_key": "candidate.parakeet",
       "variants": {
         "ctc": "ctc-v1",
         "tdt": "tdt-v1"
@@ -61,6 +62,7 @@
       "default_variant": "ctc"
     },
     "whisper-autoregressive-v1": {
+      "candidate_prefix_key": "candidate.whisper",
       "variants": {
         "whisper": "whisper-autoregressive-v1"
       },
