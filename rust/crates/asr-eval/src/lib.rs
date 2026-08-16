@@ -9,6 +9,7 @@ pub mod evaluator;
 pub mod expected;
 pub mod manifest;
 pub mod nemo_onnx;
+pub mod nemo_quality;
 pub mod writer;
 
 pub use cli::{Cli, Command};
