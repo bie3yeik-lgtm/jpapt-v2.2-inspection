@@ -61,6 +61,8 @@ fn main() -> anyhow::Result<()> {
                 run_context: args.run_context,
                 resolved_manifest: args.resolved_manifest,
                 nemo_reference: args.nemo_reference,
+                nemo_validation_report: args.nemo_validation_report,
+                nemo_validation_bundle_root: args.nemo_validation_bundle_root,
                 output: args.output,
                 max_cer_regression: args.max_cer_regression,
                 max_wer_regression: args.max_wer_regression,
