@@ -16,19 +16,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Validate the three pinned Hugging Face revision documents, "
-            "including framework/decoder compatibility."
+            "including framework/decoder and model identity compatibility."
         )
     )
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--expected-model-id")
+    parser.add_argument(
+        "--expected-development-repo-id",
+        dest="expected_development_repo_id",
+    )
+    parser.add_argument(
+        "--expected-model-id",
+        dest="expected_development_repo_id",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--expected-upstream-repo-id")
+    parser.add_argument("--expected-tokenizer-repo-id")
     parser.add_argument("--expected-framework")
     parser.add_argument("--expected-decoder")
     parser.add_argument(
         "--allow-legacy-metadata",
         action="store_true",
         help=(
-            "Allow framework/decoder identity to be absent from older "
-            "revision documents. Present values must still match."
+            "Allow upstream/tokenizer/framework/decoder identity to be absent "
+            "from older revision documents. Present values must still match."
         ),
     )
     parser.add_argument("--json", action="store_true")
@@ -83,21 +93,52 @@ def main() -> int:
 
     try:
         bundle = load_revision_bundle(root)
+        reference = bundle.reference
+
         _expect(
-            actual=bundle.reference.model_id,
-            expected=args.expected_model_id,
-            label="model_id",
+            actual=reference.development_artifact_repo_id,
+            expected=args.expected_development_repo_id,
+            label="development_artifact.repo_id",
         )
         _expect(
-            actual=bundle.reference.canonical_framework,
+            actual=reference.upstream_repo_id,
+            expected=args.expected_upstream_repo_id,
+            label="upstream.repo_id",
+            allow_missing=args.allow_legacy_metadata,
+        )
+        _expect(
+            actual=reference.tokenizer_repo_id,
+            expected=args.expected_tokenizer_repo_id,
+            label="tokenizer.repo_id",
+            allow_missing=args.allow_legacy_metadata,
+        )
+        _expect(
+            actual=reference.canonical_framework,
             expected=args.expected_framework,
             label="canonical_framework",
             allow_missing=args.allow_legacy_metadata,
         )
 
+        if not args.allow_legacy_metadata and reference.legacy_model_shape:
+            raise RevisionError(
+                "strict revision metadata requires 'development_artifact'; "
+                "legacy 'model' identity is not accepted."
+            )
+        if not args.allow_legacy_metadata:
+            if reference.upstream_repo_id is None or reference.upstream_revision is None:
+                raise RevisionError(
+                    "strict revision metadata requires upstream.repo_id and "
+                    "upstream.revision."
+                )
+            if reference.tokenizer_repo_id is None or reference.tokenizer_revision is None:
+                raise RevisionError(
+                    "strict revision metadata requires tokenizer.repo_id and "
+                    "tokenizer.revision."
+                )
+
         if args.expected_decoder is not None:
             _expect_decoder(
-                supported=bundle.reference.decoders.supported,
+                supported=reference.decoders.supported,
                 expected=args.expected_decoder,
                 label="reference.json decoder",
                 allow_missing=args.allow_legacy_metadata,
@@ -123,20 +164,32 @@ def main() -> int:
             )
         )
     else:
+        reference = bundle.reference
         print("Revision documents are valid.")
         print(f"root: {root}")
         print(f"bundle_sha256: {bundle.sha256}")
         print(
-            f"model: {bundle.reference.model_id}@"
-            f"{bundle.reference.model_revision}"
+            "development_artifact: "
+            f"{reference.development_artifact_repo_id}@"
+            f"{reference.development_artifact_revision}"
+        )
+        print(
+            "upstream: "
+            f"{reference.upstream_repo_id or '<unspecified>'}@"
+            f"{reference.upstream_revision or '<unspecified>'}"
+        )
+        print(
+            "tokenizer: "
+            f"{reference.tokenizer_repo_id or '<unspecified>'}@"
+            f"{reference.tokenizer_revision or '<unspecified>'}"
         )
         print(
             "canonical_framework: "
-            f"{bundle.reference.canonical_framework or '<unspecified>'}"
+            f"{reference.canonical_framework or '<unspecified>'}"
         )
         print(
             "reference_decoders: "
-            f"{','.join(bundle.reference.decoders.supported) or '<unspecified>'}"
+            f"{','.join(reference.decoders.supported) or '<unspecified>'}"
         )
         print(
             "evaluation_schema: "
