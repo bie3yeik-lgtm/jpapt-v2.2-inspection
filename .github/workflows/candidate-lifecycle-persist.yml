@@ -55,7 +55,7 @@ jobs:
           if [[ -z "$bucket" ]]; then
             namespace="${HF_DEFAULT_NAMESPACE:-}"
             if [[ -z "$namespace" ]]; then
-              namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json | jq -r '.name // .user // empty')"
+              namespace="$(hf auth whoami --format json | jq -r '.name // .user // empty')"
             fi
             [[ -n "$namespace" ]] || { echo "::error::unable to infer HF namespace"; exit 1; }
             bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
@@ -99,6 +99,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HF_LIFECYCLE_BUCKET: ${{ steps.resolve.outputs.bucket }}
+          SOURCE_RUN_ID: ${{ steps.resolve.outputs.run_id }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -124,7 +125,8 @@ jobs:
             evidence=()
 
             if [[ "$state" == "rejected" ]]; then
-              rejection_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=candidate-rejection-$request_key-${{ steps.resolve.outputs.run_id }}-${{ github.event.workflow_run.run_attempt || '1' }}" --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty' 2>/dev/null || true)"
+              rejection_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+                --jq ".artifacts[] | select(.name | startswith(\"candidate-rejection-$request_key-$SOURCE_RUN_ID-\")) | .id" | head -n1)"
               if [[ -n "$rejection_id" ]]; then
                 mkdir -p .ci/persist/rejection
                 gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$rejection_id/zip" > /tmp/rejection.zip
@@ -151,20 +153,17 @@ jobs:
             fi
 
             if [[ "$state" == "acknowledged" ]]; then
-              ack_file="$(find "$(dirname "$snapshot")" -type f -name 'candidate-completion-ack.json' -print -quit || true)"
-              if [[ -z "$ack_file" ]]; then
-                ack_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/${{ steps.resolve.outputs.run_id }}/artifacts?per_page=100" \
-                  --jq '.artifacts[] | select(.name | startswith("candidate-completion-ack-")) | .id' | head -n1)"
-                if [[ -n "$ack_id" ]]; then
-                  mkdir -p .ci/persist/ack
-                  gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_id/zip" > /tmp/ack.zip
-                  unzip -oq /tmp/ack.zip -d .ci/persist/ack
-                  ack_file=".ci/persist/ack/candidate-completion-ack.json"
+              ack_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.name | startswith("candidate-completion-ack-")) | .id' | head -n1)"
+              if [[ -n "$ack_id" ]]; then
+                mkdir -p .ci/persist/ack
+                gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_id/zip" > /tmp/ack.zip
+                unzip -oq /tmp/ack.zip -d .ci/persist/ack
+                ack_file=".ci/persist/ack/candidate-completion-ack.json"
+                if [[ -f "$ack_file" ]]; then
+                  python scripts/ci/build-candidate-completion-ack.py --validate "$ack_file" >/dev/null
+                  evidence+=("$ack_file")
                 fi
-              fi
-              if [[ -f "${ack_file:-}" ]]; then
-                python scripts/ci/build-candidate-completion-ack.py --validate "$ack_file" >/dev/null
-                evidence+=("$ack_file")
               fi
             fi
 
