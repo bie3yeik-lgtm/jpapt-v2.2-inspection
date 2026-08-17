@@ -3,29 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
 from pathlib import Path
 
-STATE_RANK = {
-    "planned": 0,
-    "dispatched": 1,
-    "running": 2,
-    "rejected": 3,
-    "completed": 4,
-    "acknowledged": 5,
-}
-
-
-def parse_time(value: str) -> datetime:
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    return datetime.fromisoformat(normalized)
+from candidate_lifecycle_common import STATE_RANK, load_json_object, parse_time
 
 
 def load(path: str) -> dict:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise SystemExit(f"{path} must contain a JSON object")
-    return value
+    try:
+        return load_json_object(path)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid lifecycle candidate {path}: {error}") from error
 
 
 def main() -> int:
@@ -36,7 +23,7 @@ def main() -> int:
     parser.add_argument("--github-output")
     args = parser.parse_args()
 
-    candidates: list[tuple[datetime, int, str, str, dict]] = []
+    candidates: list[tuple[object, int, str, str, dict]] = []
     for raw in args.candidate:
         if "=" not in raw:
             raise SystemExit(f"invalid candidate mapping: {raw}")
@@ -48,9 +35,11 @@ def main() -> int:
         if state not in STATE_RANK:
             raise SystemExit(f"unsupported lifecycle state in {path}: {state}")
         updated_at = value.get("updated_at")
-        if not isinstance(updated_at, str):
-            raise SystemExit(f"candidate updated_at is missing: {path}")
-        candidates.append((parse_time(updated_at), STATE_RANK[state], source, path, value))
+        try:
+            observed_at = parse_time(updated_at)
+        except (TypeError, ValueError) as error:
+            raise SystemExit(f"candidate updated_at is invalid: {path}: {error}") from error
+        candidates.append((observed_at, STATE_RANK[state], source, path, value))
 
     if not candidates:
         raise SystemExit(f"no lifecycle candidates found for request_id={args.request_id}")
@@ -59,7 +48,7 @@ def main() -> int:
     # rank is only a deterministic tie-breaker for equal timestamps; it does not
     # allow an older terminal state to hide a newer retry/rerun observation.
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    updated_at, _, source, path, selected = candidates[0]
+    _, _, source, path, selected = candidates[0]
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
