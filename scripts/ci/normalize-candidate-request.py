@@ -27,12 +27,24 @@ def generated_request_id() -> str:
     return "local-unknown"
 
 
+def generated_execution_id(prefix: str) -> str:
+    run_id = env("GITHUB_RUN_ID")
+    attempt = env("GITHUB_RUN_ATTEMPT", "1")
+    if run_id:
+        return f"{prefix}-{run_id}-{attempt}"
+    return f"{prefix}-local-unknown"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event-name", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--github-output", required=True)
     args = parser.parse_args()
+
+    execution_prefix = env("REQUEST_EXECUTION_PREFIX", "eval")
+    if not execution_prefix or not execution_prefix.replace("-", "").isalnum():
+        raise SystemExit("REQUEST_EXECUTION_PREFIX must contain only alphanumeric characters and hyphens")
 
     if args.event_name == "repository_dispatch":
         raw = env("PAYLOAD", "{}")
@@ -44,9 +56,14 @@ def main() -> int:
             raise SystemExit("PAYLOAD must be a JSON object")
         execute = parse_bool(request.pop("execute", False), "execute")
         request.setdefault("request_id", generated_request_id())
+        # Execution identity is owned by this orchestrator run, never by the
+        # external repository_dispatch caller.
+        request["request_execution_id"] = generated_execution_id(execution_prefix)
     else:
+        supplied_execution_id = env("I_REQUEST_EXECUTION_ID")
         request = {
             "request_id": env("I_REQUEST_ID") or generated_request_id(),
+            "request_execution_id": supplied_execution_id or generated_execution_id(execution_prefix),
             "source_repository": env("I_SOURCE_REPOSITORY"),
             "receipt_repository": env("I_RECEIPT_REPOSITORY"),
             "hf_bucket": env("I_HF_BUCKET"),
@@ -65,10 +82,13 @@ def main() -> int:
 
     source_repository = request.get("source_repository")
     request_id = request.get("request_id")
+    request_execution_id = request.get("request_execution_id")
     if not isinstance(source_repository, str):
         raise SystemExit("source_repository must be string")
     if not isinstance(request_id, str):
         raise SystemExit("request_id must be string")
+    if not isinstance(request_execution_id, str):
+        raise SystemExit("request_execution_id must be string")
 
     output = Path(args.output)
     output.write_text(
@@ -78,6 +98,7 @@ def main() -> int:
     with open(args.github_output, "a", encoding="utf-8") as handle:
         handle.write(f"execute={str(execute).lower()}\n")
         handle.write(f"request_id={request_id}\n")
+        handle.write(f"request_execution_id={request_execution_id}\n")
         handle.write(f"source_repository={source_repository}\n")
     print(output.read_text(encoding="utf-8"), end="")
     return 0
