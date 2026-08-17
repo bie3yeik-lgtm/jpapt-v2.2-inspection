@@ -1,0 +1,190 @@
+name: Candidate Receiver Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: External receiver repository in owner/name form
+        required: true
+        type: string
+      adopt_existing:
+        description: Allow replacing managed paths when no jpapt installation manifest exists
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+jobs:
+  bootstrap:
+    name: Install or update candidate protocol receiver
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Resolve target and ownership boundary
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          ADOPT_EXISTING: ${{ inputs.adopt_existing }}
+        run: |
+          set -euo pipefail
+          repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          [[ "$TARGET_REPOSITORY" =~ $repo_re ]] || {
+            echo "::error::repository must use owner/name"
+            exit 1
+          }
+          [[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]] || {
+            echo "::error::bootstrap target must be an external repository"
+            exit 1
+          }
+          [[ -n "${GH_TOKEN:-}" ]] || {
+            echo "::error::SOURCE_REPO_TOKEN is required for receiver bootstrap"
+            exit 1
+          }
+
+          meta="$(gh api "/repos/$TARGET_REPOSITORY")"
+          default_branch="$(jq -r '.default_branch' <<<"$meta")"
+          [[ -n "$default_branch" && "$default_branch" != null ]] || {
+            echo "::error::unable to resolve target default branch"
+            exit 1
+          }
+
+          manifest_encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$default_branch" --jq .content 2>/dev/null || true)"
+          if [[ -n "$manifest_encoded" ]]; then
+            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/existing-receiver.json
+            python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/existing-receiver.json
+            python - "$TARGET_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path('/tmp/existing-receiver.json').read_text(encoding='utf-8'))
+          if value['receiver_repository'] != sys.argv[1]:
+              raise SystemExit('existing receiver manifest belongs to another repository')
+          if value['orchestrator_repository'] != sys.argv[2]:
+              raise SystemExit('existing receiver installation is managed by another orchestrator')
+          PY
+          elif [[ "$ADOPT_EXISTING" != true ]]; then
+            managed_paths=(
+              .github/workflows/candidate-completion-receipt.yml
+              .github/workflows/candidate-request-rejection.yml
+              scripts/ci/build-candidate-completion-receipt.py
+              scripts/ci/build-candidate-completion-ack.py
+              scripts/ci/build-candidate-request-rejection.py
+              scripts/ci/validate-candidate-protocol-binding.py
+              scripts/ci/repository-dispatch-with-retry.sh
+            )
+            for path in "${managed_paths[@]}"; do
+              if gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$default_branch" >/dev/null 2>&1; then
+                echo "::error::managed path already exists without jpapt manifest: $path"
+                echo "::error::rerun with adopt_existing=true only after reviewing the target repository"
+                exit 1
+              fi
+            done
+          fi
+
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Build installation manifest
+        shell: bash
+        env:
+          RECEIVER_REPOSITORY: ${{ inputs.repository }}
+          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
+          ORCHESTRATOR_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-receiver-installation.py \
+            --output /tmp/candidate-receiver.json \
+            --file .github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml \
+            --file .github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml \
+            --file scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py \
+            --file scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py \
+            --file scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py \
+            --file scripts/ci/validate-candidate-protocol-binding.py=scripts/ci/validate-candidate-protocol-binding.py \
+            --file scripts/ci/repository-dispatch-with-retry.sh=scripts/ci/repository-dispatch-with-retry.sh
+          python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/candidate-receiver.json
+
+      - name: Install managed receiver files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          TARGET_BRANCH: ${{ steps.target.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          put_file() {
+            local target="$1"
+            local source="$2"
+            local message="$3"
+            local content sha body
+            content="$(base64 -w0 "$source")"
+            sha="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$TARGET_BRANCH" --jq .sha 2>/dev/null || true)"
+            body="$(jq -n \
+              --arg message "$message" \
+              --arg content "$content" \
+              --arg branch "$TARGET_BRANCH" \
+              --arg sha "$sha" \
+              'if $sha == "" then {message:$message,content:$content,branch:$branch} else {message:$message,content:$content,branch:$branch,sha:$sha} end')"
+            gh api --method PUT "/repos/$TARGET_REPOSITORY/contents/$target" --input - <<<"$body" >/dev/null
+          }
+
+          put_file .github/workflows/candidate-completion-receipt.yml .github/workflows/candidate-completion-receipt.yml 'ci: install jpapt completion receiver'
+          put_file .github/workflows/candidate-request-rejection.yml .github/workflows/candidate-request-rejection.yml 'ci: install jpapt rejection receiver'
+          put_file scripts/ci/build-candidate-completion-receipt.py scripts/ci/build-candidate-completion-receipt.py 'ci: install jpapt receiver helper'
+          put_file scripts/ci/build-candidate-completion-ack.py scripts/ci/build-candidate-completion-ack.py 'ci: install jpapt receiver helper'
+          put_file scripts/ci/build-candidate-request-rejection.py scripts/ci/build-candidate-request-rejection.py 'ci: install jpapt receiver helper'
+          put_file scripts/ci/validate-candidate-protocol-binding.py scripts/ci/validate-candidate-protocol-binding.py 'ci: install jpapt receiver helper'
+          put_file scripts/ci/repository-dispatch-with-retry.sh scripts/ci/repository-dispatch-with-retry.sh 'ci: install jpapt receiver helper'
+
+          # The manifest is written last. Its presence therefore means all managed files
+          # reached the target repository during this bootstrap attempt.
+          put_file .jpapt/candidate-receiver.json /tmp/candidate-receiver.json 'ci: record jpapt receiver installation'
+
+      - name: Verify installed hashes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          TARGET_BRANCH: ${{ steps.target.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          python - /tmp/candidate-receiver.json <<'PY' > /tmp/managed.tsv
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          for item in value['managed_files']:
+              print(f"{item['sha256']}\t{item['path']}")
+          PY
+          while IFS=$'\t' read -r expected path; do
+            encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$TARGET_BRANCH" --jq .content)"
+            actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || {
+              echo "::error::installed receiver hash mismatch: $path"
+              exit 1
+            }
+          done < /tmp/managed.tsv
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '## Candidate receiver bootstrap'
+            echo
+            printf -- '- receiver: `%s`\n' '${{ inputs.repository }}'
+            printf -- '- orchestrator: `%s`\n' "$GITHUB_REPOSITORY"
+            printf -- '- branch: `%s`\n' '${{ steps.target.outputs.default_branch }}'
+            printf -- '- manifest: `.jpapt/candidate-receiver.json`\n'
+            echo
+            echo '> Receiver Actions variable `JPAPT_ORCHESTRATOR_REPOSITORIES` and secret `JPAPT_ACK_TOKEN` are intentionally not mutated by this workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
