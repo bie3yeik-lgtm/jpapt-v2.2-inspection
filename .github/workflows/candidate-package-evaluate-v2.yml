@@ -633,9 +633,7 @@ jobs:
             echo "::error::SOURCE_REPO_TOKEN is required to deliver completion receipt to $RECEIPT_REPOSITORY"
             exit 1
           }
-          GH_TOKEN="$token" gh api \
-            --method POST \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/$RECEIPT_REPOSITORY/dispatches" \
-            --input .ci/candidate-completion-dispatch.json
+          GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
+            "$RECEIPT_REPOSITORY" \
+            .ci/candidate-completion-dispatch.json \
+            3
