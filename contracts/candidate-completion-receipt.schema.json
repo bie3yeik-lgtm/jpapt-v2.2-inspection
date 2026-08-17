@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-completion-receipt.schema.json",
+  "title": "CandidateCompletionReceiptV1",
+  "description": "client_payload contract for repository_dispatch event_type jpapt.candidate-completed",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "source_repository",
+    "receipt_repository",
+    "conclusion",
+    "dry_run",
+    "suite",
+    "executor",
+    "environment",
+    "provider",
+    "orchestrator_repository",
+    "workflow_file",
+    "run_id",
+    "run_attempt",
+    "run_url",
+    "commit_sha",
+    "requested_candidate_id",
+    "resolved_candidate_id",
+    "image_ref",
+    "image_digest",
+    "result_artifact",
+    "result_uri",
+    "failed_jobs",
+    "completed_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "source_repository": {"$ref": "#/$defs/repository"},
+    "receipt_repository": {"$ref": "#/$defs/repository"},
+    "conclusion": {
+      "type": "string",
+      "enum": ["success", "failure", "cancelled"]
+    },
+    "dry_run": {"type": "boolean"},
+    "suite": {
+      "type": "string",
+      "enum": ["smoke", "parity", "probe"]
+    },
+    "executor": {
+      "type": "string",
+      "enum": ["github", "hf_jobs"]
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"]
+    },
+    "provider": {"type": "string", "minLength": 1},
+    "orchestrator_repository": {"$ref": "#/$defs/repository"},
+    "workflow_file": {"const": "candidate-package-evaluate-v2.yml"},
+    "run_id": {"type": "integer", "minimum": 1},
+    "run_attempt": {"type": "integer", "minimum": 1},
+    "run_url": {"type": "string", "format": "uri"},
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "requested_candidate_id": {
+      "type": "string",
+      "anyOf": [
+        {"const": "latest"},
+        {"pattern": "^candidate-[0-9]{6}$"}
+      ]
+    },
+    "resolved_candidate_id": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^candidate-[0-9]{6}$"}
+      ]
+    },
+    "image_ref": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "minLength": 1}
+      ]
+    },
+    "image_digest": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
+    "result_artifact": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "minLength": 1}
+      ]
+    },
+    "result_uri": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "minLength": 1}
+      ]
+    },
+    "failed_jobs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "conclusion": {"const": "success"},
+          "dry_run": {"const": false}
+        },
+        "required": ["conclusion", "dry_run"]
+      },
+      "then": {
+        "properties": {
+          "resolved_candidate_id": {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+          "image_ref": {"type": "string", "minLength": 1},
+          "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "result_artifact": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    }
+  }
+}
