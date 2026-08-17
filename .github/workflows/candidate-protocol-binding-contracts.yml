@@ -1,0 +1,158 @@
+name: Candidate Protocol Binding Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-binding-contracts.yml
+      - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-request-rejection.yml
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-binding-contracts.yml
+      - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-request-rejection.yml
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-binding-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate receipt, rejection, and ACK bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint receiver workflows
+        run: >-
+          actionlint -color
+          .github/workflows/candidate-completion-receipt.yml
+          .github/workflows/candidate-request-rejection.yml
+          .github/workflows/candidate-protocol-binding-contracts.yml
+      - name: Compile binding helpers
+        run: |
+          python -m py_compile \
+            scripts/ci/validate-candidate-protocol-binding.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-request-rejection.py
+      - name: Build receipt, ACK, and rejection fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=binding-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=true \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=2001 RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000001 \
+          BUILD_RESULT=skipped CPU_RESULT=skipped CUDA_RESULT=skipped \
+          COREML_RESULT=skipped DIRECTML_RESULT=skipped HF_JOBS_RESULT=skipped \
+          COMPLETED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json --dispatch-body /tmp/receipt-dispatch.json >/dev/null
+
+          RECEIVER_REPOSITORY=owner/receiver \
+          RECEIVER_RUN_ID=3001 RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/3001 \
+          ACCEPTED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json --ack /tmp/ack.json --dispatch-body /tmp/ack-dispatch.json >/dev/null
+
+          REQUEST_ID=binding-rejected-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=1001 GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/1001 \
+          REJECTED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/rejection.json --dispatch-body /tmp/rejection-dispatch.json >/dev/null
+      - name: Accept matching allowlisted receiver bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/orchestrator
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --rejection /tmp/rejection.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/orchestrator
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/orchestrator
+      - name: Reject wrong receiver and orchestrator bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          reject() {
+            if "$@"; then
+              echo "binding unexpectedly passed: $*" >&2
+              exit 1
+            fi
+          }
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/other \
+            --allowed-orchestrators owner/orchestrator
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --rejection /tmp/rejection.json \
+            --receiver-repository owner/other \
+            --allowed-orchestrators owner/orchestrator
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/other
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --rejection /tmp/rejection.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/other
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/receiver
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --rejection /tmp/rejection.json \
+            --receiver-repository owner/receiver
+          reject python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/other
+      - name: Require both receiver workflows to use shared binding validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'validate-candidate-protocol-binding.py' .github/workflows/candidate-completion-receipt.yml
+          grep -F 'validate-candidate-protocol-binding.py' .github/workflows/candidate-request-rejection.yml
+          grep -F -- '--rejection .ci/candidate-request-rejection.json' .github/workflows/candidate-request-rejection.yml
