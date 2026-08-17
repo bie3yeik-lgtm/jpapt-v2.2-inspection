@@ -95,20 +95,62 @@ jobs:
             echo "::error::SOURCE_REPO_TOKEN is required for cross-repository E2E delivery and preflight"
             exit 1
           }
+
+          meta="$(gh api "/repos/$RECEIPT_REPOSITORY")"
+          default_branch="$(jq -r '.default_branch' <<<"$meta")"
           gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml" >/dev/null || {
             echo "::error::receiver workflow candidate-completion-receipt.yml is not installed or not accessible"
             exit 1
           }
-          for path in \
-            scripts/ci/build-candidate-completion-receipt.py \
-            scripts/ci/build-candidate-completion-ack.py \
-            scripts/ci/validate-candidate-protocol-binding.py \
-            scripts/ci/repository-dispatch-with-retry.sh; do
-            gh api "/repos/$RECEIPT_REPOSITORY/contents/$path" >/dev/null || {
-              echo "::error::receiver dependency missing: $path"
-              exit 1
-            }
-          done
+
+          manifest_encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$default_branch" --jq .content 2>/dev/null || true)"
+          if [[ -n "$manifest_encoded" ]]; then
+            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver-manifest.json
+            python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-manifest.json
+            python - "$RECEIPT_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path('/tmp/receiver-manifest.json').read_text(encoding='utf-8'))
+          if value['receiver_repository'] != sys.argv[1]:
+              raise SystemExit('receiver installation manifest repository mismatch')
+          if value['orchestrator_repository'] != sys.argv[2]:
+              raise SystemExit('receiver installation is managed by another orchestrator')
+          PY
+
+            python - /tmp/receiver-manifest.json <<'PY' > /tmp/receiver-managed.tsv
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          for item in value['managed_files']:
+              print(f"{item['sha256']}\t{item['path']}")
+          PY
+            while IFS=$'\t' read -r expected path; do
+              encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" --jq .content 2>/dev/null || true)"
+              [[ -n "$encoded" ]] || {
+                echo "::error::managed receiver dependency missing: $path"
+                exit 1
+              }
+              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              [[ "$actual" == "$expected" ]] || {
+                echo "::error::managed receiver dependency drifted from manifest: $path"
+                exit 1
+              }
+            done < /tmp/receiver-managed.tsv
+          else
+            echo "::warning::receiver has no .jpapt/candidate-receiver.json; using compatibility preflight"
+            for path in \
+              scripts/ci/build-candidate-completion-receipt.py \
+              scripts/ci/build-candidate-completion-ack.py \
+              scripts/ci/validate-candidate-protocol-binding.py \
+              scripts/ci/repository-dispatch-with-retry.sh; do
+              gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" >/dev/null || {
+                echo "::error::receiver dependency missing: $path"
+                exit 1
+              }
+            done
+          fi
 
       - name: Dispatch dry-run evaluation V2
         shell: bash
