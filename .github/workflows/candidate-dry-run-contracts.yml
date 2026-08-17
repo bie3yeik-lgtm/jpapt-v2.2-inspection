@@ -36,9 +36,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F "if: ${{ needs.resolve.outputs.dry_run != 'true' }}" .github/workflows/candidate-package-evaluate-v2.yml
-          grep -F "if: ${{ always() && needs.resolve.result == 'success' }}" .github/workflows/candidate-package-evaluate-v2.yml
-          grep -F 'DRY_RUN: ${{ needs.resolve.outputs.dry_run }}' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F "needs.resolve.outputs.dry_run != 'true'" .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F "always() && needs.resolve.result == 'success'" .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'DRY_RUN:' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'needs.resolve.outputs.dry_run' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate-v2.yml
       - name: Build successful dry-run completion receipt with no package outputs
         shell: bash
