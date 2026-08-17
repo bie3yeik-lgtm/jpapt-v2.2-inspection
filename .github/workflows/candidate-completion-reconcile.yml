@@ -1,0 +1,172 @@
+name: Candidate Completion Reconcile
+
+on:
+  workflow_run:
+    workflows: [Candidate Package Evaluate V2]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      evaluation_run_id:
+        description: Candidate Package Evaluate V2 run ID
+        required: true
+        type: string
+      evaluation_run_attempt:
+        description: Run attempt
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+concurrency:
+  group: candidate-completion-reconcile-${{ github.event.workflow_run.id || inputs.evaluation_run_id }}-${{ github.event.workflow_run.run_attempt || inputs.evaluation_run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile completion acknowledgement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve evaluation run identity
+        id: run
+        shell: bash
+        env:
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          INPUT_RUN_ID: ${{ inputs.evaluation_run_id }}
+          INPUT_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
+        run: |
+          set -euo pipefail
+          run_id="${EVENT_RUN_ID:-$INPUT_RUN_ID}"
+          run_attempt="${EVENT_RUN_ATTEMPT:-${INPUT_RUN_ATTEMPT:-1}}"
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || { echo "::error::invalid evaluation run id"; exit 1; }
+          [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]] || { echo "::error::invalid evaluation run attempt"; exit 1; }
+          {
+            echo "run_id=$run_id"
+            echo "run_attempt=$run_attempt"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download preserved completion receipt
+        id: receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          RUN_ATTEMPT: ${{ steps.run.outputs.run_attempt }}
+        run: |
+          set -euo pipefail
+          artifact_name="candidate-completion-$RUN_ID-$RUN_ATTEMPT"
+          artifact_id="$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$artifact_name\") | .id" \
+            | head -n1)"
+          if [[ -z "$artifact_id" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No completion receipt artifact exists for run $RUN_ID attempt $RUN_ATTEMPT."
+            exit 0
+          fi
+          mkdir -p .ci/reconcile
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/completion-receipt.zip
+          unzip -q /tmp/completion-receipt.zip -d .ci/reconcile
+          test -f .ci/reconcile/candidate-completion-receipt.json
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --validate .ci/reconcile/candidate-completion-receipt.json
+          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py \
+            --receipt-sha .ci/reconcile/candidate-completion-receipt.json)"
+          receipt_repository="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('.ci/reconcile/candidate-completion-receipt.json').read_text())
+          print(receipt['receipt_repository'])
+          PY
+          )"
+          {
+            echo "found=true"
+            echo "receipt_sha=$receipt_sha"
+            echo "receipt_repository=$receipt_repository"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check for validated acknowledgement
+        if: ${{ steps.receipt.outputs.found == 'true' }}
+        id: ack
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECEIPT_SHA: ${{ steps.receipt.outputs.receipt_sha }}
+        run: |
+          set -euo pipefail
+          artifact_name="candidate-completion-ack-$RECEIPT_SHA"
+          found=false
+          for attempt in 1 2 3; do
+            count="$(gh api \
+              "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
+              --jq '.total_count')"
+            if [[ "$count" != "0" ]]; then
+              found=true
+              break
+            fi
+            if [[ "$attempt" != "3" ]]; then
+              sleep 5
+            fi
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild completion dispatch envelope
+        if: ${{ steps.receipt.outputs.found == 'true' && steps.ack.outputs.found != 'true' }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('.ci/reconcile/candidate-completion-receipt.json').read_text())
+          envelope = {'event_type': 'jpapt.candidate-completed', 'client_payload': receipt}
+          Path('.ci/reconcile/candidate-completion-dispatch.json').write_text(
+              json.dumps(envelope, separators=(',', ':'), ensure_ascii=False) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Redispatch unacknowledged completion receipt
+        if: ${{ steps.receipt.outputs.found == 'true' && steps.ack.outputs.found != 'true' }}
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ steps.receipt.outputs.receipt_repository }}
+          GH_FALLBACK_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="${SOURCE_REPO_TOKEN:-}"
+          if [[ -z "$token" && "$RECEIPT_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            token="$GH_FALLBACK_TOKEN"
+          fi
+          [[ -n "$token" ]] || {
+            echo "::error::SOURCE_REPO_TOKEN is required to reconcile completion delivery to $RECEIPT_REPOSITORY"
+            exit 1
+          }
+          GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
+            "$RECEIPT_REPOSITORY" \
+            .ci/reconcile/candidate-completion-dispatch.json \
+            3
+
+      - name: Report reconciliation state
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RECEIPT_FOUND: ${{ steps.receipt.outputs.found }}
+          ACK_FOUND: ${{ steps.ack.outputs.found }}
+          RECEIPT_SHA: ${{ steps.receipt.outputs.receipt_sha }}
+        run: |
+          {
+            echo '## Candidate completion reconciliation'
+            echo
+            printf -- '- receipt found: `%s`\n' "${RECEIPT_FOUND:-false}"
+            printf -- '- acknowledgement found before reconciliation: `%s`\n' "${ACK_FOUND:-false}"
+            if [[ -n "${RECEIPT_SHA:-}" ]]; then
+              printf -- '- receipt SHA-256: `%s`\n' "$RECEIPT_SHA"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
