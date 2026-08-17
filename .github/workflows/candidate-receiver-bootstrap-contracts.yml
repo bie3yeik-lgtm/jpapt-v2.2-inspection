@@ -98,6 +98,21 @@ jobs:
           assert len(value['managed_files']) == 4
           assert len(paths) == 4
           PY
+      - name: Reject malformed installation manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/receiver-naive.json
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-naive.json; then
+            echo 'naive installed_at unexpectedly accepted' >&2
+            exit 1
+          fi
+          jq '.unexpected="x"' /tmp/receiver.json > /tmp/receiver-extra.json
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-extra.json; then
+            echo 'unknown receiver installation field unexpectedly accepted' >&2
+            exit 1
+          fi
+          grep -F '"pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"' contracts/candidate-receiver-installation.schema.json
       - name: Verify receiver transitive dependency closure
         shell: bash
         run: |
