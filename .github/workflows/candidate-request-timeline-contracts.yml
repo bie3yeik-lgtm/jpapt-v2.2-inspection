@@ -4,20 +4,24 @@ on:
   push:
     branches: [main]
     paths:
+      - .github/actionlint.yaml
       - .github/workflows/candidate-request-timeline.yml
       - .github/workflows/candidate-request-timeline-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
   pull_request:
     paths:
+      - .github/actionlint.yaml
       - .github/workflows/candidate-request-timeline.yml
       - .github/workflows/candidate-request-timeline-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
   workflow_dispatch:
 
 permissions:
@@ -34,12 +38,42 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Install schema validator
-        run: python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install validation tools
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
+      - name: Lint timeline workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-request-timeline.yml
+          .github/workflows/candidate-request-timeline-contracts.yml
       - name: Validate helper and schema syntax
         run: |
-          python -m py_compile scripts/ci/build-candidate-request-timeline.py
+          python -m py_compile \
+            scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/build-candidate-request-timeline.py
           python -m json.tool contracts/candidate-request-timeline.schema.json >/dev/null
+      - name: Verify shared lifecycle ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'from candidate_lifecycle_common import (' scripts/ci/build-candidate-request-timeline.py
+          PYTHONPATH=scripts/ci python - <<'PY'
+          from candidate_lifecycle_common import STATES, STATE_RANK
+          assert STATES == (
+              "planned",
+              "dispatched",
+              "running",
+              "rejected",
+              "completed",
+              "acknowledged",
+          )
+          assert [STATE_RANK[state] for state in STATES] == list(range(len(STATES)))
+          PY
       - name: Verify timeline query workflow wiring
         shell: bash
         run: |
