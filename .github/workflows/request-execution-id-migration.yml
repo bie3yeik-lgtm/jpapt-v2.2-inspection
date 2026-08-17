@@ -23,46 +23,77 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          def gh(value: str) -> str:
+              return '$' + '{{ ' + value + ' }}'
+
           def patch(path: str, replacements: list[tuple[str, str]]) -> None:
               target = Path(path)
               text = target.read_text(encoding='utf-8')
               for old, new in replacements:
                   count = text.count(old)
                   if count != 1:
-                      raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:80]!r}')
+                      raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:100]!r}')
                   text = text.replace(old, new, 1)
               target.write_text(text, encoding='utf-8')
 
+          s = gh('steps.resolve.outputs.request_id')
+          sx = gh('steps.resolve.outputs.request_execution_id')
+          source = gh('steps.resolve.outputs.source_repository')
+          receipt = gh('steps.resolve.outputs.receipt_repository')
+          bucket = gh('steps.resolve.outputs.hf_bucket')
+          dry = gh('steps.resolve.outputs.dry_run')
+          request_key = gh('steps.lifecycle.outputs.request_key')
+          execute = gh('inputs.execute')
+          repo = gh('github.repository')
+          run_id = gh('github.run_id')
+          run_attempt = gh('github.run_attempt')
+          plan_request = gh('needs.plan.outputs.request_id')
+          plan_execution = gh('needs.plan.outputs.request_execution_id')
+          plan_source = gh('needs.plan.outputs.source_repository')
+          reject_request = gh('github.event.client_payload.request_id || inputs.request_id')
+
           patch('.github/workflows/candidate-request-gateway.yml', [
               (
-                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_key: ${{ steps.lifecycle.outputs.request_key }}',
-                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}\n      request_key: ${{ steps.lifecycle.outputs.request_key }}',
+                  f'      request_id: {s}\n      request_key: {request_key}',
+                  f'      request_id: {s}\n      request_execution_id: {sx}\n      request_key: {request_key}',
               ),
               (
-                  '          I_EXECUTE: ${{ inputs.execute }}\n        run: >-',
-                  '          I_EXECUTE: ${{ inputs.execute }}\n          REQUEST_EXECUTION_PREFIX: gw\n        run: >-',
+                  f'          I_EXECUTE: {execute}\n        run: >-',
+                  f'          I_EXECUTE: {execute}\n          REQUEST_EXECUTION_PREFIX: gw\n        run: >-',
               ),
               (
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          GATEWAY_RUN_ID: ${{ github.run_id }}',
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          GATEWAY_RUN_ID: ${{ github.run_id }}',
+                  f'          REQUEST_ID: {s}\n          SOURCE_REPOSITORY: {source}\n          RECEIPT_REPOSITORY: {receipt}\n          ORCHESTRATOR_REPOSITORY: {repo}\n          GATEWAY_RUN_ID: {run_id}',
+                  f'          REQUEST_ID: {s}\n          REQUEST_EXECUTION_ID: {sx}\n          SOURCE_REPOSITORY: {source}\n          RECEIPT_REPOSITORY: {receipt}\n          ORCHESTRATOR_REPOSITORY: {repo}\n          GATEWAY_RUN_ID: {run_id}',
               ),
               (
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}\n          CANDIDATE_ID:',
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}\n          CANDIDATE_ID:',
+                  f'          REQUEST_ID: {s}\n          SOURCE_REPOSITORY: {source}\n          RECEIPT_REPOSITORY: {receipt}\n          HF_BUCKET: {bucket}\n          CANDIDATE_ID:',
+                  f'          REQUEST_ID: {s}\n          REQUEST_EXECUTION_ID: {sx}\n          SOURCE_REPOSITORY: {source}\n          RECEIPT_REPOSITORY: {receipt}\n          HF_BUCKET: {bucket}\n          CANDIDATE_ID:',
               ),
               (
-                  '          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
-                  '          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}\n          INCLUDE_REQUEST_EXECUTION_ID: "true"\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
+                  f'          DRY_RUN: {dry}\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
+                  f'          DRY_RUN: {dry}\n          INCLUDE_REQUEST_EXECUTION_ID: "true"\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
               ),
               (
-                  '          REQUEST_ID: ${{ needs.plan.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}',
-                  '          REQUEST_ID: ${{ needs.plan.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ needs.plan.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}',
+                  f'          REQUEST_ID: {plan_request}\n          SOURCE_REPOSITORY: {plan_source}',
+                  f'          REQUEST_ID: {plan_request}\n          REQUEST_EXECUTION_ID: {plan_execution}\n          SOURCE_REPOSITORY: {plan_source}',
               ),
               (
-                  '          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}\n          SOURCE_REPOSITORY:',
-                  '          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}\n          REQUEST_EXECUTION_ID: gw-${{ github.run_id }}-${{ github.run_attempt }}\n          SOURCE_REPOSITORY:',
+                  f'          REQUEST_ID: {reject_request}\n          SOURCE_REPOSITORY:',
+                  f'          REQUEST_ID: {reject_request}\n          REQUEST_EXECUTION_ID: gw-{run_id}-{run_attempt}\n          SOURCE_REPOSITORY:',
               ),
           ])
+
+          input_request = gh('inputs.request_id')
+          input_execution = gh('inputs.request_execution_id')
+          v2_request = gh('steps.resolve.outputs.request_id')
+          v2_execution = gh('steps.resolve.outputs.request_execution_id')
+          v2_source = gh('steps.resolve.outputs.source_repository')
+          v2_receipt = gh('steps.resolve.outputs.receipt_repository')
+          v2_repo = gh('github.repository')
+          needs_request = gh('needs.resolve.outputs.request_id')
+          needs_execution = gh('needs.resolve.outputs.request_execution_id')
+          needs_source = gh('needs.resolve.outputs.source_repository')
+          needs_receipt = gh('needs.resolve.outputs.receipt_repository')
 
           patch('.github/workflows/candidate-package-evaluate-v2.yml', [
               (
@@ -70,20 +101,20 @@ jobs:
                   '      request_id:\n        description: Caller correlation ID; generated when blank\n        required: false\n        default: ""\n        type: string\n      request_execution_id:\n        description: Orchestrator execution correlation ID; generated when blank\n        required: false\n        default: ""\n        type: string\n      source_repository:',
               ),
               (
-                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      source_repository:',
-                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}\n      source_repository:',
+                  f'      request_id: {v2_request}\n      source_repository:',
+                  f'      request_id: {v2_request}\n      request_execution_id: {v2_execution}\n      source_repository:',
               ),
               (
-                  '          I_REQUEST_ID: ${{ inputs.request_id }}\n          I_SOURCE_REPOSITORY:',
-                  '          I_REQUEST_ID: ${{ inputs.request_id }}\n          I_REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}\n          REQUEST_EXECUTION_PREFIX: eval\n          I_SOURCE_REPOSITORY:',
+                  f'          I_REQUEST_ID: {input_request}\n          I_SOURCE_REPOSITORY:',
+                  f'          I_REQUEST_ID: {input_request}\n          I_REQUEST_EXECUTION_ID: {input_execution}\n          REQUEST_EXECUTION_PREFIX: eval\n          I_SOURCE_REPOSITORY:',
               ),
               (
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          EVALUATION_RUN_ID:',
-                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          EVALUATION_RUN_ID:',
+                  f'          REQUEST_ID: {v2_request}\n          SOURCE_REPOSITORY: {v2_source}\n          RECEIPT_REPOSITORY: {v2_receipt}\n          ORCHESTRATOR_REPOSITORY: {v2_repo}\n          EVALUATION_RUN_ID:',
+                  f'          REQUEST_ID: {v2_request}\n          REQUEST_EXECUTION_ID: {v2_execution}\n          SOURCE_REPOSITORY: {v2_source}\n          RECEIPT_REPOSITORY: {v2_receipt}\n          ORCHESTRATOR_REPOSITORY: {v2_repo}\n          EVALUATION_RUN_ID:',
               ),
               (
-                  '          REQUEST_ID: ${{ needs.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}\n          HF_BUCKET:',
-                  '          REQUEST_ID: ${{ needs.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}\n          HF_BUCKET:',
+                  f'          REQUEST_ID: {needs_request}\n          SOURCE_REPOSITORY: {needs_source}\n          RECEIPT_REPOSITORY: {needs_receipt}\n          HF_BUCKET:',
+                  f'          REQUEST_ID: {needs_request}\n          REQUEST_EXECUTION_ID: {needs_execution}\n          SOURCE_REPOSITORY: {needs_source}\n          RECEIPT_REPOSITORY: {needs_receipt}\n          HF_BUCKET:',
               ),
           ])
           PY
@@ -91,11 +122,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'request_execution_id:' .github/workflows/candidate-package-evaluate-v2.yml
+          test "$(grep -Fc 'request_execution_id:' .github/workflows/candidate-package-evaluate-v2.yml)" -ge 2
           grep -F 'REQUEST_EXECUTION_PREFIX: gw' .github/workflows/candidate-request-gateway.yml
           grep -F 'REQUEST_EXECUTION_PREFIX: eval' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'INCLUDE_REQUEST_EXECUTION_ID: "true"' .github/workflows/candidate-request-gateway.yml
-          grep -F 'REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}' .github/workflows/candidate-package-evaluate-v2.yml
+          test "$(grep -Fc 'REQUEST_EXECUTION_ID:' .github/workflows/candidate-package-evaluate-v2.yml)" -ge 2
       - name: Remove one-time migration workflow
         run: rm .github/workflows/request-execution-id-migration.yml
       - name: Commit migration
