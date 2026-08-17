@@ -76,6 +76,7 @@ jobs:
             echo "::error::source_repository must use owner/name"
             exit 1
           }
+          python scripts/ci/candidate_receiver_bundle.py --validate
           request_id="e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
           {
@@ -107,6 +108,10 @@ jobs:
           if [[ -n "$manifest_encoded" ]]; then
             printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver-manifest.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-manifest.json
+            python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver-manifest.json || {
+              echo "::error::receiver installation manifest is stale or incomplete; run Candidate Receiver Bootstrap before E2E"
+              exit 1
+            }
             python - "$RECEIPT_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
           import json
           import sys
@@ -140,17 +145,12 @@ jobs:
             done < /tmp/receiver-managed.tsv
           else
             echo "::warning::receiver has no .jpapt/candidate-receiver.json; using compatibility preflight"
-            for path in \
-              scripts/ci/candidate_protocol_common.py \
-              scripts/ci/build-candidate-completion-receipt.py \
-              scripts/ci/build-candidate-completion-ack.py \
-              scripts/ci/validate-candidate-protocol-binding.py \
-              scripts/ci/repository-dispatch-with-retry.sh; do
+            while IFS= read -r path; do
               gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" >/dev/null || {
                 echo "::error::receiver dependency missing: $path"
                 exit 1
               }
-            done
+            done < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           fi
 
       - name: Dispatch dry-run evaluation V2
