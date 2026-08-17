@@ -109,51 +109,13 @@ jobs:
           HF_LIFECYCLE_BUCKET: ${{ steps.resolve.outputs.bucket }}
         run: |
           set -euo pipefail
-          mkdir -p .ci/timeline/bucket
-          python - <<'PY' > .ci/timeline/bucket-events.tsv
-          import os
-          import sys
-          from pathlib import Path
-
-          from huggingface_hub import download_bucket_files, list_bucket_tree
-
-          bucket = os.environ["HF_LIFECYCLE_BUCKET"]
-          token = os.environ["HF_TOKEN"]
-          request_key = os.environ["REQUEST_KEY"]
-          prefix = f"requests/{request_key}/events"
-          target = Path(".ci/timeline/bucket")
-          try:
-              items = [
-                  item
-                  for item in list_bucket_tree(
-                      bucket,
-                      prefix=prefix,
-                      recursive=True,
-                      token=token,
-                  )
-                  if getattr(item, "type", None) == "file"
-                  and item.path.endswith(".lifecycle.json")
-              ]
-          except Exception as error:
-              print(
-                  f"::warning::persistent lifecycle history unavailable for {bucket}/{prefix}: {error}",
-                  file=sys.stderr,
-              )
-              items = []
-
-          downloads = []
-          rows = []
-          for index, item in enumerate(items):
-              local = target / f"{index:06d}-{Path(item.path).name}"
-              downloads.append((item, str(local)))
-              rows.append((item.path, local))
-          if downloads:
-              download_bucket_files(bucket, files=downloads, token=token)
-          for remote, local in rows:
-              print(f"{remote}\t{local}")
-          PY
-
-          count=0
+          python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            --bucket "$HF_LIFECYCLE_BUCKET" \
+            --request-key "$REQUEST_KEY" \
+            --output-dir .ci/timeline/bucket \
+            --manifest .ci/timeline/bucket-events.tsv \
+            --allow-unavailable \
+            --github-output "$GITHUB_OUTPUT" >/dev/null
           while IFS=$'\t' read -r remote snapshot; do
             [[ -n "$remote" ]] || continue
             python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
@@ -163,9 +125,7 @@ jobs:
               exit 1
             }
             printf 'hf-bucket:%s\t%s\n' "$remote" "$snapshot" >> .ci/timeline/candidates.args
-            count=$((count + 1))
           done < .ci/timeline/bucket-events.tsv
-          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Require at least one lifecycle observation
         shell: bash
         env:
