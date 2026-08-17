@@ -1,0 +1,237 @@
+name: Candidate Request Execution Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-request-execution-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-request-execution-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-request-execution-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate request execution identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint execution identity workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-request-execution-contracts.yml
+          .github/workflows/candidate-request-gateway.yml
+          .github/workflows/candidate-package-evaluate-v2.yml
+      - name: Compile execution identity helpers
+        run: |
+          python -m py_compile \
+            scripts/ci/normalize-candidate-request.py \
+            scripts/ci/build-candidate-dispatch-body.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-request-rejection.py \
+            scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/validate-candidate-protocol-binding.py
+      - name: Parse execution identity schemas
+        run: |
+          python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
+          python -m json.tool contracts/candidate-completion-ack.schema.json >/dev/null
+          python -m json.tool contracts/candidate-request-rejection.schema.json >/dev/null
+          python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
+      - name: Verify orchestrator-owned normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITHUB_RUN_ID=9001 \
+          GITHUB_RUN_ATTEMPT=2 \
+          REQUEST_EXECUTION_PREFIX=gw \
+          PAYLOAD='{"request_id":"req-reused","request_execution_id":"attacker-controlled","source_repository":"owner/source","receipt_repository":"owner/source"}' \
+          python scripts/ci/normalize-candidate-request.py \
+            --event-name repository_dispatch \
+            --output /tmp/gateway-request.json \
+            --github-output /tmp/gateway-output.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/gateway-request.json').read_text())
+          assert value['request_id'] == 'req-reused'
+          assert value['request_execution_id'] == 'gw-9001-2'
+          PY
+
+          GITHUB_RUN_ID=9002 \
+          GITHUB_RUN_ATTEMPT=1 \
+          REQUEST_EXECUTION_PREFIX=eval \
+          I_REQUEST_ID=req-direct \
+          I_SOURCE_REPOSITORY=owner/source \
+          python scripts/ci/normalize-candidate-request.py \
+            --event-name workflow_dispatch \
+            --output /tmp/direct-request.json \
+            --github-output /tmp/direct-output.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/direct-request.json').read_text())
+          assert value['request_execution_id'] == 'eval-9002-1'
+          PY
+      - name: Verify execution identity evidence propagation
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=req-contract-exec \
+          REQUEST_EXECUTION_ID=gw-700-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=true \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=700 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/700 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/receipt-dispatch.json
+          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+
+          RECEIVER_REPOSITORY=owner/source \
+          RECEIVER_RUN_ID=701 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/source/actions/runs/701 \
+          ACCEPTED_AT=2026-08-17T12:00:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/orchestrator
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('/tmp/receipt.json').read_text())
+          ack = json.loads(Path('/tmp/ack.json').read_text())
+          assert receipt['request_execution_id'] == 'gw-700-1'
+          assert ack['request_execution_id'] == 'gw-700-1'
+          ack['request_execution_id'] = 'gw-999-1'
+          Path('/tmp/bad-ack.json').write_text(json.dumps(ack))
+          PY
+          if python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/bad-ack.json \
+            --orchestrator-repository owner/orchestrator; then
+            echo 'ACK execution identity mismatch unexpectedly passed' >&2
+            exit 1
+          fi
+
+          REQUEST_ID=req-contract-reject \
+          REQUEST_EXECUTION_ID=gw-702-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=702 \
+          GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/702 \
+          REJECTED_AT=2026-08-17T12:01:00Z \
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state rejected \
+            --rejection /tmp/rejection.json \
+            --output /tmp/rejected-lifecycle.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/rejected-lifecycle.json').read_text())
+          assert value['request_execution_id'] == 'gw-702-1'
+          PY
+
+          key1="$(python scripts/ci/build-candidate-request-lifecycle.py --execution-key gw-702-1)"
+          key2="$(python scripts/ci/build-candidate-request-lifecycle.py --execution-key gw-702-1)"
+          [[ "$key1" == "$key2" && ${#key1} -eq 24 ]]
+      - name: Verify legacy V1 evidence remains accepted
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq 'del(.request_execution_id)' /tmp/receipt.json > /tmp/legacy-receipt.json
+          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/legacy-receipt.json
+          RECEIVER_REPOSITORY=owner/source \
+          RECEIVER_RUN_ID=703 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/source/actions/runs/703 \
+          ACCEPTED_AT=2026-08-17T12:02:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/legacy-receipt.json \
+            --ack /tmp/legacy-ack.json \
+            --dispatch-body /tmp/legacy-ack-dispatch.json
+          jq -e 'has("request_execution_id") | not' /tmp/legacy-ack.json >/dev/null
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/legacy-receipt.json \
+            --ack /tmp/legacy-ack.json \
+            --orchestrator-repository owner/orchestrator
+      - name: Verify Gateway and V2 wire contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          gateway=.github/workflows/candidate-request-gateway.yml
+          v2=.github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'REQUEST_EXECUTION_PREFIX: gw' "$gateway"
+          grep -F 'INCLUDE_REQUEST_EXECUTION_ID: "true"' "$gateway"
+          grep -F 'request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}' "$gateway"
+          grep -F 'request_execution_id:' "$v2"
+          grep -F 'I_REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}' "$v2"
+          grep -F 'REQUEST_EXECUTION_PREFIX: eval' "$v2"
+          grep -F 'REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}' "$v2"
+      - name: Test Rust request execution contract
+        run: cargo test --locked -p asr-contracts --bin asr-candidate-request
