@@ -85,7 +85,8 @@ jobs:
           grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-completed-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'f"{snapshot['\''receiver_run_id'\'']}-acknowledged-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'compare-candidate-lifecycle-state.py' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'group: candidate-lifecycle-persist-${{ github.repository }}' .github/workflows/candidate-lifecycle-persist.yml
+          grep -F 'group: candidate-lifecycle-persist-' .github/workflows/candidate-lifecycle-persist.yml
+          grep -F 'github.repository' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'cancel-in-progress: false' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'newer retry may legitimately be' .github/workflows/candidate-request-status.yml
           grep -F 'scripts/ci/reduce-candidate-lifecycle.py' .github/workflows/candidate-request-status.yml
