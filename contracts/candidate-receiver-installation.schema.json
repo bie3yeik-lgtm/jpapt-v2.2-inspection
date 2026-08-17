@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-receiver-installation.schema.json",
+  "title": "CandidateReceiverInstallationV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receiver_repository",
+    "orchestrator_repository",
+    "orchestrator_commit_sha",
+    "managed_files",
+    "installed_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "receiver_repository": {"$ref": "#/$defs/repository"},
+    "orchestrator_repository": {"$ref": "#/$defs/repository"},
+    "orchestrator_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "managed_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "installed_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}
+  }
+}
