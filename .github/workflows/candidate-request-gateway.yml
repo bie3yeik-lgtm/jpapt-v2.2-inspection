@@ -317,7 +317,7 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "/repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
             --input -
-      - name: Build running lifecycle snapshot
+      - name: Build dispatched lifecycle snapshot
         env:
           REQUEST_ID: ${{ needs.plan.outputs.request_id }}
           SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
@@ -326,12 +326,12 @@ jobs:
           GATEWAY_RUN_ID: ${{ github.run_id }}
         run: >-
           python scripts/ci/build-candidate-request-lifecycle.py
-          --state running
+          --state dispatched
           --output .ci/candidate-request-lifecycle.json
-      - name: Preserve running lifecycle snapshot
+      - name: Preserve dispatched lifecycle snapshot
         uses: actions/upload-artifact@v7
         with:
-          name: candidate-lifecycle-${{ needs.plan.outputs.request_key }}-running
+          name: candidate-lifecycle-${{ needs.plan.outputs.request_key }}-dispatched
           path: .ci/candidate-request-lifecycle.json
           retention-days: 30
 
