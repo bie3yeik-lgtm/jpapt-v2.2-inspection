@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-request-lifecycle.schema.json",
   "title": "CandidateRequestLifecycleV1",
-  "description": "Derived request lifecycle snapshot reconstructed from canonical request, completion receipt, and acknowledgement evidence.",
+  "description": "Derived request lifecycle snapshot reconstructed from canonical request, rejection, completion receipt, and acknowledgement evidence.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,7 +22,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
-    "state": {"type": "string", "enum": ["planned", "running", "completed", "acknowledged"]},
+    "state": {"type": "string", "enum": ["planned", "running", "rejected", "completed", "acknowledged"]},
     "source_repository": {"$ref": "#/$defs/repository"},
     "receipt_repository": {"$ref": "#/$defs/repository"},
     "orchestrator_repository": {"$ref": "#/$defs/repository"},
@@ -34,6 +34,10 @@
     "updated_at": {"type": "string", "format": "date-time"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "rejected"}}, "required": ["state"]},
+      "then": {"properties": {"gateway_run_id": {"type": "integer", "minimum": 1}}}
+    },
     {
       "if": {"properties": {"state": {"const": "completed"}}, "required": ["state"]},
       "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}, "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
