@@ -1,0 +1,152 @@
+name: Candidate Protocol Validation Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-validation-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - scripts/ci/candidate_protocol_common.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-validation-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - scripts/ci/candidate_protocol_common.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-validation-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate fail-closed protocol helpers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compile strict protocol validators
+        run: |
+          python -m py_compile \
+            scripts/ci/candidate_protocol_common.py \
+            scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/build-candidate-request-rejection.py
+      - name: Require every timestamp validator to use shared parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'parse_rfc3339_time' scripts/ci/candidate_lifecycle_common.py
+          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-completion-ack.py
+          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-completion-receipt.py
+          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-request-rejection.py
+      - name: Exercise RFC3339 offset requirement
+        run: |
+          PYTHONPATH=scripts/ci python - <<'PY'
+          from candidate_protocol_common import parse_rfc3339_time
+
+          assert parse_rfc3339_time('2026-08-17T10:00:00Z').utcoffset() is not None
+          assert parse_rfc3339_time('2026-08-17T19:00:00+09:00').utcoffset() is not None
+          for value in ('2026-08-17T10:00:00', '', 'not-a-time'):
+              try:
+                  parse_rfc3339_time(value)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(f'invalid timestamp unexpectedly accepted: {value!r}')
+          PY
+      - name: Build valid protocol fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=validation-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=true \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=2001 RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000001 \
+          BUILD_RESULT=skipped CPU_RESULT=skipped CUDA_RESULT=skipped \
+          COREML_RESULT=skipped DIRECTML_RESULT=skipped HF_JOBS_RESULT=skipped \
+          COMPLETED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json --dispatch-body /tmp/receipt-dispatch.json >/dev/null
+
+          RECEIVER_REPOSITORY=owner/receiver RECEIVER_RUN_ID=3001 RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/3001 \
+          ACCEPTED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json --ack /tmp/ack.json --dispatch-body /tmp/ack-dispatch.json >/dev/null
+
+          RECEIPT_SHA256="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)" \
+          UPDATED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state completed --receipt /tmp/receipt.json --output /tmp/lifecycle.json >/dev/null
+      - name: Reject naive timestamps in helper validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.completed_at="2026-08-17T10:03:00"' /tmp/receipt.json > /tmp/bad-receipt.json
+          if python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/bad-receipt.json; then
+            echo 'naive completed_at unexpectedly accepted' >&2
+            exit 1
+          fi
+          jq '.accepted_at="2026-08-17T10:04:00"' /tmp/ack.json > /tmp/bad-ack.json
+          if python scripts/ci/build-candidate-completion-ack.py --validate /tmp/bad-ack.json; then
+            echo 'naive accepted_at unexpectedly accepted' >&2
+            exit 1
+          fi
+          jq '.updated_at="2026-08-17T10:03:00"' /tmp/lifecycle.json > /tmp/bad-lifecycle.json
+          if python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/bad-lifecycle.json; then
+            echo 'naive updated_at unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Reject unknown protocol fields in helper validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.unexpected="x"' /tmp/ack.json > /tmp/extra-ack.json
+          if python scripts/ci/build-candidate-completion-ack.py --validate /tmp/extra-ack.json; then
+            echo 'unknown ACK field unexpectedly accepted' >&2
+            exit 1
+          fi
+          jq '.unexpected="x"' /tmp/lifecycle.json > /tmp/extra-lifecycle.json
+          if python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/extra-lifecycle.json; then
+            echo 'unknown lifecycle field unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Require HTTPS run URL schema constraints
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '"pattern": "^https://"' contracts/candidate-completion-receipt.schema.json
+          grep -F '"pattern": "^https://"' contracts/candidate-completion-ack.schema.json
+          grep -F '"pattern": "^https://"' contracts/candidate-request-rejection.schema.json
