@@ -28,10 +28,6 @@ def resolved_dry_run() -> bool:
     if explicit != "":
         return parse_bool(explicit, "DRY_RUN")
 
-    # Candidate Request Gateway materializes the normalized request here before
-    # Rust resolution. dry_run has no repository-config fallback, so this is the
-    # same caller intent that the Rust contract resolves and prevents the
-    # dispatch builder from silently forcing an executable V2 run.
     request_path = Path(env("REQUEST_JSON") or "/tmp/request.json")
     if request_path.is_file():
         value = json.loads(request_path.read_text(encoding="utf-8"))
@@ -49,6 +45,7 @@ def main() -> int:
 
     inputs = {
         "request_id": env("REQUEST_ID"),
+        "request_execution_id": env("REQUEST_EXECUTION_ID"),
         "source_repository": env("SOURCE_REPOSITORY"),
         "receipt_repository": env("RECEIPT_REPOSITORY"),
         "hf_bucket": env("HF_BUCKET"),
