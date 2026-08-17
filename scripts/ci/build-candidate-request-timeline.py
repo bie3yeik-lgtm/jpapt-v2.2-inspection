@@ -2,59 +2,41 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 from datetime import datetime
 from pathlib import Path
 
+from candidate_lifecycle_common import (
+    STATE_RANK,
+    STATES,
+    load_json_object,
+    observation_sha256,
+    parse_time,
+    request_key as build_request_key,
+)
+
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REQUEST_KEY_RE = re.compile(r"^[0-9a-f]{24}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-STATES = {"planned", "dispatched", "running", "rejected", "completed", "acknowledged"}
-STATE_RANK = {
-    "planned": 0,
-    "dispatched": 1,
-    "running": 2,
-    "rejected": 3,
-    "completed": 4,
-    "acknowledged": 5,
-}
-
-
-def canonical_bytes(value: dict) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def parse_time(value: str) -> datetime:
-    if not isinstance(value, str):
-        raise SystemExit("snapshot updated_at must be string")
-    try:
-        return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
-    except ValueError as error:
-        raise SystemExit(f"snapshot updated_at is invalid: {value}") from error
 
 
 def load_snapshot(path: str, request_id: str) -> dict:
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        value = load_json_object(path)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(f"invalid lifecycle snapshot {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise SystemExit(f"lifecycle snapshot must be object: {path}")
     if value.get("request_id") != request_id:
         raise SystemExit(
             f"lifecycle snapshot request_id mismatch: expected={request_id} actual={value.get('request_id')} path={path}"
         )
     state = value.get("state")
-    if state not in STATES:
+    if state not in STATE_RANK:
         raise SystemExit(f"lifecycle snapshot state is invalid: {state}")
-    parse_time(value.get("updated_at"))
+    try:
+        parse_time(value.get("updated_at"))
+    except (TypeError, ValueError) as error:
+        raise SystemExit(f"snapshot updated_at is invalid: {path}: {error}") from error
     return value
 
 
@@ -83,11 +65,11 @@ def validate_timeline(value: dict) -> None:
     request_id = value.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
-    request_key = value.get("request_key")
-    expected_key = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
-    if not isinstance(request_key, str) or not REQUEST_KEY_RE.fullmatch(request_key):
+    timeline_request_key = value.get("request_key")
+    expected_key = build_request_key(request_id)
+    if not isinstance(timeline_request_key, str) or not REQUEST_KEY_RE.fullmatch(timeline_request_key):
         raise SystemExit("request_key is invalid")
-    if request_key != expected_key:
+    if timeline_request_key != expected_key:
         raise SystemExit("request_key does not match request_id")
     events = value.get("events")
     if not isinstance(events, list) or not events:
@@ -119,11 +101,15 @@ def validate_timeline(value: dict) -> None:
         if snapshot.get("request_id") != request_id:
             raise SystemExit("timeline snapshot request_id mismatch")
         state = snapshot.get("state")
-        if state not in STATES:
+        if state not in STATE_RANK:
             raise SystemExit("timeline snapshot state invalid")
-        if hashlib.sha256(canonical_bytes(snapshot)).hexdigest() != digest:
+        if observation_sha256(snapshot) != digest:
             raise SystemExit("observation_sha256 does not match snapshot")
-        key = (parse_time(snapshot.get("updated_at")), STATE_RANK[state], digest)
+        try:
+            observed_at = parse_time(snapshot.get("updated_at"))
+        except (TypeError, ValueError) as error:
+            raise SystemExit(f"timeline snapshot updated_at is invalid: {error}") from error
+        key = (observed_at, STATE_RANK[state], digest)
         if previous_key is not None and key < previous_key:
             raise SystemExit("events are not ordered")
         previous_key = key
@@ -138,7 +124,7 @@ def build(request_id: str, candidates: list[str], output: str) -> None:
     for candidate in candidates:
         source, path = parse_candidate(candidate)
         snapshot = load_snapshot(path, request_id)
-        digest = hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
+        digest = observation_sha256(snapshot)
         if digest not in observations:
             observations[digest] = {"snapshot": snapshot, "sources": set()}
         observations[digest]["sources"].add(source)
@@ -164,7 +150,7 @@ def build(request_id: str, candidates: list[str], output: str) -> None:
     timeline = {
         "schema_version": 1,
         "request_id": request_id,
-        "request_key": hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24],
+        "request_key": build_request_key(request_id),
         "current_state": events[-1]["snapshot"]["state"],
         "event_count": len(events),
         "events": events,
@@ -187,11 +173,9 @@ def main() -> int:
         if args.request_id or args.candidate or args.output:
             raise SystemExit("--validate cannot be combined with build arguments")
         try:
-            value = json.loads(Path(args.validate).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+            value = load_json_object(args.validate)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
             raise SystemExit(f"invalid timeline file {args.validate}: {error}") from error
-        if not isinstance(value, dict):
-            raise SystemExit("timeline must be object")
         validate_timeline(value)
         print(json.dumps(value, indent=2, ensure_ascii=False))
         return 0
