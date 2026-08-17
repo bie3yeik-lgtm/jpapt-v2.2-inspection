@@ -20,7 +20,10 @@ def parse_time(value: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise ValueError("updated_at must be a non-empty string")
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    return datetime.fromisoformat(normalized)
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("updated_at must include a timezone offset or Z")
+    return parsed
 
 
 def load_json_object(path: str | Path) -> dict:
