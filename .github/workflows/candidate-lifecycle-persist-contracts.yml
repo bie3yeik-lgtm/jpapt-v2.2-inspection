@@ -9,6 +9,7 @@ on:
       - .github/workflows/candidate-lifecycle-persist-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-lifecycle-event-key.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
@@ -20,6 +21,7 @@ on:
       - .github/workflows/candidate-lifecycle-persist-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-lifecycle-event-key.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
@@ -57,6 +59,7 @@ jobs:
           bash -n scripts/ci/persist-candidate-lifecycle.sh
           python -m py_compile \
             scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/build-candidate-lifecycle-event-key.py \
             scripts/ci/reduce-candidate-lifecycle.py \
             scripts/ci/compare-candidate-lifecycle-state.py
       - name: Verify shared lifecycle state ordering
@@ -93,19 +96,41 @@ jobs:
             --output /tmp/lifecycle.json >/dev/null
           env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
             bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json
+      - name: Verify canonical persistent event identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=event-key-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=123 \
+          EVALUATION_RUN_ATTEMPT=2 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/event-a.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/event-a.json').read_text())
+          reordered = {key: value[key] for key in reversed(list(value))}
+          Path('/tmp/event-b.json').write_text(json.dumps(reordered, separators=(',', ':')), encoding='utf-8')
+          PY
+          key_a="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot /tmp/event-a.json | sed -n '3p')"
+          key_b="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot /tmp/event-b.json | sed -n '3p')"
+          sha_a="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot /tmp/event-a.json | sed -n '4p')"
+          sha_b="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot /tmp/event-b.json | sed -n '4p')"
+          test "$key_a" = "$key_b"
+          test "$sha_a" = "$sha_b"
+          [[ "$key_a" == evaluation-123-2-running-* ]]
       - name: Verify persistent storage layout contract
         shell: bash
         run: |
           set -euo pipefail
+          grep -F 'build-candidate-lifecycle-event-key.py' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/events/$evidence_key.lifecycle.json"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'state in {"planned", "dispatched", "rejected"}' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'snapshot_key = hashlib.sha256(snapshot_bytes).hexdigest()[:16]' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'f"gateway-{run_id or '\''unknown'\''}-{state}-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-running-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-completed-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'f"{snapshot['\''receiver_run_id'\'']}-acknowledged-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'compare-candidate-lifecycle-state.py' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'group: candidate-lifecycle-persist-' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'github.repository' .github/workflows/candidate-lifecycle-persist.yml
