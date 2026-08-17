@@ -1,0 +1,61 @@
+name: Candidate Legacy Compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-legacy-compatibility.yml
+      - scripts/ci/check-candidate-workflow-compatibility.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-legacy-compatibility.yml
+      - scripts/ci/check-candidate-workflow-compatibility.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-legacy-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: Verify frozen legacy input contract remains compatible with V2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install YAML parser
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6,<7"
+      - name: Validate checker syntax
+        run: python -m py_compile scripts/ci/check-candidate-workflow-compatibility.py
+      - name: Compare legacy and V2 workflow contracts
+        run: >-
+          python scripts/ci/check-candidate-workflow-compatibility.py
+          --output /tmp/candidate-workflow-compatibility.json
+      - name: Preserve compatibility report
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-workflow-compatibility-${{ github.run_id }}
+          path: /tmp/candidate-workflow-compatibility.json
+          retention-days: 14
+      - name: Summary
+        run: |
+          {
+            echo '## Candidate legacy compatibility'
+            echo
+            echo '- legacy workflow: `.github/workflows/candidate-package-evaluate.yml`'
+            echo '- canonical workflow: `.github/workflows/candidate-package-evaluate-v2.yml`'
+            echo '- policy: legacy inputs are frozen; common input semantics must remain identical to V2.'
+            echo '- new protocol capabilities belong in Gateway/V2, not in the legacy implementation.'
+            echo
+            echo '**Compatibility: PASS**'
+          } >> "$GITHUB_STEP_SUMMARY"
