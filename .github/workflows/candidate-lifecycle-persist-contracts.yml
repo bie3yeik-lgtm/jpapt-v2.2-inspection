@@ -1,0 +1,73 @@
+name: Candidate Lifecycle Persist Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - .github/workflows/candidate-lifecycle-persist-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - .github/workflows/candidate-lifecycle-persist-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-lifecycle-persist-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate persistent lifecycle contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint lifecycle workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-lifecycle-persist.yml
+          .github/workflows/candidate-lifecycle-persist-contracts.yml
+          .github/workflows/candidate-request-status.yml
+      - name: Validate persistence helper syntax
+        run: bash -n scripts/ci/persist-candidate-lifecycle.sh
+      - name: Exercise local no-op persistence contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=persist-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=101 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state planned \
+            --output /tmp/lifecycle.json >/dev/null
+          env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
+            bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json
+      - name: Verify persistent storage layout contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '/requests/$request_key/events/$evidence_key.lifecycle.json' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '/requests/$request_key/states/$state.json' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '/evidence/$digest-$name' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'for candidate_state in acknowledged completed rejected running planned' .github/workflows/candidate-request-status.yml
