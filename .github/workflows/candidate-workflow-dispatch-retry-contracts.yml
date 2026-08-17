@@ -1,0 +1,91 @@
+name: Candidate Workflow Dispatch Retry Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-workflow-dispatch-retry-contracts.yml
+      - scripts/ci/workflow-dispatch-with-retry.sh
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate.yml
+  pull_request:
+    paths:
+      - .github/workflows/candidate-workflow-dispatch-retry-contracts.yml
+      - scripts/ci/workflow-dispatch-with-retry.sh
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-workflow-dispatch-retry-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate workflow dispatch retry behavior
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate helper syntax and consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/workflow-dispatch-with-retry.sh
+          grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate.yml
+      - name: Retry transient failures and succeed on third attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          count_file=/tmp/workflow-dispatch-count
+          count=0
+          [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"
+          count=$((count + 1))
+          printf '%s' "$count" > "$count_file"
+          [[ "$count" -ge 3 ]]
+          SH
+          chmod +x /tmp/fake-bin/gh
+          printf '{"ref":"main","inputs":{}}\n' > /tmp/body.json
+          rm -f /tmp/workflow-dispatch-count
+          PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+            bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo workflow.yml /tmp/body.json 3
+          test "$(cat /tmp/workflow-dispatch-count)" = 3
+      - name: Stop at retry limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          exit 1
+          SH
+          chmod +x /tmp/fake-bin/gh
+          if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+            bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo workflow.yml /tmp/body.json 2; then
+            echo 'retry exhaustion unexpectedly succeeded' >&2
+            exit 1
+          fi
+      - name: Reject malformed invocation before dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          echo 'gh must not be called' >&2
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/gh
+          if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+            bash scripts/ci/workflow-dispatch-with-retry.sh invalid workflow.yml /tmp/body.json 3; then
+            exit 1
+          fi
+          if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+            bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo path/workflow.yml /tmp/body.json 3; then
+            exit 1
+          fi
