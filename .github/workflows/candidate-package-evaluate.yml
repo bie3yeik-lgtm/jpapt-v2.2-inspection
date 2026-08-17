@@ -1,14 +1,27 @@
 name: Candidate Package Evaluate
 
+# Compatibility entrypoint only. New callers should use Candidate Request Gateway
+# or Candidate Package Evaluate V2 directly. This workflow intentionally contains
+# no candidate build/evaluation implementation.
 on:
   repository_dispatch:
     types:
       - jpapt.candidate-evaluate
   workflow_dispatch:
     inputs:
+      request_id:
+        description: Optional caller correlation ID
+        required: false
+        default: ""
+        type: string
       source_repository:
         description: Source GitHub repo owner/name
         required: true
+        type: string
+      receipt_repository:
+        description: Completion receipt repo owner/name; blank = source repository
+        required: false
+        default: ""
         type: string
       hf_bucket:
         description: Optional namespace/bucket
@@ -30,11 +43,7 @@ on:
         required: false
         default: auto
         type: choice
-        options:
-          - auto
-          - bucket
-          - repository
-          - custom
+        options: [auto, bucket, repository, custom]
       dataset_id:
         description: HF dataset repo id for custom/repository source
         required: false
@@ -45,28 +54,19 @@ on:
         required: false
         default: smoke
         type: choice
-        options:
-          - smoke
-          - parity
-          - probe
+        options: [smoke, parity, probe]
       executor:
         description: Execution backend
         required: false
         default: github
         type: choice
-        options:
-          - github
-          - hf_jobs
+        options: [github, hf_jobs]
       environment:
         description: Execution environment
         required: false
         default: linux-cpu
         type: choice
-        options:
-          - linux-cpu
-          - linux-cuda
-          - macos-coreml
-          - windows-directml
+        options: [linux-cpu, linux-cuda, macos-coreml, windows-directml]
       hf_flavor:
         description: HF Jobs flavor
         required: false
@@ -78,59 +78,28 @@ on:
         default: ""
         type: string
       dry_run:
-        description: Only resolve and estimate
+        description: Resolve and estimate only
         required: false
         default: false
         type: boolean
 
 permissions:
+  actions: write
   contents: read
-  packages: write
-
-env:
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
-  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
 
 jobs:
-  resolve:
-    name: Resolve request
+  forward:
+    name: Forward legacy request to V2
     runs-on: ubuntu-latest
-    outputs:
-      source_repository: ${{ steps.resolve.outputs.source_repository }}
-      hf_bucket: ${{ steps.resolve.outputs.hf_bucket }}
-      candidate_id: ${{ steps.resolve.outputs.candidate_id }}
-      package_name: ${{ steps.resolve.outputs.package_name }}
-      image: ${{ steps.resolve.outputs.image }}
-      dataset_source: ${{ steps.resolve.outputs.dataset_source }}
-      dataset_id: ${{ steps.resolve.outputs.dataset_id }}
-      suite: ${{ steps.resolve.outputs.suite }}
-      executor: ${{ steps.resolve.outputs.executor }}
-      environment: ${{ steps.resolve.outputs.environment }}
-      provider: ${{ steps.resolve.outputs.provider }}
-      ort_package: ${{ steps.resolve.outputs.ort_package }}
-      hf_flavor: ${{ steps.resolve.outputs.hf_flavor }}
-      hf_jobs_image: ${{ steps.resolve.outputs.hf_jobs_image }}
-      dry_run: ${{ steps.resolve.outputs.dry_run }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Install routing clients
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" pyyaml
-
-      - name: Normalize and validate request
-        id: resolve
+      - name: Normalize compatibility request
+        id: request
         shell: bash
         env:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
-          GH_FALLBACK_TOKEN: ${{ github.token }}
+          I_REQUEST_ID: ${{ inputs.request_id }}
           I_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          I_RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           I_HF_BUCKET: ${{ inputs.hf_bucket }}
           I_CANDIDATE_ID: ${{ inputs.candidate_id }}
           I_PACKAGE_NAME: ${{ inputs.package_name }}
@@ -149,8 +118,9 @@ jobs:
             local key="$1"
             local default_value="$2"
             local manual_value="${3:-}"
-            if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-              jq -r --arg key "$key" --arg default_value "$default_value" '.[$key] // $default_value' <<<"$PAYLOAD"
+            if [[ "$GITHUB_EVENT_NAME" == repository_dispatch ]]; then
+              jq -r --arg key "$key" --arg default_value "$default_value" \
+                '.[$key] // $default_value | tostring' <<<"$PAYLOAD"
             elif [[ -n "$manual_value" ]]; then
               printf '%s\n' "$manual_value"
             else
@@ -158,13 +128,9 @@ jobs:
             fi
           }
 
+          request_id="$(value request_id '' "$I_REQUEST_ID")"
           source_repository="$(value source_repository '' "$I_SOURCE_REPOSITORY")"
-          [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo "::error::source_repository must be owner/name"
-            exit 1
-          }
-          repo_name="${source_repository##*/}"
-
+          receipt_repository="$(value receipt_repository '' "$I_RECEIPT_REPOSITORY")"
           hf_bucket="$(value hf_bucket '' "$I_HF_BUCKET")"
           candidate_id="$(value candidate_id '' "$I_CANDIDATE_ID")"
           package_name="$(value package_name '' "$I_PACKAGE_NAME")"
@@ -177,468 +143,98 @@ jobs:
           hf_jobs_image="$(value hf_jobs_image '' "$I_HF_JOBS_IMAGE")"
           dry_run="$(value dry_run false "$I_DRY_RUN")"
 
-          token="${SOURCE_REPO_TOKEN:-$GH_FALLBACK_TOKEN}"
-          encoded="$(GH_TOKEN="$token" gh api "/repos/$source_repository/contents/.jpapt/hf-bucket.yml" --jq .content 2>/dev/null || true)"
-          if [[ -n "$encoded" ]]; then
-            printf '%s' "$encoded" | tr -d '\n' | base64 -d > /tmp/source.yml
-            python - <<'PY' > /tmp/source.json
-          import json
-          import yaml
-          with open('/tmp/source.yml', encoding='utf-8') as handle:
-              print(json.dumps(yaml.safe_load(handle) or {}))
-          PY
-          else
-            echo '{}' > /tmp/source.json
-          fi
-          config_json="$(cat /tmp/source.json)"
-
-          if [[ -z "$hf_bucket" ]]; then
-            hf_bucket="$(jq -r '.hf_bucket // empty' <<<"$config_json")"
-          fi
-          if [[ -z "$hf_bucket" ]]; then
-            namespace="${HF_DEFAULT_NAMESPACE:-}"
-            if [[ -z "$namespace" ]]; then
-              namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
-            fi
-            [[ -n "$namespace" ]] || {
-              echo "::error::cannot infer HF namespace"
-              exit 1
-            }
-            hf_bucket="$namespace/${repo_name}-bucket"
-          fi
-          [[ "$hf_bucket" =~ ^[^/]+/[^/]+$ ]] || {
-            echo "::error::hf_bucket must be namespace/bucket"
+          [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::source_repository must use owner/name"
             exit 1
           }
-
-          if [[ -z "$candidate_id" ]]; then
-            configured_candidate="$(jq -r '.candidate.default // empty' <<<"$config_json")"
-            if [[ -n "$configured_candidate" && "$configured_candidate" != "latest" ]]; then
-              candidate_id="$configured_candidate"
-            fi
+          if [[ -z "$receipt_repository" ]]; then
+            receipt_repository="$source_repository"
           fi
-          [[ -z "$candidate_id" || "$candidate_id" =~ ^candidate-[0-9]{6}$ ]] || {
-            echo "::error::candidate_id must be candidate-NNNNNN or blank/latest"
+          [[ "$receipt_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::receipt_repository must use owner/name"
             exit 1
           }
-
-          if [[ -z "$package_name" ]]; then
-            package_name="$(jq -r '.package.default_name // empty' <<<"$config_json")"
+          if [[ -z "$request_id" ]]; then
+            request_id="legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fi
-          [[ -n "$package_name" ]] || package_name="$repo_name"
-          package_name="$(printf '%s' "$package_name" | tr '[:upper:]' '[:lower:]')"
-          [[ "$package_name" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || {
-            echo "::error::invalid package_name=$package_name"
+          [[ "$request_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || {
+            echo "::error::request_id is invalid"
             exit 1
           }
-
-          if [[ "$dataset_source" == "auto" || -z "$dataset_source" ]]; then
-            dataset_source="$(jq -r '.datasets.default_source // "bucket"' <<<"$config_json")"
-          fi
-          case "$dataset_source" in
-            bucket|repository|custom) ;;
-            *) echo "::error::invalid dataset_source=$dataset_source"; exit 1 ;;
-          esac
-          if [[ "$dataset_source" == "repository" && -z "$dataset_id" ]]; then
-            dataset_id="$(jq -r '.datasets.repository_dataset // empty' <<<"$config_json")"
-          fi
-          if [[ "$dataset_source" == "custom" && -z "$dataset_id" ]]; then
-            echo "::error::dataset_id is required when dataset_source=custom"
-            exit 1
-          fi
-          if [[ "$dataset_source" == "repository" && -z "$dataset_id" ]]; then
-            echo "::error::repository dataset_source requires datasets.repository_dataset or dataset_id"
-            exit 1
-          fi
-
-          case "$suite" in
-            smoke|parity|probe) ;;
-            *) echo "::error::invalid suite=$suite"; exit 1 ;;
-          esac
-          case "$executor" in
-            github|hf_jobs) ;;
-            *) echo "::error::invalid executor=$executor"; exit 1 ;;
-          esac
           case "$dry_run" in
             true|false) ;;
             *) echo "::error::dry_run must be true or false"; exit 1 ;;
           esac
 
-          case "$environment" in
-            linux-cpu)
-              provider=CPUExecutionProvider
-              ort_package=onnxruntime
-              ;;
-            linux-cuda)
-              provider=CUDAExecutionProvider
-              ort_package=onnxruntime-gpu
-              ;;
-            macos-coreml)
-              provider=CoreMLExecutionProvider
-              ort_package=onnxruntime
-              ;;
-            windows-directml)
-              provider=DmlExecutionProvider
-              ort_package=onnxruntime-directml
-              ;;
-            *)
-              echo "::error::unsupported environment=$environment"
-              exit 1
-              ;;
-          esac
-
-          if [[ "$executor" == "hf_jobs" && "$environment" != linux-* ]]; then
-            echo "::error::HF Jobs path is Linux only"
-            exit 1
-          fi
-
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$package_name"
+          jq -n \
+            --arg ref "$GITHUB_REF_NAME" \
+            --arg request_id "$request_id" \
+            --arg source_repository "$source_repository" \
+            --arg receipt_repository "$receipt_repository" \
+            --arg hf_bucket "$hf_bucket" \
+            --arg candidate_id "$candidate_id" \
+            --arg package_name "$package_name" \
+            --arg dataset_source "$dataset_source" \
+            --arg dataset_id "$dataset_id" \
+            --arg suite "$suite" \
+            --arg executor "$executor" \
+            --arg environment "$environment" \
+            --arg hf_flavor "$hf_flavor" \
+            --arg hf_jobs_image "$hf_jobs_image" \
+            --arg dry_run "$dry_run" \
+            '{
+              ref: $ref,
+              inputs: {
+                request_id: $request_id,
+                source_repository: $source_repository,
+                receipt_repository: $receipt_repository,
+                hf_bucket: $hf_bucket,
+                candidate_id: $candidate_id,
+                package_name: $package_name,
+                dataset_source: $dataset_source,
+                dataset_id: $dataset_id,
+                suite: $suite,
+                executor: $executor,
+                environment: $environment,
+                hf_flavor: $hf_flavor,
+                hf_jobs_image: $hf_jobs_image,
+                dry_run: $dry_run
+              }
+            }' > /tmp/v2-dispatch.json
 
           {
+            echo "request_id=$request_id"
             echo "source_repository=$source_repository"
-            echo "hf_bucket=$hf_bucket"
-            echo "candidate_id=$candidate_id"
-            echo "package_name=$package_name"
-            echo "image=$image"
-            echo "dataset_source=$dataset_source"
-            echo "dataset_id=$dataset_id"
-            echo "suite=$suite"
-            echo "executor=$executor"
-            echo "environment=$environment"
-            echo "provider=$provider"
-            echo "ort_package=$ort_package"
-            echo "hf_flavor=$hf_flavor"
-            echo "hf_jobs_image=$hf_jobs_image"
+            echo "receipt_repository=$receipt_repository"
             echo "dry_run=$dry_run"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Write plan and estimate
+      - name: Dispatch canonical V2 evaluator
         shell: bash
         env:
-          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
-          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
-          IMAGE: ${{ steps.resolve.outputs.image }}
-          DATASET_SOURCE: ${{ steps.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ steps.resolve.outputs.dataset_id }}
-          SUITE: ${{ steps.resolve.outputs.suite }}
-          EXECUTOR: ${{ steps.resolve.outputs.executor }}
-          ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
-          PROVIDER: ${{ steps.resolve.outputs.provider }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          case "$SUITE" in
-            probe) estimate=4 ;;
-            smoke) estimate=8 ;;
-            parity) estimate=30 ;;
-          esac
-          if [[ "$ENVIRONMENT" == "linux-cuda" ]]; then
-            estimate=$((estimate / 2 + 1))
-          fi
-          if [[ "$EXECUTOR" == "hf_jobs" ]]; then
-            estimate=$((estimate + 5))
-          fi
-          display_candidate="${CANDIDATE_ID:-latest}"
-          display_dataset="${DATASET_ID:-bucket-default}"
+          gh api \
+            --method POST \
+            "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
+            --input /tmp/v2-dispatch.json
+
+      - name: Write compatibility summary
+        shell: bash
+        env:
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          SOURCE_REPOSITORY: ${{ steps.request.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ steps.request.outputs.receipt_repository }}
+          DRY_RUN: ${{ steps.request.outputs.dry_run }}
+        run: |
           {
-            echo "## Candidate evaluation plan"
-            echo "- source repository: \`$SOURCE_REPOSITORY\`"
-            echo "- candidate: \`$display_candidate\`"
-            echo "- bucket: \`$HF_BUCKET\`"
-            echo "- package: \`$IMAGE\`"
-            echo "- dataset: \`$DATASET_SOURCE\` / \`$display_dataset\`"
-            echo "- suite/backend: \`$SUITE\` / \`$EXECUTOR\` / \`$ENVIRONMENT\`"
-            echo "- requested provider: \`$PROVIDER\` (strict; CPU fallback disabled)"
-            echo "- coarse estimate: **~${estimate} min** before candidate/dataset size and queue effects"
+            echo '## Legacy candidate evaluation compatibility wrapper'
+            echo
+            echo '> This entrypoint no longer evaluates candidates directly. The request was forwarded to `candidate-package-evaluate-v2.yml`.'
+            echo
+            printf -- '- request id: `%s`\n' "$REQUEST_ID"
+            printf -- '- source repository: `%s`\n' "$SOURCE_REPOSITORY"
+            printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
+            printf -- '- dry run: `%s`\n' "$DRY_RUN"
           } >> "$GITHUB_STEP_SUMMARY"
-
-  build:
-    name: Build digest-pinned candidate package
-    needs:
-      - resolve
-    if: ${{ needs.resolve.outputs.dry_run != 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      candidate_id: ${{ steps.candidate.outputs.candidate_id }}
-      image_ref: ${{ steps.build.outputs.image_ref }}
-      image_tag: ${{ steps.build.outputs.image_tag }}
-      image_digest: ${{ steps.build.outputs.image_digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install HF CLI
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2"
-
-      - name: Resolve and fetch candidate
-        id: candidate
-        env:
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.resolve.outputs.candidate_id }}
-        run: bash scripts/hf/hf-fetch-candidate.sh "${CANDIDATE_ID:-}"
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Build and push immutable package
-        id: build
-        shell: bash
-        env:
-          IMAGE: ${{ needs.resolve.outputs.image }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          PACKAGE_NAME: ${{ needs.resolve.outputs.package_name }}
-          CANDIDATE_ID: ${{ steps.candidate.outputs.candidate_id }}
-          RUNTIME_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          ORT_PACKAGE: ${{ needs.resolve.outputs.ort_package }}
-        run: |
-          set -euo pipefail
-          tag="$IMAGE:$CANDIDATE_ID-$RUNTIME_ENVIRONMENT"
-          docker buildx build \
-            -f docker/candidate-package/Dockerfile \
-            . \
-            --build-arg SOURCE_REPOSITORY="$SOURCE_REPOSITORY" \
-            --build-arg SOURCE_BUCKET="$HF_BUCKET" \
-            --build-arg CANDIDATE_ID="$CANDIDATE_ID" \
-            --build-arg PACKAGE_NAME="$PACKAGE_NAME" \
-            --build-arg RUNTIME_ENVIRONMENT="$RUNTIME_ENVIRONMENT" \
-            --build-arg ORT_PACKAGE="$ORT_PACKAGE" \
-            --cache-from "type=gha,scope=candidate-$PACKAGE_NAME-$RUNTIME_ENVIRONMENT" \
-            --cache-to "type=gha,mode=max,scope=candidate-$PACKAGE_NAME-$RUNTIME_ENVIRONMENT" \
-            --metadata-file /tmp/build-metadata.json \
-            --tag "$tag" \
-            --tag "$IMAGE:latest-$RUNTIME_ENVIRONMENT" \
-            --push
-
-          digest="$(jq -er '."containerimage.digest"' /tmp/build-metadata.json)"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "::error::invalid image digest: $digest"
-            exit 1
-          }
-          {
-            echo "image_tag=$tag"
-            echo "image_digest=$digest"
-            echo "image_ref=$IMAGE@$digest"
-          } >> "$GITHUB_OUTPUT"
-
-  github-linux-cpu:
-    name: GitHub / Linux CPU
-    needs:
-      - resolve
-      - build
-    if: ${{ needs.resolve.outputs.dry_run != 'true' && needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'linux-cpu' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install clients
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" onnx numpy onnxruntime
-      - name: Evaluate
-        shell: bash
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: CPUExecutionProvider
-          ENVIRONMENT: linux-cpu
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          GHCR_TOKEN: ${{ github.token }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-        run: bash scripts/ci/run-candidate-package-evaluation.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: candidate-package-${{ needs.build.outputs.candidate_id }}-linux-cpu-${{ needs.resolve.outputs.suite }}
-          path: results/candidate-package
-          retention-days: 14
-
-  github-linux-cuda:
-    name: GitHub / Linux CUDA
-    needs:
-      - resolve
-      - build
-    if: ${{ needs.resolve.outputs.dry_run != 'true' && needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'linux-cuda' }}
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
-      - gpu
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install clients
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" onnx numpy onnxruntime-gpu
-      - name: Evaluate
-        shell: bash
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: CUDAExecutionProvider
-          ENVIRONMENT: linux-cuda
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          GHCR_TOKEN: ${{ github.token }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-        run: bash scripts/ci/run-candidate-package-evaluation.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: candidate-package-${{ needs.build.outputs.candidate_id }}-linux-cuda-${{ needs.resolve.outputs.suite }}
-          path: results/candidate-package
-          retention-days: 14
-
-  github-macos-coreml:
-    name: GitHub / macOS CoreML
-    needs:
-      - resolve
-      - build
-    if: ${{ needs.resolve.outputs.dry_run != 'true' && needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'macos-coreml' }}
-    runs-on: macos-14
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install native runtime
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" onnx numpy onnxruntime
-      - name: Evaluate
-        shell: bash
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: CoreMLExecutionProvider
-          ENVIRONMENT: macos-coreml
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-        run: bash scripts/ci/run-candidate-package-evaluation.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: candidate-package-${{ needs.build.outputs.candidate_id }}-macos-coreml-${{ needs.resolve.outputs.suite }}
-          path: results/candidate-package
-          retention-days: 14
-
-  github-windows-directml:
-    name: GitHub / Windows DirectML
-    needs:
-      - resolve
-      - build
-    if: ${{ needs.resolve.outputs.dry_run != 'true' && needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'windows-directml' }}
-    runs-on: windows-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install native runtime
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" onnx numpy onnxruntime-directml
-      - name: Evaluate
-        shell: bash
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: DmlExecutionProvider
-          ENVIRONMENT: windows-directml
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-        run: bash scripts/ci/run-candidate-package-evaluation.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: candidate-package-${{ needs.build.outputs.candidate_id }}-windows-directml-${{ needs.resolve.outputs.suite }}
-          path: results/candidate-package
-          retention-days: 14
-
-  hf-jobs:
-    name: Hugging Face Jobs
-    needs:
-      - resolve
-      - build
-    if: ${{ needs.resolve.outputs.dry_run != 'true' && needs.resolve.outputs.executor == 'hf_jobs' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install HF CLI
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2"
-      - name: Run remote evaluation and persist result
-        shell: bash
-        env:
-          BUILT_IMAGE: ${{ needs.build.outputs.image_ref }}
-          HF_JOBS_IMAGE_OVERRIDE: ${{ needs.resolve.outputs.hf_jobs_image }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: ${{ needs.resolve.outputs.provider }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          FLAVOR: ${{ needs.resolve.outputs.hf_flavor }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-        run: |
-          set -euo pipefail
-          image="${HF_JOBS_IMAGE_OVERRIDE:-$BUILT_IMAGE}"
-          output_dir="/jpapt-output/runs/hf-jobs/$CANDIDATE_ID/$SUITE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          volumes=(-v "hf://buckets/$HF_BUCKET:/jpapt-output:rw")
-          dataset_dir=/data
-          if [[ "$DATASET_SOURCE" == "bucket" ]]; then
-            dataset_dir=/jpapt-output/datasets
-          else
-            volumes+=(-v "hf://datasets/$DATASET_ID:/data:ro")
-          fi
-
-          echo "HF Jobs image: $image"
-          echo "Persistent result: hf://buckets/$HF_BUCKET/runs/hf-jobs/$CANDIDATE_ID/$SUITE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result.json"
-
-          hf jobs run \
-            --flavor "$FLAVOR" \
-            --name "jpapt-$CANDIDATE_ID-$SUITE" \
-            "${volumes[@]}" \
-            "$image" \
-            --suite "$SUITE" \
-            --provider "$PROVIDER" \
-            --dataset-dir "$dataset_dir" \
-            --output "$output_dir/result.json"
