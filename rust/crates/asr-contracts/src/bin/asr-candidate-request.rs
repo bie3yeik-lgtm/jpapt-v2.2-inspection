@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Serialize)]
 struct ResolvedRequest {
+    request_id: String,
     source_repository: String,
+    receipt_repository: String,
     hf_bucket: String,
     candidate_id: String,
     package_name: String,
@@ -63,7 +65,9 @@ fn run() -> Result<(), String> {
     if let Some(path) = github_output {
         let mut lines = String::new();
         for (key, value) in [
+            ("request_id", resolved.request_id.clone()),
             ("source_repository", resolved.source_repository.clone()),
+            ("receipt_repository", resolved.receipt_repository.clone()),
             ("hf_bucket", resolved.hf_bucket.clone()),
             ("candidate_id", resolved.candidate_id.clone()),
             ("package_name", resolved.package_name.clone()),
@@ -134,25 +138,51 @@ fn require_choice(name: &str, value: &str, choices: &[&str]) -> Result<(), Strin
     }
 }
 
+fn validate_repository(name: &str, field: &str) -> Result<(), String> {
+    let mut parts = name.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let repo = parts.next().unwrap_or_default();
+    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+        return Err(format!("{field} must use owner/name"));
+    }
+    if !name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || "._-/".contains(ch))
+    {
+        return Err(format!("{field} contains unsupported characters"));
+    }
+    Ok(())
+}
+
+fn validate_request_id(request_id: &str) -> Result<(), String> {
+    if request_id.is_empty() || request_id.len() > 128 {
+        return Err("request_id must contain 1..128 characters".to_owned());
+    }
+    if !request_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || "._:-".contains(ch))
+    {
+        return Err("request_id contains unsupported characters".to_owned());
+    }
+    Ok(())
+}
+
 fn resolve(
     inputs: &Map<String, Value>,
     config: &Map<String, Value>,
     default_namespace: &str,
     registry_owner: &str,
 ) -> Result<ResolvedRequest, String> {
+    let request_id = string(inputs, "request_id")?;
+    validate_request_id(&request_id)?;
+
     let source_repository = string(inputs, "source_repository")?;
-    let mut parts = source_repository.split('/');
-    let source_owner = parts.next().unwrap_or_default();
-    let repo_name = parts.next().unwrap_or_default();
-    if source_owner.is_empty() || repo_name.is_empty() || parts.next().is_some() {
-        return Err("source_repository must use owner/name".to_owned());
-    }
-    if !source_repository
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || "._-/".contains(ch))
-    {
-        return Err("source_repository contains unsupported characters".to_owned());
-    }
+    validate_repository(&source_repository, "source_repository")?;
+    let source_owner = source_repository.split('/').next().unwrap_or_default();
+    let repo_name = source_repository.split('/').nth(1).unwrap_or_default();
+
+    let receipt_repository = choose(string(inputs, "receipt_repository")?, &source_repository);
+    validate_repository(&receipt_repository, "receipt_repository")?;
 
     let mut hf_bucket = string(inputs, "hf_bucket")?;
     if hf_bucket.is_empty() {
@@ -248,7 +278,9 @@ fn resolve(
     let image = format!("ghcr.io/{}/{}", registry_owner.to_ascii_lowercase(), package_name);
 
     Ok(ResolvedRequest {
+        request_id,
         source_repository,
+        receipt_repository,
         hf_bucket,
         candidate_id,
         package_name,
@@ -275,9 +307,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolves_convention_defaults() {
+    fn resolves_completion_defaults() {
         let inputs = object(
-            r#"{"source_repository":"owner/repo","dataset_source":"auto","suite":"smoke","executor":"github","environment":"linux-cpu"}"#,
+            r#"{"request_id":"req-001","source_repository":"owner/repo","dataset_source":"auto","suite":"smoke","executor":"github","environment":"linux-cpu"}"#,
             "inputs",
         )
         .unwrap();
@@ -285,16 +317,28 @@ mod tests {
         assert_eq!(resolved.hf_bucket, "hf-user/repo-bucket");
         assert_eq!(resolved.dataset_source, "bucket");
         assert_eq!(resolved.image, "ghcr.io/registry-owner/repo");
+        assert_eq!(resolved.receipt_repository, "owner/repo");
     }
 
     #[test]
     fn rejects_non_linux_hf_jobs() {
         let inputs = object(
-            r#"{"source_repository":"owner/repo","executor":"hf_jobs","environment":"macos-coreml"}"#,
+            r#"{"request_id":"req-002","source_repository":"owner/repo","executor":"hf_jobs","environment":"macos-coreml"}"#,
             "inputs",
         )
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("Linux"));
+    }
+
+    #[test]
+    fn rejects_unsafe_request_id() {
+        let inputs = object(
+            r#"{"request_id":"bad id","source_repository":"owner/repo"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("request_id"));
     }
 }
