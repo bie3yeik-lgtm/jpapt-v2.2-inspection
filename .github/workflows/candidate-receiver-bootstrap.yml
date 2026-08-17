@@ -78,6 +78,7 @@ jobs:
             managed_mappings=(
               '.github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml'
               '.github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml'
+              'scripts/ci/candidate_protocol_common.py=scripts/ci/candidate_protocol_common.py'
               'scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py'
               'scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py'
               'scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py'
@@ -117,6 +118,7 @@ jobs:
             --output /tmp/candidate-receiver.json \
             --file .github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml \
             --file .github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml \
+            --file scripts/ci/candidate_protocol_common.py=scripts/ci/candidate_protocol_common.py \
             --file scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py \
             --file scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py \
             --file scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py \
@@ -150,6 +152,7 @@ jobs:
 
           add_blob .github/workflows/candidate-completion-receipt.yml .github/workflows/candidate-completion-receipt.yml
           add_blob .github/workflows/candidate-request-rejection.yml .github/workflows/candidate-request-rejection.yml
+          add_blob scripts/ci/candidate_protocol_common.py scripts/ci/candidate_protocol_common.py
           add_blob scripts/ci/build-candidate-completion-receipt.py scripts/ci/build-candidate-completion-receipt.py
           add_blob scripts/ci/build-candidate-completion-ack.py scripts/ci/build-candidate-completion-ack.py
           add_blob scripts/ci/build-candidate-request-rejection.py scripts/ci/build-candidate-request-rejection.py
