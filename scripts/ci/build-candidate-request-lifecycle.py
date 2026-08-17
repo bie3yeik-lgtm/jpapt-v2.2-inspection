@@ -9,10 +9,11 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from candidate_lifecycle_common import STATES, parse_time
+
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-STATES = ("planned", "dispatched", "running", "rejected", "completed", "acknowledged")
 
 
 def env(name: str, default: str = "") -> str:
@@ -69,8 +70,11 @@ def validate(snapshot: dict) -> None:
         raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
         raise SystemExit("acknowledged requires receiver_run_id")
-    if not isinstance(snapshot.get("updated_at"), str) or not snapshot["updated_at"]:
-        raise SystemExit("updated_at is required")
+    updated_at = snapshot.get("updated_at")
+    try:
+        parse_time(updated_at)
+    except (TypeError, ValueError) as error:
+        raise SystemExit(f"updated_at is invalid: {error}") from error
 
 
 def main() -> int:
