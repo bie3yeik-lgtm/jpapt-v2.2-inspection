@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from candidate_protocol_common import parse_rfc3339_time
+from candidate_protocol_common import parse_rfc3339_time, validate_https_url
 
 EVENT_TYPE = "jpapt.candidate-completed"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -36,11 +36,7 @@ def nullable(value: str) -> str | None:
 
 
 def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list[str]]:
-    relevant = {
-        name: result
-        for name, result in results.items()
-        if result and result not in {"skipped", "success"}
-    }
+    relevant = {name: result for name, result in results.items() if result and result not in {"skipped", "success"}}
     failed_jobs = [f"{name}:{result}" for name, result in relevant.items()]
     if any(result == "failure" for result in relevant.values()):
         return "failure", failed_jobs
@@ -51,14 +47,7 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
     selected = [
         result
         for name, result in results.items()
-        if name
-        in {
-            "github-linux-cpu",
-            "github-linux-cuda",
-            "github-macos-coreml",
-            "github-windows-directml",
-            "hf-jobs",
-        }
+        if name in {"github-linux-cpu", "github-linux-cuda", "github-macos-coreml", "github-windows-directml", "hf-jobs"}
         and result != "skipped"
     ]
     if selected == ["success"]:
@@ -68,11 +57,11 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
 
 def validate(receipt: dict) -> None:
     expected_fields = {
-        "schema_version", "request_id", "source_repository", "receipt_repository",
-        "conclusion", "dry_run", "suite", "executor", "environment", "provider",
-        "orchestrator_repository", "workflow_file", "run_id", "run_attempt", "run_url",
-        "commit_sha", "requested_candidate_id", "resolved_candidate_id", "image_ref",
-        "image_digest", "result_artifact", "result_uri", "failed_jobs", "completed_at",
+        "schema_version", "request_id", "source_repository", "receipt_repository", "conclusion",
+        "dry_run", "suite", "executor", "environment", "provider", "orchestrator_repository",
+        "workflow_file", "run_id", "run_attempt", "run_url", "commit_sha", "requested_candidate_id",
+        "resolved_candidate_id", "image_ref", "image_digest", "result_artifact", "result_uri",
+        "failed_jobs", "completed_at",
     }
     if set(receipt) != expected_fields:
         missing = sorted(expected_fields - set(receipt))
@@ -105,8 +94,10 @@ def validate(receipt: dict) -> None:
         raise SystemExit("run_id is invalid")
     if not isinstance(receipt.get("run_attempt"), int) or receipt["run_attempt"] < 1:
         raise SystemExit("run_attempt is invalid")
-    if not isinstance(receipt.get("run_url"), str) or not receipt["run_url"].startswith("https://"):
-        raise SystemExit("run_url is invalid")
+    try:
+        validate_https_url(receipt.get("run_url"), "run_url")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     if not isinstance(receipt.get("commit_sha"), str) or not SHA_RE.fullmatch(receipt["commit_sha"]):
         raise SystemExit("commit_sha is invalid")
     requested = receipt.get("requested_candidate_id")
@@ -126,9 +117,7 @@ def validate(receipt: dict) -> None:
         for field in ("resolved_candidate_id", "image_ref", "image_digest", "result_artifact"):
             if not receipt.get(field):
                 raise SystemExit(f"successful evaluation receipt requires {field}")
-    if not isinstance(receipt.get("failed_jobs"), list) or not all(
-        isinstance(item, str) and item for item in receipt["failed_jobs"]
-    ):
+    if not isinstance(receipt.get("failed_jobs"), list) or not all(isinstance(item, str) and item for item in receipt["failed_jobs"]):
         raise SystemExit("failed_jobs is invalid")
     try:
         parse_rfc3339_time(receipt.get("completed_at"), "completed_at")
@@ -168,10 +157,7 @@ def build(receipt_path_text: str, dispatch_path_text: str) -> None:
     if conclusion == "success" and not dry_run and resolved_candidate_id:
         if executor == "hf_jobs":
             result_artifact = f"candidate-package-{resolved_candidate_id}-hf-jobs-{suite}"
-            result_uri = (
-                f"hf://buckets/{env('HF_BUCKET')}/runs/hf-jobs/{resolved_candidate_id}/"
-                f"{suite}-{env('RUN_ID')}-{env('RUN_ATTEMPT')}/result.json"
-            )
+            result_uri = f"hf://buckets/{env('HF_BUCKET')}/runs/hf-jobs/{resolved_candidate_id}/{suite}-{env('RUN_ID')}-{env('RUN_ATTEMPT')}/result.json"
         else:
             result_artifact = f"candidate-package-{resolved_candidate_id}-{environment}-{suite}"
     completed_at = env("COMPLETED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
