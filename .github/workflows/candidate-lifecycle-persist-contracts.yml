@@ -10,6 +10,7 @@ on:
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/reduce-candidate-lifecycle.py
   pull_request:
     paths:
       - .github/actionlint.yaml
@@ -18,6 +19,7 @@ on:
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/reduce-candidate-lifecycle.py
   workflow_dispatch:
 
 permissions:
@@ -46,8 +48,10 @@ jobs:
           .github/workflows/candidate-lifecycle-persist.yml
           .github/workflows/candidate-lifecycle-persist-contracts.yml
           .github/workflows/candidate-request-status.yml
-      - name: Validate persistence helper syntax
-        run: bash -n scripts/ci/persist-candidate-lifecycle.sh
+      - name: Validate persistence helpers
+        run: |
+          bash -n scripts/ci/persist-candidate-lifecycle.sh
+          python -m py_compile scripts/ci/reduce-candidate-lifecycle.py
       - name: Exercise local no-op persistence contract
         shell: bash
         run: |
@@ -76,4 +80,69 @@ jobs:
           grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-running-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-completed-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'f"{snapshot['\''receiver_run_id'\'']}-acknowledged-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'for candidate_state in acknowledged completed rejected running dispatched planned' .github/workflows/candidate-request-status.yml
+          grep -F 'newer retry may legitimately be' .github/workflows/candidate-request-status.yml
+          grep -F 'scripts/ci/reduce-candidate-lifecycle.py' .github/workflows/candidate-request-status.yml
+      - name: Verify latest observation wins across retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=retry-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=100 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          RECEIPT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          RECEIVER_RUN_ID=200 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged --output /tmp/old-ack.json >/dev/null
+
+          REQUEST_ID=retry-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=300 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T11:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/new-running.json >/dev/null
+
+          python scripts/ci/reduce-candidate-lifecycle.py \
+            --request-id retry-status-001 \
+            --candidate hf-bucket=/tmp/old-ack.json \
+            --candidate github-artifact=/tmp/new-running.json \
+            --output /tmp/reduced.json
+          test "$(jq -r .state /tmp/reduced.json)" = running
+          test "$(jq -r .evaluation_run_id /tmp/reduced.json)" = 300
+      - name: Verify state rank only breaks timestamp ties
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=tie-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=400 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T12:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/tie-running.json >/dev/null
+
+          REQUEST_ID=tie-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=400 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          RECEIPT_SHA256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+          UPDATED_AT=2026-08-17T12:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state completed --output /tmp/tie-completed.json >/dev/null
+
+          python scripts/ci/reduce-candidate-lifecycle.py \
+            --request-id tie-status-001 \
+            --candidate artifact=/tmp/tie-running.json \
+            --candidate bucket=/tmp/tie-completed.json \
+            --output /tmp/tie-reduced.json
+          test "$(jq -r .state /tmp/tie-reduced.json)" = completed
