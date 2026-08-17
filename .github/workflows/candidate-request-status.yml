@@ -31,7 +31,7 @@ jobs:
           found=false
           state=""
           artifact_id=""
-          for candidate_state in acknowledged completed running planned; do
+          for candidate_state in acknowledged completed rejected running planned; do
             artifact_name="candidate-lifecycle-$request_key-$candidate_state"
             artifact_id="$(gh api \
               "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
