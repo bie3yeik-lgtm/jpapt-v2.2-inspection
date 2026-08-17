@@ -6,12 +6,15 @@ on:
       - main
     paths:
       - .github/actionlint.yaml
+      - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
+      - contracts/candidate-completion-receipt.schema.json
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
@@ -21,12 +24,15 @@ on:
   pull_request:
     paths:
       - .github/actionlint.yaml
+      - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
+      - contracts/candidate-completion-receipt.schema.json
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
@@ -73,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           actionlint -color \
+            .github/workflows/candidate-completion-receipt.yml \
             .github/workflows/candidate-package-evaluate.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
@@ -91,10 +98,55 @@ jobs:
       - name: Validate Python helper syntax
         run: |
           python -m py_compile \
+            scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/generic-candidate-evaluate.py \
             scripts/ci/normalize-candidate-request.py
+
+      - name: Validate completion receipt schema JSON
+        run: python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
+
+      - name: Exercise completion receipt contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=req-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=false \
+          SUITE=smoke \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=12345 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/12345 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000001 \
+          RESOLVED_CANDIDATE_ID=candidate-000001 \
+          IMAGE_REF=ghcr.io/owner/source@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          IMAGE_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          BUILD_RESULT=success \
+          CPU_RESULT=success \
+          CUDA_RESULT=skipped \
+          COREML_RESULT=skipped \
+          DIRECTML_RESULT=skipped \
+          HF_JOBS_RESULT=skipped \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/dispatch.json
+          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+          python - <<'PY'
+          import json
+          with open('/tmp/dispatch.json', encoding='utf-8') as handle:
+              value = json.load(handle)
+          assert value['event_type'] == 'jpapt.candidate-completed'
+          assert value['client_payload']['request_id'] == 'req-contract-001'
+          assert value['client_payload']['conclusion'] == 'success'
+          PY
 
       - name: Test Rust candidate request contract
         run: cargo test --locked -p asr-contracts --bin asr-candidate-request
