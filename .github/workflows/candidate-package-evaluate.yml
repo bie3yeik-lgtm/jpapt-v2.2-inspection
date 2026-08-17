@@ -229,12 +229,12 @@ jobs:
           DRY_RUN: ${{ steps.request.outputs.dry_run }}
         run: |
           {
-            echo '## Legacy candidate evaluation compatibility wrapper'
+            echo "## Legacy candidate evaluation compatibility wrapper"
             echo
-            echo '> This entrypoint no longer evaluates candidates directly. The request was forwarded to `candidate-package-evaluate-v2.yml`.'
+            echo "> This entrypoint no longer evaluates candidates directly. The request was forwarded to candidate-package-evaluate-v2.yml."
             echo
-            printf -- '- request id: `%s`\n' "$REQUEST_ID"
-            printf -- '- source repository: `%s`\n' "$SOURCE_REPOSITORY"
-            printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
-            printf -- '- dry run: `%s`\n' "$DRY_RUN"
+            printf -- '- request id: <code>%s</code>\n' "$REQUEST_ID"
+            printf -- '- source repository: <code>%s</code>\n' "$SOURCE_REPOSITORY"
+            printf -- '- receipt repository: <code>%s</code>\n' "$RECEIPT_REPOSITORY"
+            printf -- '- dry run: <code>%s</code>\n' "$DRY_RUN"
           } >> "$GITHUB_STEP_SUMMARY"
