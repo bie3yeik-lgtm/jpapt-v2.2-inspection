@@ -73,6 +73,11 @@ on:
         required: false
         default: ""
         type: string
+      dry_run:
+        description: Dispatch V2 in resolve-and-estimate-only mode
+        required: false
+        default: false
+        type: boolean
       execute:
         description: Dispatch Candidate Package Evaluate V2 after validation
         required: false
@@ -126,6 +131,7 @@ jobs:
           I_ENVIRONMENT: ${{ inputs.environment }}
           I_HF_FLAVOR: ${{ inputs.hf_flavor }}
           I_HF_JOBS_IMAGE: ${{ inputs.hf_jobs_image }}
+          I_DRY_RUN: ${{ inputs.dry_run }}
           I_EXECUTE: ${{ inputs.execute }}
         run: >-
           python scripts/ci/normalize-candidate-request.py
@@ -240,6 +246,7 @@ jobs:
           EXECUTOR: ${{ steps.resolve.outputs.executor }}
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
           PROVIDER: ${{ steps.resolve.outputs.provider }}
+          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
           ESTIMATE_METHOD: ${{ steps.estimate.outputs.method }}
           ESTIMATE_COHORT: ${{ steps.estimate.outputs.cohort }}
           ESTIMATE_SAMPLES: ${{ steps.estimate.outputs.samples }}
@@ -269,6 +276,7 @@ jobs:
             printf -- '- dataset: `%s` / `%s`\n' "$DATASET_SOURCE" "$dataset"
             printf -- '- suite/backend: `%s` / `%s` / `%s`\n' "$SUITE" "$EXECUTOR" "$ENVIRONMENT"
             printf -- '- provider: `%s`\n' "$PROVIDER"
+            printf -- '- dry-run: `%s`\n' "$DRY_RUN"
             printf -- '- estimate method/cohort: `%s` / `%s`\n' "$ESTIMATE_METHOD" "$ESTIMATE_COHORT"
             printf -- '- estimate samples: `%s` selected / `%s` available\n' "$ESTIMATE_SAMPLES" "$ESTIMATE_AVAILABLE_SAMPLES"
             printf -- '- estimated upper-bound runtime: **~%s min**\n' "$ESTIMATE_MINUTES"
@@ -297,6 +305,7 @@ jobs:
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
           HF_FLAVOR: ${{ steps.resolve.outputs.hf_flavor }}
           HF_JOBS_IMAGE: ${{ steps.resolve.outputs.hf_jobs_image }}
+          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
         run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"
 
   execute:
