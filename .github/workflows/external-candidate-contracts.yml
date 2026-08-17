@@ -6,37 +6,45 @@ on:
       - main
     paths:
       - .github/actionlint.yaml
+      - .github/workflows/candidate-completion-ack.yml
       - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/repository-dispatch-with-retry.sh
       - scripts/ci/run-candidate-package-evaluation.sh
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   pull_request:
     paths:
       - .github/actionlint.yaml
+      - .github/workflows/candidate-completion-ack.yml
       - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
       - docker/candidate-package/Dockerfile
+      - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/repository-dispatch-with-retry.sh
       - scripts/ci/run-candidate-package-evaluation.sh
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   workflow_dispatch:
@@ -79,6 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           actionlint -color \
+            .github/workflows/candidate-completion-ack.yml \
             .github/workflows/candidate-completion-receipt.yml \
             .github/workflows/candidate-package-evaluate.yml \
             .github/workflows/external-bucket-bootstrap.yml \
@@ -93,21 +102,26 @@ jobs:
 
       - name: Validate Bash helper syntax
         shell: bash
-        run: bash -n scripts/ci/run-candidate-package-evaluation.sh
+        run: |
+          bash -n scripts/ci/run-candidate-package-evaluation.sh
+          bash -n scripts/ci/repository-dispatch-with-retry.sh
 
       - name: Validate Python helper syntax
         run: |
           python -m py_compile \
+            scripts/ci/build-candidate-completion-ack.py \
             scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/generic-candidate-evaluate.py \
             scripts/ci/normalize-candidate-request.py
 
-      - name: Validate completion receipt schema JSON
-        run: python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
+      - name: Validate completion protocol schema JSON
+        run: |
+          python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
+          python -m json.tool contracts/candidate-completion-ack.schema.json >/dev/null
 
-      - name: Exercise completion receipt contract
+      - name: Exercise completion receipt and acknowledgement contract
         shell: bash
         run: |
           set -euo pipefail
@@ -139,13 +153,53 @@ jobs:
             --receipt /tmp/receipt.json \
             --dispatch-body /tmp/dispatch.json
           python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+
+          RECEIVER_REPOSITORY=owner/source \
+          RECEIVER_RUN_ID=67890 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/source/actions/runs/67890 \
+          ACCEPTED_AT=2026-08-17T00:00:01Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json
+          python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
+
           python - <<'PY'
           import json
-          with open('/tmp/dispatch.json', encoding='utf-8') as handle:
-              value = json.load(handle)
-          assert value['event_type'] == 'jpapt.candidate-completed'
-          assert value['client_payload']['request_id'] == 'req-contract-001'
-          assert value['client_payload']['conclusion'] == 'success'
+          from pathlib import Path
+
+          dispatch = json.loads(Path('/tmp/dispatch.json').read_text())
+          ack_dispatch = json.loads(Path('/tmp/ack-dispatch.json').read_text())
+          ack = ack_dispatch['client_payload']
+          assert dispatch['event_type'] == 'jpapt.candidate-completed'
+          assert dispatch['client_payload']['request_id'] == 'req-contract-001'
+          assert dispatch['client_payload']['conclusion'] == 'success'
+          assert ack_dispatch['event_type'] == 'jpapt.candidate-completion-ack'
+          assert ack['request_id'] == 'req-contract-001'
+          assert len(ack['receipt_sha256']) == 64
+
+          receipt = json.loads(Path('/tmp/receipt.json').read_text())
+          reversed_receipt = {key: receipt[key] for key in reversed(list(receipt))}
+          Path('/tmp/receipt-reordered.json').write_text(json.dumps(reversed_receipt), encoding='utf-8')
+          PY
+
+          RECEIVER_REPOSITORY=owner/source \
+          RECEIVER_RUN_ID=67891 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/source/actions/runs/67891 \
+          ACCEPTED_AT=2026-08-17T00:00:02Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt-reordered.json \
+            --ack /tmp/ack-reordered.json \
+            --dispatch-body /tmp/ack-reordered-dispatch.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          first = json.loads(Path('/tmp/ack.json').read_text())
+          second = json.loads(Path('/tmp/ack-reordered.json').read_text())
+          assert first['receipt_sha256'] == second['receipt_sha256']
           PY
 
       - name: Test Rust candidate request contract
