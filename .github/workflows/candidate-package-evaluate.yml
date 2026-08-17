@@ -92,6 +92,7 @@ jobs:
     name: Forward legacy request to V2
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - name: Normalize compatibility request
         id: request
         shell: bash
@@ -113,21 +114,18 @@ jobs:
           I_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-
           value() {
             local key="$1"
             local default_value="$2"
             local manual_value="${3:-}"
             if [[ "$GITHUB_EVENT_NAME" == repository_dispatch ]]; then
-              jq -r --arg key "$key" --arg default_value "$default_value" \
-                '.[$key] // $default_value | tostring' <<<"$PAYLOAD"
+              jq -r --arg key "$key" --arg default_value "$default_value" '.[$key] // $default_value | tostring' <<<"$PAYLOAD"
             elif [[ -n "$manual_value" ]]; then
               printf '%s\n' "$manual_value"
             else
               printf '%s\n' "$default_value"
             fi
           }
-
           request_id="$(value request_id '' "$I_REQUEST_ID")"
           source_repository="$(value source_repository '' "$I_SOURCE_REPOSITORY")"
           receipt_repository="$(value receipt_repository '' "$I_RECEIPT_REPOSITORY")"
@@ -142,84 +140,37 @@ jobs:
           hf_flavor="$(value hf_flavor cpu-basic "$I_HF_FLAVOR")"
           hf_jobs_image="$(value hf_jobs_image '' "$I_HF_JOBS_IMAGE")"
           dry_run="$(value dry_run false "$I_DRY_RUN")"
-
-          [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo "::error::source_repository must use owner/name"
-            exit 1
-          }
-          if [[ -z "$receipt_repository" ]]; then
-            receipt_repository="$source_repository"
-          fi
-          [[ "$receipt_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo "::error::receipt_repository must use owner/name"
-            exit 1
-          }
-          if [[ -z "$request_id" ]]; then
-            request_id="legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          fi
-          [[ "$request_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || {
-            echo "::error::request_id is invalid"
-            exit 1
-          }
-          case "$dry_run" in
-            true|false) ;;
-            *) echo "::error::dry_run must be true or false"; exit 1 ;;
-          esac
-
+          [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::source_repository must use owner/name"; exit 1; }
+          [[ -n "$receipt_repository" ]] || receipt_repository="$source_repository"
+          [[ "$receipt_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::receipt_repository must use owner/name"; exit 1; }
+          [[ -n "$request_id" ]] || request_id="legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$request_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "::error::request_id is invalid"; exit 1; }
+          case "$dry_run" in true|false) ;; *) echo "::error::dry_run must be true or false"; exit 1 ;; esac
           jq -n \
-            --arg ref "$GITHUB_REF_NAME" \
-            --arg request_id "$request_id" \
-            --arg source_repository "$source_repository" \
-            --arg receipt_repository "$receipt_repository" \
-            --arg hf_bucket "$hf_bucket" \
-            --arg candidate_id "$candidate_id" \
-            --arg package_name "$package_name" \
-            --arg dataset_source "$dataset_source" \
-            --arg dataset_id "$dataset_id" \
-            --arg suite "$suite" \
-            --arg executor "$executor" \
-            --arg environment "$environment" \
-            --arg hf_flavor "$hf_flavor" \
-            --arg hf_jobs_image "$hf_jobs_image" \
-            --arg dry_run "$dry_run" \
-            '{
-              ref: $ref,
-              inputs: {
-                request_id: $request_id,
-                source_repository: $source_repository,
-                receipt_repository: $receipt_repository,
-                hf_bucket: $hf_bucket,
-                candidate_id: $candidate_id,
-                package_name: $package_name,
-                dataset_source: $dataset_source,
-                dataset_id: $dataset_id,
-                suite: $suite,
-                executor: $executor,
-                environment: $environment,
-                hf_flavor: $hf_flavor,
-                hf_jobs_image: $hf_jobs_image,
-                dry_run: $dry_run
-              }
-            }' > /tmp/v2-dispatch.json
-
+            --arg ref "$GITHUB_REF_NAME" --arg request_id "$request_id" \
+            --arg source_repository "$source_repository" --arg receipt_repository "$receipt_repository" \
+            --arg hf_bucket "$hf_bucket" --arg candidate_id "$candidate_id" --arg package_name "$package_name" \
+            --arg dataset_source "$dataset_source" --arg dataset_id "$dataset_id" --arg suite "$suite" \
+            --arg executor "$executor" --arg environment "$environment" --arg hf_flavor "$hf_flavor" \
+            --arg hf_jobs_image "$hf_jobs_image" --arg dry_run "$dry_run" \
+            '{ref:$ref,inputs:{request_id:$request_id,source_repository:$source_repository,receipt_repository:$receipt_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:$dataset_source,dataset_id:$dataset_id,suite:$suite,executor:$executor,environment:$environment,hf_flavor:$hf_flavor,hf_jobs_image:$hf_jobs_image,dry_run:$dry_run}}' \
+            > /tmp/v2-dispatch.json
           {
             echo "request_id=$request_id"
             echo "source_repository=$source_repository"
             echo "receipt_repository=$receipt_repository"
             echo "dry_run=$dry_run"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Dispatch canonical V2 evaluator
+      - name: Dispatch canonical V2 evaluator with bounded retry
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api \
-            --method POST \
-            "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
-            --input /tmp/v2-dispatch.json
-
+        run: >-
+          bash scripts/ci/workflow-dispatch-with-retry.sh
+          "$GITHUB_REPOSITORY"
+          candidate-package-evaluate-v2.yml
+          /tmp/v2-dispatch.json
+          3
       - name: Write compatibility summary
         shell: bash
         env:
