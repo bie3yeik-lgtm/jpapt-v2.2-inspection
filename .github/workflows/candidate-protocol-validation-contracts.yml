@@ -53,18 +53,22 @@ jobs:
             scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-request-lifecycle.py \
             scripts/ci/build-candidate-request-rejection.py
-      - name: Require every timestamp validator to use shared parser
+      - name: Require protocol validators to use shared primitives
         shell: bash
         run: |
           set -euo pipefail
           grep -F 'parse_rfc3339_time' scripts/ci/candidate_lifecycle_common.py
-          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-completion-ack.py
-          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-completion-receipt.py
-          grep -F 'parse_rfc3339_time' scripts/ci/build-candidate-request-rejection.py
-      - name: Exercise RFC3339 offset requirement
+          for helper in \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-request-rejection.py; do
+            grep -F 'parse_rfc3339_time' "$helper"
+            grep -F 'validate_https_url' "$helper"
+          done
+      - name: Exercise shared timestamp and HTTPS requirements
         run: |
           PYTHONPATH=scripts/ci python - <<'PY'
-          from candidate_protocol_common import parse_rfc3339_time
+          from candidate_protocol_common import parse_rfc3339_time, validate_https_url
 
           assert parse_rfc3339_time('2026-08-17T10:00:00Z').utcoffset() is not None
           assert parse_rfc3339_time('2026-08-17T19:00:00+09:00').utcoffset() is not None
@@ -75,6 +79,15 @@ jobs:
                   pass
               else:
                   raise AssertionError(f'invalid timestamp unexpectedly accepted: {value!r}')
+
+          assert validate_https_url('https://github.com/owner/repo/actions/runs/1')
+          for value in ('https://', 'http://github.com/owner/repo', 'ftp://github.com/file', '', 'not-a-url'):
+              try:
+                  validate_https_url(value)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(f'invalid HTTPS URL unexpectedly accepted: {value!r}')
           PY
       - name: Build valid protocol fixtures
         shell: bash
@@ -129,6 +142,22 @@ jobs:
             echo 'naive updated_at unexpectedly accepted' >&2
             exit 1
           fi
+      - name: Reject malformed HTTPS run URLs in helper validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in 'https://' 'http://github.com/owner/orchestrator/actions/runs/1'; do
+            jq --arg value "$value" '.run_url=$value' /tmp/receipt.json > /tmp/bad-receipt-url.json
+            if python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/bad-receipt-url.json; then
+              echo "invalid receipt run_url unexpectedly accepted: $value" >&2
+              exit 1
+            fi
+            jq --arg value "$value" '.receiver_run_url=$value' /tmp/ack.json > /tmp/bad-ack-url.json
+            if python scripts/ci/build-candidate-completion-ack.py --validate /tmp/bad-ack-url.json; then
+              echo "invalid ACK receiver_run_url unexpectedly accepted: $value" >&2
+              exit 1
+            fi
+          done
       - name: Reject unknown protocol fields in helper validation
         shell: bash
         run: |
