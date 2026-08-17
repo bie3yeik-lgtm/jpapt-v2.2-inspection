@@ -52,6 +52,7 @@ jobs:
             echo "::error::SOURCE_REPO_TOKEN is required for receiver bootstrap"
             exit 1
           }
+          python scripts/ci/candidate_receiver_bundle.py --validate
 
           meta="$(gh api "/repos/$TARGET_REPOSITORY")"
           default_branch="$(jq -r '.default_branch' <<<"$meta")"
@@ -74,17 +75,11 @@ jobs:
           if value['orchestrator_repository'] != sys.argv[2]:
               raise SystemExit('existing receiver installation is managed by another orchestrator')
           PY
+            if ! python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/existing-receiver.json; then
+              echo "::notice::existing receiver manifest is stale; bootstrap will converge it to the canonical bundle"
+            fi
           else
-            managed_mappings=(
-              '.github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml'
-              '.github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml'
-              'scripts/ci/candidate_protocol_common.py=scripts/ci/candidate_protocol_common.py'
-              'scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py'
-              'scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py'
-              'scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py'
-              'scripts/ci/validate-candidate-protocol-binding.py=scripts/ci/validate-candidate-protocol-binding.py'
-              'scripts/ci/repository-dispatch-with-retry.sh=scripts/ci/repository-dispatch-with-retry.sh'
-            )
+            mapfile -t managed_mappings < <(python scripts/ci/candidate_receiver_bundle.py --mappings)
             for mapping in "${managed_mappings[@]}"; do
               target="${mapping%%=*}"
               source="${mapping#*=}"
@@ -114,17 +109,15 @@ jobs:
           ORCHESTRATOR_COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          file_args=()
+          while IFS= read -r mapping; do
+            file_args+=(--file "$mapping")
+          done < <(python scripts/ci/candidate_receiver_bundle.py --mappings)
           python scripts/ci/build-candidate-receiver-installation.py \
             --output /tmp/candidate-receiver.json \
-            --file .github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml \
-            --file .github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml \
-            --file scripts/ci/candidate_protocol_common.py=scripts/ci/candidate_protocol_common.py \
-            --file scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py \
-            --file scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py \
-            --file scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py \
-            --file scripts/ci/validate-candidate-protocol-binding.py=scripts/ci/validate-candidate-protocol-binding.py \
-            --file scripts/ci/repository-dispatch-with-retry.sh=scripts/ci/repository-dispatch-with-retry.sh
+            "${file_args[@]}"
           python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/candidate-receiver.json
+          python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/candidate-receiver.json
 
       - name: Install receiver bundle atomically
         id: install
@@ -150,14 +143,9 @@ jobs:
               '. + [{path:$path,mode:"100644",type:"blob",sha:$sha}]' <<<"$entries")"
           }
 
-          add_blob .github/workflows/candidate-completion-receipt.yml .github/workflows/candidate-completion-receipt.yml
-          add_blob .github/workflows/candidate-request-rejection.yml .github/workflows/candidate-request-rejection.yml
-          add_blob scripts/ci/candidate_protocol_common.py scripts/ci/candidate_protocol_common.py
-          add_blob scripts/ci/build-candidate-completion-receipt.py scripts/ci/build-candidate-completion-receipt.py
-          add_blob scripts/ci/build-candidate-completion-ack.py scripts/ci/build-candidate-completion-ack.py
-          add_blob scripts/ci/build-candidate-request-rejection.py scripts/ci/build-candidate-request-rejection.py
-          add_blob scripts/ci/validate-candidate-protocol-binding.py scripts/ci/validate-candidate-protocol-binding.py
-          add_blob scripts/ci/repository-dispatch-with-retry.sh scripts/ci/repository-dispatch-with-retry.sh
+          while IFS=$'\t' read -r target source; do
+            add_blob "$target" "$source"
+          done < <(python scripts/ci/candidate_receiver_bundle.py --tsv)
           add_blob .jpapt/candidate-receiver.json /tmp/candidate-receiver.json
 
           tree_body="$(jq -n --arg base_tree "$base_tree" --argjson tree "$entries" '{base_tree:$base_tree,tree:$tree}')"
@@ -208,6 +196,7 @@ jobs:
             printf -- '- branch: `%s`\n' '${{ steps.target.outputs.default_branch }}'
             printf -- '- target commit: `%s`\n' '${{ steps.install.outputs.target_commit }}'
             printf -- '- manifest: `.jpapt/candidate-receiver.json`\n'
+            printf -- '- bundle: `config/candidate-receiver-bundle.json`\n'
             printf -- '- update mode: `single commit / fast-forward ref`\n'
             echo
             echo '> Receiver Actions variable `JPAPT_ORCHESTRATOR_REPOSITORIES` and secret `JPAPT_ACK_TOKEN` are intentionally not mutated by this workflow.'
