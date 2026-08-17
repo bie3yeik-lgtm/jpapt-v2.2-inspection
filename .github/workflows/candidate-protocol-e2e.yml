@@ -141,6 +141,7 @@ jobs:
           else
             echo "::warning::receiver has no .jpapt/candidate-receiver.json; using compatibility preflight"
             for path in \
+              scripts/ci/candidate_protocol_common.py \
               scripts/ci/build-candidate-completion-receipt.py \
               scripts/ci/build-candidate-completion-ack.py \
               scripts/ci/validate-candidate-protocol-binding.py \
@@ -187,12 +188,11 @@ jobs:
                 dry_run: true
               }
             }' > /tmp/e2e-dispatch.json
-          gh api \
-            --method POST \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
-            --input /tmp/e2e-dispatch.json
+          bash scripts/ci/workflow-dispatch-with-retry.sh \
+            "$GITHUB_REPOSITORY" \
+            candidate-package-evaluate-v2.yml \
+            /tmp/e2e-dispatch.json \
+            3
 
       - name: Wait for acknowledged lifecycle
         id: wait
