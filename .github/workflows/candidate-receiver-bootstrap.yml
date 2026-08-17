@@ -124,7 +124,8 @@ jobs:
             --file scripts/ci/repository-dispatch-with-retry.sh=scripts/ci/repository-dispatch-with-retry.sh
           python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/candidate-receiver.json
 
-      - name: Install managed receiver files
+      - name: Install receiver bundle atomically
+        id: install
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
@@ -132,33 +133,41 @@ jobs:
           TARGET_BRANCH: ${{ steps.target.outputs.default_branch }}
         run: |
           set -euo pipefail
-          put_file() {
+          head_sha="$(gh api "/repos/$TARGET_REPOSITORY/git/ref/heads/$TARGET_BRANCH" --jq .object.sha)"
+          base_tree="$(gh api "/repos/$TARGET_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)"
+          entries='[]'
+
+          add_blob() {
             local target="$1"
             local source="$2"
-            local message="$3"
-            local content sha body
+            local content body blob_sha
             content="$(base64 -w0 "$source")"
-            sha="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$TARGET_BRANCH" --jq .sha 2>/dev/null || true)"
-            body="$(jq -n \
-              --arg message "$message" \
-              --arg content "$content" \
-              --arg branch "$TARGET_BRANCH" \
-              --arg sha "$sha" \
-              'if $sha == "" then {message:$message,content:$content,branch:$branch} else {message:$message,content:$content,branch:$branch,sha:$sha} end')"
-            gh api --method PUT "/repos/$TARGET_REPOSITORY/contents/$target" --input - <<<"$body" >/dev/null
+            body="$(jq -n --arg content "$content" '{content:$content,encoding:"base64"}')"
+            blob_sha="$(gh api --method POST "/repos/$TARGET_REPOSITORY/git/blobs" --input - <<<"$body" --jq .sha)"
+            entries="$(jq --arg path "$target" --arg sha "$blob_sha" \
+              '. + [{path:$path,mode:"100644",type:"blob",sha:$sha}]' <<<"$entries")"
           }
 
-          put_file .github/workflows/candidate-completion-receipt.yml .github/workflows/candidate-completion-receipt.yml 'ci: install jpapt completion receiver'
-          put_file .github/workflows/candidate-request-rejection.yml .github/workflows/candidate-request-rejection.yml 'ci: install jpapt rejection receiver'
-          put_file scripts/ci/build-candidate-completion-receipt.py scripts/ci/build-candidate-completion-receipt.py 'ci: install jpapt receiver helper'
-          put_file scripts/ci/build-candidate-completion-ack.py scripts/ci/build-candidate-completion-ack.py 'ci: install jpapt receiver helper'
-          put_file scripts/ci/build-candidate-request-rejection.py scripts/ci/build-candidate-request-rejection.py 'ci: install jpapt receiver helper'
-          put_file scripts/ci/validate-candidate-protocol-binding.py scripts/ci/validate-candidate-protocol-binding.py 'ci: install jpapt receiver helper'
-          put_file scripts/ci/repository-dispatch-with-retry.sh scripts/ci/repository-dispatch-with-retry.sh 'ci: install jpapt receiver helper'
+          add_blob .github/workflows/candidate-completion-receipt.yml .github/workflows/candidate-completion-receipt.yml
+          add_blob .github/workflows/candidate-request-rejection.yml .github/workflows/candidate-request-rejection.yml
+          add_blob scripts/ci/build-candidate-completion-receipt.py scripts/ci/build-candidate-completion-receipt.py
+          add_blob scripts/ci/build-candidate-completion-ack.py scripts/ci/build-candidate-completion-ack.py
+          add_blob scripts/ci/build-candidate-request-rejection.py scripts/ci/build-candidate-request-rejection.py
+          add_blob scripts/ci/validate-candidate-protocol-binding.py scripts/ci/validate-candidate-protocol-binding.py
+          add_blob scripts/ci/repository-dispatch-with-retry.sh scripts/ci/repository-dispatch-with-retry.sh
+          add_blob .jpapt/candidate-receiver.json /tmp/candidate-receiver.json
 
-          # The manifest is written last. Its presence therefore means all managed files
-          # reached the target repository during this bootstrap attempt.
-          put_file .jpapt/candidate-receiver.json /tmp/candidate-receiver.json 'ci: record jpapt receiver installation'
+          tree_body="$(jq -n --arg base_tree "$base_tree" --argjson tree "$entries" '{base_tree:$base_tree,tree:$tree}')"
+          tree_sha="$(gh api --method POST "/repos/$TARGET_REPOSITORY/git/trees" --input - <<<"$tree_body" --jq .sha)"
+          commit_body="$(jq -n \
+            --arg message 'ci: install jpapt candidate protocol receiver' \
+            --arg tree "$tree_sha" \
+            --arg parent "$head_sha" \
+            '{message:$message,tree:$tree,parents:[$parent]}')"
+          commit_sha="$(gh api --method POST "/repos/$TARGET_REPOSITORY/git/commits" --input - <<<"$commit_body" --jq .sha)"
+          ref_body="$(jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}')"
+          gh api --method PATCH "/repos/$TARGET_REPOSITORY/git/refs/heads/$TARGET_BRANCH" --input - <<<"$ref_body" >/dev/null
+          echo "target_commit=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Verify installed hashes
         shell: bash
@@ -194,7 +203,9 @@ jobs:
             printf -- '- receiver: `%s`\n' '${{ inputs.repository }}'
             printf -- '- orchestrator: `%s`\n' "$GITHUB_REPOSITORY"
             printf -- '- branch: `%s`\n' '${{ steps.target.outputs.default_branch }}'
+            printf -- '- target commit: `%s`\n' '${{ steps.install.outputs.target_commit }}'
             printf -- '- manifest: `.jpapt/candidate-receiver.json`\n'
+            printf -- '- update mode: `single commit / fast-forward ref`\n'
             echo
             echo '> Receiver Actions variable `JPAPT_ORCHESTRATOR_REPOSITORIES` and secret `JPAPT_ACK_TOKEN` are intentionally not mutated by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"
