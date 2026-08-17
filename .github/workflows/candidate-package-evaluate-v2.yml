@@ -188,6 +188,32 @@ jobs:
             --registry-owner "$GITHUB_REPOSITORY_OWNER" \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: Build running lifecycle snapshot
+        id: lifecycle
+        shell: bash
+        env:
+          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
+          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
+          EVALUATION_RUN_ID: ${{ github.run_id }}
+          EVALUATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/lifecycle
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running \
+            --output .ci/lifecycle/candidate-request-lifecycle.json
+          echo "request_key=$request_key" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve running lifecycle snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-lifecycle-${{ steps.lifecycle.outputs.request_key }}-running
+          path: .ci/lifecycle/candidate-request-lifecycle.json
+          retention-days: 30
+
       - name: Estimate from provenance-matched history
         id: estimate
         env:
