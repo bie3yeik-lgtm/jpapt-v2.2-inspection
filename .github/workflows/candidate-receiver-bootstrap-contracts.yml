@@ -1,0 +1,98 @@
+name: Candidate Receiver Bootstrap Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-receiver-bootstrap.yml
+      - .github/workflows/candidate-receiver-bootstrap-contracts.yml
+      - .github/workflows/candidate-protocol-e2e.yml
+      - contracts/candidate-receiver-installation.schema.json
+      - scripts/ci/build-candidate-receiver-installation.py
+      - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-request-rejection.yml
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/repository-dispatch-with-retry.sh
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-receiver-bootstrap.yml
+      - .github/workflows/candidate-receiver-bootstrap-contracts.yml
+      - .github/workflows/candidate-protocol-e2e.yml
+      - contracts/candidate-receiver-installation.schema.json
+      - scripts/ci/build-candidate-receiver-installation.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-receiver-bootstrap-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate receiver bootstrap contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint receiver workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-receiver-bootstrap.yml
+          .github/workflows/candidate-receiver-bootstrap-contracts.yml
+          .github/workflows/candidate-protocol-e2e.yml
+      - name: Validate manifest builder syntax
+        run: python -m py_compile scripts/ci/build-candidate-receiver-installation.py
+      - name: Validate installation schema JSON
+        run: python -m json.tool contracts/candidate-receiver-installation.schema.json >/dev/null
+      - name: Build and validate managed installation manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIVER_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          ORCHESTRATOR_COMMIT_SHA=0000000000000000000000000000000000000000 \
+          INSTALLED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-receiver-installation.py \
+            --output /tmp/receiver.json \
+            --file .github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml \
+            --file .github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml \
+            --file scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py
+          python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/receiver.json').read_text())
+          assert value['receiver_repository'] == 'owner/receiver'
+          assert value['orchestrator_repository'] == 'owner/orchestrator'
+          assert len(value['managed_files']) == 3
+          assert len({item['path'] for item in value['managed_files']}) == 3
+          PY
+      - name: Verify bootstrap safety boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '[[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'managed path already exists without jpapt manifest' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'existing receiver installation is managed by another orchestrator' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'The manifest is written last.' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'installed receiver hash mismatch' .github/workflows/candidate-receiver-bootstrap.yml
+      - name: Verify E2E manifest preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '.jpapt/candidate-receiver.json' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'receiver installation manifest repository mismatch' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'managed receiver dependency drifted from manifest' .github/workflows/candidate-protocol-e2e.yml
