@@ -1,0 +1,113 @@
+name: Candidate Request Timeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Candidate request correlation ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  timeline:
+    name: Export request lifecycle timeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Collect lifecycle artifacts for request
+        id: collect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          mkdir -p .ci/timeline/artifacts
+          : > .ci/timeline/candidates.args
+          count=0
+          for state in planned dispatched running rejected completed acknowledged; do
+            artifact_name="candidate-lifecycle-$request_key-$state"
+            while IFS=$'\t' read -r artifact_id created_at; do
+              [[ -n "$artifact_id" ]] || continue
+              dir=".ci/timeline/artifacts/$artifact_id"
+              mkdir -p "$dir"
+              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle-$artifact_id.zip
+              unzip -q /tmp/lifecycle-$artifact_id.zip -d "$dir"
+              snapshot="$(find "$dir" -type f -name 'candidate-request-lifecycle.json' -print -quit)"
+              [[ -n "$snapshot" ]] || {
+                echo "::error::artifact $artifact_id ($artifact_name) has no lifecycle snapshot"
+                exit 1
+              }
+              python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
+              actual_request_id="$(jq -r .request_id "$snapshot")"
+              [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+                echo "::error::artifact $artifact_id request_id mismatch"
+                exit 1
+              }
+              printf '%s\t%s\t%s\n' "$artifact_id" "$created_at" "$snapshot" >> .ci/timeline/candidates.args
+              count=$((count + 1))
+            done < <(
+              gh api --paginate \
+                "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
+                --jq '.artifacts[] | select(.expired == false) | [.id, .created_at] | @tsv'
+            )
+          done
+          [[ "$count" -gt 0 ]] || {
+            echo "::error::no unexpired lifecycle artifacts found for request_id=$REQUEST_ID"
+            exit 1
+          }
+          {
+            echo "request_key=$request_key"
+            echo "artifact_count=$count"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build canonical timeline
+        shell: bash
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          args=(--request-id "$REQUEST_ID")
+          while IFS=$'\t' read -r artifact_id created_at snapshot; do
+            args+=(--candidate "github-artifact:$artifact_id=$snapshot")
+          done < .ci/timeline/candidates.args
+          python scripts/ci/build-candidate-request-timeline.py \
+            "${args[@]}" \
+            --output .ci/timeline/candidate-request-timeline.json >/dev/null
+          python scripts/ci/build-candidate-request-timeline.py \
+            --validate .ci/timeline/candidate-request-timeline.json >/dev/null
+      - name: Write timeline summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeline=.ci/timeline/candidate-request-timeline.json
+          {
+            echo '## Candidate request timeline'
+            echo
+            printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
+            printf -- '- request key: `%s`\n' '${{ steps.collect.outputs.request_key }}'
+            printf -- '- artifact observations collected: `%s`\n' '${{ steps.collect.outputs.artifact_count }}'
+            printf -- '- unique lifecycle observations: `%s`\n' "$(jq -r .event_count "$timeline")"
+            printf -- '- current state: **%s**\n' "$(jq -r .current_state "$timeline")"
+            echo
+            echo '| updated_at | state | evaluation | receiver | sources |'
+            echo '|---|---|---|---|---|'
+            jq -r '.events[] | [
+              .snapshot.updated_at,
+              .snapshot.state,
+              (if .snapshot.evaluation_run_id == null then "-" else ((.snapshot.evaluation_run_id|tostring) + "/" + (.snapshot.evaluation_run_attempt|tostring)) end),
+              (if .snapshot.receiver_run_id == null then "-" else (.snapshot.receiver_run_id|tostring) end),
+              (.sources | join(", "))
+            ] | "| `\(.[0])` | `\(.[1])` | `\(.[2])` | `\(.[3])` | `\(.[4])` |"' "$timeline"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve request timeline
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-request-timeline-${{ steps.collect.outputs.request_key }}-${{ github.run_id }}
+          path: .ci/timeline/candidate-request-timeline.json
+          retention-days: 30
