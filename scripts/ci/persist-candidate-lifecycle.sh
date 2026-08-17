@@ -83,22 +83,9 @@ state_tmp="$(mktemp)"
 write_state=true
 if hf buckets cp --token "$HF_TOKEN" "$state_remote" "$state_tmp" >/dev/null 2>&1; then
   python scripts/ci/build-candidate-request-lifecycle.py --validate "$state_tmp" >/dev/null
-  write_state="$(python - "$state_tmp" "$snapshot" <<'PY'
-import json
-import sys
-from datetime import datetime
-from pathlib import Path
-
-def parse(value: str) -> datetime:
-    return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
-
-existing = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-incoming = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-if existing["request_id"] != incoming["request_id"] or existing["state"] != incoming["state"]:
-    raise SystemExit("materialized lifecycle state identity mismatch")
-print("true" if parse(incoming["updated_at"]) >= parse(existing["updated_at"]) else "false")
-PY
-)"
+  write_state="$(python scripts/ci/compare-candidate-lifecycle-state.py \
+    --existing "$state_tmp" \
+    --incoming "$snapshot")"
 fi
 rm -f "$state_tmp"
 if [[ "$write_state" == true ]]; then
