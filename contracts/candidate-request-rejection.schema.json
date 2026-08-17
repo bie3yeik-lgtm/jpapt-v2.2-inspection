@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-request-rejection.schema.json",
+  "title": "CandidateRequestRejectionV1",
+  "description": "client_payload contract for repository_dispatch event_type jpapt.candidate-rejected",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "source_repository",
+    "receipt_repository",
+    "orchestrator_repository",
+    "reason_code",
+    "gateway_run_id",
+    "gateway_run_attempt",
+    "gateway_run_url",
+    "rejected_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+    "source_repository": {"$ref": "#/$defs/repository"},
+    "receipt_repository": {"$ref": "#/$defs/repository"},
+    "orchestrator_repository": {"$ref": "#/$defs/repository"},
+    "reason_code": {"const": "REQUEST_NORMALIZATION_OR_RESOLUTION_FAILED"},
+    "gateway_run_id": {"type": "integer", "minimum": 1},
+    "gateway_run_attempt": {"type": "integer", "minimum": 1},
+    "gateway_run_url": {"type": "string", "format": "uri"},
+    "rejected_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}
+  }
+}
