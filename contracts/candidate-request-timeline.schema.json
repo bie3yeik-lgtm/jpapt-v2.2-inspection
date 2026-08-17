@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jpapt.dev/contracts/candidate-request-timeline.schema.json",
+  "title": "CandidateRequestTimelineV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "request_key",
+    "current_state",
+    "event_count",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{24}$"
+    },
+    "current_state": {
+      "enum": ["planned", "dispatched", "running", "rejected", "completed", "acknowledged"]
+    },
+    "event_count": {"type": "integer", "minimum": 1},
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation_sha256", "sources", "snapshot"],
+        "properties": {
+          "observation_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "snapshot": {
+            "$ref": "candidate-request-lifecycle.schema.json"
+          }
+        }
+      }
+    }
+  }
+}
