@@ -262,6 +262,7 @@ jobs:
             printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
             printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
             printf -- '- completion event: `jpapt.candidate-completed`\n'
+            printf -- '- rejection event: `jpapt.candidate-rejected`\n'
             printf -- '- bucket: `%s`\n' "$HF_BUCKET"
             printf -- '- candidate: `%s`\n' "$candidate"
             printf -- '- package: `%s`\n' "$IMAGE"
@@ -333,3 +334,83 @@ jobs:
           name: candidate-lifecycle-${{ needs.plan.outputs.request_key }}-running
           path: .ci/candidate-request-lifecycle.json
           retention-days: 30
+
+  reject:
+    name: Emit candidate request rejection
+    needs: plan
+    if: ${{ always() && needs.plan.result == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build rejection evidence
+        id: rejection
+        shell: bash
+        env:
+          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}
+          SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository || inputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ github.event.client_payload.receipt_repository || inputs.receipt_repository || github.event.client_payload.source_repository || inputs.source_repository }}
+          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
+          GATEWAY_RUN_ID: ${{ github.run_id }}
+          GATEWAY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GATEWAY_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/rejection
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection .ci/rejection/candidate-request-rejection.json \
+            --dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json
+          request_id="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())
+          print(value['request_id'])
+          PY
+          )"
+          receipt_repository="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())
+          print(value['receipt_repository'])
+          PY
+          )"
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state rejected \
+            --rejection .ci/rejection/candidate-request-rejection.json \
+            --output .ci/rejection/candidate-request-lifecycle.json
+          {
+            echo "request_key=$request_key"
+            echo "receipt_repository=$receipt_repository"
+          } >> "$GITHUB_OUTPUT"
+      - name: Preserve rejection evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-rejection-${{ steps.rejection.outputs.request_key }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/rejection/candidate-request-rejection.json
+          retention-days: 30
+      - name: Preserve rejected lifecycle snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-lifecycle-${{ steps.rejection.outputs.request_key }}-rejected
+          path: .ci/rejection/candidate-request-lifecycle.json
+          retention-days: 30
+      - name: Dispatch rejection event
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ steps.rejection.outputs.receipt_repository }}
+          RECEIPT_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$RECEIPT_TOKEN"
+          if [[ -z "$token" && "$RECEIPT_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            token="$GITHUB_TOKEN"
+          fi
+          [[ -n "$token" ]] || {
+            echo "::error::SOURCE_REPO_TOKEN is required to deliver rejection to $RECEIPT_REPOSITORY"
+            exit 1
+          }
+          GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
+            "$RECEIPT_REPOSITORY" \
+            .ci/rejection/candidate-request-rejection-dispatch.json \
+            3
