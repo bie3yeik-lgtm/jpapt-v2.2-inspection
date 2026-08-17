@@ -19,7 +19,7 @@
     "reason_code": {"const": "REQUEST_NORMALIZATION_OR_RESOLUTION_FAILED"},
     "gateway_run_id": {"type": "integer", "minimum": 1},
     "gateway_run_attempt": {"type": "integer", "minimum": 1},
-    "gateway_run_url": {"type": "string", "format": "uri"},
+    "gateway_run_url": {"type": "string", "format": "uri", "pattern": "^https://"},
     "rejected_at": {"type": "string", "format": "date-time", "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"}
   },
   "$defs": {"repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}}
