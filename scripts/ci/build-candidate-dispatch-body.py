@@ -23,18 +23,29 @@ def parse_bool(raw: object, name: str, default: bool = False) -> bool:
     raise SystemExit(f"{name} must be true or false")
 
 
+def request_value(name: str) -> object:
+    request_path = Path(env("REQUEST_JSON") or "/tmp/request.json")
+    if not request_path.is_file():
+        return None
+    value = json.loads(request_path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise SystemExit(f"{request_path} must contain a JSON object")
+    return value.get(name)
+
+
 def resolved_dry_run() -> bool:
     explicit = env("DRY_RUN")
     if explicit != "":
         return parse_bool(explicit, "DRY_RUN")
+    return parse_bool(request_value("dry_run"), "request dry_run")
 
-    request_path = Path(env("REQUEST_JSON") or "/tmp/request.json")
-    if request_path.is_file():
-        value = json.loads(request_path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise SystemExit(f"{request_path} must contain a JSON object")
-        return parse_bool(value.get("dry_run"), "request dry_run")
-    return False
+
+def resolved_execution_id() -> str:
+    explicit = env("REQUEST_EXECUTION_ID")
+    if explicit:
+        return explicit
+    value = request_value("request_execution_id")
+    return value if isinstance(value, str) else ""
 
 
 def main() -> int:
@@ -45,7 +56,6 @@ def main() -> int:
 
     inputs = {
         "request_id": env("REQUEST_ID"),
-        "request_execution_id": env("REQUEST_EXECUTION_ID"),
         "source_repository": env("SOURCE_REPOSITORY"),
         "receipt_repository": env("RECEIPT_REPOSITORY"),
         "hf_bucket": env("HF_BUCKET"),
@@ -60,6 +70,9 @@ def main() -> int:
         "hf_jobs_image": env("HF_JOBS_IMAGE"),
         "dry_run": resolved_dry_run(),
     }
+    execution_id = resolved_execution_id()
+    if execution_id:
+        inputs["request_execution_id"] = execution_id
     body = {"ref": args.ref, "inputs": inputs}
     compact = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
     with open(args.github_output, "a", encoding="utf-8") as handle:
