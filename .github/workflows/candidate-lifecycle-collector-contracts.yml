@@ -8,6 +8,7 @@ on:
       - .github/workflows/candidate-lifecycle-collector-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
   pull_request:
@@ -16,6 +17,7 @@ on:
       - .github/workflows/candidate-lifecycle-collector-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
   workflow_dispatch:
@@ -51,6 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            scripts/ci/build-candidate-request-lifecycle.py \
             scripts/ci/candidate_lifecycle_common.py \
             scripts/ci/collect-candidate-lifecycle-bucket-events.py
           grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-status.yml
@@ -90,7 +93,56 @@ jobs:
               'requests/key/events/z.lifecycle.json',
           ]
           PY
-      - name: Require timezone-aware lifecycle ordering timestamps
+      - name: Exercise collector download manifest with fake HF client
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-hf
+          cat > /tmp/fake-hf/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+          from pathlib import Path
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'requests/0123456789abcdef01234567/events'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item(prefix + '/z.lifecycle.json'),
+                  Item(prefix + '/ignore.json'),
+                  Item(prefix + '/a.lifecycle.json'),
+              ]
+
+          def download_bucket_files(bucket, *, files, token):
+              assert bucket == 'owner/bucket'
+              assert token == 'synthetic-token'
+              assert [item.path.rsplit('/', 1)[-1] for item, _ in files] == [
+                  'a.lifecycle.json',
+                  'z.lifecycle.json',
+              ]
+              for item, local in files:
+                  Path(local).parent.mkdir(parents=True, exist_ok=True)
+                  Path(local).write_text('{"remote":"' + item.path + '"}\n', encoding='utf-8')
+          PY
+          : > /tmp/collector-output
+          PYTHONPATH=/tmp/fake-hf python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            --bucket owner/bucket \
+            --request-key 0123456789abcdef01234567 \
+            --output-dir /tmp/events \
+            --manifest /tmp/events.tsv \
+            --github-output /tmp/collector-output >/dev/null
+          test "$(wc -l < /tmp/events.tsv)" = 2
+          grep -Fx 'count=2' /tmp/collector-output
+          test "$(sed -n '1p' /tmp/events.tsv | cut -f1)" = 'requests/0123456789abcdef01234567/events/a.lifecycle.json'
+          test "$(sed -n '2p' /tmp/events.tsv | cut -f1)" = 'requests/0123456789abcdef01234567/events/z.lifecycle.json'
+      - name: Require timezone-aware lifecycle timestamps
         shell: bash
         run: |
           set -euo pipefail
@@ -106,6 +158,26 @@ jobs:
           else:
               raise AssertionError('naive timestamp unexpectedly accepted')
           PY
+          cat > /tmp/naive-lifecycle.json <<'JSON'
+          {
+            "schema_version": 1,
+            "request_id": "naive-001",
+            "state": "planned",
+            "source_repository": "owner/source",
+            "receipt_repository": "owner/receiver",
+            "orchestrator_repository": "owner/orchestrator",
+            "gateway_run_id": 1,
+            "evaluation_run_id": null,
+            "evaluation_run_attempt": null,
+            "receipt_sha256": null,
+            "receiver_run_id": null,
+            "updated_at": "2026-08-17T10:00:00"
+          }
+          JSON
+          if python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/naive-lifecycle.json; then
+            echo 'naive lifecycle timestamp unexpectedly accepted' >&2
+            exit 1
+          fi
       - name: Reject malformed collector identities before network access
         shell: bash
         env:
@@ -115,16 +187,16 @@ jobs:
           if python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
             --bucket invalid \
             --request-key 0123456789abcdef01234567 \
-            --output-dir /tmp/events \
-            --manifest /tmp/events.tsv; then
+            --output-dir /tmp/events-invalid \
+            --manifest /tmp/events-invalid.tsv; then
             echo 'invalid bucket unexpectedly accepted' >&2
             exit 1
           fi
           if python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
             --bucket owner/bucket \
             --request-key invalid-key \
-            --output-dir /tmp/events \
-            --manifest /tmp/events.tsv; then
+            --output-dir /tmp/events-invalid \
+            --manifest /tmp/events-invalid.tsv; then
             echo 'invalid request key unexpectedly accepted' >&2
             exit 1
           fi
