@@ -75,6 +75,29 @@ jobs:
           if value['orchestrator_repository'] != sys.argv[2]:
               raise SystemExit('existing receiver installation is managed by another orchestrator')
           PY
+
+            python - /tmp/existing-receiver.json <<'PY' > /tmp/existing-managed.tsv
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          for item in value['managed_files']:
+              print(f"{item['sha256']}\t{item['path']}")
+          PY
+            while IFS=$'\t' read -r expected path; do
+              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$default_branch" --jq .content 2>/dev/null || true)"
+              if [[ -z "$encoded" ]]; then
+                echo "::notice::managed path is missing and will be repaired: $path"
+                continue
+              fi
+              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              [[ "$actual" == "$expected" ]] || {
+                echo "::error::managed path drifted from the owned installation manifest: $path"
+                echo "::error::bootstrap refuses to overwrite a modified managed path; review or restore it first"
+                exit 1
+              }
+            done < /tmp/existing-managed.tsv
+
             if ! python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/existing-receiver.json; then
               echo "::notice::existing receiver manifest is stale; bootstrap will converge it to the canonical bundle"
             fi
@@ -146,6 +169,16 @@ jobs:
           while IFS=$'\t' read -r target source; do
             add_blob "$target" "$source"
           done < <(python scripts/ci/candidate_receiver_bundle.py --tsv)
+
+          if [[ -f /tmp/existing-receiver.json ]]; then
+            while IFS= read -r obsolete; do
+              [[ -n "$obsolete" ]] || continue
+              echo "::notice::removing obsolete previously managed path: $obsolete"
+              entries="$(jq --arg path "$obsolete" \
+                '. + [{path:$path,mode:"100644",type:"blob",sha:null}]' <<<"$entries")"
+            done < <(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json)
+          fi
+
           add_blob .jpapt/candidate-receiver.json /tmp/candidate-receiver.json
 
           tree_body="$(jq -n --arg base_tree "$base_tree" --argjson tree "$entries" '{base_tree:$base_tree,tree:$tree}')"
@@ -185,6 +218,16 @@ jobs:
             }
           done < /tmp/managed.tsv
 
+          if [[ -f /tmp/existing-receiver.json ]]; then
+            while IFS= read -r obsolete; do
+              [[ -n "$obsolete" ]] || continue
+              if gh api "/repos/$TARGET_REPOSITORY/contents/$obsolete?ref=$TARGET_BRANCH" >/dev/null 2>&1; then
+                echo "::error::obsolete managed path still exists after bootstrap: $obsolete"
+                exit 1
+              fi
+            done < <(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json)
+          fi
+
       - name: Summary
         shell: bash
         run: |
@@ -198,6 +241,8 @@ jobs:
             printf -- '- manifest: `.jpapt/candidate-receiver.json`\n'
             printf -- '- bundle: `config/candidate-receiver-bundle.json`\n'
             printf -- '- update mode: `single commit / fast-forward ref`\n'
+            printf -- '- managed drift policy: `fail closed; missing files repaired`\n'
+            printf -- '- obsolete managed paths: `removed atomically`\n'
             echo
             echo '> Receiver Actions variable `JPAPT_ORCHESTRATOR_REPOSITORIES` and secret `JPAPT_ACK_TOKEN` are intentionally not mutated by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"
