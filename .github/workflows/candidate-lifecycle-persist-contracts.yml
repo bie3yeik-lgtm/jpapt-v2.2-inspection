@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F '/requests/$request_key/events/$evidence_key.lifecycle.json' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F '/requests/$request_key/states/$state.json' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F '/evidence/$digest-$name' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '"$base/events/$evidence_key.lifecycle.json"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '"$base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '"$base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'for candidate_state in acknowledged completed rejected running planned' .github/workflows/candidate-request-status.yml
