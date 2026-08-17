@@ -1,0 +1,92 @@
+name: Candidate Request Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Candidate request correlation ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  status:
+    name: Resolve latest request lifecycle state
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve lifecycle artifact
+        id: lifecycle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          mkdir -p .ci/status
+          found=false
+          state=""
+          artifact_id=""
+          for candidate_state in acknowledged completed running planned; do
+            artifact_name="candidate-lifecycle-$request_key-$candidate_state"
+            artifact_id="$(gh api \
+              "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
+              --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty')"
+            if [[ -n "$artifact_id" ]]; then
+              found=true
+              state="$candidate_state"
+              break
+            fi
+          done
+          [[ "$found" == true ]] || {
+            echo "::error::no lifecycle evidence found for request_id=$REQUEST_ID"
+            exit 1
+          }
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle.zip
+          unzip -q /tmp/lifecycle.zip -d .ci/status
+          lifecycle_file="$(find .ci/status -type f -name 'candidate-request-lifecycle.json' -print -quit)"
+          [[ -n "$lifecycle_file" ]] || { echo "::error::lifecycle artifact payload missing"; exit 1; }
+          python scripts/ci/build-candidate-request-lifecycle.py --validate "$lifecycle_file"
+          actual_request_id="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          path = next(Path('.ci/status').rglob('candidate-request-lifecycle.json'))
+          print(json.loads(path.read_text())['request_id'])
+          PY
+          )"
+          [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+            echo "::error::lifecycle artifact request_id mismatch"
+            exit 1
+          }
+          cp "$lifecycle_file" .ci/candidate-request-lifecycle.json
+          {
+            echo "state=$state"
+            echo "request_key=$request_key"
+          } >> "$GITHUB_OUTPUT"
+      - name: Write request status summary
+        shell: bash
+        env:
+          STATE: ${{ steps.lifecycle.outputs.state }}
+          REQUEST_KEY: ${{ steps.lifecycle.outputs.request_key }}
+        run: |
+          {
+            echo '## Candidate request status'
+            echo
+            printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
+            printf -- '- request key: `%s`\n' "$REQUEST_KEY"
+            printf -- '- state: **%s**\n' "$STATE"
+            echo
+            echo '```json'
+            cat .ci/candidate-request-lifecycle.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve queried lifecycle snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-request-status-${{ steps.lifecycle.outputs.request_key }}-${{ github.run_id }}
+          path: .ci/candidate-request-lifecycle.json
+          retention-days: 7
