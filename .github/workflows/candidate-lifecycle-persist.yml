@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Candidate Request Gateway
+      - Candidate Package Evaluate V2
       - Candidate Request Lifecycle Observer
       - Candidate Completion Acknowledgement
     types: [completed]
