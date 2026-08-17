@@ -72,9 +72,7 @@ jobs:
             echo "::error::JPAPT_ACK_TOKEN is required to acknowledge receipt to $ORCHESTRATOR_REPOSITORY"
             exit 1
           }
-          GH_TOKEN="$token" gh api \
-            --method POST \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/$ORCHESTRATOR_REPOSITORY/dispatches" \
-            --input .ci/candidate-completion-ack-dispatch.json
+          GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
+            "$ORCHESTRATOR_REPOSITORY" \
+            .ci/candidate-completion-ack-dispatch.json \
+            3
