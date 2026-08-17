@@ -124,6 +124,8 @@ Semantics:
 
 The distinction is intentional: GitHub accepting a workflow dispatch is not proof that the dispatched evaluation run reached its own request-resolution boundary.
 
+`updated_at` is an offset-aware RFC3339 timestamp. Lifecycle builders, ordering helpers, and JSON Schema reject naive timestamps without `Z` or an explicit `+/-HH:MM` offset.
+
 Artifact lookup uses the first 24 hex characters of `SHA-256(request_id)` as `<request-key>`:
 
 ```text
@@ -181,6 +183,8 @@ Timeline events are ordered by:
 
 The timeline query combines unexpired GitHub lifecycle artifacts with persistent Bucket `events/` when `HF_TOKEN` and a lifecycle Bucket are available. This means GitHub artifacts provide short-term independent evidence while the Bucket provides long-lived history.
 
+Both Status and Timeline use `scripts/ci/collect-candidate-lifecycle-bucket-events.py` for persistent event enumeration and download. This keeps Hugging Face Storage Buckets filtering, deterministic ordering, and manifest generation in one implementation.
+
 ## Persistent lifecycle storage
 
 GitHub Actions artifacts are short-lived operational evidence. `Candidate Lifecycle Persist` copies lifecycle evidence to a dedicated private Hugging Face Bucket after the Gateway, V2 evaluation workflow, lifecycle observer, or ACK receiver completes.
@@ -233,6 +237,14 @@ The direct V2 completion callback, request rejection callback, completion ACK ca
 
 `candidate-completion-reconcile.yml` recovers a preserved receipt after the evaluation workflow terminates. If a matching ACK artifact is absent, it rebuilds the completion envelope and performs bounded redispatch.
 
+## Legacy compatibility entrypoint
+
+`.github/workflows/candidate-package-evaluate.yml` is compatibility-only. It preserves the legacy `jpapt.candidate-evaluate` repository dispatch and manual workflow input surface, but it contains no candidate package build, provider evaluation, HF Jobs execution, or completion implementation.
+
+The wrapper supplies a correlation ID when the legacy caller omitted one, defaults `receipt_repository` to `source_repository`, and forwards the request to `.github/workflows/candidate-package-evaluate-v2.yml` through GitHub workflow dispatch. New integrations should use `Candidate Request Gateway` or V2 directly.
+
+This is deliberate: there is exactly one evaluator implementation and therefore one completion/lifecycle path.
+
 ## Dry-run semantics
 
 Gateway API and manual `workflow_dispatch` inputs both preserve `dry_run` through normalization, Rust resolution, and V2 dispatch.
@@ -263,7 +275,8 @@ No model or evaluation secrets are embedded in protocol payloads.
 ```text
 .github/workflows/candidate-request-gateway.yml
 .github/workflows/candidate-request-rejection.yml
-.github/workflows/candidate-package-evaluate-v2.yml
+.github/workflows/candidate-package-evaluate.yml              # legacy forwarding shim
+.github/workflows/candidate-package-evaluate-v2.yml           # canonical evaluator
 .github/workflows/candidate-completion-receipt.yml
 .github/workflows/candidate-completion-ack.yml
 .github/workflows/candidate-completion-reconcile.yml
@@ -298,4 +311,6 @@ Additional focused contract suites verify behavior that should not be hidden ins
 - `Candidate Dispatch Body Contracts`: Gateway `dry_run` normalization and downstream propagation.
 - `Candidate Dry Run Contracts`: no-compute completion semantics and missing-terminal-result behavior.
 - `Candidate Lifecycle Persist Contracts`: actionlint, shared state ordering, canonical immutable event identity, monotonic materialized-state writes, retry-aware current-state reduction, and persistence path conventions.
-- `Candidate Request Timeline Contracts`: actionlint, shared state ordering, retry-aware timeline reduction, duplicate observation merging, cross-request isolation, and Draft 2020-12 schema validation.
+- `Candidate Lifecycle Collector Contracts`: shared HF Bucket event filtering/download manifest behavior, workflow reuse, malformed identity rejection, and timezone-aware lifecycle validation.
+- `Candidate Request Timeline Contracts`: actionlint, shared state ordering, retry-aware timeline reduction, duplicate observation merging, cross-request isolation, timezone-aware nested lifecycle validation, and Draft 2020-12 schema validation.
+- `Candidate Package Evaluate Legacy Contracts`: guarantees the legacy entrypoint only forwards to V2 and rejects reintroduction of duplicated evaluator implementation.
