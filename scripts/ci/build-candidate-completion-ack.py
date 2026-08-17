@@ -69,6 +69,7 @@ def load_json(path: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--receipt")
+    parser.add_argument("--receipt-sha")
     parser.add_argument("--ack")
     parser.add_argument("--dispatch-body")
     parser.add_argument("--validate")
@@ -76,6 +77,10 @@ def main() -> int:
 
     if args.validate:
         validate_ack(load_json(args.validate))
+        return 0
+
+    if args.receipt_sha:
+        print(canonical_receipt_sha256(load_json(args.receipt_sha)))
         return 0
 
     if not args.receipt or not args.ack or not args.dispatch_body:
