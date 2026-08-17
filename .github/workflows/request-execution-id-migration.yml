@@ -1,0 +1,110 @@
+name: Request Execution ID Migration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/request-execution-id-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Patch Gateway and V2 execution identity wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def patch(path: str, replacements: list[tuple[str, str]]) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              for old, new in replacements:
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:80]!r}')
+                  text = text.replace(old, new, 1)
+              target.write_text(text, encoding='utf-8')
+
+          patch('.github/workflows/candidate-request-gateway.yml', [
+              (
+                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_key: ${{ steps.lifecycle.outputs.request_key }}',
+                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}\n      request_key: ${{ steps.lifecycle.outputs.request_key }}',
+              ),
+              (
+                  '          I_EXECUTE: ${{ inputs.execute }}\n        run: >-',
+                  '          I_EXECUTE: ${{ inputs.execute }}\n          REQUEST_EXECUTION_PREFIX: gw\n        run: >-',
+              ),
+              (
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          GATEWAY_RUN_ID: ${{ github.run_id }}',
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          GATEWAY_RUN_ID: ${{ github.run_id }}',
+              ),
+              (
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}\n          CANDIDATE_ID:',
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}\n          CANDIDATE_ID:',
+              ),
+              (
+                  '          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
+                  '          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}\n          INCLUDE_REQUEST_EXECUTION_ID: "true"\n        run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"',
+              ),
+              (
+                  '          REQUEST_ID: ${{ needs.plan.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}',
+                  '          REQUEST_ID: ${{ needs.plan.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ needs.plan.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}',
+              ),
+              (
+                  '          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}\n          SOURCE_REPOSITORY:',
+                  '          REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}\n          REQUEST_EXECUTION_ID: gw-${{ github.run_id }}-${{ github.run_attempt }}\n          SOURCE_REPOSITORY:',
+              ),
+          ])
+
+          patch('.github/workflows/candidate-package-evaluate-v2.yml', [
+              (
+                  '      request_id:\n        description: Caller correlation ID; generated when blank\n        required: false\n        default: ""\n        type: string\n      source_repository:',
+                  '      request_id:\n        description: Caller correlation ID; generated when blank\n        required: false\n        default: ""\n        type: string\n      request_execution_id:\n        description: Orchestrator execution correlation ID; generated when blank\n        required: false\n        default: ""\n        type: string\n      source_repository:',
+              ),
+              (
+                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      source_repository:',
+                  '      request_id: ${{ steps.resolve.outputs.request_id }}\n      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}\n      source_repository:',
+              ),
+              (
+                  '          I_REQUEST_ID: ${{ inputs.request_id }}\n          I_SOURCE_REPOSITORY:',
+                  '          I_REQUEST_ID: ${{ inputs.request_id }}\n          I_REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}\n          REQUEST_EXECUTION_PREFIX: eval\n          I_SOURCE_REPOSITORY:',
+              ),
+              (
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          EVALUATION_RUN_ID:',
+                  '          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}\n          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}\n          EVALUATION_RUN_ID:',
+              ),
+              (
+                  '          REQUEST_ID: ${{ needs.resolve.outputs.request_id }}\n          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}\n          HF_BUCKET:',
+                  '          REQUEST_ID: ${{ needs.resolve.outputs.request_id }}\n          REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}\n          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}\n          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}\n          HF_BUCKET:',
+              ),
+          ])
+          PY
+      - name: Verify execution identity wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'request_execution_id:' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'REQUEST_EXECUTION_PREFIX: gw' .github/workflows/candidate-request-gateway.yml
+          grep -F 'REQUEST_EXECUTION_PREFIX: eval' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'INCLUDE_REQUEST_EXECUTION_ID: "true"' .github/workflows/candidate-request-gateway.yml
+          grep -F 'REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}' .github/workflows/candidate-package-evaluate-v2.yml
+      - name: Remove one-time migration workflow
+        run: rm .github/workflows/request-execution-id-migration.yml
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/candidate-request-gateway.yml .github/workflows/candidate-package-evaluate-v2.yml .github/workflows/request-execution-id-migration.yml
+          git diff --cached --check
+          git commit -m 'feat: wire request execution identity through Gateway and V2'
+          git push origin HEAD:main
