@@ -24,8 +24,11 @@ env:
   HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
   HF_LIFECYCLE_BUCKET_OVERRIDE: ${{ vars.HF_LIFECYCLE_BUCKET }}
 
+# All lifecycle persisters in this orchestrator are serialized. Immutable event
+# objects are safe concurrently, but the per-state materialized views use a
+# read/compare/write monotonic update and therefore require one writer at a time.
 concurrency:
-  group: candidate-lifecycle-persist-${{ github.event.workflow_run.id || inputs.source_run_id }}
+  group: candidate-lifecycle-persist-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -185,5 +188,5 @@ jobs:
             echo
             printf -- '- source workflow run: `%s`\n' "$RUN_ID"
             printf -- '- bucket: `hf://buckets/%s`\n' "$BUCKET"
-            printf -- '- storage: immutable `events/` + canonical `evidence/` + materialized `states/`\n'
+            printf -- '- storage: immutable `events/` + canonical `evidence/` + monotonic materialized `states/`\n'
           } >> "$GITHUB_STEP_SUMMARY"
