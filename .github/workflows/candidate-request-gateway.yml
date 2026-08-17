@@ -5,9 +5,19 @@ on:
     types: [jpapt.candidate-request]
   workflow_dispatch:
     inputs:
+      request_id:
+        description: Optional caller correlation ID; generated when blank
+        required: false
+        default: ""
+        type: string
       source_repository:
         description: Source GitHub repo owner/name
         required: true
+        type: string
+      receipt_repository:
+        description: Completion receipt repo owner/name; blank = source repository
+        required: false
+        default: ""
         type: string
       hf_bucket:
         description: Optional namespace/bucket
@@ -99,7 +109,9 @@ jobs:
         id: inputs
         env:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          I_REQUEST_ID: ${{ inputs.request_id }}
           I_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          I_RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           I_HF_BUCKET: ${{ inputs.hf_bucket }}
           I_CANDIDATE_ID: ${{ inputs.candidate_id }}
           I_PACKAGE_NAME: ${{ inputs.package_name }}
@@ -187,7 +199,9 @@ jobs:
       - name: Write normalized plan
         shell: bash
         env:
+          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
           IMAGE: ${{ steps.resolve.outputs.image }}
@@ -214,7 +228,10 @@ jobs:
           {
             echo '## Candidate request plan'
             echo
+            printf -- '- request id: `%s`\n' "$REQUEST_ID"
             printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
+            printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
+            printf -- '- completion event: `jpapt.candidate-completed`\n'
             printf -- '- bucket: `%s`\n' "$HF_BUCKET"
             printf -- '- candidate: `%s`\n' "$candidate"
             printf -- '- package: `%s`\n' "$IMAGE"
@@ -236,7 +253,9 @@ jobs:
       - name: Build normalized workflow dispatch body
         id: body
         env:
+          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
           PACKAGE_NAME: ${{ steps.resolve.outputs.package_name }}
