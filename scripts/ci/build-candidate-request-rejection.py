@@ -14,6 +14,19 @@ EVENT_TYPE = "jpapt.candidate-rejected"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REASON_CODE = "REQUEST_NORMALIZATION_OR_RESOLUTION_FAILED"
+REQUIRED_FIELDS = {
+    "schema_version",
+    "request_id",
+    "source_repository",
+    "receipt_repository",
+    "orchestrator_repository",
+    "reason_code",
+    "gateway_run_id",
+    "gateway_run_attempt",
+    "gateway_run_url",
+    "rejected_at",
+}
+OPTIONAL_FIELDS = {"request_execution_id"}
 
 
 def env(name: str, default: str = "") -> str:
@@ -21,25 +34,19 @@ def env(name: str, default: str = "") -> str:
 
 
 def validate(value: dict) -> None:
-    expected = {
-        "schema_version",
-        "request_id",
-        "source_repository",
-        "receipt_repository",
-        "orchestrator_repository",
-        "reason_code",
-        "gateway_run_id",
-        "gateway_run_attempt",
-        "gateway_run_url",
-        "rejected_at",
-    }
-    if set(value) != expected:
-        raise SystemExit("rejection fields mismatch")
+    fields = set(value)
+    missing = sorted(REQUIRED_FIELDS - fields)
+    unknown = sorted(fields - REQUIRED_FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
+        raise SystemExit(f"rejection fields mismatch: missing={missing}, unknown={unknown}")
     if value.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = value.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    execution_id = value.get("request_execution_id")
+    if execution_id is not None and (not isinstance(execution_id, str) or not REQUEST_ID_RE.fullmatch(execution_id)):
+        raise SystemExit("request_execution_id is invalid")
     for field in ("source_repository", "receipt_repository", "orchestrator_repository"):
         repo = value.get(field)
         if not isinstance(repo, str) or not REPOSITORY_RE.fullmatch(repo):
@@ -93,6 +100,9 @@ def main() -> int:
         "gateway_run_url": env("GATEWAY_RUN_URL"),
         "rejected_at": env("REJECTED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    execution_id = env("REQUEST_EXECUTION_ID")
+    if execution_id:
+        rejection["request_execution_id"] = execution_id
     validate(rejection)
 
     rejection_path = Path(args.rejection)
