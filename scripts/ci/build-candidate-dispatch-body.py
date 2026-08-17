@@ -17,7 +17,9 @@ def main() -> int:
     args = parser.parse_args()
 
     inputs = {
+        "request_id": env("REQUEST_ID"),
         "source_repository": env("SOURCE_REPOSITORY"),
+        "receipt_repository": env("RECEIPT_REPOSITORY"),
         "hf_bucket": env("HF_BUCKET"),
         "candidate_id": env("CANDIDATE_ID"),
         "package_name": env("PACKAGE_NAME"),
