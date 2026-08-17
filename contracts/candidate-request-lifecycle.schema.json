@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-request-lifecycle.schema.json",
+  "title": "CandidateRequestLifecycleV1",
+  "description": "Derived request lifecycle snapshot reconstructed from canonical request, completion receipt, and acknowledgement evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "state",
+    "source_repository",
+    "receipt_repository",
+    "orchestrator_repository",
+    "gateway_run_id",
+    "evaluation_run_id",
+    "evaluation_run_attempt",
+    "receipt_sha256",
+    "receiver_run_id",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+    "state": {"type": "string", "enum": ["planned", "running", "completed", "acknowledged"]},
+    "source_repository": {"$ref": "#/$defs/repository"},
+    "receipt_repository": {"$ref": "#/$defs/repository"},
+    "orchestrator_repository": {"$ref": "#/$defs/repository"},
+    "gateway_run_id": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+    "evaluation_run_id": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+    "evaluation_run_attempt": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+    "receipt_sha256": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}]},
+    "receiver_run_id": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "running"}}, "required": ["state"]},
+      "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}}}
+    },
+    {
+      "if": {"properties": {"state": {"const": "completed"}}, "required": ["state"]},
+      "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}, "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    {
+      "if": {"properties": {"state": {"const": "acknowledged"}}, "required": ["state"]},
+      "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}, "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "receiver_run_id": {"type": "integer", "minimum": 1}}}
+    }
+  ],
+  "$defs": {
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}
+  }
+}
