@@ -15,6 +15,20 @@ EVENT_TYPE = "jpapt.candidate-completion-ack"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_FIELDS = {
+    "schema_version",
+    "request_id",
+    "receipt_sha256",
+    "receipt_repository",
+    "orchestrator_repository",
+    "evaluation_run_id",
+    "evaluation_run_attempt",
+    "receiver_repository",
+    "receiver_run_id",
+    "receiver_run_attempt",
+    "receiver_run_url",
+    "accepted_at",
+}
 
 
 def env(name: str, default: str = "") -> str:
@@ -22,16 +36,15 @@ def env(name: str, default: str = "") -> str:
 
 
 def canonical_receipt_sha256(receipt: dict) -> str:
-    payload = json.dumps(
-        receipt,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    payload = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
 def validate_ack(ack: dict) -> None:
+    if set(ack) != EXPECTED_FIELDS:
+        missing = sorted(EXPECTED_FIELDS - set(ack))
+        unknown = sorted(set(ack) - EXPECTED_FIELDS)
+        raise SystemExit(f"ack fields mismatch: missing={missing}, unknown={unknown}")
     if ack.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = ack.get("request_id")
@@ -44,12 +57,7 @@ def validate_ack(ack: dict) -> None:
         value = ack.get(field)
         if not isinstance(value, str) or not REPOSITORY_RE.fullmatch(value):
             raise SystemExit(f"{field} must use owner/name")
-    for field in (
-        "evaluation_run_id",
-        "evaluation_run_attempt",
-        "receiver_run_id",
-        "receiver_run_attempt",
-    ):
+    for field in ("evaluation_run_id", "evaluation_run_attempt", "receiver_run_id", "receiver_run_attempt"):
         value = ack.get(field)
         if not isinstance(value, int) or value < 1:
             raise SystemExit(f"{field} must be a positive integer")
@@ -77,27 +85,17 @@ def main() -> int:
     parser.add_argument("--dispatch-body")
     parser.add_argument("--validate")
     args = parser.parse_args()
-
     if args.validate:
         validate_ack(load_json(args.validate))
         return 0
-
     if args.receipt_sha:
         print(canonical_receipt_sha256(load_json(args.receipt_sha)))
         return 0
-
     if not args.receipt or not args.ack or not args.dispatch_body:
         parser.error("--receipt, --ack, and --dispatch-body are required when building an acknowledgement")
 
     receipt = load_json(args.receipt)
-    required_receipt_fields = (
-        "request_id",
-        "receipt_repository",
-        "orchestrator_repository",
-        "run_id",
-        "run_attempt",
-    )
-    for field in required_receipt_fields:
+    for field in ("request_id", "receipt_repository", "orchestrator_repository", "run_id", "run_attempt"):
         if field not in receipt:
             raise SystemExit(f"receipt is missing {field}")
 
@@ -113,23 +111,16 @@ def main() -> int:
         "receiver_run_id": int(env("RECEIVER_RUN_ID")),
         "receiver_run_attempt": int(env("RECEIVER_RUN_ATTEMPT", "1")),
         "receiver_run_url": env("RECEIVER_RUN_URL"),
-        "accepted_at": env("ACCEPTED_AT")
-        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "accepted_at": env("ACCEPTED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     validate_ack(ack)
-
     ack_path = Path(args.ack)
     dispatch_path = Path(args.dispatch_body)
     ack_path.parent.mkdir(parents=True, exist_ok=True)
     dispatch_path.parent.mkdir(parents=True, exist_ok=True)
     ack_path.write_text(json.dumps(ack, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     dispatch_path.write_text(
-        json.dumps(
-            {"event_type": EVENT_TYPE, "client_payload": ack},
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        + "\n",
+        json.dumps({"event_type": EVENT_TYPE, "client_payload": ack}, separators=(",", ":"), ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     print(ack_path.read_text(encoding="utf-8"), end="")
