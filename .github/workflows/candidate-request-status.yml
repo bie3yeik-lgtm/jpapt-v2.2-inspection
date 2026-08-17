@@ -40,6 +40,7 @@ jobs:
           mkdir -p .ci/status
           bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
           candidates=()
+          persistent_event_count=0
 
           validate_candidate() {
             local file="$1"
@@ -67,6 +68,10 @@ jobs:
               bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
             fi
           fi
+          if [[ -n "$bucket" && ! "$bucket" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::HF lifecycle bucket must use namespace/name"
+            exit 1
+          fi
 
           # Collect every materialized state available from persistent storage.
           # We do not stop at the highest state: a newer retry may legitimately be
@@ -76,10 +81,64 @@ jobs:
               remote="hf://buckets/$bucket/requests/$request_key/states/$candidate_state.json"
               local_file=".ci/status/bucket-$candidate_state.json"
               if hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
-                validate_candidate "$local_file" persistent
-                candidates+=(--candidate "hf-bucket=$local_file")
+                validate_candidate "$local_file" persistent-state
+                candidates+=(--candidate "hf-state:$candidate_state=$local_file")
               fi
             done
+
+            # Immutable events are also read directly. This recovers the newest
+            # observation if persistence stopped after appending events/ but before
+            # updating the materialized states/ view.
+            mkdir -p .ci/status/events
+            REQUEST_KEY="$request_key" HF_LIFECYCLE_BUCKET="$bucket" python - <<'PY' > .ci/status/events.tsv
+          import os
+          import sys
+          from pathlib import Path
+
+          from huggingface_hub import download_bucket_files, list_bucket_tree
+
+          bucket = os.environ['HF_LIFECYCLE_BUCKET']
+          token = os.environ['HF_TOKEN']
+          request_key = os.environ['REQUEST_KEY']
+          prefix = f'requests/{request_key}/events'
+          target = Path('.ci/status/events')
+          try:
+              items = [
+                  item
+                  for item in list_bucket_tree(
+                      bucket,
+                      prefix=prefix,
+                      recursive=True,
+                      token=token,
+                  )
+                  if getattr(item, 'type', None) == 'file'
+                  and item.path.endswith('.lifecycle.json')
+              ]
+          except Exception as error:
+              print(
+                  f'::warning::persistent lifecycle events unavailable for {bucket}/{prefix}: {error}',
+                  file=sys.stderr,
+              )
+              items = []
+
+          downloads = []
+          rows = []
+          for index, item in enumerate(items):
+              local = target / f'{index:06d}-{Path(item.path).name}'
+              downloads.append((item, str(local)))
+              rows.append((item.path, local))
+          if downloads:
+              download_bucket_files(bucket, files=downloads, token=token)
+          for remote, local in rows:
+              print(f'{remote}\t{local}')
+          PY
+
+            while IFS=$'\t' read -r remote local_file; do
+              [[ -n "$remote" ]] || continue
+              validate_candidate "$local_file" persistent-event
+              candidates+=(--candidate "hf-event:$remote=$local_file")
+              persistent_event_count=$((persistent_event_count + 1))
+            done < .ci/status/events.tsv
           fi
 
           # GitHub artifacts are a short-term independent evidence source. Collect
@@ -101,7 +160,7 @@ jobs:
               exit 1
             }
             validate_candidate "$lifecycle_file" artifact
-            candidates+=(--candidate "github-artifact=$lifecycle_file")
+            candidates+=(--candidate "github-artifact:$artifact_id=$lifecycle_file")
           done
 
           (( ${#candidates[@]} > 0 )) || {
@@ -117,6 +176,7 @@ jobs:
           {
             echo "request_key=$request_key"
             echo "bucket=$bucket"
+            echo "persistent_event_count=$persistent_event_count"
           } >> "$GITHUB_OUTPUT"
 
       - name: Write request status summary
@@ -127,6 +187,7 @@ jobs:
           SOURCE: ${{ steps.lifecycle.outputs.source }}
           UPDATED_AT: ${{ steps.lifecycle.outputs.updated_at }}
           CANDIDATE_COUNT: ${{ steps.lifecycle.outputs.candidate_count }}
+          PERSISTENT_EVENT_COUNT: ${{ steps.lifecycle.outputs.persistent_event_count }}
           BUCKET: ${{ steps.lifecycle.outputs.bucket }}
         run: |
           {
@@ -138,6 +199,7 @@ jobs:
             printf -- '- selected evidence source: `%s`\n' "$SOURCE"
             printf -- '- selected updated_at: `%s`\n' "$UPDATED_AT"
             printf -- '- lifecycle candidates considered: `%s`\n' "$CANDIDATE_COUNT"
+            printf -- '- immutable bucket events considered: `%s`\n' "${PERSISTENT_EVENT_COUNT:-0}"
             if [[ -n "$BUCKET" ]]; then
               printf -- '- lifecycle bucket checked: `hf://buckets/%s`\n' "$BUCKET"
             fi
