@@ -8,6 +8,7 @@ on:
       - .github/actionlint.yaml
       - .github/workflows/candidate-completion-ack.yml
       - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-completion-reconcile.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
@@ -30,6 +31,7 @@ on:
       - .github/actionlint.yaml
       - .github/workflows/candidate-completion-ack.yml
       - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-completion-reconcile.yml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
@@ -92,11 +94,10 @@ jobs:
             .github/workflows/candidate-package-evaluate.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
-          # The canonical V2 and gateway summaries use literal Markdown
-          # backticks in single-quoted printf format strings. SC2016 is
-          # informational for those summary-only lines; every other
-          # actionlint/ShellCheck diagnostic remains enabled.
+          # Summary-only Markdown printf strings contain literal backticks.
+          # Ignore SC2016 only for the workflows that intentionally use them.
           actionlint -color -ignore 'SC2016' \
+            .github/workflows/candidate-completion-reconcile.yml \
             .github/workflows/candidate-package-evaluate-v2.yml \
             .github/workflows/candidate-request-gateway.yml
 
@@ -165,6 +166,8 @@ jobs:
             --dispatch-body /tmp/ack-dispatch.json
           python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
 
+          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+
           python - <<'PY'
           import json
           from pathlib import Path
@@ -193,6 +196,9 @@ jobs:
             --receipt /tmp/receipt-reordered.json \
             --ack /tmp/ack-reordered.json \
             --dispatch-body /tmp/ack-reordered-dispatch.json
+
+          reordered_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt-reordered.json)"
+          [[ "$receipt_sha" == "$reordered_sha" ]]
 
           python - <<'PY'
           import json
