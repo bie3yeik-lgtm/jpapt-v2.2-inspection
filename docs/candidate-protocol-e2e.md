@@ -103,17 +103,29 @@ The orchestrator must provide:
 
 ```text
 SOURCE_REPO_TOKEN
+HF_TOKEN
 ```
 
-It is used by bootstrap, synthetic E2E preflight, and `Candidate Package Evaluate V2` when delivering completion/rejection events to external repositories. Installing workflow files also requires that this credential has the corresponding repository capability; bootstrap fails rather than silently degrading when GitHub rejects the atomic branch update.
+`SOURCE_REPO_TOKEN` is used by bootstrap, synthetic E2E preflight, and `Candidate Package Evaluate V2` when delivering completion/rejection events to external repositories. Installing workflow files also requires that this credential has the corresponding repository capability; bootstrap fails rather than silently degrading when GitHub rejects the atomic branch update.
 
-Secrets are capabilities; `JPAPT_ORCHESTRATOR_REPOSITORIES` is the receiver-side trust policy. Both must be configured.
+`HF_TOKEN` is used by request resolution and by the readiness audit to prove that the exact Bucket intended for E2E is reachable. Secrets are capabilities; `JPAPT_ORCHESTRATOR_REPOSITORIES` is the receiver-side trust policy. All required capabilities and trust configuration must be present.
 
 ## Readiness audit
 
-Before running E2E, `Candidate Protocol Readiness` can audit the target repository without changing it. It verifies:
+Before running E2E, run:
+
+```text
+Actions -> Candidate Protocol Readiness -> Run workflow
+```
+
+Use the same `receipt_repository` and `hf_bucket` that will be passed to `Candidate Protocol E2E`. `Candidate Protocol Readiness` audits the target repository and the request-resolution prerequisite without mutating either GitHub repository or the HF Bucket.
+
+It verifies:
 
 - orchestrator `SOURCE_REPO_TOKEN` and `HF_TOKEN` are configured;
+- `hf_bucket` uses `namespace/name` form;
+- `hf://buckets/<hf_bucket>/candidates` is listable with `HF_TOKEN`;
+- at least one canonical `candidate-NNNNNN` identifier is visible under the candidate collection;
 - receiver workflow is reachable;
 - a managed installation manifest is structurally valid when present;
 - the managed path set exactly matches the current canonical receiver bundle;
@@ -122,11 +134,13 @@ Before running E2E, `Candidate Protocol Readiness` can audit the target reposito
 - receiver `JPAPT_ORCHESTRATOR_REPOSITORIES` contains the current orchestrator;
 - receiver secret metadata includes `JPAPT_ACK_TOKEN`.
 
-The audit never reads secret values. A failure to read the required metadata is treated as inability to prove readiness. A stale managed receiver fails readiness and should be updated with `Candidate Receiver Bootstrap` before E2E.
+The HF check is intentionally metadata-only: readiness uses `hf buckets list` and never performs `hf buckets sync`, so candidate/model payload bytes are not downloaded. This catches a missing, inaccessible, or empty candidate collection before a synthetic V2 request is dispatched while preserving the dry-run cost boundary.
+
+The audit never reads secret values. A failure to read required metadata is treated as inability to prove readiness. A stale managed receiver fails readiness and should be updated with `Candidate Receiver Bootstrap` before E2E.
 
 ## Running the E2E workflow
 
-After receiver bootstrap and receiver-side trust/token configuration, run:
+After receiver bootstrap, receiver-side trust/token configuration, and a successful readiness audit, run:
 
 ```text
 Actions -> Candidate Protocol E2E -> Run workflow
@@ -135,7 +149,7 @@ Actions -> Candidate Protocol E2E -> Run workflow
 Required inputs:
 
 - `receipt_repository`: external receiver repository, `owner/name`.
-- `hf_bucket`: an existing `namespace/name` Bucket accepted by the normal request resolver. The E2E run does not download a candidate from it because evaluation is a dry-run.
+- `hf_bucket`: the same existing `namespace/name` Bucket that passed readiness. The E2E run does not download a candidate from it because evaluation is a dry-run, but normal request resolution must still be able to identify a candidate.
 
 Optional inputs:
 
@@ -162,7 +176,9 @@ The workflow does not need to guess the evaluation run ID. Once `acknowledged` a
 
 ## Failure interpretation
 
-A failure before dispatch normally indicates configuration, bootstrap drift, stale receiver installation, or receiver trust/capability problems. A timeout after dispatch means the synthetic request did not reach end-to-end acknowledgement. Inspect the most advanced lifecycle artifact for the request:
+A readiness failure on the HF Bucket means the E2E request prerequisite is not usable: the Bucket is malformed, inaccessible with the configured token, or exposes no canonical candidate ID. Fix that before dispatching E2E.
+
+A failure after readiness but before E2E dispatch normally indicates configuration, bootstrap drift, stale receiver installation, or receiver trust/capability problems. A timeout after dispatch means the synthetic request did not reach end-to-end acknowledgement. Inspect the most advanced lifecycle artifact for the request:
 
 ```text
 running
@@ -177,6 +193,8 @@ acknowledged
 Normal completion reconciliation remains active, so temporary completion dispatch loss may recover during the same E2E window.
 
 ## Safety and cost
+
+`Candidate Protocol Readiness` only lists HF Bucket metadata and reads GitHub repository/action metadata. It does not sync candidate payloads, build packages, run ONNX Runtime, or launch Hugging Face Jobs.
 
 `Candidate Protocol E2E` is manual-only. It refuses a receiver equal to the orchestrator repository, so success necessarily exercises cross-repository delivery. The dispatch body hard-codes:
 
