@@ -99,7 +99,10 @@ jobs:
         run: |
           set -euo pipefail
           jq '.managed_files = .managed_files[:-1]' /tmp/receiver.json > /tmp/stale.json
-          ! python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/stale.json
+          if python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/stale.json; then
+            echo 'stale installation unexpectedly matched canonical bundle' >&2
+            exit 1
+          fi
 
           zero_sha="$(printf '0%.0s' {1..64})"
           jq --arg sha "$zero_sha" '.managed_files += [{"path":"scripts/ci/obsolete-managed.py","sha256":$sha}]' \
@@ -107,9 +110,15 @@ jobs:
           test "$(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/obsolete.json)" = scripts/ci/obsolete-managed.py
 
           jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/naive.json
-          ! python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/naive.json
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/naive.json; then
+            echo 'naive installed_at unexpectedly passed validation' >&2
+            exit 1
+          fi
           jq '.unexpected="x"' /tmp/receiver.json > /tmp/extra.json
-          ! python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/extra.json
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/extra.json; then
+            echo 'unknown installation field unexpectedly passed validation' >&2
+            exit 1
+          fi
       - name: Verify canonical bundle dependency closure
         shell: bash
         run: |
