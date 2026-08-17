@@ -9,6 +9,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from candidate_protocol_common import parse_rfc3339_time
+
 EVENT_TYPE = "jpapt.candidate-completion-ack"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -54,9 +56,10 @@ def validate_ack(ack: dict) -> None:
     receiver_run_url = ack.get("receiver_run_url")
     if not isinstance(receiver_run_url, str) or not receiver_run_url.startswith("https://"):
         raise SystemExit("receiver_run_url is invalid")
-    accepted_at = ack.get("accepted_at")
-    if not isinstance(accepted_at, str) or not accepted_at:
-        raise SystemExit("accepted_at is required")
+    try:
+        parse_rfc3339_time(ack.get("accepted_at"), "accepted_at")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def load_json(path: str) -> dict:
