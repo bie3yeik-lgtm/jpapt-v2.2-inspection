@@ -171,6 +171,10 @@ jobs:
           SUITE: ${{ steps.resolve.outputs.suite }}
           EXECUTOR: ${{ steps.resolve.outputs.executor }}
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
+          SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
+          DATASET_SOURCE: ${{ steps.resolve.outputs.dataset_source }}
+          DATASET_ID: ${{ steps.resolve.outputs.dataset_id }}
         run: >-
           python scripts/ci/estimate-candidate-runtime.py
           --repository "$GITHUB_REPOSITORY"
@@ -193,10 +197,15 @@ jobs:
           ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
           PROVIDER: ${{ steps.resolve.outputs.provider }}
           ESTIMATE_METHOD: ${{ steps.estimate.outputs.method }}
+          ESTIMATE_COHORT: ${{ steps.estimate.outputs.cohort }}
           ESTIMATE_SAMPLES: ${{ steps.estimate.outputs.samples }}
+          ESTIMATE_AVAILABLE_SAMPLES: ${{ steps.estimate.outputs.available_samples }}
           ESTIMATE_MINUTES: ${{ steps.estimate.outputs.estimate_minutes }}
           ESTIMATE_P50: ${{ steps.estimate.outputs.p50_minutes }}
           ESTIMATE_P90: ${{ steps.estimate.outputs.p90_minutes }}
+          OBSERVED_DATASET_BYTES: ${{ steps.estimate.outputs.observed_dataset_bytes_p50 }}
+          OBSERVED_PACKAGE_BYTES: ${{ steps.estimate.outputs.observed_package_bytes_p50 }}
+          OBSERVED_CANDIDATE_BYTES: ${{ steps.estimate.outputs.observed_candidate_bytes_p50 }}
           EXECUTE: ${{ steps.inputs.outputs.execute }}
         run: |
           candidate="${CANDIDATE_ID:-latest}"
@@ -211,10 +220,14 @@ jobs:
             printf -- '- dataset: `%s` / `%s`\n' "$DATASET_SOURCE" "$dataset"
             printf -- '- suite/backend: `%s` / `%s` / `%s`\n' "$SUITE" "$EXECUTOR" "$ENVIRONMENT"
             printf -- '- provider: `%s`\n' "$PROVIDER"
-            printf -- '- estimate method: `%s` (`%s` samples)\n' "$ESTIMATE_METHOD" "$ESTIMATE_SAMPLES"
+            printf -- '- estimate method/cohort: `%s` / `%s`\n' "$ESTIMATE_METHOD" "$ESTIMATE_COHORT"
+            printf -- '- estimate samples: `%s` selected / `%s` available\n' "$ESTIMATE_SAMPLES" "$ESTIMATE_AVAILABLE_SAMPLES"
             printf -- '- estimated upper-bound runtime: **~%s min**\n' "$ESTIMATE_MINUTES"
             if [[ "$ESTIMATE_METHOD" == historical ]]; then
               printf -- '- observed p50 / p90: `%s` / `%s` min\n' "$ESTIMATE_P50" "$ESTIMATE_P90"
+              [[ -n "$OBSERVED_DATASET_BYTES" ]] && printf -- '- cohort median dataset bytes: `%s`\n' "$OBSERVED_DATASET_BYTES"
+              [[ -n "$OBSERVED_PACKAGE_BYTES" ]] && printf -- '- cohort median package bytes: `%s`\n' "$OBSERVED_PACKAGE_BYTES"
+              [[ -n "$OBSERVED_CANDIDATE_BYTES" ]] && printf -- '- cohort median native candidate bytes: `%s`\n' "$OBSERVED_CANDIDATE_BYTES"
             fi
             printf -- '- execute: `%s`\n' "$EXECUTE"
           } >> "$GITHUB_STEP_SUMMARY"
