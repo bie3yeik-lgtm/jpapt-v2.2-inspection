@@ -8,6 +8,7 @@ on:
       - .github/workflows/candidate-receiver-bootstrap.yml
       - .github/workflows/candidate-receiver-bootstrap-contracts.yml
       - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-readiness.yml
       - contracts/candidate-receiver-installation.schema.json
       - scripts/ci/build-candidate-receiver-installation.py
       - .github/workflows/candidate-completion-receipt.yml
@@ -23,6 +24,7 @@ on:
       - .github/workflows/candidate-receiver-bootstrap.yml
       - .github/workflows/candidate-receiver-bootstrap-contracts.yml
       - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-readiness.yml
       - contracts/candidate-receiver-installation.schema.json
       - scripts/ci/build-candidate-receiver-installation.py
   workflow_dispatch:
@@ -53,6 +55,7 @@ jobs:
           .github/workflows/candidate-receiver-bootstrap.yml
           .github/workflows/candidate-receiver-bootstrap-contracts.yml
           .github/workflows/candidate-protocol-e2e.yml
+          .github/workflows/candidate-protocol-readiness.yml
       - name: Validate manifest builder syntax
         run: python -m py_compile scripts/ci/build-candidate-receiver-installation.py
       - name: Validate installation schema JSON
@@ -96,3 +99,13 @@ jobs:
           grep -F '.jpapt/candidate-receiver.json' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'receiver installation manifest repository mismatch' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'managed receiver dependency drifted from manifest' .github/workflows/candidate-protocol-e2e.yml
+      - name: Verify readiness audit contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'SOURCE_REPO_TOKEN is not configured' .github/workflows/candidate-protocol-readiness.yml
+          grep -F 'HF_TOKEN is not configured' .github/workflows/candidate-protocol-readiness.yml
+          grep -F 'JPAPT_ORCHESTRATOR_REPOSITORIES' .github/workflows/candidate-protocol-readiness.yml
+          grep -F 'JPAPT_ACK_TOKEN' .github/workflows/candidate-protocol-readiness.yml
+          grep -F 'managed path hash mismatch' .github/workflows/candidate-protocol-readiness.yml
+          grep -F '**Readiness: PASS**' .github/workflows/candidate-protocol-readiness.yml
