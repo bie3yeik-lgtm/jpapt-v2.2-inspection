@@ -15,12 +15,13 @@ EVENT_TYPE = "jpapt.candidate-completion-ack"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-EXPECTED_FIELDS = {
+REQUIRED_FIELDS = {
     "schema_version", "request_id", "receipt_sha256", "receipt_repository",
     "orchestrator_repository", "evaluation_run_id", "evaluation_run_attempt",
     "receiver_repository", "receiver_run_id", "receiver_run_attempt",
     "receiver_run_url", "accepted_at",
 }
+OPTIONAL_FIELDS = {"request_execution_id"}
 
 
 def env(name: str, default: str = "") -> str:
@@ -33,15 +34,19 @@ def canonical_receipt_sha256(receipt: dict) -> str:
 
 
 def validate_ack(ack: dict) -> None:
-    if set(ack) != EXPECTED_FIELDS:
-        missing = sorted(EXPECTED_FIELDS - set(ack))
-        unknown = sorted(set(ack) - EXPECTED_FIELDS)
+    fields = set(ack)
+    missing = sorted(REQUIRED_FIELDS - fields)
+    unknown = sorted(fields - REQUIRED_FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
         raise SystemExit(f"ack fields mismatch: missing={missing}, unknown={unknown}")
     if ack.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = ack.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    execution_id = ack.get("request_execution_id")
+    if execution_id is not None and (not isinstance(execution_id, str) or not REQUEST_ID_RE.fullmatch(execution_id)):
+        raise SystemExit("request_execution_id is invalid")
     receipt_sha256 = ack.get("receipt_sha256")
     if not isinstance(receipt_sha256, str) or not SHA256_RE.fullmatch(receipt_sha256):
         raise SystemExit("receipt_sha256 is invalid")
@@ -103,6 +108,8 @@ def main() -> int:
         "receiver_run_url": env("RECEIVER_RUN_URL"),
         "accepted_at": env("ACCEPTED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if receipt.get("request_execution_id"):
+        ack["request_execution_id"] = receipt["request_execution_id"]
     validate_ack(ack)
     ack_path = Path(args.ack)
     dispatch_path = Path(args.dispatch_body)
