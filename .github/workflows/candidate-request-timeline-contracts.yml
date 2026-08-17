@@ -1,0 +1,107 @@
+name: Candidate Request Timeline Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-request-timeline-contracts.yml
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-request-timeline-contracts.yml
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-request-timeline-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate request timeline reduction
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate helper and schema syntax
+        run: |
+          python -m py_compile scripts/ci/build-candidate-request-timeline.py
+          python -m json.tool contracts/candidate-request-timeline.schema.json >/dev/null
+      - name: Build retry-aware lifecycle fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=timeline-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=100 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state planned --output /tmp/planned.json >/dev/null
+
+          REQUEST_ID=timeline-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=200 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          RECEIPT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          RECEIVER_RUN_ID=300 \
+          UPDATED_AT=2026-08-17T11:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged --output /tmp/old-ack.json >/dev/null
+
+          REQUEST_ID=timeline-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=400 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T12:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/new-running.json >/dev/null
+      - name: Build timeline, deduplicate observations, and choose latest retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-request-timeline.py \
+            --request-id timeline-001 \
+            --candidate artifact=/tmp/planned.json \
+            --candidate artifact=/tmp/old-ack.json \
+            --candidate bucket=/tmp/old-ack.json \
+            --candidate artifact=/tmp/new-running.json \
+            --output /tmp/timeline.json >/dev/null
+          python scripts/ci/build-candidate-request-timeline.py --validate /tmp/timeline.json >/dev/null
+          test "$(jq -r .event_count /tmp/timeline.json)" = 3
+          test "$(jq -r .current_state /tmp/timeline.json)" = running
+          test "$(jq -r '.events[1].sources | join(",")' /tmp/timeline.json)" = artifact,bucket
+          test "$(jq -r '.events[2].snapshot.evaluation_run_id' /tmp/timeline.json)" = 400
+      - name: Reject cross-request timeline contamination
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=timeline-other \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=999 \
+          UPDATED_AT=2026-08-17T13:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state planned --output /tmp/other.json >/dev/null
+          if python scripts/ci/build-candidate-request-timeline.py \
+            --request-id timeline-001 \
+            --candidate artifact=/tmp/other.json \
+            --output /tmp/invalid-timeline.json; then
+            echo 'cross-request snapshot unexpectedly accepted' >&2
+            exit 1
+          fi
