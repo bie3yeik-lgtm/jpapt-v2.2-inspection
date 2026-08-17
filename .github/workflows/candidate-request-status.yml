@@ -12,13 +12,23 @@ permissions:
   contents: read
   actions: read
 
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
+  HF_LIFECYCLE_BUCKET_OVERRIDE: ${{ vars.HF_LIFECYCLE_BUCKET }}
+
 jobs:
   status:
     name: Resolve latest request lifecycle state
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Resolve lifecycle artifact
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install HF client
+        run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2"
+      - name: Resolve lifecycle evidence
         id: lifecycle
         shell: bash
         env:
@@ -30,48 +40,98 @@ jobs:
           mkdir -p .ci/status
           found=false
           state=""
-          artifact_id=""
-          for candidate_state in acknowledged completed rejected running planned; do
-            artifact_name="candidate-lifecycle-$request_key-$candidate_state"
-            artifact_id="$(gh api \
-              "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
-              --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty')"
-            if [[ -n "$artifact_id" ]]; then
-              found=true
-              state="$candidate_state"
-              break
+          source=""
+          bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
+
+          if [[ -n "${HF_TOKEN:-}" && -z "$bucket" ]]; then
+            namespace="${HF_DEFAULT_NAMESPACE:-}"
+            if [[ -z "$namespace" ]]; then
+              namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
             fi
-          done
+            if [[ -n "$namespace" ]]; then
+              bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
+            fi
+          fi
+
+          if [[ -n "${HF_TOKEN:-}" && -n "$bucket" ]]; then
+            for candidate_state in acknowledged completed rejected running planned; do
+              remote="hf://buckets/$bucket/requests/$request_key/states/$candidate_state.json"
+              local_file=".ci/status/bucket-$candidate_state.json"
+              if HF_TOKEN="$HF_TOKEN" hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
+                python scripts/ci/build-candidate-request-lifecycle.py --validate "$local_file" >/dev/null
+                actual_request_id="$(python - "$local_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          print(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))['request_id'])
+          PY
+          )"
+                [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+                  echo "::error::persistent lifecycle request_id mismatch"
+                  exit 1
+                }
+                cp "$local_file" .ci/candidate-request-lifecycle.json
+                found=true
+                state="$candidate_state"
+                source="hf-bucket"
+                break
+              fi
+            done
+          fi
+
+          if [[ "$found" != true ]]; then
+            artifact_id=""
+            for candidate_state in acknowledged completed rejected running planned; do
+              artifact_name="candidate-lifecycle-$request_key-$candidate_state"
+              artifact_id="$(gh api \
+                "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
+                --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty')"
+              if [[ -n "$artifact_id" ]]; then
+                state="$candidate_state"
+                source="github-artifact"
+                found=true
+                break
+              fi
+            done
+            if [[ "$found" == true ]]; then
+              mkdir -p .ci/status/artifact
+              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle.zip
+              unzip -q /tmp/lifecycle.zip -d .ci/status/artifact
+              lifecycle_file="$(find .ci/status/artifact -type f -name 'candidate-request-lifecycle.json' -print -quit)"
+              [[ -n "$lifecycle_file" ]] || { echo "::error::lifecycle artifact payload missing"; exit 1; }
+              python scripts/ci/build-candidate-request-lifecycle.py --validate "$lifecycle_file" >/dev/null
+              actual_request_id="$(python - "$lifecycle_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          print(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))['request_id'])
+          PY
+          )"
+              [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+                echo "::error::lifecycle artifact request_id mismatch"
+                exit 1
+              }
+              cp "$lifecycle_file" .ci/candidate-request-lifecycle.json
+            fi
+          fi
+
           [[ "$found" == true ]] || {
             echo "::error::no lifecycle evidence found for request_id=$REQUEST_ID"
             exit 1
           }
-          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle.zip
-          unzip -q /tmp/lifecycle.zip -d .ci/status
-          lifecycle_file="$(find .ci/status -type f -name 'candidate-request-lifecycle.json' -print -quit)"
-          [[ -n "$lifecycle_file" ]] || { echo "::error::lifecycle artifact payload missing"; exit 1; }
-          python scripts/ci/build-candidate-request-lifecycle.py --validate "$lifecycle_file"
-          actual_request_id="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          path = next(Path('.ci/status').rglob('candidate-request-lifecycle.json'))
-          print(json.loads(path.read_text())['request_id'])
-          PY
-          )"
-          [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
-            echo "::error::lifecycle artifact request_id mismatch"
-            exit 1
-          }
-          cp "$lifecycle_file" .ci/candidate-request-lifecycle.json
           {
             echo "state=$state"
             echo "request_key=$request_key"
+            echo "source=$source"
+            echo "bucket=$bucket"
           } >> "$GITHUB_OUTPUT"
       - name: Write request status summary
         shell: bash
         env:
           STATE: ${{ steps.lifecycle.outputs.state }}
           REQUEST_KEY: ${{ steps.lifecycle.outputs.request_key }}
+          SOURCE: ${{ steps.lifecycle.outputs.source }}
+          BUCKET: ${{ steps.lifecycle.outputs.bucket }}
         run: |
           {
             echo '## Candidate request status'
@@ -79,6 +139,10 @@ jobs:
             printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
             printf -- '- request key: `%s`\n' "$REQUEST_KEY"
             printf -- '- state: **%s**\n' "$STATE"
+            printf -- '- evidence source: `%s`\n' "$SOURCE"
+            if [[ "$SOURCE" == "hf-bucket" ]]; then
+              printf -- '- lifecycle bucket: `hf://buckets/%s`\n' "$BUCKET"
+            fi
             echo
             echo '```json'
             cat .ci/candidate-request-lifecycle.json
