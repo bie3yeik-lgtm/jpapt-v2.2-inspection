@@ -81,6 +81,12 @@ jobs:
           PY
           )"
           [[ "$expected" == "$actual" ]] || { echo "::error::acknowledgement receipt hash mismatch"; exit 1; }
+      - name: Validate acknowledgement binding
+        run: >-
+          python scripts/ci/validate-candidate-protocol-binding.py
+          --receipt .ci/receipt/candidate-completion-receipt.json
+          --ack .ci/candidate-completion-ack.json
+          --orchestrator-repository "${{ github.repository }}"
       - name: Build acknowledged lifecycle snapshot
         id: lifecycle
         shell: bash
