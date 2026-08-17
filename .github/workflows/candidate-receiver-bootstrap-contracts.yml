@@ -13,6 +13,7 @@ on:
       - scripts/ci/build-candidate-receiver-installation.py
       - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-request-rejection.yml
+      - scripts/ci/candidate_protocol_common.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-request-rejection.py
@@ -27,6 +28,14 @@ on:
       - .github/workflows/candidate-protocol-readiness.yml
       - contracts/candidate-receiver-installation.schema.json
       - scripts/ci/build-candidate-receiver-installation.py
+      - .github/workflows/candidate-completion-receipt.yml
+      - .github/workflows/candidate-request-rejection.yml
+      - scripts/ci/candidate_protocol_common.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/repository-dispatch-with-retry.sh
   workflow_dispatch:
 
 permissions:
@@ -57,7 +66,10 @@ jobs:
           .github/workflows/candidate-protocol-e2e.yml
           .github/workflows/candidate-protocol-readiness.yml
       - name: Validate manifest builder syntax
-        run: python -m py_compile scripts/ci/build-candidate-receiver-installation.py
+        run: |
+          python -m py_compile \
+            scripts/ci/candidate_protocol_common.py \
+            scripts/ci/build-candidate-receiver-installation.py
       - name: Validate installation schema JSON
         run: python -m json.tool contracts/candidate-receiver-installation.schema.json >/dev/null
       - name: Build and validate managed installation manifest
@@ -72,6 +84,7 @@ jobs:
             --output /tmp/receiver.json \
             --file .github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml \
             --file .github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml \
+            --file scripts/ci/candidate_protocol_common.py=scripts/ci/candidate_protocol_common.py \
             --file scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py
           python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
           python - <<'PY'
@@ -80,9 +93,20 @@ jobs:
           value = json.loads(Path('/tmp/receiver.json').read_text())
           assert value['receiver_repository'] == 'owner/receiver'
           assert value['orchestrator_repository'] == 'owner/orchestrator'
-          assert len(value['managed_files']) == 3
-          assert len({item['path'] for item in value['managed_files']}) == 3
+          paths = {item['path'] for item in value['managed_files']}
+          assert 'scripts/ci/candidate_protocol_common.py' in paths
+          assert len(value['managed_files']) == 4
+          assert len(paths) == 4
           PY
+      - name: Verify receiver transitive dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'from candidate_protocol_common import' scripts/ci/build-candidate-completion-receipt.py
+          grep -F 'from candidate_protocol_common import' scripts/ci/build-candidate-completion-ack.py
+          grep -F 'from candidate_protocol_common import' scripts/ci/build-candidate-request-rejection.py
+          test "$(grep -Fc 'scripts/ci/candidate_protocol_common.py' .github/workflows/candidate-receiver-bootstrap.yml)" -ge 3
+          grep -F 'scripts/ci/candidate_protocol_common.py' .github/workflows/candidate-protocol-e2e.yml
       - name: Verify bootstrap safety boundaries
         shell: bash
         run: |
