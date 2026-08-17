@@ -60,11 +60,11 @@ def validate(snapshot: dict) -> None:
     ):
         raise SystemExit("receipt_sha256 is invalid")
     state = snapshot["state"]
-    if state in {"running", "completed", "acknowledged"}:
+    if state in {"completed", "acknowledged"}:
         if snapshot["evaluation_run_id"] is None or snapshot["evaluation_run_attempt"] is None:
             raise SystemExit(f"{state} requires evaluation run identity")
-    if state in {"completed", "acknowledged"} and snapshot["receipt_sha256"] is None:
-        raise SystemExit(f"{state} requires receipt_sha256")
+        if snapshot["receipt_sha256"] is None:
+            raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
         raise SystemExit("acknowledged requires receiver_run_id")
     if not isinstance(snapshot.get("updated_at"), str) or not snapshot["updated_at"]:
