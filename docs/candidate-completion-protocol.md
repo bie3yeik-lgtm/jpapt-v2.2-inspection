@@ -231,9 +231,13 @@ Persistence workflow runs are serialized at repository scope. In addition, `comp
 
 ## Retry policy
 
-Repository dispatch delivery uses `scripts/ci/repository-dispatch-with-retry.sh` with a bounded three-attempt retry by default. It never retries indefinitely.
+Both protocol ingress and protocol egress use bounded retries and fail-fast structural validation.
 
-The direct V2 completion callback, request rejection callback, completion ACK callback, and reconciliation redispatch all use the bounded retry helper. Duplicate event delivery is expected protocol behavior; completion consumers are idempotent by `receipt_sha256`.
+Workflow dispatch delivery uses `scripts/ci/workflow-dispatch-with-retry.sh`. Before any GitHub API call, it requires a valid JSON object with a non-empty string `ref` and, when present, an object-valued `inputs`. The Candidate Request Gateway and legacy compatibility wrapper both use this helper to submit the canonical V2 evaluator. Structurally invalid dispatch bodies are rejected immediately and are never retried.
+
+Repository dispatch delivery uses `scripts/ci/repository-dispatch-with-retry.sh`. Before any GitHub API call, it requires a valid JSON object with a 1..100 character `event_type` and an object-valued `client_payload`. The direct V2 completion callback, request rejection callback, completion ACK callback, and reconciliation redispatch all use this helper.
+
+Both helpers use a bounded three-attempt retry by default and never retry indefinitely. Retries are reserved for transport/API failure after local validation succeeds. Duplicate repository event delivery is expected protocol behavior; completion consumers are idempotent by `receipt_sha256`.
 
 `candidate-completion-reconcile.yml` recovers a preserved receipt after the evaluation workflow terminates. If a matching ACK artifact is absent, it rebuilds the completion envelope and performs bounded redispatch.
 
@@ -307,7 +311,8 @@ Each condition has a different recovery action. Lifecycle persistence can be bac
 
 Additional focused contract suites verify behavior that should not be hidden inside the broad protocol suite:
 
-- `Candidate Dispatch Retry Contracts`: bounded retry success, retry exhaustion, and invalid invocation behavior.
+- `Candidate Dispatch Retry Contracts`: repository-dispatch bounded retry success/exhaustion plus fail-fast rejection of malformed repository, JSON, event type, and payload bodies.
+- `Candidate Workflow Dispatch Retry Contracts`: workflow-dispatch bounded retry success/exhaustion, Gateway/legacy helper integration, and fail-fast rejection of malformed JSON/ref/input bodies.
 - `Candidate Dispatch Body Contracts`: Gateway `dry_run` normalization and downstream propagation.
 - `Candidate Dry Run Contracts`: no-compute completion semantics and missing-terminal-result behavior.
 - `Candidate Lifecycle Persist Contracts`: actionlint, shared state ordering, canonical immutable event identity, monotonic materialized-state writes, retry-aware current-state reduction, and persistence path conventions.
