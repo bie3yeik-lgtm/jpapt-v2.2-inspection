@@ -50,9 +50,13 @@ The installation manifest is `CandidateReceiverInstallationV1`. It records:
 - every managed receiver path and its SHA-256;
 - an offset-aware RFC3339 installation timestamp.
 
-The complete receiver bundle, including the manifest, is written as **one Git commit** using the Git Data API and then attached to the target default branch with a non-forced fast-forward ref update. A branch race or rejected update therefore cannot leave only some managed paths committed by the bootstrap run.
+The complete receiver bundle, including the manifest, is written as **one Git commit** using the Git Data API and then attached to the target default branch with a non-forced fast-forward ref update. The bootstrap captures the receiver branch head before validating any existing managed files and uses that exact commit as the base tree and parent of the installation commit. If the receiver branch moves after preflight, the non-forced ref update fails rather than rebasing the installation onto unvalidated state. A concurrent change is therefore handled by a safe rerun instead of being silently overwritten.
 
-A later bootstrap accepts an existing installation only when its manifest binds the same receiver to the same orchestrator. An older owned manifest that no longer matches the canonical bundle is treated as stale and is converged by bootstrap to the current bundle. If no manifest exists, already-present managed files are compared byte-for-byte with the current canonical source. Exact matches are treated as a recoverable prior/partial installation; differing files require explicit `adopt_existing=true` after review.
+For an existing managed installation, bootstrap treats the current manifest as an ownership record before changing anything. Every existing managed path is compared with the SHA-256 recorded in that manifest. A missing managed path is repairable; a present path whose bytes differ is treated as possible human or out-of-band modification and bootstrap fails closed rather than overwriting it. This protection applies before stale-bundle convergence.
+
+An older owned manifest that no longer matches the canonical bundle is treated as stale and is converged to the current bundle only after the old managed paths pass the ownership/hash check. Newly required files are added, missing files are repaired, and paths that were managed by the old manifest but were intentionally removed from the canonical bundle are deleted in the same atomic Git tree update. An obsolete path that is already absent is simply treated as already converged.
+
+If no manifest exists, already-present canonical managed files are compared byte-for-byte with the current source. Exact matches are treated as a recoverable prior/partial installation; differing files require explicit `adopt_existing=true` after review.
 
 Receiver Actions variables and secrets are intentionally not mutated by bootstrap. Capability/trust configuration remains an explicit repository-owner operation.
 
