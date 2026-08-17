@@ -1,0 +1,237 @@
+name: Candidate Protocol Synthetic E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-synthetic-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Exercise synthetic protocol chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compile protocol helpers
+        run: |
+          python -m py_compile \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-dispatch-body.py \
+            scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/build-candidate-request-timeline.py \
+            scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/normalize-candidate-request.py \
+            scripts/ci/validate-candidate-protocol-binding.py
+      - name: Normalize synthetic request and build V2 dispatch body
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/normalize.out
+          I_REQUEST_ID=synthetic-e2e-001 \
+          I_SOURCE_REPOSITORY=owner/source \
+          I_RECEIPT_REPOSITORY=owner/receiver \
+          I_HF_BUCKET=owner/source-bucket \
+          I_CANDIDATE_ID=candidate-000001 \
+          I_PACKAGE_NAME=source \
+          I_DATASET_SOURCE=bucket \
+          I_DATASET_ID='' \
+          I_SUITE=probe \
+          I_EXECUTOR=github \
+          I_ENVIRONMENT=linux-cpu \
+          I_HF_FLAVOR=cpu-basic \
+          I_HF_JOBS_IMAGE='' \
+          I_DRY_RUN=true \
+          I_EXECUTE=false \
+          python scripts/ci/normalize-candidate-request.py \
+            --event-name workflow_dispatch \
+            --output /tmp/request.json \
+            --github-output /tmp/normalize.out >/dev/null
+
+          jq -e '.request_id == "synthetic-e2e-001"' /tmp/request.json >/dev/null
+          jq -e '.dry_run == true' /tmp/request.json >/dev/null
+
+          : > /tmp/dispatch.out
+          REQUEST_ID=synthetic-e2e-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          CANDIDATE_ID=candidate-000001 \
+          PACKAGE_NAME=source \
+          DATASET_SOURCE=bucket \
+          DATASET_ID='' \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          HF_FLAVOR=cpu-basic \
+          HF_JOBS_IMAGE='' \
+          REQUEST_JSON=/tmp/request.json \
+          python scripts/ci/build-candidate-dispatch-body.py \
+            --github-output /tmp/dispatch.out \
+            --ref main > /tmp/dispatch.json
+
+          jq -e '.ref == "main"' /tmp/dispatch.json >/dev/null
+          jq -e '.inputs.request_id == "synthetic-e2e-001"' /tmp/dispatch.json >/dev/null
+          jq -e '.inputs.receipt_repository == "owner/receiver"' /tmp/dispatch.json >/dev/null
+          jq -e '.inputs.dry_run == true' /tmp/dispatch.json >/dev/null
+      - name: Build pre-execution lifecycle observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=synthetic-e2e-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=1001 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state planned --output /tmp/planned.json >/dev/null
+
+          REQUEST_ID=synthetic-e2e-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=1001 \
+          UPDATED_AT=2026-08-17T10:01:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state dispatched --output /tmp/dispatched.json >/dev/null
+
+          REQUEST_ID=synthetic-e2e-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=2001 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T10:02:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/running.json >/dev/null
+      - name: Build synthetic dry-run completion receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=synthetic-e2e-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=true \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          WORKFLOW_FILE=candidate-package-evaluate-v2.yml \
+          RUN_ID=2001 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000001 \
+          BUILD_RESULT=skipped \
+          CPU_RESULT=skipped \
+          CUDA_RESULT=skipped \
+          COREML_RESULT=skipped \
+          DIRECTML_RESULT=skipped \
+          HF_JOBS_RESULT=skipped \
+          COMPLETED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+
+          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+          jq -e '.conclusion == "success" and .dry_run == true' /tmp/receipt.json >/dev/null
+          jq -e '.event_type == "jpapt.candidate-completed"' /tmp/completion-dispatch.json >/dev/null
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/orchestrator
+      - name: Build completion lifecycle and acknowledgement
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+
+          RECEIPT_SHA256="$receipt_sha" \
+          UPDATED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state completed \
+            --receipt /tmp/receipt.json \
+            --output /tmp/completed.json >/dev/null
+
+          RECEIVER_REPOSITORY=owner/receiver \
+          RECEIVER_RUN_ID=3001 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/3001 \
+          ACCEPTED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json >/dev/null
+
+          python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
+          jq -e '.event_type == "jpapt.candidate-completion-ack"' /tmp/ack-dispatch.json >/dev/null
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/orchestrator
+
+          SOURCE_REPOSITORY=owner/source \
+          UPDATED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --output /tmp/acknowledged.json >/dev/null
+      - name: Reduce complete synthetic history to acknowledged
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-request-timeline.py \
+            --request-id synthetic-e2e-001 \
+            --candidate gateway=/tmp/planned.json \
+            --candidate gateway=/tmp/dispatched.json \
+            --candidate evaluator=/tmp/running.json \
+            --candidate receipt=/tmp/completed.json \
+            --candidate ack=/tmp/acknowledged.json \
+            --output /tmp/timeline.json >/dev/null
+
+          python scripts/ci/build-candidate-request-timeline.py --validate /tmp/timeline.json
+          test "$(jq -r .event_count /tmp/timeline.json)" = 5
+          test "$(jq -r .current_state /tmp/timeline.json)" = acknowledged
+          test "$(jq -r '.events[-1].snapshot.receiver_run_id' /tmp/timeline.json)" = 3001
+          test "$(jq -r '.events[-1].snapshot.receipt_sha256' /tmp/timeline.json)" = \
+            "$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
