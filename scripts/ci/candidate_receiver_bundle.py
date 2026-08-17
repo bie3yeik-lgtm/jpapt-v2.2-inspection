@@ -46,7 +46,7 @@ def load_bundle(path: Path, *, verify_sources: bool = True) -> list[dict[str, st
     return result
 
 
-def assert_installation(bundle: list[dict[str, str]], manifest_path: Path) -> None:
+def installation_paths(manifest_path: Path) -> set[str]:
     try:
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -56,11 +56,19 @@ def assert_installation(bundle: list[dict[str, str]], manifest_path: Path) -> No
     managed = value.get("managed_files")
     if not isinstance(managed, list):
         raise SystemExit("receiver installation manifest managed_files must be a list")
-    actual = {
-        item.get("path")
-        for item in managed
-        if isinstance(item, dict) and isinstance(item.get("path"), str)
-    }
+    paths: set[str] = set()
+    for index, item in enumerate(managed):
+        if not isinstance(item, dict):
+            raise SystemExit(f"managed_files[{index}] must be an object")
+        path = relative_path(item.get("path"), f"managed_files[{index}].path")
+        if path in paths:
+            raise SystemExit(f"duplicate managed file path in installation: {path}")
+        paths.add(path)
+    return paths
+
+
+def assert_installation(bundle: list[dict[str, str]], manifest_path: Path) -> None:
+    actual = installation_paths(manifest_path)
     expected = {item["path"] for item in bundle}
     if actual != expected:
         missing = sorted(expected - actual)
@@ -68,6 +76,12 @@ def assert_installation(bundle: list[dict[str, str]], manifest_path: Path) -> No
         raise SystemExit(
             f"receiver installation bundle mismatch: missing={missing}, unexpected={unexpected}"
         )
+
+
+def obsolete_installation_paths(bundle: list[dict[str, str]], manifest_path: Path) -> list[str]:
+    actual = installation_paths(manifest_path)
+    expected = {item["path"] for item in bundle}
+    return sorted(actual - expected)
 
 
 def main() -> int:
@@ -79,6 +93,7 @@ def main() -> int:
     output.add_argument("--tsv", action="store_true")
     output.add_argument("--validate", action="store_true")
     output.add_argument("--assert-installation")
+    output.add_argument("--obsolete-installation")
     args = parser.parse_args()
 
     bundle = load_bundle(Path(args.config))
@@ -93,6 +108,9 @@ def main() -> int:
             print(f"{item['path']}\t{item['source']}")
     elif args.assert_installation:
         assert_installation(bundle, Path(args.assert_installation))
+    elif args.obsolete_installation:
+        for path in obsolete_installation_paths(bundle, Path(args.obsolete_installation)):
+            print(path)
     return 0
 
 
