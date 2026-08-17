@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   acknowledgement:
     name: Validate candidate completion acknowledgement
@@ -39,6 +43,6 @@ jobs:
       - name: Preserve acknowledgement
         uses: actions/upload-artifact@v7
         with:
-          name: candidate-completion-ack-${{ github.run_id }}-${{ github.run_attempt }}
+          name: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
           path: .ci/candidate-completion-ack.json
           retention-days: 30
