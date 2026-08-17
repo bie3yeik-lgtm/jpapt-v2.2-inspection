@@ -1,0 +1,114 @@
+name: Candidate Dispatch Retry Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-dispatch-retry-contracts.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
+  pull_request:
+    paths:
+      - .github/workflows/candidate-dispatch-retry-contracts.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-dispatch-retry-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate bounded repository dispatch retries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate retry helper syntax and integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/repository-dispatch-with-retry.sh
+          grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'candidate-completion-dispatch.json' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-request-gateway.yml
+      - name: Prepare fake GitHub CLI and sleep
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          count_file="${FAKE_GH_COUNT_FILE:?}"
+          count=0
+          [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          [[ "$*" == *'/repos/owner/receiver/dispatches'* ]] || exit 42
+          [[ "$*" == *'--input /tmp/dispatch.json'* ]] || exit 43
+          succeed_at="${FAKE_GH_SUCCEED_AT:-1}"
+          (( count >= succeed_at ))
+          SH
+          cat > /tmp/fake-bin/sleep <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "${1:-}" >> "${FAKE_SLEEP_LOG:?}"
+          SH
+          chmod +x /tmp/fake-bin/gh /tmp/fake-bin/sleep
+          cat > /tmp/dispatch.json <<'JSON'
+          {"event_type":"jpapt.contract-test","client_payload":{"request_id":"retry-001"}}
+          JSON
+      - name: Retry until a later attempt succeeds
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-success
+          FAKE_GH_SUCCEED_AT: "3"
+          FAKE_SLEEP_LOG: /tmp/sleep-success
+        run: |
+          set -euo pipefail
+          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            owner/receiver /tmp/dispatch.json 4
+          test "$(cat /tmp/gh-count-success)" = 3
+          test "$(wc -l < /tmp/sleep-success)" = 2
+          test "$(sed -n '1p' /tmp/sleep-success)" = 2
+          test "$(sed -n '2p' /tmp/sleep-success)" = 5
+      - name: Stop exactly at max attempts
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-fail
+          FAKE_GH_SUCCEED_AT: "99"
+          FAKE_SLEEP_LOG: /tmp/sleep-fail
+        run: |
+          set -euo pipefail
+          if PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            owner/receiver /tmp/dispatch.json 2; then
+            echo 'dispatch unexpectedly succeeded' >&2
+            exit 1
+          fi
+          test "$(cat /tmp/gh-count-fail)" = 2
+          test "$(wc -l < /tmp/sleep-fail)" = 1
+      - name: Reject invalid invocation before dispatch
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-invalid
+          FAKE_GH_SUCCEED_AT: "1"
+          FAKE_SLEEP_LOG: /tmp/sleep-invalid
+        run: |
+          set -euo pipefail
+          set +e
+          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            invalid-repository /tmp/dispatch.json 3
+          status=$?
+          set -e
+          test "$status" = 2
+          test ! -e /tmp/gh-count-invalid
