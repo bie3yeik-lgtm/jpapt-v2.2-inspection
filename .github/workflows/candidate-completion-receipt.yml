@@ -36,6 +36,14 @@ jobs:
         run: >-
           python scripts/ci/build-candidate-completion-receipt.py
           --validate .ci/candidate-completion-receipt.json
+      - name: Validate receiver and orchestrator binding
+        env:
+          ALLOWED_ORCHESTRATORS: ${{ vars.JPAPT_ORCHESTRATOR_REPOSITORIES }}
+        run: >-
+          python scripts/ci/validate-candidate-protocol-binding.py
+          --receipt .ci/candidate-completion-receipt.json
+          --receiver-repository "${{ github.repository }}"
+          --allowed-orchestrators "$ALLOWED_ORCHESTRATORS"
       - name: Build CandidateCompletionAckV1
         env:
           RECEIVER_REPOSITORY: ${{ github.repository }}
