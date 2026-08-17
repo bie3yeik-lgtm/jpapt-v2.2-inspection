@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-completion-ack.schema.json",
+  "title": "CandidateCompletionAckV1",
+  "description": "client_payload contract for repository_dispatch event_type jpapt.candidate-completion-ack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "receipt_sha256",
+    "receipt_repository",
+    "orchestrator_repository",
+    "evaluation_run_id",
+    "evaluation_run_attempt",
+    "receiver_repository",
+    "receiver_run_id",
+    "receiver_run_attempt",
+    "receiver_run_url",
+    "accepted_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "receipt_repository": {"$ref": "#/$defs/repository"},
+    "orchestrator_repository": {"$ref": "#/$defs/repository"},
+    "evaluation_run_id": {"type": "integer", "minimum": 1},
+    "evaluation_run_attempt": {"type": "integer", "minimum": 1},
+    "receiver_repository": {"$ref": "#/$defs/repository"},
+    "receiver_run_id": {"type": "integer", "minimum": 1},
+    "receiver_run_attempt": {"type": "integer", "minimum": 1},
+    "receiver_run_url": {"type": "string", "format": "uri"},
+    "accepted_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    }
+  }
+}
