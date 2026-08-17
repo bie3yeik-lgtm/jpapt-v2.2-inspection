@@ -38,9 +38,14 @@ snapshot = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 request_id = snapshot["request_id"]
 request_key = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
 state = snapshot["state"]
-if state in {"planned", "running", "rejected"}:
+if state in {"planned", "dispatched", "rejected"}:
     run_id = snapshot.get("gateway_run_id")
     evidence_key = f"gateway-{run_id or 'unknown'}-{state}"
+elif state == "running":
+    evidence_key = (
+        f"evaluation-{snapshot['evaluation_run_id']}-"
+        f"{snapshot['evaluation_run_attempt']}-running"
+    )
 elif state == "completed":
     evidence_key = (
         f"evaluation-{snapshot['evaluation_run_id']}-"
