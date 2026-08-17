@@ -35,10 +35,6 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"state": {"const": "running"}}, "required": ["state"]},
-      "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}}}
-    },
-    {
       "if": {"properties": {"state": {"const": "completed"}}, "required": ["state"]},
       "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}, "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
     },
