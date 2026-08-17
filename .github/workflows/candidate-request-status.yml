@@ -86,53 +86,14 @@ jobs:
               fi
             done
 
-            # Immutable events are also read directly. This recovers the newest
-            # observation if persistence stopped after appending events/ but before
-            # updating the materialized states/ view.
-            mkdir -p .ci/status/events
-            REQUEST_KEY="$request_key" HF_LIFECYCLE_BUCKET="$bucket" python - <<'PY' > .ci/status/events.tsv
-          import os
-          import sys
-          from pathlib import Path
-
-          from huggingface_hub import download_bucket_files, list_bucket_tree
-
-          bucket = os.environ['HF_LIFECYCLE_BUCKET']
-          token = os.environ['HF_TOKEN']
-          request_key = os.environ['REQUEST_KEY']
-          prefix = f'requests/{request_key}/events'
-          target = Path('.ci/status/events')
-          try:
-              items = [
-                  item
-                  for item in list_bucket_tree(
-                      bucket,
-                      prefix=prefix,
-                      recursive=True,
-                      token=token,
-                  )
-                  if getattr(item, 'type', None) == 'file'
-                  and item.path.endswith('.lifecycle.json')
-              ]
-          except Exception as error:
-              print(
-                  f'::warning::persistent lifecycle events unavailable for {bucket}/{prefix}: {error}',
-                  file=sys.stderr,
-              )
-              items = []
-
-          downloads = []
-          rows = []
-          for index, item in enumerate(items):
-              local = target / f'{index:06d}-{Path(item.path).name}'
-              downloads.append((item, str(local)))
-              rows.append((item.path, local))
-          if downloads:
-              download_bucket_files(bucket, files=downloads, token=token)
-          for remote, local in rows:
-              print(f'{remote}\t{local}')
-          PY
-
+            # Immutable events are an independent recovery source when a persister
+            # appended events/ but stopped before refreshing states/.
+            python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+              --bucket "$bucket" \
+              --request-key "$request_key" \
+              --output-dir .ci/status/events \
+              --manifest .ci/status/events.tsv \
+              --allow-unavailable >/dev/null
             while IFS=$'\t' read -r remote local_file; do
               [[ -n "$remote" ]] || continue
               validate_candidate "$local_file" persistent-event
