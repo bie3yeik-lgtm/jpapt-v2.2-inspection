@@ -1,0 +1,88 @@
+name: Candidate Dispatch Body Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-dispatch-body-contracts.yml
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/normalize-candidate-request.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  pull_request:
+    paths:
+      - .github/workflows/candidate-dispatch-body-contracts.yml
+      - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/normalize-candidate-request.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-dispatch-body-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate dispatch body caller intent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate builder syntax
+        run: python -m py_compile scripts/ci/build-candidate-dispatch-body.py
+      - name: Inherit dry-run from normalized Gateway request
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/request.json <<'JSON'
+          {"request_id":"dry-run-001","source_repository":"owner/source","dry_run":true}
+          JSON
+          : > /tmp/github-output
+          REQUEST_ID=dry-run-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/bucket \
+          DATASET_SOURCE=bucket \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          python scripts/ci/build-candidate-dispatch-body.py \
+            --github-output /tmp/github-output > /tmp/body.json
+          test "$(jq -r '.inputs.dry_run' /tmp/body.json)" = true
+      - name: Explicit resolved dry-run overrides request file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/request.json <<'JSON'
+          {"request_id":"dry-run-002","source_repository":"owner/source","dry_run":true}
+          JSON
+          : > /tmp/github-output
+          DRY_RUN=false \
+          REQUEST_ID=dry-run-002 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/bucket \
+          DATASET_SOURCE=bucket \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          python scripts/ci/build-candidate-dispatch-body.py \
+            --github-output /tmp/github-output > /tmp/body-override.json
+          test "$(jq -r '.inputs.dry_run' /tmp/body-override.json)" = false
+      - name: Reject invalid dry-run intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/request.json <<'JSON'
+          {"request_id":"dry-run-003","source_repository":"owner/source","dry_run":"maybe"}
+          JSON
+          : > /tmp/github-output
+          if REQUEST_ID=dry-run-003 \
+            SOURCE_REPOSITORY=owner/source \
+            python scripts/ci/build-candidate-dispatch-body.py \
+              --github-output /tmp/github-output; then
+            echo 'invalid dry_run unexpectedly accepted' >&2
+            exit 1
+          fi
