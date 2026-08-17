@@ -14,7 +14,7 @@ from candidate_lifecycle_common import STATES, parse_time
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-EXPECTED_FIELDS = {
+REQUIRED_FIELDS = {
     "schema_version",
     "request_id",
     "state",
@@ -28,6 +28,7 @@ EXPECTED_FIELDS = {
     "receiver_run_id",
     "updated_at",
 }
+OPTIONAL_FIELDS = {"request_execution_id"}
 
 
 def env(name: str, default: str = "") -> str:
@@ -44,6 +45,12 @@ def request_key(request_id: str) -> str:
     return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
 
 
+def execution_key(request_execution_id: str) -> str:
+    if not REQUEST_ID_RE.fullmatch(request_execution_id):
+        raise SystemExit("request_execution_id is invalid")
+    return hashlib.sha256(request_execution_id.encode("utf-8")).hexdigest()[:24]
+
+
 def load_json(path: str | None) -> dict | None:
     if not path:
         return None
@@ -54,15 +61,19 @@ def load_json(path: str | None) -> dict | None:
 
 
 def validate(snapshot: dict) -> None:
-    if set(snapshot) != EXPECTED_FIELDS:
-        missing = sorted(EXPECTED_FIELDS - set(snapshot))
-        unknown = sorted(set(snapshot) - EXPECTED_FIELDS)
+    fields = set(snapshot)
+    missing = sorted(REQUIRED_FIELDS - fields)
+    unknown = sorted(fields - REQUIRED_FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
         raise SystemExit(f"lifecycle fields mismatch: missing={missing}, unknown={unknown}")
     if snapshot.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = snapshot.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    execution_id = snapshot.get("request_execution_id")
+    if execution_id is not None and (not isinstance(execution_id, str) or not REQUEST_ID_RE.fullmatch(execution_id)):
+        raise SystemExit("request_execution_id is invalid")
     if snapshot.get("state") not in STATES:
         raise SystemExit("state is invalid")
     for field in ("source_repository", "receipt_repository", "orchestrator_repository"):
@@ -103,10 +114,14 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--validate")
     parser.add_argument("--request-key")
+    parser.add_argument("--execution-key")
     args = parser.parse_args()
 
     if args.request_key:
         print(request_key(args.request_key))
+        return 0
+    if args.execution_key:
+        print(execution_key(args.execution_key))
         return 0
     if args.validate:
         snapshot = load_json(args.validate)
@@ -120,6 +135,7 @@ def main() -> int:
     ack = load_json(args.ack)
     rejection = load_json(args.rejection)
     request_id = env("REQUEST_ID")
+    request_execution_id = env("REQUEST_EXECUTION_ID") or None
     source_repository = env("SOURCE_REPOSITORY")
     receipt_repository = env("RECEIPT_REPOSITORY")
     orchestrator_repository = env("ORCHESTRATOR_REPOSITORY")
@@ -131,6 +147,7 @@ def main() -> int:
 
     if receipt:
         request_id = receipt["request_id"]
+        request_execution_id = receipt.get("request_execution_id")
         source_repository = receipt["source_repository"]
         receipt_repository = receipt["receipt_repository"]
         orchestrator_repository = receipt["orchestrator_repository"]
@@ -138,6 +155,10 @@ def main() -> int:
         evaluation_run_attempt = receipt["run_attempt"]
     if ack:
         request_id = ack["request_id"]
+        ack_execution_id = ack.get("request_execution_id")
+        if request_execution_id and ack_execution_id != request_execution_id:
+            raise SystemExit("ACK request_execution_id does not match receipt")
+        request_execution_id = ack_execution_id or request_execution_id
         receipt_repository = ack["receipt_repository"]
         orchestrator_repository = ack["orchestrator_repository"]
         evaluation_run_id = ack["evaluation_run_id"]
@@ -147,6 +168,7 @@ def main() -> int:
         source_repository = source_repository or env("SOURCE_REPOSITORY")
     if rejection:
         request_id = rejection["request_id"]
+        request_execution_id = rejection.get("request_execution_id")
         source_repository = rejection["source_repository"]
         receipt_repository = rejection["receipt_repository"]
         orchestrator_repository = rejection["orchestrator_repository"]
@@ -166,6 +188,8 @@ def main() -> int:
         "receiver_run_id": receiver_run_id,
         "updated_at": env("UPDATED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if request_execution_id:
+        snapshot["request_execution_id"] = request_execution_id
     validate(snapshot)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
