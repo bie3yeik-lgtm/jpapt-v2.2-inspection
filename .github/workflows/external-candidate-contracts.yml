@@ -222,8 +222,27 @@ jobs:
           ORCHESTRATOR_REPOSITORY=owner/orchestrator \
           GATEWAY_RUN_ID=100 \
           python scripts/ci/build-candidate-request-lifecycle.py \
+            --state dispatched --output /tmp/lifecycle-dispatched.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-dispatched.json
+
+          REQUEST_ID=req-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=12345 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          python scripts/ci/build-candidate-request-lifecycle.py \
             --state running --output /tmp/lifecycle-running.json
           python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-running.json
+          if REQUEST_ID=req-contract-001 \
+            SOURCE_REPOSITORY=owner/source \
+            RECEIPT_REPOSITORY=owner/source \
+            ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+            python scripts/ci/build-candidate-request-lifecycle.py \
+              --state running --output /tmp/lifecycle-invalid-running.json; then
+            echo 'running without evaluation identity unexpectedly passed' >&2
+            exit 1
+          fi
 
           REQUEST_ID=req-rejected-001 \
           SOURCE_REPOSITORY=owner/source \
@@ -272,13 +291,14 @@ jobs:
           states = []
           for path in (
               '/tmp/lifecycle-planned.json',
+              '/tmp/lifecycle-dispatched.json',
               '/tmp/lifecycle-running.json',
               '/tmp/lifecycle-rejected.json',
               '/tmp/lifecycle-completed.json',
               '/tmp/lifecycle-acknowledged.json',
           ):
               states.append(json.loads(Path(path).read_text())['state'])
-          assert states == ['planned', 'running', 'rejected', 'completed', 'acknowledged']
+          assert states == ['planned', 'dispatched', 'running', 'rejected', 'completed', 'acknowledged']
 
           receipt = json.loads(Path('/tmp/receipt.json').read_text())
           reversed_receipt = {key: receipt[key] for key in reversed(list(receipt))}
