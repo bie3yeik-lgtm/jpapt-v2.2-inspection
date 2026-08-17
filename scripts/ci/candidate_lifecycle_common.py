@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from candidate_protocol_common import parse_rfc3339_time
+
 STATES = (
     "planned",
     "dispatched",
@@ -17,13 +19,7 @@ STATE_RANK = {state: rank for rank, state in enumerate(STATES)}
 
 
 def parse_time(value: str) -> datetime:
-    if not isinstance(value, str) or not value:
-        raise ValueError("updated_at must be a non-empty string")
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("updated_at must include a timezone offset or Z")
-    return parsed
+    return parse_rfc3339_time(value, "updated_at")
 
 
 def load_json_object(path: str | Path) -> dict:
