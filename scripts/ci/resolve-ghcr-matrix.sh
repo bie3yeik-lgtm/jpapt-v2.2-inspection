@@ -32,8 +32,11 @@ NAMESPACE="$(printf '%s' "$NAMESPACE" | tr '[:upper:]' '[:lower:]')"
 entries='[]'
 matched=0
 
-mapfile -t dockerfiles < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
-(( ${#dockerfiles[@]} > 0 )) || fail "docker/*/Dockerfile was not found"
+# Static GHCR target contexts are explicitly identified by config.json. Generic
+# runtime-parametric Dockerfiles (for example docker/candidate-package) do not
+# represent one source model and must never be forced into this static matrix.
+mapfile -t target_configs < <(find docker -mindepth 2 -maxdepth 2 -type f -name config.json -print | sort)
+(( ${#target_configs[@]} > 0 )) || fail "docker/*/config.json static target definitions were not found"
 
 mapfile -t repository_targets < <(
   find config/hf-targets -maxdepth 1 -type f -name '*.toml' -printf '%f\n' \
@@ -52,8 +55,11 @@ while IFS= read -r variable_target; do
   fi
 done < <(printf '%s' "$HF_TARGETS_JSON" | jq -r 'keys[]')
 
-for dockerfile in "${dockerfiles[@]}"; do
-  context="$(dirname "$dockerfile")"
+for config in "${target_configs[@]}"; do
+  context="$(dirname "$config")"
+  dockerfile="$context/Dockerfile"
+  [[ -f "$dockerfile" ]] || fail "$context declares config.json but has no Dockerfile"
+
   source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
   source_framework="$(sed -n 's/^LABEL io\.jpapt\.source\.framework="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
   package="$(sed -n 's/^LABEL io\.jpapt\.ghcr\.package="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
@@ -63,6 +69,10 @@ for dockerfile in "${dockerfiles[@]}"; do
   [[ -n "$source_framework" ]] || fail "$dockerfile must declare LABEL io.jpapt.source.framework"
   [[ -n "$package" ]] || fail "$dockerfile must declare LABEL io.jpapt.ghcr.package"
   [[ -n "$role" ]] || fail "$dockerfile must declare LABEL io.jpapt.role"
+  test "$(jq -er '.source.repo_id' "$config")" = "$source_repo" \
+    || fail "$config source.repo_id disagrees with $dockerfile"
+  test "$(jq -er '.source.framework' "$config")" = "$source_framework" \
+    || fail "$config source.framework disagrees with $dockerfile"
 
   for target_id in "${repository_targets[@]}"; do
     if [[ -n "$TARGET_FILTER" && "$target_id" != "$TARGET_FILTER" ]]; then
@@ -112,7 +122,7 @@ for dockerfile in "${dockerfiles[@]}"; do
   done
 done
 
-(( matched > 0 )) || fail "no Dockerfile matched a source-controlled HF target present in HF_TARGETS_JSON${TARGET_FILTER:+ (filter=$TARGET_FILTER)}"
+(( matched > 0 )) || fail "no static Docker target matched a source-controlled HF target present in HF_TARGETS_JSON${TARGET_FILTER:+ (filter=$TARGET_FILTER)}"
 
 matrix="$(jq -c '{include:.}' <<<"$entries")"
 printf '%s\n' "$matrix"
