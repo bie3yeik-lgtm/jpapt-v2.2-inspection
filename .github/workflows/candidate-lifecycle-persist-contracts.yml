@@ -9,6 +9,7 @@ on:
       - .github/workflows/candidate-lifecycle-persist-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
       - scripts/ci/compare-candidate-lifecycle-state.py
@@ -19,6 +20,7 @@ on:
       - .github/workflows/candidate-lifecycle-persist-contracts.yml
       - .github/workflows/candidate-request-status.yml
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
       - scripts/ci/compare-candidate-lifecycle-state.py
@@ -54,8 +56,28 @@ jobs:
         run: |
           bash -n scripts/ci/persist-candidate-lifecycle.sh
           python -m py_compile \
+            scripts/ci/candidate_lifecycle_common.py \
             scripts/ci/reduce-candidate-lifecycle.py \
             scripts/ci/compare-candidate-lifecycle-state.py
+      - name: Verify shared lifecycle state ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=scripts/ci python - <<'PY'
+          from candidate_lifecycle_common import STATES, STATE_RANK
+          expected = (
+              "planned",
+              "dispatched",
+              "running",
+              "rejected",
+              "completed",
+              "acknowledged",
+          )
+          assert STATES == expected
+          assert [STATE_RANK[state] for state in STATES] == list(range(len(STATES)))
+          PY
+          grep -F 'from candidate_lifecycle_common import STATE_RANK' scripts/ci/reduce-candidate-lifecycle.py
+          grep -F 'from candidate_lifecycle_common import load_json_object, parse_time' scripts/ci/compare-candidate-lifecycle-state.py
       - name: Exercise local no-op persistence contract
         shell: bash
         run: |
