@@ -1,0 +1,189 @@
+name: Candidate Lifecycle Persist
+
+on:
+  workflow_run:
+    workflows:
+      - Candidate Request Gateway
+      - Candidate Request Lifecycle Observer
+      - Candidate Completion Acknowledgement
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Workflow run ID containing candidate lifecycle artifacts
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
+  HF_LIFECYCLE_BUCKET_OVERRIDE: ${{ vars.HF_LIFECYCLE_BUCKET }}
+
+concurrency:
+  group: candidate-lifecycle-persist-${{ github.event.workflow_run.id || inputs.source_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  persist:
+    name: Persist lifecycle and canonical evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install HF client
+        run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2"
+      - name: Resolve source run and lifecycle Bucket
+        id: resolve
+        shell: bash
+        env:
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          INPUT_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          run_id="${EVENT_RUN_ID:-$INPUT_RUN_ID}"
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || { echo "::error::invalid source workflow run id"; exit 1; }
+          [[ -n "${HF_TOKEN:-}" ]] || { echo "::error::HF_TOKEN is required for persistent lifecycle storage"; exit 1; }
+
+          bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
+          if [[ -z "$bucket" ]]; then
+            namespace="${HF_DEFAULT_NAMESPACE:-}"
+            if [[ -z "$namespace" ]]; then
+              namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json | jq -r '.name // .user // empty')"
+            fi
+            [[ -n "$namespace" ]] || { echo "::error::unable to infer HF namespace"; exit 1; }
+            bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
+          fi
+          [[ "$bucket" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::HF lifecycle bucket must use namespace/name"
+            exit 1
+          }
+          hf buckets create "$bucket" --exist-ok --private --token "$HF_TOKEN"
+          {
+            echo "run_id=$run_id"
+            echo "bucket=$bucket"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download lifecycle artifacts
+        id: lifecycle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/persist/lifecycle
+          mapfile -t artifacts < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("candidate-lifecycle-")) | [.id, .name] | @tsv')
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo "::notice::source run has no candidate lifecycle artifacts"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for row in "${artifacts[@]}"; do
+            IFS=$'\t' read -r artifact_id artifact_name <<<"$row"
+            dir=".ci/persist/lifecycle/$artifact_name"
+            mkdir -p "$dir"
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle.zip
+            unzip -q /tmp/lifecycle.zip -d "$dir"
+          done
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - name: Persist lifecycle states
+        if: ${{ steps.lifecycle.outputs.found == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_LIFECYCLE_BUCKET: ${{ steps.resolve.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          persisted=0
+          for snapshot in .ci/persist/lifecycle/*/candidate-request-lifecycle.json; do
+            python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
+            readarray -t fields < <(python - "$snapshot" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          print(value['state'])
+          print(value.get('evaluation_run_id') or '')
+          print(value.get('evaluation_run_attempt') or '')
+          print(value['request_id'])
+          PY
+          )
+            state="${fields[0]}"
+            evaluation_run_id="${fields[1]}"
+            evaluation_run_attempt="${fields[2]}"
+            request_id="${fields[3]}"
+            request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
+            evidence=()
+
+            if [[ "$state" == "rejected" ]]; then
+              rejection_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=candidate-rejection-$request_key-${{ steps.resolve.outputs.run_id }}-${{ github.event.workflow_run.run_attempt || '1' }}" --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty' 2>/dev/null || true)"
+              if [[ -n "$rejection_id" ]]; then
+                mkdir -p .ci/persist/rejection
+                gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$rejection_id/zip" > /tmp/rejection.zip
+                unzip -oq /tmp/rejection.zip -d .ci/persist/rejection
+                [[ -f .ci/persist/rejection/candidate-request-rejection.json ]] && evidence+=(.ci/persist/rejection/candidate-request-rejection.json)
+              fi
+            fi
+
+            if [[ -n "$evaluation_run_id" && -n "$evaluation_run_attempt" ]]; then
+              receipt_name="candidate-completion-$evaluation_run_id-$evaluation_run_attempt"
+              receipt_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$evaluation_run_id/artifacts?per_page=100" \
+                --jq ".artifacts[] | select(.name == \"$receipt_name\") | .id" | head -n1)"
+              if [[ -n "$receipt_id" ]]; then
+                receipt_dir=".ci/persist/receipt-$evaluation_run_id-$evaluation_run_attempt"
+                mkdir -p "$receipt_dir"
+                gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$receipt_id/zip" > /tmp/receipt.zip
+                unzip -oq /tmp/receipt.zip -d "$receipt_dir"
+                receipt_file="$receipt_dir/candidate-completion-receipt.json"
+                if [[ -f "$receipt_file" ]]; then
+                  python scripts/ci/build-candidate-completion-receipt.py --validate "$receipt_file" >/dev/null
+                  evidence+=("$receipt_file")
+                fi
+              fi
+            fi
+
+            if [[ "$state" == "acknowledged" ]]; then
+              ack_file="$(find "$(dirname "$snapshot")" -type f -name 'candidate-completion-ack.json' -print -quit || true)"
+              if [[ -z "$ack_file" ]]; then
+                ack_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/${{ steps.resolve.outputs.run_id }}/artifacts?per_page=100" \
+                  --jq '.artifacts[] | select(.name | startswith("candidate-completion-ack-")) | .id' | head -n1)"
+                if [[ -n "$ack_id" ]]; then
+                  mkdir -p .ci/persist/ack
+                  gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_id/zip" > /tmp/ack.zip
+                  unzip -oq /tmp/ack.zip -d .ci/persist/ack
+                  ack_file=".ci/persist/ack/candidate-completion-ack.json"
+                fi
+              fi
+              if [[ -f "${ack_file:-}" ]]; then
+                python scripts/ci/build-candidate-completion-ack.py --validate "$ack_file" >/dev/null
+                evidence+=("$ack_file")
+              fi
+            fi
+
+            HF_TOKEN="$HF_TOKEN" HF_LIFECYCLE_BUCKET="$HF_LIFECYCLE_BUCKET" \
+              bash scripts/ci/persist-candidate-lifecycle.sh "$snapshot" "${evidence[@]}"
+            persisted=$((persisted + 1))
+          done
+          echo "persisted=$persisted" >> "$GITHUB_STEP_SUMMARY"
+      - name: Summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BUCKET: ${{ steps.resolve.outputs.bucket }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
+        run: |
+          {
+            echo '## Candidate lifecycle persistence'
+            echo
+            printf -- '- source workflow run: `%s`\n' "$RUN_ID"
+            printf -- '- bucket: `hf://buckets/%s`\n' "$BUCKET"
+            printf -- '- storage: immutable `events/` + canonical `evidence/` + materialized `states/`\n'
+          } >> "$GITHUB_STEP_SUMMARY"
