@@ -101,6 +101,7 @@ jobs:
       body: ${{ steps.body.outputs.body }}
       execute: ${{ steps.inputs.outputs.execute }}
       request_id: ${{ steps.resolve.outputs.request_id }}
+      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}
       request_key: ${{ steps.lifecycle.outputs.request_key }}
       source_repository: ${{ steps.resolve.outputs.source_repository }}
       receipt_repository: ${{ steps.resolve.outputs.receipt_repository }}
@@ -131,6 +132,7 @@ jobs:
           I_HF_JOBS_IMAGE: ${{ inputs.hf_jobs_image }}
           I_DRY_RUN: ${{ inputs.dry_run }}
           I_EXECUTE: ${{ inputs.execute }}
+          REQUEST_EXECUTION_PREFIX: gw
         run: >-
           python scripts/ci/normalize-candidate-request.py
           --event-name "$GITHUB_EVENT_NAME"
@@ -185,6 +187,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
@@ -224,6 +227,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
@@ -254,6 +258,7 @@ jobs:
             echo '## Candidate request plan'
             echo
             printf -- '- request id: `%s`\n' "$REQUEST_ID"
+            printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
             printf -- '- lifecycle artifact key: `%s`\n' "${{ steps.lifecycle.outputs.request_key }}"
             printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
             printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
@@ -281,6 +286,7 @@ jobs:
         id: body
         env:
           REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
@@ -294,6 +300,7 @@ jobs:
           HF_FLAVOR: ${{ steps.resolve.outputs.hf_flavor }}
           HF_JOBS_IMAGE: ${{ steps.resolve.outputs.hf_jobs_image }}
           DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
+          INCLUDE_REQUEST_EXECUTION_ID: "true"
         run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"
 
   execute:
@@ -319,6 +326,7 @@ jobs:
       - name: Build dispatched lifecycle snapshot
         env:
           REQUEST_ID: ${{ needs.plan.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ needs.plan.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ needs.plan.outputs.receipt_repository }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
@@ -346,6 +354,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ github.event.client_payload.request_id || inputs.request_id }}
+          REQUEST_EXECUTION_ID: gw-${{ github.run_id }}-${{ github.run_attempt }}
           SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository || inputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ github.event.client_payload.receipt_repository || inputs.receipt_repository || github.event.client_payload.source_repository || inputs.source_repository }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
