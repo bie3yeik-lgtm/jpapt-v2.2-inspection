@@ -22,7 +22,7 @@
     "receiver_repository": {"$ref": "#/$defs/repository"},
     "receiver_run_id": {"type": "integer", "minimum": 1},
     "receiver_run_attempt": {"type": "integer", "minimum": 1},
-    "receiver_run_url": {"type": "string", "format": "uri"},
+    "receiver_run_url": {"type": "string", "format": "uri", "pattern": "^https://"},
     "accepted_at": {"type": "string", "format": "date-time", "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"}
   },
   "$defs": {"repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}}
