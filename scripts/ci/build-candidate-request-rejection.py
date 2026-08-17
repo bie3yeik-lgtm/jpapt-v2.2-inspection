@@ -8,6 +8,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from candidate_protocol_common import parse_rfc3339_time
+
 EVENT_TYPE = "jpapt.candidate-rejected"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -50,8 +52,10 @@ def validate(value: dict) -> None:
             raise SystemExit(f"{field} must be a positive integer")
     if not isinstance(value.get("gateway_run_url"), str) or not value["gateway_run_url"].startswith("https://"):
         raise SystemExit("gateway_run_url is invalid")
-    if not isinstance(value.get("rejected_at"), str) or "T" not in value["rejected_at"]:
-        raise SystemExit("rejected_at is invalid")
+    try:
+        parse_rfc3339_time(value.get("rejected_at"), "rejected_at")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def load(path: str) -> dict:
