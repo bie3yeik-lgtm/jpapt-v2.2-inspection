@@ -27,7 +27,7 @@
     "workflow_file": {"const": "candidate-package-evaluate-v2.yml"},
     "run_id": {"type": "integer", "minimum": 1},
     "run_attempt": {"type": "integer", "minimum": 1},
-    "run_url": {"type": "string", "format": "uri"},
+    "run_url": {"type": "string", "format": "uri", "pattern": "^https://"},
     "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "requested_candidate_id": {"type": "string", "anyOf": [{"const": "latest"}, {"pattern": "^candidate-[0-9]{6}$"}]},
     "resolved_candidate_id": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^candidate-[0-9]{6}$"}]},
@@ -38,16 +38,14 @@
     "failed_jobs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "completed_at": {"type": "string", "format": "date-time", "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"}
   },
-  "allOf": [
-    {
-      "if": {"properties": {"conclusion": {"const": "success"}, "dry_run": {"const": false}}, "required": ["conclusion", "dry_run"]},
-      "then": {"properties": {
-        "resolved_candidate_id": {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
-        "image_ref": {"type": "string", "minLength": 1},
-        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-        "result_artifact": {"type": "string", "minLength": 1}
-      }}
-    }
-  ],
+  "allOf": [{
+    "if": {"properties": {"conclusion": {"const": "success"}, "dry_run": {"const": false}}, "required": ["conclusion", "dry_run"]},
+    "then": {"properties": {
+      "resolved_candidate_id": {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+      "image_ref": {"type": "string", "minLength": 1},
+      "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+      "result_artifact": {"type": "string", "minLength": 1}
+    }}
+  }],
   "$defs": {"repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}}
 }
