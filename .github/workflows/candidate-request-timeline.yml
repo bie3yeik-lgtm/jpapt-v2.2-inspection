@@ -73,7 +73,7 @@ jobs:
           count=0
           for state in planned dispatched running rejected completed acknowledged; do
             artifact_name="candidate-lifecycle-$REQUEST_KEY-$state"
-            while IFS=$'\t' read -r artifact_id created_at; do
+            while read -r artifact_id; do
               [[ -n "$artifact_id" ]] || continue
               dir=".ci/timeline/artifacts/$artifact_id"
               mkdir -p "$dir"
@@ -95,7 +95,7 @@ jobs:
             done < <(
               gh api --paginate \
                 "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
-                --jq '.artifacts[] | select(.expired == false) | [.id, .created_at] | @tsv'
+                --jq '.artifacts[] | select(.expired == false) | .id'
             )
           done
           echo "count=$count" >> "$GITHUB_OUTPUT"
