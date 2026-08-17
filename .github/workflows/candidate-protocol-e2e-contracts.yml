@@ -8,6 +8,8 @@ on:
       - .github/workflows/candidate-protocol-e2e.yml
       - .github/workflows/candidate-protocol-e2e-contracts.yml
       - docs/candidate-protocol-e2e.md
+      - config/candidate-receiver-bundle.json
+      - scripts/ci/candidate_receiver_bundle.py
       - scripts/ci/candidate_protocol_common.py
       - scripts/ci/workflow-dispatch-with-retry.sh
       - scripts/ci/build-candidate-request-lifecycle.py
@@ -20,6 +22,8 @@ on:
       - .github/workflows/candidate-protocol-e2e.yml
       - .github/workflows/candidate-protocol-e2e-contracts.yml
       - docs/candidate-protocol-e2e.md
+      - config/candidate-receiver-bundle.json
+      - scripts/ci/candidate_receiver_bundle.py
       - scripts/ci/candidate_protocol_common.py
       - scripts/ci/workflow-dispatch-with-retry.sh
       - scripts/ci/build-candidate-request-lifecycle.py
@@ -53,6 +57,11 @@ jobs:
           actionlint -color -ignore 'SC2016'
           .github/workflows/candidate-protocol-e2e.yml
           .github/workflows/candidate-protocol-e2e-contracts.yml
+      - name: Validate canonical receiver bundle
+        run: |
+          python -m py_compile scripts/ci/candidate_receiver_bundle.py
+          python -m json.tool config/candidate-receiver-bundle.json >/dev/null
+          python scripts/ci/candidate_receiver_bundle.py --validate
       - name: Verify manual-only and cross-repository guard
         shell: bash
         run: |
@@ -98,8 +107,17 @@ jobs:
         run: |
           set -euo pipefail
           grep -F 'actions/workflows/candidate-completion-receipt.yml' .github/workflows/candidate-protocol-e2e.yml
-          grep -F 'scripts/ci/candidate_protocol_common.py' .github/workflows/candidate-protocol-e2e.yml
-          grep -F 'scripts/ci/build-candidate-completion-receipt.py' .github/workflows/candidate-protocol-e2e.yml
-          grep -F 'scripts/ci/build-candidate-completion-ack.py' .github/workflows/candidate-protocol-e2e.yml
-          grep -F 'scripts/ci/validate-candidate-protocol-binding.py' .github/workflows/candidate-protocol-e2e.yml
-          grep -F 'scripts/ci/repository-dispatch-with-retry.sh' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'candidate_receiver_bundle.py --assert-installation /tmp/receiver-manifest.json' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'receiver installation manifest is stale or incomplete' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'candidate_receiver_bundle.py --paths' .github/workflows/candidate-protocol-e2e.yml
+          for path in \
+            .github/workflows/candidate-completion-receipt.yml \
+            .github/workflows/candidate-request-rejection.yml \
+            scripts/ci/candidate_protocol_common.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-request-rejection.py \
+            scripts/ci/validate-candidate-protocol-binding.py \
+            scripts/ci/repository-dispatch-with-retry.sh; do
+            grep -Fx "$path" < <(python scripts/ci/candidate_receiver_bundle.py --paths)
+          done
