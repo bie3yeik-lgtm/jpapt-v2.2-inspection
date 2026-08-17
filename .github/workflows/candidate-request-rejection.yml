@@ -1,0 +1,66 @@
+name: Candidate Request Rejection
+
+on:
+  repository_dispatch:
+    types: [jpapt.candidate-rejected]
+  workflow_dispatch:
+    inputs:
+      rejection_json:
+        description: CandidateRequestRejectionV1 JSON payload
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rejection:
+    name: Validate candidate request rejection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Materialize rejection payload
+        shell: bash
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          REJECTION_JSON: ${{ inputs.rejection_json }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+            printf '%s\n' "$PAYLOAD" > .ci/candidate-request-rejection.json
+          else
+            printf '%s\n' "$REJECTION_JSON" > .ci/candidate-request-rejection.json
+          fi
+      - name: Validate CandidateRequestRejectionV1
+        run: >-
+          python scripts/ci/build-candidate-request-rejection.py
+          --validate .ci/candidate-request-rejection.json
+      - name: Validate rejection receiver binding
+        env:
+          ALLOWED_ORCHESTRATORS: ${{ vars.JPAPT_ORCHESTRATOR_REPOSITORIES }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path('.ci/candidate-request-rejection.json').read_text())
+          receiver = os.environ['GITHUB_REPOSITORY']
+          if value['receipt_repository'] != receiver:
+              raise SystemExit('rejection receipt_repository does not match receiver repository')
+          orchestrator = value['orchestrator_repository']
+          allowed = {
+              item.strip()
+              for item in os.environ.get('ALLOWED_ORCHESTRATORS', '').split(',')
+              if item.strip()
+          }
+          if orchestrator != receiver and orchestrator not in allowed:
+              raise SystemExit('rejection orchestrator_repository is not allowlisted')
+          PY
+      - name: Preserve received rejection
+        uses: actions/upload-artifact@v7
+        with:
+          name: received-candidate-rejection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/candidate-request-rejection.json
+          retention-days: 30
