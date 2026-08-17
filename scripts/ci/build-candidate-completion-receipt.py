@@ -16,6 +16,14 @@ REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CANDIDATE_RE = re.compile(r"^candidate-[0-9]{6}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+REQUIRED_FIELDS = {
+    "schema_version", "request_id", "source_repository", "receipt_repository", "conclusion",
+    "dry_run", "suite", "executor", "environment", "provider", "orchestrator_repository",
+    "workflow_file", "run_id", "run_attempt", "run_url", "commit_sha", "requested_candidate_id",
+    "resolved_candidate_id", "image_ref", "image_digest", "result_artifact", "result_uri",
+    "failed_jobs", "completed_at",
+}
+OPTIONAL_FIELDS = {"request_execution_id"}
 
 
 def env(name: str, default: str = "") -> str:
@@ -56,16 +64,10 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
 
 
 def validate(receipt: dict) -> None:
-    expected_fields = {
-        "schema_version", "request_id", "source_repository", "receipt_repository", "conclusion",
-        "dry_run", "suite", "executor", "environment", "provider", "orchestrator_repository",
-        "workflow_file", "run_id", "run_attempt", "run_url", "commit_sha", "requested_candidate_id",
-        "resolved_candidate_id", "image_ref", "image_digest", "result_artifact", "result_uri",
-        "failed_jobs", "completed_at",
-    }
-    if set(receipt) != expected_fields:
-        missing = sorted(expected_fields - set(receipt))
-        unknown = sorted(set(receipt) - expected_fields)
+    fields = set(receipt)
+    missing = sorted(REQUIRED_FIELDS - fields)
+    unknown = sorted(fields - REQUIRED_FIELDS - OPTIONAL_FIELDS)
+    if missing or unknown:
         raise SystemExit(f"receipt fields mismatch: missing={missing}, unknown={unknown}")
     if receipt.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
@@ -76,6 +78,9 @@ def validate(receipt: dict) -> None:
     request_id = receipt.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    execution_id = receipt.get("request_execution_id")
+    if execution_id is not None and (not isinstance(execution_id, str) or not REQUEST_ID_RE.fullmatch(execution_id)):
+        raise SystemExit("request_execution_id is invalid")
     if receipt.get("conclusion") not in {"success", "failure", "cancelled"}:
         raise SystemExit("conclusion is invalid")
     if not isinstance(receipt.get("dry_run"), bool):
@@ -187,6 +192,9 @@ def build(receipt_path_text: str, dispatch_path_text: str) -> None:
         "failed_jobs": failed_jobs,
         "completed_at": completed_at,
     }
+    execution_id = env("REQUEST_EXECUTION_ID")
+    if execution_id:
+        receipt["request_execution_id"] = execution_id
     validate(receipt)
     receipt_path = Path(receipt_path_text)
     dispatch_path = Path(dispatch_path_text)
