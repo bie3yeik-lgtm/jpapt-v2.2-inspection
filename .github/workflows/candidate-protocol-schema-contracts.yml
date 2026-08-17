@@ -1,0 +1,217 @@
+name: Candidate Protocol Schema Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-schema-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-schema-contracts.yml
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-schema-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate builder and JSON Schema agreement
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Draft 2020-12 validator
+        run: python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
+      - name: Check all protocol schemas
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          for path in sorted(Path('contracts').glob('candidate-*.schema.json')):
+              schema = json.loads(path.read_text(encoding='utf-8'))
+              Draft202012Validator.check_schema(schema)
+              print(path)
+          PY
+      - name: Generate canonical protocol fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=schema-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=false \
+          SUITE=smoke \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          WORKFLOW_FILE=candidate-package-evaluate-v2.yml \
+          RUN_ID=2001 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000001 \
+          RESOLVED_CANDIDATE_ID=candidate-000001 \
+          IMAGE_REF=ghcr.io/owner/source@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          IMAGE_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          RESULT_ARTIFACT=candidate-result-2001 \
+          RESULT_URI=artifact://candidate-result-2001 \
+          BUILD_RESULT=success \
+          CPU_RESULT=success \
+          CUDA_RESULT=skipped \
+          COREML_RESULT=skipped \
+          DIRECTML_RESULT=skipped \
+          HF_JOBS_RESULT=skipped \
+          COMPLETED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+
+          RECEIVER_REPOSITORY=owner/receiver \
+          RECEIVER_RUN_ID=3001 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/3001 \
+          ACCEPTED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json >/dev/null
+
+          REQUEST_ID=schema-rejected-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=1001 \
+          GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/1001 \
+          REJECTED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json >/dev/null
+
+          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+          RECEIPT_SHA256="$receipt_sha" \
+          UPDATED_AT=2026-08-17T10:03:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state completed \
+            --receipt /tmp/receipt.json \
+            --output /tmp/lifecycle.json >/dev/null
+
+          SOURCE_REPOSITORY=owner/source \
+          UPDATED_AT=2026-08-17T10:04:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --output /tmp/acknowledged.json >/dev/null
+
+          python scripts/ci/build-candidate-request-timeline.py \
+            --request-id schema-contract-001 \
+            --candidate receipt=/tmp/lifecycle.json \
+            --candidate ack=/tmp/acknowledged.json \
+            --output /tmp/timeline.json >/dev/null
+      - name: Validate generated fixtures against actual schemas
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator, FormatChecker
+          from referencing import Registry, Resource
+
+          def load(path):
+              return json.loads(Path(path).read_text(encoding='utf-8'))
+
+          schemas = {
+              'receipt': load('contracts/candidate-completion-receipt.schema.json'),
+              'ack': load('contracts/candidate-completion-ack.schema.json'),
+              'rejection': load('contracts/candidate-request-rejection.schema.json'),
+              'lifecycle': load('contracts/candidate-request-lifecycle.schema.json'),
+              'timeline': load('contracts/candidate-request-timeline.schema.json'),
+          }
+          fixtures = {
+              'receipt': load('/tmp/receipt.json'),
+              'ack': load('/tmp/ack.json'),
+              'rejection': load('/tmp/rejection.json'),
+              'lifecycle': load('/tmp/lifecycle.json'),
+          }
+          checker = FormatChecker()
+          for name, instance in fixtures.items():
+              Draft202012Validator(schemas[name], format_checker=checker).validate(instance)
+              print(f'validated {name}')
+
+          registry = Registry().with_resource(
+              schemas['lifecycle']['$id'],
+              Resource.from_contents(schemas['lifecycle']),
+          )
+          Draft202012Validator(
+              schemas['timeline'],
+              registry=registry,
+              format_checker=checker,
+          ).validate(load('/tmp/timeline.json'))
+          print('validated timeline')
+          PY
+      - name: Prove schema constraints reject malformed protocol payloads
+        run: |
+          python - <<'PY'
+          import copy
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator, FormatChecker
+          from jsonschema.exceptions import ValidationError
+
+          def load(path):
+              return json.loads(Path(path).read_text(encoding='utf-8'))
+
+          checker = FormatChecker()
+          receipt_schema = load('contracts/candidate-completion-receipt.schema.json')
+          lifecycle_schema = load('contracts/candidate-request-lifecycle.schema.json')
+          receipt = load('/tmp/receipt.json')
+          lifecycle = load('/tmp/lifecycle.json')
+
+          bad_receipt = copy.deepcopy(receipt)
+          bad_receipt['commit_sha'] = 'not-a-sha'
+          try:
+              Draft202012Validator(receipt_schema, format_checker=checker).validate(bad_receipt)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError('invalid receipt commit_sha unexpectedly passed schema validation')
+
+          bad_lifecycle = copy.deepcopy(lifecycle)
+          bad_lifecycle['updated_at'] = '2026-08-17T10:03:00'
+          try:
+              Draft202012Validator(lifecycle_schema, format_checker=checker).validate(bad_lifecycle)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError('naive lifecycle updated_at unexpectedly passed schema validation')
+          PY
