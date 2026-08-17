@@ -28,7 +28,7 @@ The preferred receiver setup path is:
 Actions -> Candidate Receiver Bootstrap -> Run workflow
 ```
 
-`repository` must name an external `owner/name` repository. The bootstrap installs the reference completion/rejection workflows and their required helper scripts, then writes:
+`repository` must name an external `owner/name` repository. The bootstrap installs the reference completion/rejection workflows and their required helper scripts together with:
 
 ```text
 .jpapt/candidate-receiver.json
@@ -42,9 +42,9 @@ The manifest is `CandidateReceiverInstallationV1`. It records:
 - every managed receiver path and its SHA-256;
 - installation timestamp.
 
-The manifest is deliberately written **after** all managed files. Its presence therefore marks a completed bootstrap attempt. A later bootstrap accepts an existing installation only when its manifest binds the same receiver to the same orchestrator.
+The complete receiver bundle, including the manifest, is written as **one Git commit** using the Git Data API and then attached to the target default branch with a non-forced fast-forward ref update. A branch race or rejected update therefore cannot leave only some managed paths committed by the bootstrap run.
 
-If no manifest exists and any managed path already exists, bootstrap fails by default instead of overwriting unrelated repository content. `adopt_existing=true` is an explicit migration escape hatch and should only be used after reviewing those existing paths.
+A later bootstrap accepts an existing installation only when its manifest binds the same receiver to the same orchestrator. If no manifest exists, already-present managed files are compared byte-for-byte with the current canonical source. Exact matches are treated as a recoverable prior/partial installation; differing files require explicit `adopt_existing=true` after review.
 
 Receiver Actions variables and secrets are intentionally not mutated by bootstrap. Capability/trust configuration remains an explicit repository-owner operation.
 
@@ -87,9 +87,21 @@ The orchestrator must provide:
 SOURCE_REPO_TOKEN
 ```
 
-It is used by bootstrap, synthetic E2E preflight, and `Candidate Package Evaluate V2` when delivering completion/rejection events to external repositories. Installing workflow files also requires that this credential has the corresponding repository capability; bootstrap fails rather than silently degrading when GitHub rejects a write.
+It is used by bootstrap, synthetic E2E preflight, and `Candidate Package Evaluate V2` when delivering completion/rejection events to external repositories. Installing workflow files also requires that this credential has the corresponding repository capability; bootstrap fails rather than silently degrading when GitHub rejects the atomic branch update.
 
 Secrets are capabilities; `JPAPT_ORCHESTRATOR_REPOSITORIES` is the receiver-side trust policy. Both must be configured.
+
+## Readiness audit
+
+Before running E2E, `Candidate Protocol Readiness` can audit the target repository without changing it. It verifies:
+
+- orchestrator `SOURCE_REPO_TOKEN` and `HF_TOKEN` are configured;
+- receiver workflow is reachable;
+- managed installation manifest and all recorded hashes are consistent when managed installation is required;
+- receiver `JPAPT_ORCHESTRATOR_REPOSITORIES` contains the current orchestrator;
+- receiver secret metadata includes `JPAPT_ACK_TOKEN`.
+
+The audit never reads secret values. A failure to read the required metadata is treated as inability to prove readiness.
 
 ## Running the E2E workflow
 
