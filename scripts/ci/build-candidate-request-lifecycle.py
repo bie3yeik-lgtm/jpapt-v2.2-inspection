@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,12 @@ def env(name: str, default: str = "") -> str:
 
 def integer_or_none(value: str) -> int | None:
     return int(value) if value else None
+
+
+def request_key(request_id: str) -> str:
+    if not REQUEST_ID_RE.fullmatch(request_id):
+        raise SystemExit("request_id is invalid")
+    return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
 
 
 def load_json(path: str | None) -> dict | None:
@@ -71,7 +78,12 @@ def main() -> int:
     parser.add_argument("--ack")
     parser.add_argument("--output")
     parser.add_argument("--validate")
+    parser.add_argument("--request-key")
     args = parser.parse_args()
+
+    if args.request_key:
+        print(request_key(args.request_key))
+        return 0
 
     if args.validate:
         snapshot = load_json(args.validate)
