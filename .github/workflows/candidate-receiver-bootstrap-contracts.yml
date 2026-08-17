@@ -89,8 +89,12 @@ jobs:
           set -euo pipefail
           grep -F '[[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'managed path already exists without jpapt manifest' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'recoverable partial install already matches canonical source' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'existing receiver installation is managed by another orchestrator' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'The manifest is written last.' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'git/trees' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'git/commits' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'git/refs/heads/$TARGET_BRANCH' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F '{sha:$sha,force:false}' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'installed receiver hash mismatch' .github/workflows/candidate-receiver-bootstrap.yml
       - name: Verify E2E manifest preflight
         shell: bash
