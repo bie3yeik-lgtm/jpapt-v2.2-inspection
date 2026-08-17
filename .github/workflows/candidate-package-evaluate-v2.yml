@@ -8,6 +8,11 @@ on:
         required: false
         default: ""
         type: string
+      request_execution_id:
+        description: Orchestrator execution correlation ID; generated when blank
+        required: false
+        default: ""
+        type: string
       source_repository:
         description: Source GitHub repo owner/name
         required: true
@@ -92,6 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       request_id: ${{ steps.resolve.outputs.request_id }}
+      request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}
       source_repository: ${{ steps.resolve.outputs.source_repository }}
       receipt_repository: ${{ steps.resolve.outputs.receipt_repository }}
       hf_bucket: ${{ steps.resolve.outputs.hf_bucket }}
@@ -122,6 +128,8 @@ jobs:
         id: inputs
         env:
           I_REQUEST_ID: ${{ inputs.request_id }}
+          I_REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
+          REQUEST_EXECUTION_PREFIX: eval
           I_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
           I_RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           I_HF_BUCKET: ${{ inputs.hf_bucket }}
@@ -193,6 +201,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
@@ -238,6 +247,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
@@ -263,6 +273,7 @@ jobs:
             echo '## Candidate evaluation plan'
             echo
             printf -- '- request id: `%s`\n' "$REQUEST_ID"
+            printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
             printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
             printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
             printf -- '- completion event: `jpapt.candidate-completed`\n'
@@ -584,6 +595,7 @@ jobs:
       - name: Build completion receipt and dispatch body
         env:
           REQUEST_ID: ${{ needs.resolve.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}
           SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
           RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
