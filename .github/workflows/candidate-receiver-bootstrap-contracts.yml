@@ -176,3 +176,18 @@ jobs:
           grep -F 'JPAPT_ACK_TOKEN' "$readiness"
           grep -F 'managed path hash mismatch' "$readiness"
           grep -F '**Readiness: PASS**' "$readiness"
+      - name: Verify readiness HF Bucket preflight contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          readiness=.github/workflows/candidate-protocol-readiness.yml
+          grep -F 'hf_bucket:' "$readiness"
+          grep -F 'hf://buckets/$HF_BUCKET/candidates' "$readiness"
+          grep -F 'hf buckets list --token "$HF_TOKEN" "$remote" -R -q' "$readiness"
+          grep -F "grep -Eo 'candidate-[0-9]{6}'" "$readiness"
+          grep -F 'E2E HF Bucket contains no candidate-NNNNNN under candidates/' "$readiness"
+          grep -F 'E2E HF Bucket candidate collection: reachable and non-empty' "$readiness"
+          if grep -F 'hf buckets sync' "$readiness"; then
+            echo 'readiness must not download candidate payloads' >&2
+            exit 1
+          fi
