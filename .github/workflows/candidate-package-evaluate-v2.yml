@@ -3,9 +3,19 @@ name: Candidate Package Evaluate V2
 on:
   workflow_dispatch:
     inputs:
+      request_id:
+        description: Caller correlation ID; generated when blank
+        required: false
+        default: ""
+        type: string
       source_repository:
         description: Source GitHub repo owner/name
         required: true
+        type: string
+      receipt_repository:
+        description: Completion receipt repo owner/name; blank = source repository
+        required: false
+        default: ""
         type: string
       hf_bucket:
         description: Optional namespace/bucket
@@ -81,7 +91,9 @@ jobs:
     name: Resolve request
     runs-on: ubuntu-latest
     outputs:
+      request_id: ${{ steps.resolve.outputs.request_id }}
       source_repository: ${{ steps.resolve.outputs.source_repository }}
+      receipt_repository: ${{ steps.resolve.outputs.receipt_repository }}
       hf_bucket: ${{ steps.resolve.outputs.hf_bucket }}
       candidate_id: ${{ steps.resolve.outputs.candidate_id }}
       package_name: ${{ steps.resolve.outputs.package_name }}
@@ -109,7 +121,9 @@ jobs:
       - name: Normalize workflow inputs
         id: inputs
         env:
+          I_REQUEST_ID: ${{ inputs.request_id }}
           I_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          I_RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           I_HF_BUCKET: ${{ inputs.hf_bucket }}
           I_CANDIDATE_ID: ${{ inputs.candidate_id }}
           I_PACKAGE_NAME: ${{ inputs.package_name }}
@@ -197,7 +211,9 @@ jobs:
       - name: Write execution plan
         shell: bash
         env:
+          REQUEST_ID: ${{ steps.resolve.outputs.request_id }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ steps.resolve.outputs.receipt_repository }}
           HF_BUCKET: ${{ steps.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ steps.resolve.outputs.candidate_id }}
           IMAGE: ${{ steps.resolve.outputs.image }}
@@ -220,7 +236,10 @@ jobs:
           {
             echo '## Candidate evaluation plan'
             echo
+            printf -- '- request id: `%s`\n' "$REQUEST_ID"
             printf -- '- source: `%s`\n' "$SOURCE_REPOSITORY"
+            printf -- '- receipt repository: `%s`\n' "$RECEIPT_REPOSITORY"
+            printf -- '- completion event: `jpapt.candidate-completed`\n'
             printf -- '- bucket: `%s`\n' "$HF_BUCKET"
             printf -- '- candidate: `%s`\n' "$candidate"
             printf -- '- package: `%s`\n' "$IMAGE"
@@ -519,3 +538,78 @@ jobs:
           name: candidate-package-${{ needs.build.outputs.candidate_id }}-hf-jobs-${{ needs.resolve.outputs.suite }}
           path: results/candidate-package
           retention-days: 14
+
+  completion:
+    name: Emit candidate completion receipt
+    needs:
+      - resolve
+      - build
+      - github-linux-cpu
+      - github-linux-cuda
+      - github-macos-coreml
+      - github-windows-directml
+      - hf-jobs
+    if: ${{ always() && needs.resolve.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build completion receipt and dispatch body
+        env:
+          REQUEST_ID: ${{ needs.resolve.outputs.request_id }}
+          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}
+          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
+          DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
+          SUITE: ${{ needs.resolve.outputs.suite }}
+          EXECUTOR: ${{ needs.resolve.outputs.executor }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          PROVIDER: ${{ needs.resolve.outputs.provider }}
+          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          REQUESTED_CANDIDATE_ID: ${{ needs.resolve.outputs.candidate_id }}
+          RESOLVED_CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          CPU_RESULT: ${{ needs.github-linux-cpu.result }}
+          CUDA_RESULT: ${{ needs.github-linux-cuda.result }}
+          COREML_RESULT: ${{ needs.github-macos-coreml.result }}
+          DIRECTML_RESULT: ${{ needs.github-windows-directml.result }}
+          HF_JOBS_RESULT: ${{ needs.hf-jobs.result }}
+        run: >-
+          python scripts/ci/build-candidate-completion-receipt.py
+          --receipt .ci/candidate-completion-receipt.json
+          --dispatch-body .ci/candidate-completion-dispatch.json
+      - name: Preserve completion receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-completion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/candidate-completion-receipt.json
+          retention-days: 30
+      - name: Dispatch completion event
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}
+          RECEIPT_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$RECEIPT_TOKEN"
+          if [[ -z "$token" && "$RECEIPT_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            token="$GITHUB_TOKEN"
+          fi
+          [[ -n "$token" ]] || {
+            echo "::error::SOURCE_REPO_TOKEN is required to deliver completion receipt to $RECEIPT_REPOSITORY"
+            exit 1
+          }
+          GH_TOKEN="$token" gh api \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "/repos/$RECEIPT_REPOSITORY/dispatches" \
+            --input .ci/candidate-completion-dispatch.json
