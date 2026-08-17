@@ -68,9 +68,17 @@ jobs:
             echo "::error::unable to list E2E candidate collection: $remote"
             exit 1
           fi
-          candidate_count="$(grep -Eo 'candidate-[0-9]{6}' /tmp/readiness-candidates.txt | sort -u | wc -l | tr -d ' ')"
+          candidate_count="$(python - /tmp/readiness-candidates.txt <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding='utf-8')
+          print(len(set(re.findall(r'candidate-[0-9]{6}', text))))
+          PY
+          )"
           [[ "$candidate_count" -gt 0 ]] || {
-            echo "::error::E2E Bucket contains no candidate-NNNNNN under candidates/: $HF_BUCKET"
+            echo "::error::E2E HF Bucket contains no candidate-NNNNNN under candidates/: $HF_BUCKET"
             exit 1
           }
           echo "candidate_count=$candidate_count" >> "$GITHUB_OUTPUT"
