@@ -36,6 +36,7 @@ jobs:
           set -euo pipefail
           bash -n scripts/ci/workflow-dispatch-with-retry.sh
           grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate.yml
+          grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-request-gateway.yml
       - name: Retry transient failures and succeed on third attempt
         shell: bash
         run: |
