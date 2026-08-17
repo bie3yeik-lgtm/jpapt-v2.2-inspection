@@ -49,7 +49,14 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
     selected = [
         result
         for name, result in results.items()
-        if name in {"github-linux-cpu", "github-linux-cuda", "github-macos-coreml", "github-windows-directml", "hf-jobs"}
+        if name
+        in {
+            "github-linux-cpu",
+            "github-linux-cuda",
+            "github-macos-coreml",
+            "github-windows-directml",
+            "hf-jobs",
+        }
         and result != "skipped"
     ]
     if selected == ["success"]:
@@ -58,6 +65,36 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
 
 
 def validate(receipt: dict) -> None:
+    expected_fields = {
+        "schema_version",
+        "request_id",
+        "source_repository",
+        "receipt_repository",
+        "conclusion",
+        "dry_run",
+        "suite",
+        "executor",
+        "environment",
+        "provider",
+        "orchestrator_repository",
+        "workflow_file",
+        "run_id",
+        "run_attempt",
+        "run_url",
+        "commit_sha",
+        "requested_candidate_id",
+        "resolved_candidate_id",
+        "image_ref",
+        "image_digest",
+        "result_artifact",
+        "result_uri",
+        "failed_jobs",
+        "completed_at",
+    }
+    if set(receipt) != expected_fields:
+        missing = sorted(expected_fields - set(receipt))
+        unknown = sorted(set(receipt) - expected_fields)
+        raise SystemExit(f"receipt fields mismatch: missing={missing}, unknown={unknown}")
     if receipt.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     for field in ("source_repository", "receipt_repository", "orchestrator_repository"):
@@ -75,8 +112,15 @@ def validate(receipt: dict) -> None:
         raise SystemExit("suite is invalid")
     if receipt.get("executor") not in {"github", "hf_jobs"}:
         raise SystemExit("executor is invalid")
-    if receipt.get("environment") not in {"linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"}:
+    if receipt.get("environment") not in {
+        "linux-cpu",
+        "linux-cuda",
+        "macos-coreml",
+        "windows-directml",
+    }:
         raise SystemExit("environment is invalid")
+    if not isinstance(receipt.get("provider"), str) or not receipt["provider"]:
+        raise SystemExit("provider is invalid")
     if receipt.get("workflow_file") != "candidate-package-evaluate-v2.yml":
         raise SystemExit("workflow_file is invalid")
     if not isinstance(receipt.get("run_id"), int) or receipt["run_id"] < 1:
@@ -88,30 +132,53 @@ def validate(receipt: dict) -> None:
     if not isinstance(receipt.get("commit_sha"), str) or not SHA_RE.fullmatch(receipt["commit_sha"]):
         raise SystemExit("commit_sha is invalid")
     requested = receipt.get("requested_candidate_id")
-    if requested != "latest" and (not isinstance(requested, str) or not CANDIDATE_RE.fullmatch(requested)):
+    if requested != "latest" and (
+        not isinstance(requested, str) or not CANDIDATE_RE.fullmatch(requested)
+    ):
         raise SystemExit("requested_candidate_id is invalid")
     resolved = receipt.get("resolved_candidate_id")
-    if resolved is not None and (not isinstance(resolved, str) or not CANDIDATE_RE.fullmatch(resolved)):
+    if resolved is not None and (
+        not isinstance(resolved, str) or not CANDIDATE_RE.fullmatch(resolved)
+    ):
         raise SystemExit("resolved_candidate_id is invalid")
+    for field in ("image_ref", "result_artifact", "result_uri"):
+        value = receipt.get(field)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise SystemExit(f"{field} is invalid")
     digest = receipt.get("image_digest")
-    if digest is not None and (not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest)):
+    if digest is not None and (
+        not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest)
+    ):
         raise SystemExit("image_digest is invalid")
     if receipt["conclusion"] == "success" and not receipt["dry_run"]:
-        for field in ("resolved_candidate_id", "image_ref", "image_digest", "result_artifact"):
+        for field in (
+            "resolved_candidate_id",
+            "image_ref",
+            "image_digest",
+            "result_artifact",
+        ):
             if not receipt.get(field):
                 raise SystemExit(f"successful evaluation receipt requires {field}")
     if not isinstance(receipt.get("failed_jobs"), list) or not all(
         isinstance(item, str) and item for item in receipt["failed_jobs"]
     ):
         raise SystemExit("failed_jobs is invalid")
+    if not isinstance(receipt.get("completed_at"), str) or "T" not in receipt["completed_at"]:
+        raise SystemExit("completed_at is invalid")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--receipt", required=True)
-    parser.add_argument("--dispatch-body", required=True)
-    args = parser.parse_args()
+def load_and_validate(path: str) -> None:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid receipt file {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise SystemExit("receipt must be a JSON object")
+    validate(value)
+    print(json.dumps(value, indent=2, ensure_ascii=False))
 
+
+def build(receipt_path_text: str, dispatch_path_text: str) -> None:
     dry_run = boolean(env("DRY_RUN", "false"), "DRY_RUN")
     results = {
         "build": env("BUILD_RESULT"),
@@ -138,9 +205,13 @@ def main() -> int:
                 f"{suite}-{env('RUN_ID')}-{env('RUN_ATTEMPT')}/result.json"
             )
         else:
-            result_artifact = f"candidate-package-{resolved_candidate_id}-{environment}-{suite}"
+            result_artifact = (
+                f"candidate-package-{resolved_candidate_id}-{environment}-{suite}"
+            )
 
-    completed_at = env("COMPLETED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    completed_at = env("COMPLETED_AT") or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
     receipt = {
         "schema_version": 1,
         "request_id": env("REQUEST_ID"),
@@ -169,16 +240,40 @@ def main() -> int:
     }
     validate(receipt)
 
-    receipt_path = Path(args.receipt)
-    dispatch_path = Path(args.dispatch_body)
+    receipt_path = Path(receipt_path_text)
+    dispatch_path = Path(dispatch_path_text)
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     dispatch_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    receipt_path.write_text(
+        json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     dispatch_path.write_text(
-        json.dumps({"event_type": EVENT_TYPE, "client_payload": receipt}, separators=(",", ":"), ensure_ascii=False) + "\n",
+        json.dumps(
+            {"event_type": EVENT_TYPE, "client_payload": receipt},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(receipt_path.read_text(encoding="utf-8"), end="")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--receipt")
+    parser.add_argument("--dispatch-body")
+    parser.add_argument("--validate")
+    args = parser.parse_args()
+
+    if args.validate:
+        if args.receipt or args.dispatch_body:
+            raise SystemExit("--validate cannot be combined with build arguments")
+        load_and_validate(args.validate)
+        return 0
+    if not args.receipt or not args.dispatch_body:
+        raise SystemExit("build mode requires --receipt and --dispatch-body")
+    build(args.receipt, args.dispatch_body)
     return 0
 
 
