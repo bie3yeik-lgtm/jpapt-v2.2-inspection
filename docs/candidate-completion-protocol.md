@@ -105,6 +105,7 @@ Supported states are:
 
 ```text
 planned
+dispatched
 running
 rejected
 completed
@@ -114,15 +115,19 @@ acknowledged
 Semantics:
 
 - `planned`: Gateway Rust normalization/resolution produced a valid plan.
-- `running`: Gateway successfully submitted `candidate-package-evaluate-v2.yml`; GitHub may not yet expose the evaluation run ID.
+- `dispatched`: Gateway successfully submitted `candidate-package-evaluate-v2.yml`. The evaluation workflow may still be queued and evaluation run identity is not required.
+- `running`: the V2 evaluation workflow itself completed Rust request resolution and emitted a snapshot containing its actual `github.run_id` and `github.run_attempt`.
 - `rejected`: Gateway failed before accepted execution and produced a validated `CandidateRequestRejectionV1`.
 - `completed`: a validated completion receipt exists; evaluation run identity and canonical receipt hash are mandatory.
 - `acknowledged`: a validated ACK exists and matches the preserved completion receipt.
+
+The distinction is intentional: GitHub accepting a workflow dispatch is not proof that the dispatched evaluation run reached its own request-resolution boundary. Legacy `running` snapshots created before this split remain schema-valid only when they contain the evaluation identity required by the current contract; new Gateway runs emit `dispatched` instead.
 
 Artifact lookup uses the first 24 hex characters of `SHA-256(request_id)` as `<request-key>`:
 
 ```text
 candidate-lifecycle-<request-key>-planned
+candidate-lifecycle-<request-key>-dispatched
 candidate-lifecycle-<request-key>-running
 candidate-lifecycle-<request-key>-rejected
 candidate-lifecycle-<request-key>-completed
@@ -133,7 +138,7 @@ Lifecycle snapshots MUST NOT replace evaluation result, promotion, receipt, reje
 
 ## Persistent lifecycle storage
 
-GitHub Actions artifacts are short-lived operational evidence. `Candidate Lifecycle Persist` copies lifecycle evidence to a dedicated private Hugging Face Bucket after the Gateway, lifecycle observer, or ACK receiver completes.
+GitHub Actions artifacts are short-lived operational evidence. `Candidate Lifecycle Persist` copies lifecycle evidence to a dedicated private Hugging Face Bucket after the Gateway, V2 evaluation workflow, lifecycle observer, or ACK receiver completes.
 
 The Bucket defaults to:
 
@@ -157,6 +162,7 @@ requests/<request-key>/
 │   └── <sha256>-<canonical-filename>.json
 └── states/
     ├── planned.json
+    ├── dispatched.json
     ├── running.json
     ├── rejected.json
     ├── completed.json
@@ -170,12 +176,12 @@ Roles are intentionally different:
 - `states/` is a materialized lookup view. It may be overwritten by another observation of the same state and MUST NOT be treated as canonical history.
 - GitHub lifecycle artifacts remain the short-term fallback and make persistence failures independent of the evaluation protocol itself.
 
-Persistence runs through `.github/workflows/candidate-lifecycle-persist.yml`, which is triggered by `workflow_run` rather than being embedded in evaluation/ACK jobs. Therefore a Bucket outage cannot change an already-established evaluation or acknowledgement result. The workflow also supports manual `source_run_id` input for backfill.
+Persistence runs through `.github/workflows/candidate-lifecycle-persist.yml`, which is triggered by `workflow_run` rather than being embedded in completion/ACK delivery jobs. Therefore a Bucket outage cannot change an already-established evaluation or acknowledgement result. The workflow also supports manual `source_run_id` input for backfill.
 
 `Candidate Request Status` resolves the most advanced available state in this order:
 
 ```text
-acknowledged -> completed -> rejected -> running -> planned
+acknowledged -> completed -> rejected -> running -> dispatched -> planned
 ```
 
 It first checks `states/` in the persistent lifecycle Bucket and falls back to GitHub Actions artifacts when persistent evidence is unavailable. The downloaded snapshot is revalidated and its original `request_id` must match the requested correlation ID.
@@ -217,11 +223,12 @@ No model or evaluation secrets are embedded in protocol payloads.
 Do not collapse these conditions into one boolean:
 
 1. request rejection: normalization/resolution did not reach accepted execution;
-2. evaluation failure: represented by `CandidateCompletionReceiptV1.conclusion=failure`;
-3. completion dispatch failure: orchestrator has its receipt artifact but no receiver evidence;
-4. receipt schema/binding failure: receiver MUST NOT emit an ACK;
-5. ACK dispatch/validation failure: receiver accepted the receipt but orchestrator lacks validated acknowledgement evidence;
-6. lifecycle persistence failure: canonical GitHub evidence may still exist, but the long-lived Bucket copy is incomplete.
+2. dispatch accepted but evaluation not running: `dispatched` exists but no evaluation-owned `running` snapshot exists yet;
+3. evaluation failure: represented by `CandidateCompletionReceiptV1.conclusion=failure`;
+4. completion dispatch failure: orchestrator has its receipt artifact but no receiver evidence;
+5. receipt schema/binding failure: receiver MUST NOT emit an ACK;
+6. ACK dispatch/validation failure: receiver accepted the receipt but orchestrator lacks validated acknowledgement evidence;
+7. lifecycle persistence failure: canonical GitHub evidence may still exist, but the long-lived Bucket copy is incomplete.
 
 Each condition has a different recovery action. Lifecycle persistence can be backfilled from a source workflow run while its GitHub artifacts still exist.
 
@@ -237,7 +244,8 @@ Each condition has a different recovery action. Lifecycle persistence can be bac
 - rejection generation, validation, and event type;
 - request ID preservation;
 - canonical receipt SHA stability across JSON key reordering;
-- planned, running, rejected, completed, and acknowledged lifecycle generation/validation;
+- planned, dispatched, running, rejected, completed, and acknowledged lifecycle generation/validation;
+- `running` is rejected when evaluation run identity is missing;
 - stable request artifact-key derivation;
 - workflow actionlint;
 - bounded-dispatch helper syntax;
