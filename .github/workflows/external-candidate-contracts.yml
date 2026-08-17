@@ -12,14 +12,18 @@ on:
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-request-lifecycle-observer.yml
+      - .github/workflows/candidate-request-status.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
       - docker/candidate-package/Dockerfile
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
@@ -35,14 +39,18 @@ on:
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-request-lifecycle-observer.yml
+      - .github/workflows/candidate-request-status.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-request-lifecycle.schema.json
       - docker/candidate-package/Dockerfile
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
+      - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
@@ -92,6 +100,7 @@ jobs:
             .github/workflows/candidate-completion-ack.yml \
             .github/workflows/candidate-completion-receipt.yml \
             .github/workflows/candidate-package-evaluate.yml \
+            .github/workflows/candidate-request-lifecycle-observer.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
           # Summary-only Markdown printf strings contain literal backticks.
@@ -99,7 +108,8 @@ jobs:
           actionlint -color -ignore 'SC2016' \
             .github/workflows/candidate-completion-reconcile.yml \
             .github/workflows/candidate-package-evaluate-v2.yml \
-            .github/workflows/candidate-request-gateway.yml
+            .github/workflows/candidate-request-gateway.yml \
+            .github/workflows/candidate-request-status.yml
 
       - name: Validate Bash helper syntax
         shell: bash
@@ -113,16 +123,18 @@ jobs:
             scripts/ci/build-candidate-completion-ack.py \
             scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-dispatch-body.py \
+            scripts/ci/build-candidate-request-lifecycle.py \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/generic-candidate-evaluate.py \
             scripts/ci/normalize-candidate-request.py
 
-      - name: Validate completion protocol schema JSON
+      - name: Validate protocol schema JSON
         run: |
           python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
           python -m json.tool contracts/candidate-completion-ack.schema.json >/dev/null
+          python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
 
-      - name: Exercise completion receipt and acknowledgement contract
+      - name: Exercise completion receipt, acknowledgement, and lifecycle contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -167,6 +179,40 @@ jobs:
           python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
 
           receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key req-contract-001)"
+          [[ ${#request_key} -eq 24 ]]
+
+          REQUEST_ID=req-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=100 \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state planned --output /tmp/lifecycle-planned.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-planned.json
+
+          REQUEST_ID=req-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=100 \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/lifecycle-running.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-running.json
+
+          RECEIPT_SHA256="$receipt_sha" \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state completed \
+            --receipt /tmp/receipt.json \
+            --output /tmp/lifecycle-completed.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-completed.json
+
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --output /tmp/lifecycle-acknowledged.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-acknowledged.json
 
           python - <<'PY'
           import json
@@ -181,6 +227,16 @@ jobs:
           assert ack_dispatch['event_type'] == 'jpapt.candidate-completion-ack'
           assert ack['request_id'] == 'req-contract-001'
           assert len(ack['receipt_sha256']) == 64
+
+          states = []
+          for path in (
+              '/tmp/lifecycle-planned.json',
+              '/tmp/lifecycle-running.json',
+              '/tmp/lifecycle-completed.json',
+              '/tmp/lifecycle-acknowledged.json',
+          ):
+              states.append(json.loads(Path(path).read_text())['state'])
+          assert states == ['planned', 'running', 'completed', 'acknowledged']
 
           receipt = json.loads(Path('/tmp/receipt.json').read_text())
           reversed_receipt = {key: receipt[key] for key in reversed(list(receipt))}
@@ -199,14 +255,6 @@ jobs:
 
           reordered_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt-reordered.json)"
           [[ "$receipt_sha" == "$reordered_sha" ]]
-
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          first = json.loads(Path('/tmp/ack.json').read_text())
-          second = json.loads(Path('/tmp/ack-reordered.json').read_text())
-          assert first['receipt_sha256'] == second['receipt_sha256']
-          PY
 
       - name: Test Rust candidate request contract
         run: cargo test --locked -p asr-contracts --bin asr-candidate-request
