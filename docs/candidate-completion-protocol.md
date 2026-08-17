@@ -129,13 +129,56 @@ candidate-lifecycle-<request-key>-completed
 candidate-lifecycle-<request-key>-acknowledged
 ```
 
+Lifecycle snapshots MUST NOT replace evaluation result, promotion, receipt, rejection, or ACK contracts. They are only a query/index layer over canonical evidence.
+
+## Persistent lifecycle storage
+
+GitHub Actions artifacts are short-lived operational evidence. `Candidate Lifecycle Persist` copies lifecycle evidence to a dedicated private Hugging Face Bucket after the Gateway, lifecycle observer, or ACK receiver completes.
+
+The Bucket defaults to:
+
+```text
+<HF_DEFAULT_NAMESPACE>/<orchestrator-repository-name>-lifecycle
+```
+
+and can be overridden with the repository variable:
+
+```text
+HF_LIFECYCLE_BUCKET
+```
+
+Persistent layout is keyed by the same `<request-key>` used for GitHub artifacts:
+
+```text
+requests/<request-key>/
+├── events/
+│   └── <evidence-key>.lifecycle.json
+├── evidence/
+│   └── <sha256>-<canonical-filename>.json
+└── states/
+    ├── planned.json
+    ├── running.json
+    ├── rejected.json
+    ├── completed.json
+    └── acknowledged.json
+```
+
+Roles are intentionally different:
+
+- `events/` is append-only lifecycle evidence. Event names are derived from Gateway, evaluation, and receiver run identities.
+- `evidence/` stores canonical rejection, completion receipt, and acknowledgement objects when they are available.
+- `states/` is a materialized lookup view. It may be overwritten by another observation of the same state and MUST NOT be treated as canonical history.
+- GitHub lifecycle artifacts remain the short-term fallback and make persistence failures independent of the evaluation protocol itself.
+
+Persistence runs through `.github/workflows/candidate-lifecycle-persist.yml`, which is triggered by `workflow_run` rather than being embedded in evaluation/ACK jobs. Therefore a Bucket outage cannot change an already-established evaluation or acknowledgement result. The workflow also supports manual `source_run_id` input for backfill.
+
 `Candidate Request Status` resolves the most advanced available state in this order:
 
 ```text
 acknowledged -> completed -> rejected -> running -> planned
 ```
 
-Lifecycle snapshots MUST NOT replace evaluation result, promotion, receipt, rejection, or ACK contracts. They are only a query/index layer over canonical evidence.
+It first checks `states/` in the persistent lifecycle Bucket and falls back to GitHub Actions artifacts when persistent evidence is unavailable. The downloaded snapshot is revalidated and its original `request_id` must match the requested correlation ID.
 
 ## Retry policy
 
@@ -151,6 +194,8 @@ The receipt repository uses `JPAPT_ACK_TOKEN` to send `jpapt.candidate-completio
 
 `JPAPT_ORCHESTRATOR_REPOSITORIES` controls trust; tokens control capability. A repository must pass both checks before an external acknowledgement is emitted.
 
+Persistent lifecycle storage uses `HF_TOKEN`. The lifecycle Bucket is private by default and contains protocol evidence, not model credentials or GitHub tokens.
+
 No model or evaluation secrets are embedded in protocol payloads.
 
 ## Reference workflows
@@ -163,6 +208,7 @@ No model or evaluation secrets are embedded in protocol payloads.
 .github/workflows/candidate-completion-ack.yml
 .github/workflows/candidate-completion-reconcile.yml
 .github/workflows/candidate-request-lifecycle-observer.yml
+.github/workflows/candidate-lifecycle-persist.yml
 .github/workflows/candidate-request-status.yml
 ```
 
@@ -174,9 +220,10 @@ Do not collapse these conditions into one boolean:
 2. evaluation failure: represented by `CandidateCompletionReceiptV1.conclusion=failure`;
 3. completion dispatch failure: orchestrator has its receipt artifact but no receiver evidence;
 4. receipt schema/binding failure: receiver MUST NOT emit an ACK;
-5. ACK dispatch/validation failure: receiver accepted the receipt but orchestrator lacks validated acknowledgement evidence.
+5. ACK dispatch/validation failure: receiver accepted the receipt but orchestrator lacks validated acknowledgement evidence;
+6. lifecycle persistence failure: canonical GitHub evidence may still exist, but the long-lived Bucket copy is incomplete.
 
-Each condition has a different recovery action.
+Each condition has a different recovery action. Lifecycle persistence can be backfilled from a source workflow run while its GitHub artifacts still exist.
 
 ## Contract CI
 
@@ -196,3 +243,10 @@ Each condition has a different recovery action.
 - bounded-dispatch helper syntax;
 - Rust request contract tests;
 - candidate Dockerfile parsing.
+
+`Candidate Lifecycle Persist Contracts` separately verifies:
+
+- persistence/status workflow actionlint;
+- persistence helper Bash syntax;
+- Bucket-disabled local no-op behavior;
+- immutable event, canonical evidence, and materialized-state path conventions.
