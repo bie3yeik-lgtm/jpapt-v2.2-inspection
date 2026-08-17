@@ -110,10 +110,8 @@ jobs:
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
-
       - name: Install routing clients
         run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2" pyyaml
-
       - name: Normalize event inputs
         id: inputs
         env:
@@ -138,7 +136,6 @@ jobs:
           --event-name "$GITHUB_EVENT_NAME"
           --output /tmp/request.json
           --github-output "$GITHUB_OUTPUT"
-
       - name: Fetch source repository routing config
         shell: bash
         env:
@@ -159,7 +156,6 @@ jobs:
           else
             echo '{}' > /tmp/source.json
           fi
-
       - name: Infer HF namespace
         id: namespace
         shell: bash
@@ -170,7 +166,6 @@ jobs:
             namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
           fi
           echo "value=$namespace" >> "$GITHUB_OUTPUT"
-
       - name: Resolve request with Rust contract
         id: resolve
         shell: bash
@@ -185,7 +180,6 @@ jobs:
             --default-namespace "$DEFAULT_NAMESPACE" \
             --registry-owner "$GITHUB_REPOSITORY_OWNER" \
             --github-output "$GITHUB_OUTPUT"
-
       - name: Build planned lifecycle snapshot
         id: lifecycle
         shell: bash
@@ -199,18 +193,14 @@ jobs:
           set -euo pipefail
           mkdir -p .ci/lifecycle
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
-          python scripts/ci/build-candidate-request-lifecycle.py \
-            --state planned \
-            --output .ci/lifecycle/candidate-request-lifecycle.json
+          python scripts/ci/build-candidate-request-lifecycle.py --state planned --output .ci/lifecycle/candidate-request-lifecycle.json
           echo "request_key=$request_key" >> "$GITHUB_OUTPUT"
-
       - name: Preserve planned lifecycle snapshot
         uses: actions/upload-artifact@v7
         with:
           name: candidate-lifecycle-${{ steps.lifecycle.outputs.request_key }}-planned
           path: .ci/lifecycle/candidate-request-lifecycle.json
           retention-days: 30
-
       - name: Estimate from canonical V2 history
         id: estimate
         env:
@@ -230,7 +220,6 @@ jobs:
           --executor "$EXECUTOR"
           --environment "$ENVIRONMENT"
           --github-output "$GITHUB_OUTPUT"
-
       - name: Write normalized plan
         shell: bash
         env:
@@ -288,7 +277,6 @@ jobs:
             fi
             printf -- '- execute: `%s`\n' "$EXECUTE"
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Build normalized workflow dispatch body
         id: body
         env:
@@ -315,17 +303,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Dispatch Candidate Package Evaluate V2
+      - name: Dispatch Candidate Package Evaluate V2 with bounded retry
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           BODY: ${{ needs.plan.outputs.body }}
         run: |
-          printf '%s\n' "$BODY" | gh api \
-            --method POST \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
-            --input -
+          set -euo pipefail
+          printf '%s\n' "$BODY" > /tmp/v2-dispatch.json
+          bash scripts/ci/workflow-dispatch-with-retry.sh \
+            "$GITHUB_REPOSITORY" \
+            candidate-package-evaluate-v2.yml \
+            /tmp/v2-dispatch.json \
+            3
       - name: Build dispatched lifecycle snapshot
         env:
           REQUEST_ID: ${{ needs.plan.outputs.request_id }}
