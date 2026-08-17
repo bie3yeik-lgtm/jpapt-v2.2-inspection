@@ -4,21 +4,41 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 
 def env(name: str) -> str:
     return os.environ.get(name, "")
 
 
-def env_bool(name: str, default: bool = False) -> bool:
-    raw = env(name)
-    if raw == "":
+def parse_bool(raw: object, name: str, default: bool = False) -> bool:
+    if raw is None or raw == "":
         return default
-    if raw.lower() == "true":
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str) and raw.lower() == "true":
         return True
-    if raw.lower() == "false":
+    if isinstance(raw, str) and raw.lower() == "false":
         return False
     raise SystemExit(f"{name} must be true or false")
+
+
+def resolved_dry_run() -> bool:
+    explicit = env("DRY_RUN")
+    if explicit != "":
+        return parse_bool(explicit, "DRY_RUN")
+
+    # Candidate Request Gateway materializes the normalized request here before
+    # Rust resolution. dry_run has no repository-config fallback, so this is the
+    # same caller intent that the Rust contract resolves and prevents the
+    # dispatch builder from silently forcing an executable V2 run.
+    request_path = Path(env("REQUEST_JSON") or "/tmp/request.json")
+    if request_path.is_file():
+        value = json.loads(request_path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise SystemExit(f"{request_path} must contain a JSON object")
+        return parse_bool(value.get("dry_run"), "request dry_run")
+    return False
 
 
 def main() -> int:
@@ -41,7 +61,7 @@ def main() -> int:
         "environment": env("ENVIRONMENT"),
         "hf_flavor": env("HF_FLAVOR"),
         "hf_jobs_image": env("HF_JOBS_IMAGE"),
-        "dry_run": env_bool("DRY_RUN"),
+        "dry_run": resolved_dry_run(),
     }
     body = {"ref": args.ref, "inputs": inputs}
     compact = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
