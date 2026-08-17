@@ -112,3 +112,32 @@ jobs:
           set -e
           test "$status" = 2
           test ! -e /tmp/gh-count-invalid
+      - name: Reject malformed dispatch body before dispatch
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          echo 'gh must not be called for invalid repository dispatch body' >&2
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/gh
+
+          printf '{broken\n' > /tmp/invalid-json.json
+          printf '{"client_payload":{}}\n' > /tmp/missing-event.json
+          printf '{"event_type":"","client_payload":{}}\n' > /tmp/empty-event.json
+          printf '{"event_type":"jpapt.test","client_payload":[]}\n' > /tmp/bad-payload.json
+          python - <<'PY' > /tmp/long-event.json
+          import json
+          print(json.dumps({"event_type": "x" * 101, "client_payload": {}}))
+          PY
+
+          for body in /tmp/invalid-json.json /tmp/missing-event.json /tmp/empty-event.json /tmp/bad-payload.json /tmp/long-event.json; do
+            if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=test-token \
+              bash scripts/ci/repository-dispatch-with-retry.sh owner/receiver "$body" 3; then
+              echo "invalid repository dispatch body unexpectedly succeeded: $body" >&2
+              exit 1
+            fi
+          done
