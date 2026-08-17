@@ -1,0 +1,44 @@
+name: Candidate Completion Receipt
+
+on:
+  repository_dispatch:
+    types: [jpapt.candidate-completed]
+  workflow_dispatch:
+    inputs:
+      receipt_json:
+        description: CandidateCompletionReceiptV1 JSON payload
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  receipt:
+    name: Validate completion receipt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Materialize receipt payload
+        shell: bash
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          RECEIPT_JSON: ${{ inputs.receipt_json }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+            printf '%s\n' "$PAYLOAD" > .ci/candidate-completion-receipt.json
+          else
+            printf '%s\n' "$RECEIPT_JSON" > .ci/candidate-completion-receipt.json
+          fi
+      - name: Validate CandidateCompletionReceiptV1
+        run: >-
+          python scripts/ci/build-candidate-completion-receipt.py
+          --validate .ci/candidate-completion-receipt.json
+      - name: Preserve received receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: received-candidate-completion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/candidate-completion-receipt.json
+          retention-days: 30
