@@ -139,9 +139,11 @@ jobs:
       - name: Validate generated timeline against Draft 2020-12 schema
         run: |
           python - <<'PY'
+          import copy
           import json
           from pathlib import Path
-          from jsonschema import Draft202012Validator
+          from jsonschema import Draft202012Validator, FormatChecker
+          from jsonschema.exceptions import ValidationError
           from referencing import Registry, Resource
 
           lifecycle = json.loads(Path('contracts/candidate-request-lifecycle.schema.json').read_text())
@@ -150,7 +152,21 @@ jobs:
           Draft202012Validator.check_schema(lifecycle)
           Draft202012Validator.check_schema(timeline)
           registry = Registry().with_resource(lifecycle['$id'], Resource.from_contents(lifecycle))
-          Draft202012Validator(timeline, registry=registry).validate(instance)
+          validator = Draft202012Validator(
+              timeline,
+              registry=registry,
+              format_checker=FormatChecker(),
+          )
+          validator.validate(instance)
+
+          invalid = copy.deepcopy(instance)
+          invalid['events'][0]['snapshot']['updated_at'] = '2026-08-17T10:00:00'
+          try:
+              validator.validate(invalid)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError('naive lifecycle updated_at unexpectedly passed JSON Schema validation')
           PY
       - name: Reject cross-request timeline contamination
         shell: bash
