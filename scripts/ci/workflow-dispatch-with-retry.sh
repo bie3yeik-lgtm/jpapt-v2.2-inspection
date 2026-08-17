@@ -24,6 +24,18 @@ max_attempts="${4:-3}"
   echo "ERROR: max_attempts must be a positive integer" >&2
   exit 2
 }
+command -v jq >/dev/null 2>&1 || {
+  echo "ERROR: jq is required to validate workflow dispatch body" >&2
+  exit 2
+}
+if ! jq -e '
+  type == "object"
+  and (.ref | type == "string" and length > 0)
+  and ((has("inputs") | not) or (.inputs | type == "object"))
+' "$body_file" >/dev/null 2>&1; then
+  echo "ERROR: workflow dispatch body must be a JSON object with non-empty string ref and optional object inputs: $body_file" >&2
+  exit 2
+fi
 
 attempt=1
 while true; do
