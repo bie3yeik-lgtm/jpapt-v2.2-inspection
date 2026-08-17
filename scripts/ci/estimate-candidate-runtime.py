@@ -70,8 +70,13 @@ def fallback_minutes(suite: str, executor: str, environment: str) -> int:
     return base
 
 
-def matching_artifact(artifacts: list[dict], suite: str, environment: str) -> dict | None:
-    suffix = f"-{environment}-{suite}"
+def matching_artifact(
+    artifacts: list[dict], suite: str, environment: str, executor: str
+) -> dict | None:
+    if executor == "hf_jobs":
+        suffix = f"-hf-jobs-{suite}"
+    else:
+        suffix = f"-{environment}-{suite}"
     for item in artifacts:
         if str(item.get("name", "")).endswith(suffix):
             return item
@@ -153,7 +158,7 @@ def median_metric(samples: list[dict], key: str) -> int | None:
     values = []
     for sample in samples:
         value = (sample.get("provenance") or {}).get(key)
-        if isinstance(value, int) and value >= 0:
+        if isinstance(value, int) and value > 0:
             values.append(value)
     if not values:
         return None
@@ -174,7 +179,7 @@ def main() -> int:
     parser.add_argument("--hf-bucket", default=os.environ.get("HF_BUCKET", ""))
     parser.add_argument("--dataset-source", default=os.environ.get("DATASET_SOURCE", ""))
     parser.add_argument("--dataset-id", default=os.environ.get("DATASET_ID", ""))
-    parser.add_argument("--workflow", default="candidate-package-evaluate.yml")
+    parser.add_argument("--workflow", default="candidate-package-evaluate-v2.yml")
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--github-output")
     args = parser.parse_args()
@@ -182,7 +187,7 @@ def main() -> int:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     fallback = fallback_minutes(args.suite, args.executor, args.environment)
     result = {
-        "schema_version": 2,
+        "schema_version": 3,
         "method": "fallback",
         "cohort": "none",
         "samples": 0,
@@ -218,11 +223,11 @@ def main() -> int:
                 artifacts = api_get(
                     f"{base}/actions/runs/{run_id}/artifacts?per_page=100", token
                 ).get("artifacts", [])
-                artifact = None
-                if args.executor == "github":
-                    artifact = matching_artifact(artifacts, args.suite, args.environment)
-                    if artifact is None:
-                        continue
+                artifact = matching_artifact(
+                    artifacts, args.suite, args.environment, args.executor
+                )
+                if artifact is None:
+                    continue
                 jobs = api_get(
                     f"{base}/actions/runs/{run_id}/jobs?per_page=100", token
                 ).get("jobs", [])
@@ -245,9 +250,7 @@ def main() -> int:
                 samples.append(
                     {
                         "minutes": sum(durations),
-                        "provenance": artifact_provenance(artifact, token)
-                        if artifact is not None
-                        else {},
+                        "provenance": artifact_provenance(artifact, token),
                     }
                 )
 
@@ -270,15 +273,9 @@ def main() -> int:
                     estimate_minutes=max(1, math.ceil(p90)),
                     p50_minutes=round(p50, 2),
                     p90_minutes=round(p90, 2),
-                    observed_dataset_bytes_p50=median_metric(
-                        selected, "dataset_bytes"
-                    ),
-                    observed_package_bytes_p50=median_metric(
-                        selected, "package_bytes"
-                    ),
-                    observed_candidate_bytes_p50=median_metric(
-                        selected, "candidate_bytes"
-                    ),
+                    observed_dataset_bytes_p50=median_metric(selected, "dataset_bytes"),
+                    observed_package_bytes_p50=median_metric(selected, "package_bytes"),
+                    observed_candidate_bytes_p50=median_metric(selected, "candidate_bytes"),
                 )
         except (
             urllib.error.URLError,
