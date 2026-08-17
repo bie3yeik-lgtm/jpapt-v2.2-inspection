@@ -1,0 +1,159 @@
+name: Candidate Protocol Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      receipt_repository:
+        description: External receiver repository in owner/name form
+        required: true
+        type: string
+      require_managed_installation:
+        description: Fail when receiver has no jpapt managed installation manifest
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit cross-repository protocol readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate orchestrator capabilities
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || {
+            echo "::error::SOURCE_REPO_TOKEN is not configured"
+            exit 1
+          }
+          [[ -n "${HF_TOKEN:-}" ]] || {
+            echo "::error::HF_TOKEN is not configured"
+            exit 1
+          }
+
+      - name: Audit receiver installation and trust metadata
+        id: receiver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          REQUIRE_MANAGED: ${{ inputs.require_managed_installation }}
+        run: |
+          set -euo pipefail
+          repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          [[ "$RECEIPT_REPOSITORY" =~ $repo_re ]] || {
+            echo "::error::receipt_repository must use owner/name"
+            exit 1
+          }
+          [[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]] || {
+            echo "::error::readiness audit expects an external receiver"
+            exit 1
+          }
+
+          meta="$(gh api "/repos/$RECEIPT_REPOSITORY")"
+          default_branch="$(jq -r '.default_branch' <<<"$meta")"
+          gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml" >/dev/null || {
+            echo "::error::candidate-completion-receipt.yml is not installed or not accessible"
+            exit 1
+          }
+
+          manifest_encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$default_branch" --jq .content 2>/dev/null || true)"
+          managed=false
+          installed_commit=""
+          if [[ -n "$manifest_encoded" ]]; then
+            managed=true
+            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver.json
+            python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
+            readarray -t manifest_fields < <(python - "$RECEIPT_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path('/tmp/receiver.json').read_text(encoding='utf-8'))
+          if value['receiver_repository'] != sys.argv[1]:
+              raise SystemExit('receiver manifest repository mismatch')
+          if value['orchestrator_repository'] != sys.argv[2]:
+              raise SystemExit('receiver manifest orchestrator mismatch')
+          print(value['orchestrator_commit_sha'])
+          print(len(value['managed_files']))
+          PY
+          )
+            installed_commit="${manifest_fields[0]}"
+
+            python - /tmp/receiver.json <<'PY' > /tmp/managed.tsv
+          import json
+          import sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          for item in value['managed_files']:
+              print(f"{item['sha256']}\t{item['path']}")
+          PY
+            while IFS=$'\t' read -r expected path; do
+              encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" --jq .content 2>/dev/null || true)"
+              [[ -n "$encoded" ]] || { echo "::error::managed path missing: $path"; exit 1; }
+              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              [[ "$actual" == "$expected" ]] || { echo "::error::managed path hash mismatch: $path"; exit 1; }
+            done < /tmp/managed.tsv
+          elif [[ "$REQUIRE_MANAGED" == true ]]; then
+            echo "::error::receiver is not a managed jpapt installation"
+            exit 1
+          fi
+
+          variable="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/variables/JPAPT_ORCHESTRATOR_REPOSITORIES" --jq .value 2>/dev/null || true)"
+          if [[ -z "$variable" ]]; then
+            echo "::error::receiver variable JPAPT_ORCHESTRATOR_REPOSITORIES is missing or inaccessible"
+            exit 1
+          fi
+          python - "$variable" "$GITHUB_REPOSITORY" <<'PY'
+          import sys
+          allowed = {item.strip() for item in sys.argv[1].split(',') if item.strip()}
+          if sys.argv[2] not in allowed:
+              raise SystemExit('current orchestrator is not present in JPAPT_ORCHESTRATOR_REPOSITORIES')
+          PY
+
+          secret_count="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/secrets" --jq '[.secrets[] | select(.name == "JPAPT_ACK_TOKEN")] | length' 2>/dev/null || echo 0)"
+          [[ "$secret_count" == 1 ]] || {
+            echo "::error::receiver secret JPAPT_ACK_TOKEN is missing or secret metadata is inaccessible"
+            exit 1
+          }
+
+          {
+            echo "managed=$managed"
+            echo "installed_commit=$installed_commit"
+            echo "default_branch=$default_branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        shell: bash
+        env:
+          MANAGED: ${{ steps.receiver.outputs.managed }}
+          INSTALLED_COMMIT: ${{ steps.receiver.outputs.installed_commit }}
+          DEFAULT_BRANCH: ${{ steps.receiver.outputs.default_branch }}
+        run: |
+          {
+            echo '## Candidate protocol readiness'
+            echo
+            printf -- '- orchestrator: `%s`\n' "$GITHUB_REPOSITORY"
+            printf -- '- receiver: `%s`\n' '${{ inputs.receipt_repository }}'
+            printf -- '- receiver branch: `%s`\n' "$DEFAULT_BRANCH"
+            printf -- '- managed installation: `%s`\n' "$MANAGED"
+            if [[ -n "$INSTALLED_COMMIT" ]]; then
+              printf -- '- installed orchestrator commit: `%s`\n' "$INSTALLED_COMMIT"
+              printf -- '- current orchestrator commit: `%s`\n' "$GITHUB_SHA"
+              if [[ "$INSTALLED_COMMIT" != "$GITHUB_SHA" ]]; then
+                echo '- note: receiver is internally hash-consistent but was installed from another orchestrator commit.'
+              fi
+            fi
+            echo '- trust allowlist: verified'
+            echo '- acknowledgement secret metadata: verified'
+            echo '- orchestrator SOURCE_REPO_TOKEN / HF_TOKEN: configured'
+            echo
+            echo '**Readiness: PASS**'
+          } >> "$GITHUB_STEP_SUMMARY"
