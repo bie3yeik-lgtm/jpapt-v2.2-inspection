@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
@@ -40,9 +41,73 @@ jobs:
         run: >-
           python scripts/ci/build-candidate-completion-ack.py
           --validate .ci/candidate-completion-ack.json
+      - name: Recover acknowledged receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evaluation_run_id="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
+          print(value['evaluation_run_id'])
+          PY
+          )"
+          evaluation_run_attempt="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
+          print(value['evaluation_run_attempt'])
+          PY
+          )"
+          artifact_name="candidate-completion-$evaluation_run_id-$evaluation_run_attempt"
+          artifact_id="$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$evaluation_run_id/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$artifact_name\") | .id" | head -n1)"
+          [[ -n "$artifact_id" ]] || { echo "::error::completion receipt artifact not found"; exit 1; }
+          mkdir -p .ci/receipt
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/receipt.zip
+          unzip -q /tmp/receipt.zip -d .ci/receipt
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --validate .ci/receipt/candidate-completion-receipt.json
+          expected="$(python scripts/ci/build-candidate-completion-ack.py \
+            --receipt-sha .ci/receipt/candidate-completion-receipt.json)"
+          actual="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
+          print(value['receipt_sha256'])
+          PY
+          )"
+          [[ "$expected" == "$actual" ]] || { echo "::error::acknowledgement receipt hash mismatch"; exit 1; }
+      - name: Build acknowledged lifecycle snapshot
+        id: lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          request_id="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('.ci/candidate-completion-ack.json').read_text())['request_id'])
+          PY
+          )"
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state acknowledged \
+            --receipt .ci/receipt/candidate-completion-receipt.json \
+            --ack .ci/candidate-completion-ack.json \
+            --output .ci/candidate-request-lifecycle.json
+          echo "request_key=$request_key" >> "$GITHUB_OUTPUT"
       - name: Preserve acknowledgement
         uses: actions/upload-artifact@v7
         with:
           name: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
           path: .ci/candidate-completion-ack.json
+          retention-days: 30
+      - name: Preserve acknowledged lifecycle snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-lifecycle-${{ steps.lifecycle.outputs.request_key }}-acknowledged
+          path: .ci/candidate-request-lifecycle.json
           retention-days: 30
