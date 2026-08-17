@@ -12,7 +12,7 @@ from pathlib import Path
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-STATES = ("planned", "running", "completed", "acknowledged")
+STATES = ("planned", "running", "rejected", "completed", "acknowledged")
 
 
 def env(name: str, default: str = "") -> str:
@@ -67,6 +67,8 @@ def validate(snapshot: dict) -> None:
             raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
         raise SystemExit("acknowledged requires receiver_run_id")
+    if state == "rejected" and snapshot["gateway_run_id"] is None:
+        raise SystemExit("rejected requires gateway_run_id")
     if not isinstance(snapshot.get("updated_at"), str) or not snapshot["updated_at"]:
         raise SystemExit("updated_at is required")
 
@@ -76,6 +78,7 @@ def main() -> int:
     parser.add_argument("--state", choices=STATES)
     parser.add_argument("--receipt")
     parser.add_argument("--ack")
+    parser.add_argument("--rejection")
     parser.add_argument("--output")
     parser.add_argument("--validate")
     parser.add_argument("--request-key")
@@ -96,11 +99,13 @@ def main() -> int:
 
     receipt = load_json(args.receipt)
     ack = load_json(args.ack)
+    rejection = load_json(args.rejection)
 
     request_id = env("REQUEST_ID")
     source_repository = env("SOURCE_REPOSITORY")
     receipt_repository = env("RECEIPT_REPOSITORY")
     orchestrator_repository = env("ORCHESTRATOR_REPOSITORY")
+    gateway_run_id = integer_or_none(env("GATEWAY_RUN_ID"))
     evaluation_run_id = integer_or_none(env("EVALUATION_RUN_ID"))
     evaluation_run_attempt = integer_or_none(env("EVALUATION_RUN_ATTEMPT"))
     receipt_sha256 = env("RECEIPT_SHA256") or None
@@ -122,6 +127,12 @@ def main() -> int:
         receipt_sha256 = ack["receipt_sha256"]
         receiver_run_id = ack["receiver_run_id"]
         source_repository = source_repository or env("SOURCE_REPOSITORY")
+    if rejection:
+        request_id = rejection["request_id"]
+        source_repository = rejection["source_repository"]
+        receipt_repository = rejection["receipt_repository"]
+        orchestrator_repository = rejection["orchestrator_repository"]
+        gateway_run_id = rejection["gateway_run_id"]
 
     snapshot = {
         "schema_version": 1,
@@ -130,7 +141,7 @@ def main() -> int:
         "source_repository": source_repository,
         "receipt_repository": receipt_repository,
         "orchestrator_repository": orchestrator_repository,
-        "gateway_run_id": integer_or_none(env("GATEWAY_RUN_ID")),
+        "gateway_run_id": gateway_run_id,
         "evaluation_run_id": evaluation_run_id,
         "evaluation_run_attempt": evaluation_run_attempt,
         "receipt_sha256": receipt_sha256,
