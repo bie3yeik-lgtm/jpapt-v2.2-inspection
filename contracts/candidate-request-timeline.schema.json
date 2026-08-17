@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jpapt.dev/contracts/candidate-request-timeline.schema.json",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-request-timeline.schema.json",
   "title": "CandidateRequestTimelineV1",
   "type": "object",
   "additionalProperties": false,
