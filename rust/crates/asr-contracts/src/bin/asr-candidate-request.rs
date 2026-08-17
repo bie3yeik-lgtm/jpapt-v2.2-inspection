@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Serialize)]
 struct ResolvedRequest {
     request_id: String,
+    request_execution_id: String,
     source_repository: String,
     receipt_repository: String,
     hf_bucket: String,
@@ -66,6 +67,7 @@ fn run() -> Result<(), String> {
         let mut lines = String::new();
         for (key, value) in [
             ("request_id", resolved.request_id.clone()),
+            ("request_execution_id", resolved.request_execution_id.clone()),
             ("source_repository", resolved.source_repository.clone()),
             ("receipt_repository", resolved.receipt_repository.clone()),
             ("hf_bucket", resolved.hf_bucket.clone()),
@@ -127,7 +129,11 @@ fn nested_string(config: &Map<String, Value>, section: &str, key: &str) -> Strin
 }
 
 fn choose(value: String, fallback: &str) -> String {
-    if value.is_empty() { fallback.to_owned() } else { value }
+    if value.is_empty() {
+        fallback.to_owned()
+    } else {
+        value
+    }
 }
 
 fn require_choice(name: &str, value: &str, choices: &[&str]) -> Result<(), String> {
@@ -154,15 +160,15 @@ fn validate_repository(name: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_request_id(request_id: &str) -> Result<(), String> {
-    if request_id.is_empty() || request_id.len() > 128 {
-        return Err("request_id must contain 1..128 characters".to_owned());
+fn validate_correlation_id(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 128 {
+        return Err(format!("{field} must contain 1..128 characters"));
     }
-    if !request_id
+    if !value
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || "._:-".contains(ch))
     {
-        return Err("request_id contains unsupported characters".to_owned());
+        return Err(format!("{field} contains unsupported characters"));
     }
     Ok(())
 }
@@ -174,7 +180,9 @@ fn resolve(
     registry_owner: &str,
 ) -> Result<ResolvedRequest, String> {
     let request_id = string(inputs, "request_id")?;
-    validate_request_id(&request_id)?;
+    validate_correlation_id(&request_id, "request_id")?;
+    let request_execution_id = string(inputs, "request_execution_id")?;
+    validate_correlation_id(&request_execution_id, "request_execution_id")?;
 
     let source_repository = string(inputs, "source_repository")?;
     validate_repository(&source_repository, "source_repository")?;
@@ -279,6 +287,7 @@ fn resolve(
 
     Ok(ResolvedRequest {
         request_id,
+        request_execution_id,
         source_repository,
         receipt_repository,
         hf_bucket,
@@ -309,11 +318,12 @@ mod tests {
     #[test]
     fn resolves_completion_defaults() {
         let inputs = object(
-            r#"{"request_id":"req-001","source_repository":"owner/repo","dataset_source":"auto","suite":"smoke","executor":"github","environment":"linux-cpu"}"#,
+            r#"{"request_id":"req-001","request_execution_id":"gw-100-1","source_repository":"owner/repo","dataset_source":"auto","suite":"smoke","executor":"github","environment":"linux-cpu"}"#,
             "inputs",
         )
         .unwrap();
         let resolved = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap();
+        assert_eq!(resolved.request_execution_id, "gw-100-1");
         assert_eq!(resolved.hf_bucket, "hf-user/repo-bucket");
         assert_eq!(resolved.dataset_source, "bucket");
         assert_eq!(resolved.image, "ghcr.io/registry-owner/repo");
@@ -323,7 +333,7 @@ mod tests {
     #[test]
     fn rejects_non_linux_hf_jobs() {
         let inputs = object(
-            r#"{"request_id":"req-002","source_repository":"owner/repo","executor":"hf_jobs","environment":"macos-coreml"}"#,
+            r#"{"request_id":"req-002","request_execution_id":"gw-101-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"macos-coreml"}"#,
             "inputs",
         )
         .unwrap();
@@ -334,11 +344,22 @@ mod tests {
     #[test]
     fn rejects_unsafe_request_id() {
         let inputs = object(
-            r#"{"request_id":"bad id","source_repository":"owner/repo"}"#,
+            r#"{"request_id":"bad id","request_execution_id":"gw-102-1","source_repository":"owner/repo"}"#,
             "inputs",
         )
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("request_id"));
+    }
+
+    #[test]
+    fn rejects_missing_execution_id() {
+        let inputs = object(
+            r#"{"request_id":"req-003","source_repository":"owner/repo"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("request_execution_id"));
     }
 }
