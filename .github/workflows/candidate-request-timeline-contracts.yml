@@ -12,6 +12,7 @@ on:
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
   pull_request:
     paths:
       - .github/actionlint.yaml
@@ -22,6 +23,7 @@ on:
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
   workflow_dispatch:
 
 permissions:
@@ -55,6 +57,7 @@ jobs:
         run: |
           python -m py_compile \
             scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/collect-candidate-lifecycle-bucket-events.py \
             scripts/ci/build-candidate-request-timeline.py
           python -m json.tool contracts/candidate-request-timeline.schema.json >/dev/null
       - name: Verify shared lifecycle ordering
@@ -80,8 +83,7 @@ jobs:
           set -euo pipefail
           grep -F 'gh api --paginate' .github/workflows/candidate-request-timeline.yml
           grep -F 'candidate-lifecycle-$REQUEST_KEY-$state' .github/workflows/candidate-request-timeline.yml
-          grep -F 'list_bucket_tree(' .github/workflows/candidate-request-timeline.yml
-          grep -F 'download_bucket_files(' .github/workflows/candidate-request-timeline.yml
+          grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-timeline.yml
           grep -F 'build-candidate-request-timeline.py' .github/workflows/candidate-request-timeline.yml
           grep -F 'candidate-request-timeline-' .github/workflows/candidate-request-timeline.yml
       - name: Build retry-aware lifecycle fixtures
