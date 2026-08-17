@@ -3,20 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
-from pathlib import Path
 
-
-def parse_time(value: str) -> datetime:
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    return datetime.fromisoformat(normalized)
+from candidate_lifecycle_common import load_json_object, parse_time
 
 
 def load(path: str) -> dict:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise SystemExit(f"{path} must contain a JSON object")
-    return value
+    try:
+        return load_json_object(path)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid lifecycle state {path}: {error}") from error
 
 
 def main() -> int:
@@ -30,12 +25,14 @@ def main() -> int:
     for field in ("request_id", "state"):
         if existing.get(field) != incoming.get(field):
             raise SystemExit(f"materialized lifecycle {field} mismatch")
-    for label, value in (("existing", existing), ("incoming", incoming)):
-        updated_at = value.get("updated_at")
-        if not isinstance(updated_at, str) or not updated_at:
-            raise SystemExit(f"{label} updated_at is required")
 
-    should_write = parse_time(incoming["updated_at"]) >= parse_time(existing["updated_at"])
+    try:
+        existing_time = parse_time(existing.get("updated_at"))
+        incoming_time = parse_time(incoming.get("updated_at"))
+    except (TypeError, ValueError) as error:
+        raise SystemExit(f"materialized lifecycle updated_at is invalid: {error}") from error
+
+    should_write = incoming_time >= existing_time
     print("true" if should_write else "false")
     return 0
 
