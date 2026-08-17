@@ -46,7 +46,7 @@ jobs:
           if [[ -n "${HF_TOKEN:-}" && -z "$bucket" ]]; then
             namespace="${HF_DEFAULT_NAMESPACE:-}"
             if [[ -z "$namespace" ]]; then
-              namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
+              namespace="$(hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
             fi
             if [[ -n "$namespace" ]]; then
               bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
@@ -57,7 +57,7 @@ jobs:
             for candidate_state in acknowledged completed rejected running planned; do
               remote="hf://buckets/$bucket/requests/$request_key/states/$candidate_state.json"
               local_file=".ci/status/bucket-$candidate_state.json"
-              if HF_TOKEN="$HF_TOKEN" hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
+              if hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
                 python scripts/ci/build-candidate-request-lifecycle.py --validate "$local_file" >/dev/null
                 actual_request_id="$(python - "$local_file" <<'PY'
           import json
