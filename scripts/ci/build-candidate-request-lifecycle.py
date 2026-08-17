@@ -14,6 +14,20 @@ from candidate_lifecycle_common import STATES, parse_time
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_FIELDS = {
+    "schema_version",
+    "request_id",
+    "state",
+    "source_repository",
+    "receipt_repository",
+    "orchestrator_repository",
+    "gateway_run_id",
+    "evaluation_run_id",
+    "evaluation_run_attempt",
+    "receipt_sha256",
+    "receiver_run_id",
+    "updated_at",
+}
 
 
 def env(name: str, default: str = "") -> str:
@@ -40,6 +54,10 @@ def load_json(path: str | None) -> dict | None:
 
 
 def validate(snapshot: dict) -> None:
+    if set(snapshot) != EXPECTED_FIELDS:
+        missing = sorted(EXPECTED_FIELDS - set(snapshot))
+        unknown = sorted(set(snapshot) - EXPECTED_FIELDS)
+        raise SystemExit(f"lifecycle fields mismatch: missing={missing}, unknown={unknown}")
     if snapshot.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = snapshot.get("request_id")
@@ -70,9 +88,8 @@ def validate(snapshot: dict) -> None:
         raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
         raise SystemExit("acknowledged requires receiver_run_id")
-    updated_at = snapshot.get("updated_at")
     try:
-        parse_time(updated_at)
+        parse_time(snapshot.get("updated_at"))
     except (TypeError, ValueError) as error:
         raise SystemExit(f"updated_at is invalid: {error}") from error
 
@@ -91,20 +108,17 @@ def main() -> int:
     if args.request_key:
         print(request_key(args.request_key))
         return 0
-
     if args.validate:
         snapshot = load_json(args.validate)
         assert snapshot is not None
         validate(snapshot)
         return 0
-
     if not args.state or not args.output:
         parser.error("--state and --output are required when building a lifecycle snapshot")
 
     receipt = load_json(args.receipt)
     ack = load_json(args.ack)
     rejection = load_json(args.rejection)
-
     request_id = env("REQUEST_ID")
     source_repository = env("SOURCE_REPOSITORY")
     receipt_repository = env("RECEIPT_REPOSITORY")
