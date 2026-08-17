@@ -9,25 +9,17 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from candidate_protocol_common import parse_rfc3339_time
+from candidate_protocol_common import parse_rfc3339_time, validate_https_url
 
 EVENT_TYPE = "jpapt.candidate-completion-ack"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 EXPECTED_FIELDS = {
-    "schema_version",
-    "request_id",
-    "receipt_sha256",
-    "receipt_repository",
-    "orchestrator_repository",
-    "evaluation_run_id",
-    "evaluation_run_attempt",
-    "receiver_repository",
-    "receiver_run_id",
-    "receiver_run_attempt",
-    "receiver_run_url",
-    "accepted_at",
+    "schema_version", "request_id", "receipt_sha256", "receipt_repository",
+    "orchestrator_repository", "evaluation_run_id", "evaluation_run_attempt",
+    "receiver_repository", "receiver_run_id", "receiver_run_attempt",
+    "receiver_run_url", "accepted_at",
 }
 
 
@@ -61,10 +53,8 @@ def validate_ack(ack: dict) -> None:
         value = ack.get(field)
         if not isinstance(value, int) or value < 1:
             raise SystemExit(f"{field} must be a positive integer")
-    receiver_run_url = ack.get("receiver_run_url")
-    if not isinstance(receiver_run_url, str) or not receiver_run_url.startswith("https://"):
-        raise SystemExit("receiver_run_url is invalid")
     try:
+        validate_https_url(ack.get("receiver_run_url"), "receiver_run_url")
         parse_rfc3339_time(ack.get("accepted_at"), "accepted_at")
     except ValueError as error:
         raise SystemExit(str(error)) from error
