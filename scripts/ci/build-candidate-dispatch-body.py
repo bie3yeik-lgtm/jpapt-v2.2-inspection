@@ -10,6 +10,17 @@ def env(name: str) -> str:
     return os.environ.get(name, "")
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = env(name)
+    if raw == "":
+        return default
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+    raise SystemExit(f"{name} must be true or false")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--github-output", required=True)
@@ -30,7 +41,7 @@ def main() -> int:
         "environment": env("ENVIRONMENT"),
         "hf_flavor": env("HF_FLAVOR"),
         "hf_jobs_image": env("HF_JOBS_IMAGE"),
-        "dry_run": False,
+        "dry_run": env_bool("DRY_RUN"),
     }
     body = {"ref": args.ref, "inputs": inputs}
     compact = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
