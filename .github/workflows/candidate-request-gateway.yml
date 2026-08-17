@@ -64,7 +64,7 @@ on:
         default: ""
         type: string
       execute:
-        description: Dispatch Candidate Package Evaluate after validation
+        description: Dispatch Candidate Package Evaluate V2 after validation
         required: false
         default: false
         type: boolean
@@ -164,7 +164,7 @@ jobs:
             --registry-owner "$GITHUB_REPOSITORY_OWNER" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Estimate from historical Actions runs
+      - name: Estimate from canonical V2 history
         id: estimate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,6 +178,7 @@ jobs:
         run: >-
           python scripts/ci/estimate-candidate-runtime.py
           --repository "$GITHUB_REPOSITORY"
+          --workflow candidate-package-evaluate-v2.yml
           --suite "$SUITE"
           --executor "$EXECUTOR"
           --environment "$ENVIRONMENT"
@@ -249,12 +250,12 @@ jobs:
         run: python scripts/ci/build-candidate-dispatch-body.py --github-output "$GITHUB_OUTPUT"
 
   execute:
-    name: Dispatch normalized evaluation
+    name: Dispatch normalized evaluation V2
     needs: plan
     if: ${{ needs.plan.outputs.execute == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch Candidate Package Evaluate
+      - name: Dispatch Candidate Package Evaluate V2
         env:
           GH_TOKEN: ${{ github.token }}
           BODY: ${{ needs.plan.outputs.body }}
@@ -263,5 +264,5 @@ jobs:
             --method POST \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "/repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-package-evaluate.yml/dispatches" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-package-evaluate-v2.yml/dispatches" \
             --input -
