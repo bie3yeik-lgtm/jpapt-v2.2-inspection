@@ -13,6 +13,7 @@ on:
       - .github/workflows/candidate-protocol-surface-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/workflow-dispatch-with-retry.sh
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
@@ -30,6 +31,7 @@ on:
       - .github/workflows/candidate-protocol-surface-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/workflow-dispatch-with-retry.sh
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
@@ -76,6 +78,7 @@ jobs:
             scripts/ci/collect-candidate-lifecycle-bucket-events.py \
             scripts/ci/reduce-candidate-lifecycle.py \
             scripts/ci/compare-candidate-lifecycle-state.py
+          bash -n scripts/ci/workflow-dispatch-with-retry.sh
       - name: Parse lifecycle schemas
         run: |
           python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
@@ -96,10 +99,15 @@ jobs:
           set -euo pipefail
           legacy=.github/workflows/candidate-package-evaluate.yml
           v2=.github/workflows/candidate-package-evaluate-v2.yml
-          grep -F 'candidate-package-evaluate-v2.yml/dispatches' "$legacy"
+          grep -F 'workflow-dispatch-with-retry.sh' "$legacy"
+          grep -F 'candidate-package-evaluate-v2.yml' "$legacy"
           grep -F 'Build digest-pinned candidate package' "$v2"
           if grep -F 'Build digest-pinned candidate package' "$legacy"; then
             echo 'legacy entrypoint unexpectedly contains evaluator implementation' >&2
+            exit 1
+          fi
+          if grep -F 'actions/workflows/candidate-package-evaluate-v2.yml/dispatches' "$legacy"; then
+            echo 'legacy entrypoint unexpectedly bypasses bounded workflow dispatch helper' >&2
             exit 1
           fi
       - name: Require synthetic chain to cover terminal acknowledgement
