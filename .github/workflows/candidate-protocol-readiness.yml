@@ -38,6 +38,7 @@ jobs:
             echo "::error::HF_TOKEN is not configured"
             exit 1
           }
+          python scripts/ci/candidate_receiver_bundle.py --validate
 
       - name: Audit receiver installation and trust metadata
         id: receiver
@@ -72,6 +73,10 @@ jobs:
             managed=true
             printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
+            python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver.json || {
+              echo "::error::receiver managed installation is stale or incomplete; run Candidate Receiver Bootstrap"
+              exit 1
+            }
             readarray -t manifest_fields < <(python - "$RECEIPT_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
           import json
           import sys
@@ -104,6 +109,14 @@ jobs:
           elif [[ "$REQUIRE_MANAGED" == true ]]; then
             echo "::error::receiver is not a managed jpapt installation"
             exit 1
+          else
+            echo "::warning::receiver is unmanaged; validating canonical compatibility paths"
+            while IFS= read -r path; do
+              gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" >/dev/null || {
+                echo "::error::receiver compatibility path missing: $path"
+                exit 1
+              }
+            done < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           fi
 
           variable="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/variables/JPAPT_ORCHESTRATOR_REPOSITORIES" --jq .value 2>/dev/null || true)"
@@ -151,6 +164,7 @@ jobs:
                 echo '- note: receiver is internally hash-consistent but was installed from another orchestrator commit.'
               fi
             fi
+            echo '- canonical receiver bundle: verified'
             echo '- trust allowlist: verified'
             echo '- acknowledgement secret metadata: verified'
             echo '- orchestrator SOURCE_REPO_TOKEN / HF_TOKEN: configured'
