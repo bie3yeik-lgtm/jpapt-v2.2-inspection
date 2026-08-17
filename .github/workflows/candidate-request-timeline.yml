@@ -12,6 +12,11 @@ permissions:
   contents: read
   actions: read
 
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
+  HF_LIFECYCLE_BUCKET_OVERRIDE: ${{ vars.HF_LIFECYCLE_BUCKET }}
+
 jobs:
   timeline:
     name: Export request lifecycle timeline
@@ -19,26 +24,61 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Collect lifecycle artifacts for request
-        id: collect
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install persistent-history client
+        run: python -m pip install --disable-pip-version-check "huggingface_hub>=1.0,<2"
+      - name: Resolve request key and lifecycle bucket
+        id: resolve
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
-          mkdir -p .ci/timeline/artifacts
+          bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
+          bucket_source=override
+          if [[ -z "$bucket" ]]; then
+            bucket_source=inferred
+            namespace="${HF_DEFAULT_NAMESPACE:-}"
+            if [[ -z "$namespace" && -n "${HF_TOKEN:-}" ]]; then
+              namespace="$(hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
+            fi
+            if [[ -n "$namespace" ]]; then
+              bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
+            fi
+          fi
+          if [[ -n "$bucket" && ! "$bucket" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::HF lifecycle bucket must use namespace/name"
+            exit 1
+          fi
+          mkdir -p .ci/timeline
           : > .ci/timeline/candidates.args
+          {
+            echo "request_key=$request_key"
+            echo "bucket=$bucket"
+            echo "bucket_source=$bucket_source"
+          } >> "$GITHUB_OUTPUT"
+      - name: Collect GitHub lifecycle artifacts
+        id: artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_KEY: ${{ steps.resolve.outputs.request_key }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/timeline/artifacts
           count=0
           for state in planned dispatched running rejected completed acknowledged; do
-            artifact_name="candidate-lifecycle-$request_key-$state"
+            artifact_name="candidate-lifecycle-$REQUEST_KEY-$state"
             while IFS=$'\t' read -r artifact_id created_at; do
               [[ -n "$artifact_id" ]] || continue
               dir=".ci/timeline/artifacts/$artifact_id"
               mkdir -p "$dir"
-              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/lifecycle-$artifact_id.zip
-              unzip -q /tmp/lifecycle-$artifact_id.zip -d "$dir"
+              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "/tmp/lifecycle-$artifact_id.zip"
+              unzip -q "/tmp/lifecycle-$artifact_id.zip" -d "$dir"
               snapshot="$(find "$dir" -type f -name 'candidate-request-lifecycle.json' -print -quit)"
               [[ -n "$snapshot" ]] || {
                 echo "::error::artifact $artifact_id ($artifact_name) has no lifecycle snapshot"
@@ -50,7 +90,7 @@ jobs:
                 echo "::error::artifact $artifact_id request_id mismatch"
                 exit 1
               }
-              printf '%s\t%s\t%s\n' "$artifact_id" "$created_at" "$snapshot" >> .ci/timeline/candidates.args
+              printf 'github-artifact:%s\t%s\n' "$artifact_id" "$snapshot" >> .ci/timeline/candidates.args
               count=$((count + 1))
             done < <(
               gh api --paginate \
@@ -58,14 +98,88 @@ jobs:
                 --jq '.artifacts[] | select(.expired == false) | [.id, .created_at] | @tsv'
             )
           done
-          [[ "$count" -gt 0 ]] || {
-            echo "::error::no unexpired lifecycle artifacts found for request_id=$REQUEST_ID"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Collect persistent lifecycle events
+        id: bucket_events
+        if: ${{ env.HF_TOKEN != '' && steps.resolve.outputs.bucket != '' }}
+        shell: bash
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_KEY: ${{ steps.resolve.outputs.request_key }}
+          HF_LIFECYCLE_BUCKET: ${{ steps.resolve.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/timeline/bucket
+          python - <<'PY' > .ci/timeline/bucket-events.tsv
+          import os
+          import sys
+          from pathlib import Path
+
+          from huggingface_hub import download_bucket_files, list_bucket_tree
+
+          bucket = os.environ["HF_LIFECYCLE_BUCKET"]
+          token = os.environ["HF_TOKEN"]
+          request_key = os.environ["REQUEST_KEY"]
+          prefix = f"requests/{request_key}/events"
+          target = Path(".ci/timeline/bucket")
+          try:
+              items = [
+                  item
+                  for item in list_bucket_tree(
+                      bucket,
+                      prefix=prefix,
+                      recursive=True,
+                      token=token,
+                  )
+                  if getattr(item, "type", None) == "file"
+                  and item.path.endswith(".lifecycle.json")
+              ]
+          except Exception as error:
+              print(
+                  f"::warning::persistent lifecycle history unavailable for {bucket}/{prefix}: {error}",
+                  file=sys.stderr,
+              )
+              items = []
+
+          downloads = []
+          rows = []
+          for index, item in enumerate(items):
+              local = target / f"{index:06d}-{Path(item.path).name}"
+              downloads.append((item, str(local)))
+              rows.append((item.path, local))
+          if downloads:
+              download_bucket_files(bucket, files=downloads, token=token)
+          for remote, local in rows:
+              print(f"{remote}\t{local}")
+          PY
+
+          count=0
+          while IFS=$'\t' read -r remote snapshot; do
+            [[ -n "$remote" ]] || continue
+            python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
+            actual_request_id="$(jq -r .request_id "$snapshot")"
+            [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+              echo "::error::persistent event $remote request_id mismatch"
+              exit 1
+            }
+            printf 'hf-bucket:%s\t%s\n' "$remote" "$snapshot" >> .ci/timeline/candidates.args
+            count=$((count + 1))
+          done < .ci/timeline/bucket-events.tsv
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Require at least one lifecycle observation
+        shell: bash
+        env:
+          ARTIFACT_COUNT: ${{ steps.artifacts.outputs.count }}
+          BUCKET_COUNT: ${{ steps.bucket_events.outputs.count }}
+        run: |
+          set -euo pipefail
+          artifact_count="${ARTIFACT_COUNT:-0}"
+          bucket_count="${BUCKET_COUNT:-0}"
+          total=$((artifact_count + bucket_count))
+          [[ "$total" -gt 0 ]] || {
+            echo "::error::no lifecycle evidence found for request_id=${{ inputs.request_id }}"
             exit 1
           }
-          {
-            echo "request_key=$request_key"
-            echo "artifact_count=$count"
-          } >> "$GITHUB_OUTPUT"
       - name: Build canonical timeline
         shell: bash
         env:
@@ -73,8 +187,9 @@ jobs:
         run: |
           set -euo pipefail
           args=(--request-id "$REQUEST_ID")
-          while IFS=$'\t' read -r artifact_id created_at snapshot; do
-            args+=(--candidate "github-artifact:$artifact_id=$snapshot")
+          while IFS=$'\t' read -r source snapshot; do
+            [[ -n "$source" && -n "$snapshot" ]] || continue
+            args+=(--candidate "$source=$snapshot")
           done < .ci/timeline/candidates.args
           python scripts/ci/build-candidate-request-timeline.py \
             "${args[@]}" \
@@ -83,6 +198,10 @@ jobs:
             --validate .ci/timeline/candidate-request-timeline.json >/dev/null
       - name: Write timeline summary
         shell: bash
+        env:
+          ARTIFACT_COUNT: ${{ steps.artifacts.outputs.count }}
+          BUCKET_COUNT: ${{ steps.bucket_events.outputs.count }}
+          BUCKET: ${{ steps.resolve.outputs.bucket }}
         run: |
           set -euo pipefail
           timeline=.ci/timeline/candidate-request-timeline.json
@@ -90,8 +209,12 @@ jobs:
             echo '## Candidate request timeline'
             echo
             printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
-            printf -- '- request key: `%s`\n' '${{ steps.collect.outputs.request_key }}'
-            printf -- '- artifact observations collected: `%s`\n' '${{ steps.collect.outputs.artifact_count }}'
+            printf -- '- request key: `%s`\n' '${{ steps.resolve.outputs.request_key }}'
+            printf -- '- GitHub artifact observations: `%s`\n' "${ARTIFACT_COUNT:-0}"
+            printf -- '- persistent bucket observations: `%s`\n' "${BUCKET_COUNT:-0}"
+            if [[ -n "$BUCKET" ]]; then
+              printf -- '- lifecycle bucket: `hf://buckets/%s`\n' "$BUCKET"
+            fi
             printf -- '- unique lifecycle observations: `%s`\n' "$(jq -r .event_count "$timeline")"
             printf -- '- current state: **%s**\n' "$(jq -r .current_state "$timeline")"
             echo
@@ -108,6 +231,6 @@ jobs:
       - name: Preserve request timeline
         uses: actions/upload-artifact@v7
         with:
-          name: candidate-request-timeline-${{ steps.collect.outputs.request_key }}-${{ github.run_id }}
+          name: candidate-request-timeline-${{ steps.resolve.outputs.request_key }}-${{ github.run_id }}
           path: .ci/timeline/candidate-request-timeline.json
           retention-days: 30
