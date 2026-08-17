@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Validate resolver and Dockerfile contracts
+      - name: Validate resolver and static Docker target contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -51,18 +51,36 @@ jobs:
           bash scripts/ci/resolve-ghcr-matrix.sh | tee .ci/ghcr-contracts/matrix.json
           jq -e '.include | length > 0' .ci/ghcr-contracts/matrix.json >/dev/null
 
-          while IFS= read -r dockerfile; do
-            context="$(dirname "$dockerfile")"
-            config="$context/config.json"
+          # A static GHCR target is identified by config.json. Generic Docker
+          # contexts are validated separately and are intentionally excluded.
+          while IFS= read -r config; do
+            context="$(dirname "$config")"
+            dockerfile="$context/Dockerfile"
+            [[ -f "$dockerfile" ]] || { echo "::error::$context/config.json requires Dockerfile"; exit 1; }
             source_repo="$(sed -n 's/^LABEL io\.jpapt\.source\.repo_id="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
             framework="$(sed -n 's/^LABEL io\.jpapt\.source\.framework="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
             package="$(sed -n 's/^LABEL io\.jpapt\.ghcr\.package="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
             role="$(sed -n 's/^LABEL io\.jpapt\.role="\([^"]*\)"[[:space:]]*$/\1/p' "$dockerfile" | tail -n1)"
             [[ -n "$source_repo" && -n "$framework" && -n "$package" && -n "$role" ]]
-            [[ -f "$config" ]] || { echo "::error::$context/config.json is required"; exit 1; }
             test "$(jq -er '.source.repo_id' "$config")" = "$source_repo"
             test "$(jq -er '.source.framework' "$config")" = "$framework"
-          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
+          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name config.json -print | sort)
+
+      - name: Validate generic candidate package contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          dockerfile=docker/candidate-package/Dockerfile
+          [[ -f "$dockerfile" ]] || { echo "::error::$dockerfile is required"; exit 1; }
+          grep -F 'ARG SOURCE_REPOSITORY=unknown/unknown' "$dockerfile"
+          grep -F 'ARG SOURCE_BUCKET=unknown/unknown' "$dockerfile"
+          grep -F 'ARG CANDIDATE_ID=latest' "$dockerfile"
+          grep -F 'ARG PACKAGE_NAME=jpapt-candidate' "$dockerfile"
+          grep -F 'ARG RUNTIME_ENVIRONMENT=linux-cpu' "$dockerfile"
+          grep -F 'io.jpapt.source.repository="${SOURCE_REPOSITORY}"' "$dockerfile"
+          grep -F 'io.jpapt.candidate.id="${CANDIDATE_ID}"' "$dockerfile"
+          grep -F 'io.jpapt.runtime.target_environment="${RUNTIME_ENVIRONMENT}"' "$dockerfile"
+          docker buildx build --check -f "$dockerfile" .
 
       - name: Validate repository target and Actions policy
         shell: bash
