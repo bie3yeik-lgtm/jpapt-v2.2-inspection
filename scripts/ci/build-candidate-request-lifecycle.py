@@ -12,7 +12,7 @@ from pathlib import Path
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-STATES = ("planned", "running", "rejected", "completed", "acknowledged")
+STATES = ("planned", "dispatched", "running", "rejected", "completed", "acknowledged")
 
 
 def env(name: str, default: str = "") -> str:
@@ -60,15 +60,15 @@ def validate(snapshot: dict) -> None:
     ):
         raise SystemExit("receipt_sha256 is invalid")
     state = snapshot["state"]
-    if state in {"completed", "acknowledged"}:
+    if state in {"dispatched", "rejected"} and snapshot["gateway_run_id"] is None:
+        raise SystemExit(f"{state} requires gateway_run_id")
+    if state in {"running", "completed", "acknowledged"}:
         if snapshot["evaluation_run_id"] is None or snapshot["evaluation_run_attempt"] is None:
             raise SystemExit(f"{state} requires evaluation run identity")
-        if snapshot["receipt_sha256"] is None:
-            raise SystemExit(f"{state} requires receipt_sha256")
+    if state in {"completed", "acknowledged"} and snapshot["receipt_sha256"] is None:
+        raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
         raise SystemExit("acknowledged requires receiver_run_id")
-    if state == "rejected" and snapshot["gateway_run_id"] is None:
-        raise SystemExit("rejected requires gateway_run_id")
     if not isinstance(snapshot.get("updated_at"), str) or not snapshot["updated_at"]:
         raise SystemExit("updated_at is required")
 
