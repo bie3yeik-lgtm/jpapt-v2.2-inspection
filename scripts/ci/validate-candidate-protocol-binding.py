@@ -17,22 +17,36 @@ def allowed_repositories(raw: str) -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
-def validate_receipt_binding(receipt: dict, receiver_repository: str, allowed: set[str]) -> None:
-    if receipt.get("receipt_repository") != receiver_repository:
+def validate_receiver_binding(
+    value: dict,
+    receiver_repository: str,
+    allowed: set[str],
+    *,
+    label: str,
+) -> None:
+    if value.get("receipt_repository") != receiver_repository:
         raise SystemExit(
-            "receipt_repository does not match receiver repository: "
-            f"{receipt.get('receipt_repository')} != {receiver_repository}"
+            f"{label} receipt_repository does not match receiver repository: "
+            f"{value.get('receipt_repository')} != {receiver_repository}"
         )
-    orchestrator = receipt.get("orchestrator_repository")
+    orchestrator = value.get("orchestrator_repository")
     if orchestrator == receiver_repository:
         return
     if not allowed:
         raise SystemExit(
-            "external orchestrator is not allowed: configure "
+            f"external {label} orchestrator is not allowed: configure "
             "JPAPT_ORCHESTRATOR_REPOSITORIES"
         )
     if orchestrator not in allowed:
-        raise SystemExit(f"orchestrator_repository is not allowlisted: {orchestrator}")
+        raise SystemExit(f"{label} orchestrator_repository is not allowlisted: {orchestrator}")
+
+
+def validate_receipt_binding(receipt: dict, receiver_repository: str, allowed: set[str]) -> None:
+    validate_receiver_binding(receipt, receiver_repository, allowed, label="receipt")
+
+
+def validate_rejection_binding(rejection: dict, receiver_repository: str, allowed: set[str]) -> None:
+    validate_receiver_binding(rejection, receiver_repository, allowed, label="rejection")
 
 
 def validate_ack_binding(receipt: dict, ack: dict, orchestrator_repository: str) -> None:
@@ -52,13 +66,25 @@ def validate_ack_binding(receipt: dict, ack: dict, orchestrator_repository: str)
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--receipt", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--receipt")
+    source.add_argument("--rejection")
     parser.add_argument("--ack")
     parser.add_argument("--receiver-repository")
     parser.add_argument("--orchestrator-repository")
     parser.add_argument("--allowed-orchestrators", default="")
     args = parser.parse_args()
 
+    allowed = allowed_repositories(args.allowed_orchestrators)
+    if args.rejection:
+        if args.ack:
+            parser.error("--ack cannot be combined with --rejection")
+        if not args.receiver_repository:
+            parser.error("--receiver-repository is required with --rejection")
+        validate_rejection_binding(load(args.rejection), args.receiver_repository, allowed)
+        return 0
+
+    assert args.receipt is not None
     receipt = load(args.receipt)
     if args.ack:
         if not args.orchestrator_repository:
@@ -67,11 +93,7 @@ def main() -> int:
     else:
         if not args.receiver_repository:
             parser.error("--receiver-repository is required without --ack")
-        validate_receipt_binding(
-            receipt,
-            args.receiver_repository,
-            allowed_repositories(args.allowed_orchestrators),
-        )
+        validate_receipt_binding(receipt, args.receiver_repository, allowed)
     return 0
 
 
