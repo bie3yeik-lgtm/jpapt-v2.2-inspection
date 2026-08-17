@@ -43,24 +43,22 @@ state = snapshot["state"]
 snapshot_key = hashlib.sha256(snapshot_bytes).hexdigest()[:16]
 if state in {"planned", "dispatched", "rejected"}:
     run_id = snapshot.get("gateway_run_id")
-    # gateway_run_attempt is not part of LifecycleV1. Include the snapshot digest
-    # so a rerun cannot overwrite an earlier immutable event path.
     evidence_key = f"gateway-{run_id or 'unknown'}-{state}-{snapshot_key}"
 elif state == "running":
     evidence_key = (
         f"evaluation-{snapshot['evaluation_run_id']}-"
-        f"{snapshot['evaluation_run_attempt']}-running"
+        f"{snapshot['evaluation_run_attempt']}-running-{snapshot_key}"
     )
 elif state == "completed":
     evidence_key = (
         f"evaluation-{snapshot['evaluation_run_id']}-"
-        f"{snapshot['evaluation_run_attempt']}-completed"
+        f"{snapshot['evaluation_run_attempt']}-completed-{snapshot_key}"
     )
 elif state == "acknowledged":
     evidence_key = (
         f"evaluation-{snapshot['evaluation_run_id']}-"
         f"{snapshot['evaluation_run_attempt']}-receiver-"
-        f"{snapshot['receiver_run_id']}-acknowledged"
+        f"{snapshot['receiver_run_id']}-acknowledged-{snapshot_key}"
     )
 else:
     raise SystemExit(f"unsupported lifecycle state: {state}")
@@ -74,9 +72,9 @@ state="${metadata[1]}"
 evidence_key="${metadata[2]}"
 base="hf://buckets/$HF_LIFECYCLE_BUCKET/requests/$request_key"
 
-# The event path is immutable evidence. The per-state path is a materialized
-# lookup view only; consumers must never treat it as a replacement for the
-# canonical event/evidence objects.
+# Every event path includes a content digest. Re-observing identical bytes is
+# idempotent; any materially different snapshot is written to a new path. The
+# per-state path is only a materialized lookup view and is intentionally mutable.
 hf buckets cp --token "$HF_TOKEN" "$snapshot" "$base/events/$evidence_key.lifecycle.json"
 hf buckets cp --token "$HF_TOKEN" "$snapshot" "$base/states/$state.json"
 
