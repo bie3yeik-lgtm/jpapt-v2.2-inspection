@@ -20,19 +20,52 @@ orchestrator V2 dry-run
 
 The test does **not** build a candidate package, run ONNX Runtime, launch a GPU, or launch Hugging Face Jobs. `dry_run=true` is asserted again from the final completion receipt before the E2E run can succeed.
 
+## Managed receiver bootstrap
+
+The preferred receiver setup path is:
+
+```text
+Actions -> Candidate Receiver Bootstrap -> Run workflow
+```
+
+`repository` must name an external `owner/name` repository. The bootstrap installs the reference completion/rejection workflows and their required helper scripts, then writes:
+
+```text
+.jpapt/candidate-receiver.json
+```
+
+The manifest is `CandidateReceiverInstallationV1`. It records:
+
+- receiver repository identity;
+- orchestrator repository identity;
+- exact orchestrator commit used for the installation;
+- every managed receiver path and its SHA-256;
+- installation timestamp.
+
+The manifest is deliberately written **after** all managed files. Its presence therefore marks a completed bootstrap attempt. A later bootstrap accepts an existing installation only when its manifest binds the same receiver to the same orchestrator.
+
+If no manifest exists and any managed path already exists, bootstrap fails by default instead of overwriting unrelated repository content. `adopt_existing=true` is an explicit migration escape hatch and should only be used after reviewing those existing paths.
+
+Receiver Actions variables and secrets are intentionally not mutated by bootstrap. Capability/trust configuration remains an explicit repository-owner operation.
+
 ## Receiver repository contract
 
-The external receiver must be a repository different from the orchestrator and must contain these files on its default branch:
+A managed receiver currently installs:
 
 ```text
 .github/workflows/candidate-completion-receipt.yml
+.github/workflows/candidate-request-rejection.yml
 scripts/ci/build-candidate-completion-receipt.py
 scripts/ci/build-candidate-completion-ack.py
+scripts/ci/build-candidate-request-rejection.py
 scripts/ci/validate-candidate-protocol-binding.py
 scripts/ci/repository-dispatch-with-retry.sh
+.jpapt/candidate-receiver.json
 ```
 
-The receiver workflow should use the reference implementation from this repository unless it intentionally implements the same protocol independently.
+During E2E preflight, a managed receiver's manifest is validated and every managed file is fetched from the receiver default branch and checked against the SHA-256 recorded in the manifest. Repository/orchestrator binding must also match the current E2E target and orchestrator.
+
+For compatibility, an older independently installed receiver without `.jpapt/candidate-receiver.json` can still pass a reduced existence-based preflight. New installations should use the managed bootstrap.
 
 The receiver repository variable must allow this orchestrator:
 
@@ -54,13 +87,13 @@ The orchestrator must provide:
 SOURCE_REPO_TOKEN
 ```
 
-The token is used both by the synthetic E2E preflight and by `Candidate Package Evaluate V2` when it delivers the completion event to the external receiver.
+It is used by bootstrap, synthetic E2E preflight, and `Candidate Package Evaluate V2` when delivering completion/rejection events to external repositories. Installing workflow files also requires that this credential has the corresponding repository capability; bootstrap fails rather than silently degrading when GitHub rejects a write.
 
 Secrets are capabilities; `JPAPT_ORCHESTRATOR_REPOSITORIES` is the receiver-side trust policy. Both must be configured.
 
 ## Running the E2E workflow
 
-Run:
+After receiver bootstrap and receiver-side trust/token configuration, run:
 
 ```text
 Actions -> Candidate Protocol E2E -> Run workflow
@@ -94,7 +127,7 @@ The workflow does not need to guess the evaluation run ID. Once `acknowledged` a
 
 ## Failure interpretation
 
-A failure before dispatch normally indicates configuration or receiver installation problems. A timeout after dispatch means the synthetic request did not reach end-to-end acknowledgement. Inspect the most advanced lifecycle artifact for the request:
+A failure before dispatch normally indicates configuration, bootstrap drift, or receiver installation problems. A timeout after dispatch means the synthetic request did not reach end-to-end acknowledgement. Inspect the most advanced lifecycle artifact for the request:
 
 ```text
 running
