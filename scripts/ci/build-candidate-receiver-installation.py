@@ -9,12 +9,26 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from candidate_protocol_common import parse_rfc3339_time
+
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_FIELDS = {
+    "schema_version",
+    "receiver_repository",
+    "orchestrator_repository",
+    "orchestrator_commit_sha",
+    "managed_files",
+    "installed_at",
+}
 
 
 def validate(value: dict) -> None:
+    if set(value) != EXPECTED_FIELDS:
+        missing = sorted(EXPECTED_FIELDS - set(value))
+        unknown = sorted(set(value) - EXPECTED_FIELDS)
+        raise SystemExit(f"installation fields mismatch: missing={missing}, unknown={unknown}")
     if value.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     for field in ("receiver_repository", "orchestrator_repository"):
@@ -40,9 +54,10 @@ def validate(value: dict) -> None:
         seen.add(path)
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise SystemExit(f"invalid sha256 for {path}")
-    installed_at = value.get("installed_at")
-    if not isinstance(installed_at, str) or not installed_at:
-        raise SystemExit("installed_at is required")
+    try:
+        parse_rfc3339_time(value.get("installed_at"), "installed_at")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def main() -> int:
