@@ -74,13 +74,14 @@ jobs:
           set -euo pipefail
           actionlint -color \
             .github/workflows/candidate-package-evaluate.yml \
-            .github/workflows/candidate-package-evaluate-v2.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
-          # Gateway summary formatting uses literal Markdown backticks in
-          # single-quoted printf formats. SC2016 is informational there; all
-          # other actionlint/ShellCheck diagnostics remain enabled.
+          # The canonical V2 and gateway summaries use literal Markdown
+          # backticks in single-quoted printf format strings. SC2016 is
+          # informational for those summary-only lines; every other
+          # actionlint/ShellCheck diagnostic remains enabled.
           actionlint -color -ignore 'SC2016' \
+            .github/workflows/candidate-package-evaluate-v2.yml \
             .github/workflows/candidate-request-gateway.yml
 
       - name: Validate Bash helper syntax
