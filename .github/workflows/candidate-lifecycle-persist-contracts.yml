@@ -11,6 +11,7 @@ on:
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
   pull_request:
     paths:
       - .github/actionlint.yaml
@@ -20,6 +21,7 @@ on:
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/persist-candidate-lifecycle.sh
       - scripts/ci/reduce-candidate-lifecycle.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
   workflow_dispatch:
 
 permissions:
@@ -51,7 +53,9 @@ jobs:
       - name: Validate persistence helpers
         run: |
           bash -n scripts/ci/persist-candidate-lifecycle.sh
-          python -m py_compile scripts/ci/reduce-candidate-lifecycle.py
+          python -m py_compile \
+            scripts/ci/reduce-candidate-lifecycle.py \
+            scripts/ci/compare-candidate-lifecycle-state.py
       - name: Exercise local no-op persistence contract
         shell: bash
         run: |
@@ -80,8 +84,70 @@ jobs:
           grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-running-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-completed-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'f"{snapshot['\''receiver_run_id'\'']}-acknowledged-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'compare-candidate-lifecycle-state.py' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'group: candidate-lifecycle-persist-${{ github.repository }}' .github/workflows/candidate-lifecycle-persist.yml
+          grep -F 'cancel-in-progress: false' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'newer retry may legitimately be' .github/workflows/candidate-request-status.yml
           grep -F 'scripts/ci/reduce-candidate-lifecycle.py' .github/workflows/candidate-request-status.yml
+      - name: Verify materialized-state monotonic comparator
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=monotonic-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=100 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T10:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/existing-running.json >/dev/null
+
+          REQUEST_ID=monotonic-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=101 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T09:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/older-running.json >/dev/null
+
+          REQUEST_ID=monotonic-status-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=102 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T11:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/newer-running.json >/dev/null
+
+          test "$(python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/existing-running.json --incoming /tmp/older-running.json)" = false
+          test "$(python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/existing-running.json --incoming /tmp/newer-running.json)" = true
+          test "$(python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/existing-running.json --incoming /tmp/existing-running.json)" = true
+      - name: Reject materialized-state identity mismatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=other-request \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=103 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-17T12:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/other-running.json >/dev/null
+          if python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/existing-running.json \
+            --incoming /tmp/other-running.json; then
+            echo 'identity mismatch unexpectedly accepted' >&2
+            exit 1
+          fi
       - name: Verify latest observation wins across retries
         shell: bash
         run: |
