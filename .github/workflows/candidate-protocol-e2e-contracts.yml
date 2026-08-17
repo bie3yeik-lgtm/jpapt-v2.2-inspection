@@ -1,0 +1,90 @@
+name: Candidate Protocol E2E Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-e2e-contracts.yml
+      - docs/candidate-protocol-e2e.md
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-e2e-contracts.yml
+      - docs/candidate-protocol-e2e.md
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-e2e-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate cross-repository E2E harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint E2E workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-protocol-e2e.yml
+          .github/workflows/candidate-protocol-e2e-contracts.yml
+      - name: Verify manual-only and cross-repository guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'workflow_dispatch:' .github/workflows/candidate-protocol-e2e.yml
+          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' .github/workflows/candidate-protocol-e2e.yml; then
+            echo 'E2E workflow unexpectedly has an automatic trigger' >&2
+            exit 1
+          fi
+          grep -F '[[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-protocol-e2e.yml
+      - name: Verify dry-run cost boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'dry_run: true' .github/workflows/candidate-protocol-e2e.yml
+          grep -F "assert receipt['dry_run'] is True" .github/workflows/candidate-protocol-e2e.yml
+          grep -F "assert receipt['conclusion'] == 'success'" .github/workflows/candidate-protocol-e2e.yml
+          if grep -F 'hf jobs run' .github/workflows/candidate-protocol-e2e.yml; then
+            echo 'E2E workflow must not launch Hugging Face Jobs directly' >&2
+            exit 1
+          fi
+      - name: Verify lifecycle correlation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'candidate-lifecycle-$REQUEST_KEY-$state' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'for state in acknowledged completed running' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'candidate-completion-$evaluation_run_id-$evaluation_run_attempt' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'candidate-completion-ack-$receipt_sha' .github/workflows/candidate-protocol-e2e.yml
+      - name: Verify receiver preflight contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'actions/workflows/candidate-completion-receipt.yml' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'scripts/ci/build-candidate-completion-receipt.py' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'scripts/ci/build-candidate-completion-ack.py' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'scripts/ci/validate-candidate-protocol-binding.py' .github/workflows/candidate-protocol-e2e.yml
+          grep -F 'scripts/ci/repository-dispatch-with-retry.sh' .github/workflows/candidate-protocol-e2e.yml
