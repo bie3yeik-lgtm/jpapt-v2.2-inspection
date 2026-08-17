@@ -71,4 +71,7 @@ jobs:
           grep -F '"$base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'state in {"planned", "dispatched", "rejected"}' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'snapshot_key = hashlib.sha256(snapshot_bytes).hexdigest()[:16]' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'f"gateway-{run_id or '\''unknown'\''}-{state}-{snapshot_key}"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'f"{snapshot['\''evaluation_run_attempt'\'']}-running"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'for candidate_state in acknowledged completed rejected running dispatched planned' .github/workflows/candidate-request-status.yml
