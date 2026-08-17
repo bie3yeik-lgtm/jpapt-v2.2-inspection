@@ -1,0 +1,44 @@
+name: Candidate Completion Acknowledgement
+
+on:
+  repository_dispatch:
+    types: [jpapt.candidate-completion-ack]
+  workflow_dispatch:
+    inputs:
+      ack_json:
+        description: CandidateCompletionAckV1 JSON payload
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acknowledgement:
+    name: Validate candidate completion acknowledgement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Materialize acknowledgement payload
+        shell: bash
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          ACK_JSON: ${{ inputs.ack_json }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+            printf '%s\n' "$PAYLOAD" > .ci/candidate-completion-ack.json
+          else
+            printf '%s\n' "$ACK_JSON" > .ci/candidate-completion-ack.json
+          fi
+      - name: Validate CandidateCompletionAckV1
+        run: >-
+          python scripts/ci/build-candidate-completion-ack.py
+          --validate .ci/candidate-completion-ack.json
+      - name: Preserve acknowledgement
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-completion-ack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/candidate-completion-ack.json
+          retention-days: 30
