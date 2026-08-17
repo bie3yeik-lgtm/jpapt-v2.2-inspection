@@ -58,6 +58,12 @@ def validate_ack_binding(receipt: dict, ack: dict, orchestrator_repository: str)
         "evaluation_run_attempt": receipt.get("run_attempt"),
         "receiver_repository": receipt.get("receipt_repository"),
     }
+    receipt_execution_id = receipt.get("request_execution_id")
+    ack_execution_id = ack.get("request_execution_id")
+    if receipt_execution_id is not None:
+        checks["request_execution_id"] = receipt_execution_id
+    elif ack_execution_id is not None:
+        raise SystemExit("ACK contains request_execution_id but legacy receipt does not")
     for field, expected in checks.items():
         actual = ack.get(field)
         if actual != expected:
