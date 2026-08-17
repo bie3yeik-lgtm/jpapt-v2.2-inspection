@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "path": ".github/workflows/candidate-completion-receipt.yml",
+      "source": ".github/workflows/candidate-completion-receipt.yml"
+    },
+    {
+      "path": ".github/workflows/candidate-request-rejection.yml",
+      "source": ".github/workflows/candidate-request-rejection.yml"
+    },
+    {
+      "path": "scripts/ci/candidate_protocol_common.py",
+      "source": "scripts/ci/candidate_protocol_common.py"
+    },
+    {
+      "path": "scripts/ci/build-candidate-completion-receipt.py",
+      "source": "scripts/ci/build-candidate-completion-receipt.py"
+    },
+    {
+      "path": "scripts/ci/build-candidate-completion-ack.py",
+      "source": "scripts/ci/build-candidate-completion-ack.py"
+    },
+    {
+      "path": "scripts/ci/build-candidate-request-rejection.py",
+      "source": "scripts/ci/build-candidate-request-rejection.py"
+    },
+    {
+      "path": "scripts/ci/validate-candidate-protocol-binding.py",
+      "source": "scripts/ci/validate-candidate-protocol-binding.py"
+    },
+    {
+      "path": "scripts/ci/repository-dispatch-with-retry.sh",
+      "source": "scripts/ci/repository-dispatch-with-retry.sh"
+    }
+  ]
+}
