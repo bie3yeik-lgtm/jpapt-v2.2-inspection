@@ -74,19 +74,29 @@ jobs:
           if value['orchestrator_repository'] != sys.argv[2]:
               raise SystemExit('existing receiver installation is managed by another orchestrator')
           PY
-          elif [[ "$ADOPT_EXISTING" != true ]]; then
-            managed_paths=(
-              .github/workflows/candidate-completion-receipt.yml
-              .github/workflows/candidate-request-rejection.yml
-              scripts/ci/build-candidate-completion-receipt.py
-              scripts/ci/build-candidate-completion-ack.py
-              scripts/ci/build-candidate-request-rejection.py
-              scripts/ci/validate-candidate-protocol-binding.py
-              scripts/ci/repository-dispatch-with-retry.sh
+          else
+            managed_mappings=(
+              '.github/workflows/candidate-completion-receipt.yml=.github/workflows/candidate-completion-receipt.yml'
+              '.github/workflows/candidate-request-rejection.yml=.github/workflows/candidate-request-rejection.yml'
+              'scripts/ci/build-candidate-completion-receipt.py=scripts/ci/build-candidate-completion-receipt.py'
+              'scripts/ci/build-candidate-completion-ack.py=scripts/ci/build-candidate-completion-ack.py'
+              'scripts/ci/build-candidate-request-rejection.py=scripts/ci/build-candidate-request-rejection.py'
+              'scripts/ci/validate-candidate-protocol-binding.py=scripts/ci/validate-candidate-protocol-binding.py'
+              'scripts/ci/repository-dispatch-with-retry.sh=scripts/ci/repository-dispatch-with-retry.sh'
             )
-            for path in "${managed_paths[@]}"; do
-              if gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$default_branch" >/dev/null 2>&1; then
-                echo "::error::managed path already exists without jpapt manifest: $path"
+            for mapping in "${managed_mappings[@]}"; do
+              target="${mapping%%=*}"
+              source="${mapping#*=}"
+              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$default_branch" --jq .content 2>/dev/null || true)"
+              [[ -n "$encoded" ]] || continue
+              remote_hash="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              local_hash="$(sha256sum "$source" | awk '{print $1}')"
+              if [[ "$remote_hash" == "$local_hash" ]]; then
+                echo "::notice::recoverable partial install already matches canonical source: $target"
+                continue
+              fi
+              if [[ "$ADOPT_EXISTING" != true ]]; then
+                echo "::error::managed path already exists without jpapt manifest and differs from canonical source: $target"
                 echo "::error::rerun with adopt_existing=true only after reviewing the target repository"
                 exit 1
               fi
