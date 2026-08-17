@@ -22,7 +22,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
-    "state": {"type": "string", "enum": ["planned", "running", "rejected", "completed", "acknowledged"]},
+    "state": {"type": "string", "enum": ["planned", "dispatched", "running", "rejected", "completed", "acknowledged"]},
     "source_repository": {"$ref": "#/$defs/repository"},
     "receipt_repository": {"$ref": "#/$defs/repository"},
     "orchestrator_repository": {"$ref": "#/$defs/repository"},
@@ -34,6 +34,14 @@
     "updated_at": {"type": "string", "format": "date-time"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "dispatched"}}, "required": ["state"]},
+      "then": {"properties": {"gateway_run_id": {"type": "integer", "minimum": 1}}}
+    },
+    {
+      "if": {"properties": {"state": {"const": "running"}}, "required": ["state"]},
+      "then": {"properties": {"evaluation_run_id": {"type": "integer", "minimum": 1}, "evaluation_run_attempt": {"type": "integer", "minimum": 1}}}
+    },
     {
       "if": {"properties": {"state": {"const": "rejected"}}, "required": ["state"]},
       "then": {"properties": {"gateway_run_id": {"type": "integer", "minimum": 1}}}
