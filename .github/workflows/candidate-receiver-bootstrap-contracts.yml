@@ -151,7 +151,18 @@ jobs:
           grep -F 'candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'sha:null' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'obsolete managed path still exists after bootstrap' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify bootstrap ownership and atomic update boundaries
+      - name: Verify preflight head pinning and atomic update boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'validated_head_sha="$(gh api "/repos/$TARGET_REPOSITORY/git/ref/heads/$default_branch" --jq .object.sha)"' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F '?ref=$validated_head_sha' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'validated_head_sha=$validated_head_sha' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'VALIDATED_HEAD_SHA: ${{ steps.target.outputs.validated_head_sha }}' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'head_sha="$VALIDATED_HEAD_SHA"' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F -- '--arg parent "$head_sha"' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F '{sha:$sha,force:false}' .github/workflows/candidate-receiver-bootstrap.yml
+      - name: Verify bootstrap ownership and update safety boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -162,7 +173,6 @@ jobs:
           grep -F 'git/trees' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'git/commits' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'git/refs/heads/$TARGET_BRANCH' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F '{sha:$sha,force:false}' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'installed receiver hash mismatch' .github/workflows/candidate-receiver-bootstrap.yml
       - name: Verify E2E and readiness reject stale manifests
         shell: bash
