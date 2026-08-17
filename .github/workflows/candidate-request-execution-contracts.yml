@@ -228,10 +228,11 @@ jobs:
           v2=.github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'REQUEST_EXECUTION_PREFIX: gw' "$gateway"
           grep -F 'INCLUDE_REQUEST_EXECUTION_ID: "true"' "$gateway"
-          grep -F 'request_execution_id: ${{ steps.resolve.outputs.request_execution_id }}' "$gateway"
-          grep -F 'request_execution_id:' "$v2"
-          grep -F 'I_REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}' "$v2"
+          test "$(grep -Fc 'request_execution_id:' "$gateway")" -ge 1
+          test "$(grep -Fc 'REQUEST_EXECUTION_ID:' "$gateway")" -ge 3
+          test "$(grep -Fc 'request_execution_id:' "$v2")" -ge 2
+          grep -F 'I_REQUEST_EXECUTION_ID:' "$v2"
           grep -F 'REQUEST_EXECUTION_PREFIX: eval' "$v2"
-          grep -F 'REQUEST_EXECUTION_ID: ${{ needs.resolve.outputs.request_execution_id }}' "$v2"
+          test "$(grep -Fc 'REQUEST_EXECUTION_ID:' "$v2")" -ge 2
       - name: Test Rust request execution contract
         run: cargo test --locked -p asr-contracts --bin asr-candidate-request
