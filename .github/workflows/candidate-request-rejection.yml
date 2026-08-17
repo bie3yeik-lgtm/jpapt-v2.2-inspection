@@ -39,25 +39,11 @@ jobs:
       - name: Validate rejection receiver binding
         env:
           ALLOWED_ORCHESTRATORS: ${{ vars.JPAPT_ORCHESTRATOR_REPOSITORIES }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          value = json.loads(Path('.ci/candidate-request-rejection.json').read_text())
-          receiver = os.environ['GITHUB_REPOSITORY']
-          if value['receipt_repository'] != receiver:
-              raise SystemExit('rejection receipt_repository does not match receiver repository')
-          orchestrator = value['orchestrator_repository']
-          allowed = {
-              item.strip()
-              for item in os.environ.get('ALLOWED_ORCHESTRATORS', '').split(',')
-              if item.strip()
-          }
-          if orchestrator != receiver and orchestrator not in allowed:
-              raise SystemExit('rejection orchestrator_repository is not allowlisted')
-          PY
+        run: >-
+          python scripts/ci/validate-candidate-protocol-binding.py
+          --rejection .ci/candidate-request-rejection.json
+          --receiver-repository "${{ github.repository }}"
+          --allowed-orchestrators "$ALLOWED_ORCHESTRATORS"
       - name: Preserve received rejection
         uses: actions/upload-artifact@v7
         with:
