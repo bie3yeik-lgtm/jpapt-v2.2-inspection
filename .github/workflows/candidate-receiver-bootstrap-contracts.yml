@@ -115,6 +115,10 @@ jobs:
             echo 'stale receiver installation unexpectedly matched canonical bundle' >&2
             exit 1
           fi
+          zero_sha="$(printf '0%.0s' {1..64})"
+          jq --arg sha "$zero_sha" '.managed_files += [{"path":"scripts/ci/obsolete-managed.py","sha256":$sha}]' \
+            /tmp/receiver.json > /tmp/receiver-obsolete.json
+          test "$(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/receiver-obsolete.json)" = scripts/ci/obsolete-managed.py
           jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/receiver-naive.json
           if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-naive.json; then
             echo 'naive installed_at unexpectedly accepted' >&2
@@ -136,11 +140,21 @@ jobs:
           grep -Fx 'scripts/ci/candidate_protocol_common.py' < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           grep -F 'candidate_receiver_bundle.py --mappings' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'candidate_receiver_bundle.py --tsv' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify bootstrap stale-install convergence and safety boundaries
+      - name: Verify bootstrap drift protection and stale-install convergence
         shell: bash
         run: |
           set -euo pipefail
+          grep -F 'managed path drifted from the owned installation manifest' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'bootstrap refuses to overwrite a modified managed path' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'managed path is missing and will be repaired' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'existing receiver manifest is stale; bootstrap will converge it to the canonical bundle' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'sha:null' .github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'obsolete managed path still exists after bootstrap' .github/workflows/candidate-receiver-bootstrap.yml
+      - name: Verify bootstrap ownership and atomic update boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
           grep -F '[[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'managed path already exists without jpapt manifest' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'recoverable partial install already matches canonical source' .github/workflows/candidate-receiver-bootstrap.yml
