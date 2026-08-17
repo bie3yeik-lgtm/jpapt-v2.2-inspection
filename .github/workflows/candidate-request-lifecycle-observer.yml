@@ -1,0 +1,104 @@
+name: Candidate Request Lifecycle Observer
+
+on:
+  workflow_run:
+    workflows: [Candidate Package Evaluate V2]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      evaluation_run_id:
+        description: Candidate Package Evaluate V2 run ID
+        required: true
+        type: string
+      evaluation_run_attempt:
+        description: Run attempt
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: candidate-lifecycle-observer-${{ github.event.workflow_run.id || inputs.evaluation_run_id }}-${{ github.event.workflow_run.run_attempt || inputs.evaluation_run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  completed:
+    name: Persist completed lifecycle snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve evaluation run
+        id: run
+        shell: bash
+        env:
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          INPUT_RUN_ID: ${{ inputs.evaluation_run_id }}
+          INPUT_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
+        run: |
+          set -euo pipefail
+          run_id="${EVENT_RUN_ID:-$INPUT_RUN_ID}"
+          run_attempt="${EVENT_RUN_ATTEMPT:-${INPUT_RUN_ATTEMPT:-1}}"
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || { echo "::error::invalid evaluation run id"; exit 1; }
+          [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]] || { echo "::error::invalid evaluation run attempt"; exit 1; }
+          {
+            echo "run_id=$run_id"
+            echo "run_attempt=$run_attempt"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download completion receipt
+        id: receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          RUN_ATTEMPT: ${{ steps.run.outputs.run_attempt }}
+        run: |
+          set -euo pipefail
+          artifact_name="candidate-completion-$RUN_ID-$RUN_ATTEMPT"
+          artifact_id="$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$artifact_name\") | .id" | head -n1)"
+          if [[ -z "$artifact_id" ]]; then
+            echo "::notice::no completion receipt artifact; request was not accepted through the canonical completion boundary"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p .ci/lifecycle
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/receipt.zip
+          unzip -q /tmp/receipt.zip -d .ci/lifecycle
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --validate .ci/lifecycle/candidate-completion-receipt.json
+          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py \
+            --receipt-sha .ci/lifecycle/candidate-completion-receipt.json)"
+          request_id="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.ci/lifecycle/candidate-completion-receipt.json').read_text())
+          print(value['request_id'])
+          PY
+          )"
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
+          {
+            echo "found=true"
+            echo "receipt_sha=$receipt_sha"
+            echo "request_key=$request_key"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build completed lifecycle snapshot
+        if: ${{ steps.receipt.outputs.found == 'true' }}
+        env:
+          RECEIPT_SHA256: ${{ steps.receipt.outputs.receipt_sha }}
+        run: >-
+          python scripts/ci/build-candidate-request-lifecycle.py
+          --state completed
+          --receipt .ci/lifecycle/candidate-completion-receipt.json
+          --output .ci/lifecycle/candidate-request-lifecycle.json
+      - name: Preserve completed lifecycle snapshot
+        if: ${{ steps.receipt.outputs.found == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-lifecycle-${{ steps.receipt.outputs.request_key }}-completed
+          path: .ci/lifecycle/candidate-request-lifecycle.json
+          retention-days: 30
