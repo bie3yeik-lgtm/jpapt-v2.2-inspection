@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - .github/workflows/candidate-dispatch-body-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/normalize-candidate-request.py
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   pull_request:
     paths:
       - .github/workflows/candidate-dispatch-body-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/normalize-candidate-request.py
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
@@ -30,8 +32,34 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Validate builder syntax
-        run: python -m py_compile scripts/ci/build-candidate-dispatch-body.py
+      - name: Validate helper syntax
+        run: >-
+          python -m py_compile
+          scripts/ci/build-candidate-dispatch-body.py
+          scripts/ci/normalize-candidate-request.py
+      - name: Verify Gateway exposes dry-run end to end
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'dry_run:' .github/workflows/candidate-request-gateway.yml
+          grep -F 'I_DRY_RUN: ${{ inputs.dry_run }}' .github/workflows/candidate-request-gateway.yml
+          grep -F 'DRY_RUN: ${{ steps.resolve.outputs.dry_run }}' .github/workflows/candidate-request-gateway.yml
+          grep -F "printf -- '- dry-run:" .github/workflows/candidate-request-gateway.yml
+      - name: Normalize manual Gateway dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/normalized-output
+          I_REQUEST_ID=manual-dry-run-001 \
+          I_SOURCE_REPOSITORY=owner/source \
+          I_DRY_RUN=true \
+          I_EXECUTE=true \
+          python scripts/ci/normalize-candidate-request.py \
+            --event-name workflow_dispatch \
+            --output /tmp/request.json \
+            --github-output /tmp/normalized-output >/dev/null
+          test "$(jq -r .dry_run /tmp/request.json)" = true
+          grep -Fx 'execute=true' /tmp/normalized-output
       - name: Inherit dry-run from normalized Gateway request
         shell: bash
         run: |
