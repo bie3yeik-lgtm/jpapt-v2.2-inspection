@@ -13,22 +13,26 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - .github/workflows/candidate-request-rejection.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
       - docker/candidate-package/Dockerfile
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
       - scripts/ci/repository-dispatch-with-retry.sh
       - scripts/ci/run-candidate-package-evaluation.sh
+      - scripts/ci/validate-candidate-protocol-binding.py
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   pull_request:
     paths:
@@ -40,22 +44,26 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - .github/workflows/candidate-request-rejection.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/external-bucket-bootstrap.yml
       - .github/workflows/external-candidate-contracts.yml
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-rejection.schema.json
       - docker/candidate-package/Dockerfile
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-rejection.py
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/generic-candidate-evaluate.py
       - scripts/ci/normalize-candidate-request.py
       - scripts/ci/repository-dispatch-with-retry.sh
       - scripts/ci/run-candidate-package-evaluation.sh
+      - scripts/ci/validate-candidate-protocol-binding.py
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
   workflow_dispatch:
 
@@ -101,10 +109,9 @@ jobs:
             .github/workflows/candidate-completion-receipt.yml \
             .github/workflows/candidate-package-evaluate.yml \
             .github/workflows/candidate-request-lifecycle-observer.yml \
+            .github/workflows/candidate-request-rejection.yml \
             .github/workflows/external-bucket-bootstrap.yml \
             .github/workflows/external-candidate-contracts.yml
-          # Summary-only Markdown printf strings contain literal backticks.
-          # Ignore SC2016 only for the workflows that intentionally use them.
           actionlint -color -ignore 'SC2016' \
             .github/workflows/candidate-completion-reconcile.yml \
             .github/workflows/candidate-package-evaluate-v2.yml \
@@ -124,17 +131,20 @@ jobs:
             scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/build-candidate-request-rejection.py \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/generic-candidate-evaluate.py \
-            scripts/ci/normalize-candidate-request.py
+            scripts/ci/normalize-candidate-request.py \
+            scripts/ci/validate-candidate-protocol-binding.py
 
       - name: Validate protocol schema JSON
         run: |
           python -m json.tool contracts/candidate-completion-receipt.schema.json >/dev/null
           python -m json.tool contracts/candidate-completion-ack.schema.json >/dev/null
           python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
+          python -m json.tool contracts/candidate-request-rejection.schema.json >/dev/null
 
-      - name: Exercise completion receipt, acknowledgement, and lifecycle contracts
+      - name: Exercise completion, rejection, binding, and lifecycle contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -166,6 +176,17 @@ jobs:
             --receipt /tmp/receipt.json \
             --dispatch-body /tmp/dispatch.json
           python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/source \
+            --allowed-orchestrators owner/orchestrator
+          if python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/other \
+            --allowed-orchestrators owner/orchestrator; then
+            echo 'receiver binding mismatch unexpectedly passed' >&2
+            exit 1
+          fi
 
           RECEIVER_REPOSITORY=owner/source \
           RECEIVER_RUN_ID=67890 \
@@ -177,6 +198,10 @@ jobs:
             --ack /tmp/ack.json \
             --dispatch-body /tmp/ack-dispatch.json
           python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/orchestrator
 
           receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key req-contract-001)"
@@ -200,6 +225,24 @@ jobs:
             --state running --output /tmp/lifecycle-running.json
           python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-running.json
 
+          REQUEST_ID=req-rejected-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=101 \
+          GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/101 \
+          REJECTED_AT=2026-08-17T00:00:03Z \
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json
+          python scripts/ci/build-candidate-request-rejection.py --validate /tmp/rejection.json
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state rejected \
+            --rejection /tmp/rejection.json \
+            --output /tmp/lifecycle-rejected.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate /tmp/lifecycle-rejected.json
+
           RECEIPT_SHA256="$receipt_sha" \
           python scripts/ci/build-candidate-request-lifecycle.py \
             --state completed \
@@ -220,23 +263,22 @@ jobs:
 
           dispatch = json.loads(Path('/tmp/dispatch.json').read_text())
           ack_dispatch = json.loads(Path('/tmp/ack-dispatch.json').read_text())
-          ack = ack_dispatch['client_payload']
+          rejection_dispatch = json.loads(Path('/tmp/rejection-dispatch.json').read_text())
           assert dispatch['event_type'] == 'jpapt.candidate-completed'
-          assert dispatch['client_payload']['request_id'] == 'req-contract-001'
-          assert dispatch['client_payload']['conclusion'] == 'success'
           assert ack_dispatch['event_type'] == 'jpapt.candidate-completion-ack'
-          assert ack['request_id'] == 'req-contract-001'
-          assert len(ack['receipt_sha256']) == 64
+          assert rejection_dispatch['event_type'] == 'jpapt.candidate-rejected'
+          assert rejection_dispatch['client_payload']['reason_code'] == 'REQUEST_NORMALIZATION_OR_RESOLUTION_FAILED'
 
           states = []
           for path in (
               '/tmp/lifecycle-planned.json',
               '/tmp/lifecycle-running.json',
+              '/tmp/lifecycle-rejected.json',
               '/tmp/lifecycle-completed.json',
               '/tmp/lifecycle-acknowledged.json',
           ):
               states.append(json.loads(Path(path).read_text())['state'])
-          assert states == ['planned', 'running', 'completed', 'acknowledged']
+          assert states == ['planned', 'running', 'rejected', 'completed', 'acknowledged']
 
           receipt = json.loads(Path('/tmp/receipt.json').read_text())
           reversed_receipt = {key: receipt[key] for key in reversed(list(receipt))}
