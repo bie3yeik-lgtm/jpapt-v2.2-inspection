@@ -1,0 +1,113 @@
+name: Candidate Protocol Surface Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - .github/workflows/candidate-protocol-surface-contracts.yml
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+      - scripts/ci/reduce-candidate-lifecycle.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - .github/workflows/candidate-protocol-surface-contracts.yml
+      - contracts/candidate-request-lifecycle.schema.json
+      - contracts/candidate-request-timeline.schema.json
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-request-timeline.py
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+      - scripts/ci/reduce-candidate-lifecycle.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-surface-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate candidate protocol surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint protocol surface workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-package-evaluate.yml
+          .github/workflows/candidate-package-evaluate-v2.yml
+          .github/workflows/candidate-request-status.yml
+          .github/workflows/candidate-request-timeline.yml
+          .github/workflows/candidate-protocol-synthetic-e2e.yml
+          .github/workflows/candidate-protocol-surface-contracts.yml
+      - name: Compile lifecycle and query helpers
+        run: |
+          python -m py_compile \
+            scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/build-candidate-request-timeline.py \
+            scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            scripts/ci/reduce-candidate-lifecycle.py \
+            scripts/ci/compare-candidate-lifecycle-state.py
+      - name: Parse lifecycle schemas
+        run: |
+          python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
+          python -m json.tool contracts/candidate-request-timeline.schema.json >/dev/null
+      - name: Require shared lifecycle semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'candidate_lifecycle_common' scripts/ci/build-candidate-request-lifecycle.py
+          grep -F 'candidate_lifecycle_common' scripts/ci/build-candidate-request-timeline.py
+          grep -F 'candidate_lifecycle_common' scripts/ci/reduce-candidate-lifecycle.py
+          grep -F 'candidate_lifecycle_common' scripts/ci/compare-candidate-lifecycle-state.py
+          grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-status.yml
+          grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-timeline.yml
+      - name: Require one canonical evaluator implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          legacy=.github/workflows/candidate-package-evaluate.yml
+          v2=.github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'candidate-package-evaluate-v2.yml/dispatches' "$legacy"
+          grep -F 'Build digest-pinned candidate package' "$v2"
+          if grep -F 'Build digest-pinned candidate package' "$legacy"; then
+            echo 'legacy entrypoint unexpectedly contains evaluator implementation' >&2
+            exit 1
+          fi
+      - name: Require synthetic chain to cover terminal acknowledgement
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2e=.github/workflows/candidate-protocol-synthetic-e2e.yml
+          grep -F 'build-candidate-completion-receipt.py' "$e2e"
+          grep -F 'build-candidate-completion-ack.py' "$e2e"
+          grep -F 'build-candidate-request-timeline.py' "$e2e"
+          grep -F 'current_state /tmp/timeline.json)" = acknowledged' "$e2e"
