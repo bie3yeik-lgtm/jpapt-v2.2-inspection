@@ -70,8 +70,10 @@ def main() -> int:
         "hf_jobs_image": env("HF_JOBS_IMAGE"),
         "dry_run": resolved_dry_run(),
     }
-    execution_id = resolved_execution_id()
-    if execution_id:
+    if parse_bool(env("INCLUDE_REQUEST_EXECUTION_ID"), "INCLUDE_REQUEST_EXECUTION_ID"):
+        execution_id = resolved_execution_id()
+        if not execution_id:
+            raise SystemExit("request_execution_id is required when forwarding is enabled")
         inputs["request_execution_id"] = execution_id
     body = {"ref": args.ref, "inputs": inputs}
     compact = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
