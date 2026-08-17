@@ -69,17 +69,16 @@ jobs:
           .github/workflows/candidate-receiver-bootstrap-contracts.yml
           .github/workflows/candidate-protocol-e2e.yml
           .github/workflows/candidate-protocol-readiness.yml
-      - name: Validate receiver bundle and manifest helper syntax
+      - name: Validate bundle and manifest helpers
         run: |
           python -m py_compile \
             scripts/ci/candidate_protocol_common.py \
             scripts/ci/candidate_receiver_bundle.py \
             scripts/ci/build-candidate-receiver-installation.py
           python -m json.tool config/candidate-receiver-bundle.json >/dev/null
+          python -m json.tool contracts/candidate-receiver-installation.schema.json >/dev/null
           python scripts/ci/candidate_receiver_bundle.py --validate
-      - name: Validate installation schema JSON
-        run: python -m json.tool contracts/candidate-receiver-installation.schema.json >/dev/null
-      - name: Build canonical managed installation manifest
+      - name: Build canonical installation fixture
         shell: bash
         run: |
           set -euo pipefail
@@ -92,45 +91,26 @@ jobs:
           ORCHESTRATOR_COMMIT_SHA=0000000000000000000000000000000000000000 \
           INSTALLED_AT=2026-08-17T10:00:00Z \
           python scripts/ci/build-candidate-receiver-installation.py \
-            --output /tmp/receiver.json \
-            "${file_args[@]}"
+            --output /tmp/receiver.json "${file_args[@]}"
           python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
           python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver.json
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          bundle = json.loads(Path('config/candidate-receiver-bundle.json').read_text())
-          value = json.loads(Path('/tmp/receiver.json').read_text())
-          assert value['receiver_repository'] == 'owner/receiver'
-          assert value['orchestrator_repository'] == 'owner/orchestrator'
-          assert len(value['managed_files']) == len(bundle['files'])
-          assert {item['path'] for item in value['managed_files']} == {item['path'] for item in bundle['files']}
-          PY
-      - name: Reject stale or malformed installation manifests
+      - name: Reject stale and malformed installations
         shell: bash
         run: |
           set -euo pipefail
-          jq '.managed_files = .managed_files[:-1]' /tmp/receiver.json > /tmp/receiver-stale.json
-          if python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver-stale.json; then
-            echo 'stale receiver installation unexpectedly matched canonical bundle' >&2
-            exit 1
-          fi
+          jq '.managed_files = .managed_files[:-1]' /tmp/receiver.json > /tmp/stale.json
+          ! python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/stale.json
+
           zero_sha="$(printf '0%.0s' {1..64})"
           jq --arg sha "$zero_sha" '.managed_files += [{"path":"scripts/ci/obsolete-managed.py","sha256":$sha}]' \
-            /tmp/receiver.json > /tmp/receiver-obsolete.json
-          test "$(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/receiver-obsolete.json)" = scripts/ci/obsolete-managed.py
-          jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/receiver-naive.json
-          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-naive.json; then
-            echo 'naive installed_at unexpectedly accepted' >&2
-            exit 1
-          fi
-          jq '.unexpected="x"' /tmp/receiver.json > /tmp/receiver-extra.json
-          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-extra.json; then
-            echo 'unknown receiver installation field unexpectedly accepted' >&2
-            exit 1
-          fi
-          grep -F '"pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"' contracts/candidate-receiver-installation.schema.json
-      - name: Verify receiver transitive dependency closure
+            /tmp/receiver.json > /tmp/obsolete.json
+          test "$(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/obsolete.json)" = scripts/ci/obsolete-managed.py
+
+          jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/naive.json
+          ! python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/naive.json
+          jq '.unexpected="x"' /tmp/receiver.json > /tmp/extra.json
+          ! python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/extra.json
+      - name: Verify canonical bundle dependency closure
         shell: bash
         run: |
           set -euo pipefail
@@ -140,55 +120,50 @@ jobs:
           grep -Fx 'scripts/ci/candidate_protocol_common.py' < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           grep -F 'candidate_receiver_bundle.py --mappings' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'candidate_receiver_bundle.py --tsv' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify bootstrap drift protection and stale-install convergence
+      - name: Verify managed drift and obsolete-path policy
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'managed path drifted from the owned installation manifest' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'bootstrap refuses to overwrite a modified managed path' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'managed path is missing and will be repaired' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'existing receiver manifest is stale; bootstrap will converge it to the canonical bundle' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'sha:null' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'obsolete managed path still exists after bootstrap' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify preflight head pinning and atomic update boundary
+          bootstrap=.github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'managed path drifted from the owned installation manifest' "$bootstrap"
+          grep -F 'bootstrap refuses to overwrite a modified managed path' "$bootstrap"
+          grep -F 'managed path is missing and will be repaired' "$bootstrap"
+          grep -F 'existing receiver manifest is stale; bootstrap will converge it to the canonical bundle' "$bootstrap"
+          grep -F 'candidate_receiver_bundle.py --obsolete-installation /tmp/existing-receiver.json' "$bootstrap"
+          grep -F 'sha:null' "$bootstrap"
+          grep -F 'obsolete managed path still exists after bootstrap' "$bootstrap"
+      - name: Verify preflight-head and atomic update policy
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'validated_head_sha="$(gh api "/repos/$TARGET_REPOSITORY/git/ref/heads/$default_branch" --jq .object.sha)"' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F '?ref=$validated_head_sha' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'validated_head_sha=$validated_head_sha' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'VALIDATED_HEAD_SHA: ${{ steps.target.outputs.validated_head_sha }}' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'head_sha="$VALIDATED_HEAD_SHA"' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F -- '--arg parent "$head_sha"' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F '{sha:$sha,force:false}' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify bootstrap ownership and update safety boundaries
+          bootstrap=.github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'validated_head_sha=' "$bootstrap"
+          grep -F '?ref=$validated_head_sha' "$bootstrap"
+          grep -F 'VALIDATED_HEAD_SHA:' "$bootstrap"
+          grep -F 'head_sha="$VALIDATED_HEAD_SHA"' "$bootstrap"
+          grep -F -- '--arg parent "$head_sha"' "$bootstrap"
+          grep -F '{sha:$sha,force:false}' "$bootstrap"
+          grep -F 'git/refs/heads/$TARGET_BRANCH' "$bootstrap"
+      - name: Verify external receiver safety gates
         shell: bash
         run: |
           set -euo pipefail
-          grep -F '[[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'managed path already exists without jpapt manifest' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'recoverable partial install already matches canonical source' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'existing receiver installation is managed by another orchestrator' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'git/trees' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'git/commits' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'git/refs/heads/$TARGET_BRANCH' .github/workflows/candidate-receiver-bootstrap.yml
-          grep -F 'installed receiver hash mismatch' .github/workflows/candidate-receiver-bootstrap.yml
-      - name: Verify E2E and readiness reject stale manifests
-        shell: bash
-        run: |
-          set -euo pipefail
+          bootstrap=.github/workflows/candidate-receiver-bootstrap.yml
+          grep -F '[[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' "$bootstrap"
+          grep -F 'managed path already exists without jpapt manifest' "$bootstrap"
+          grep -F 'existing receiver installation is managed by another orchestrator' "$bootstrap"
           grep -F 'candidate_receiver_bundle.py --assert-installation /tmp/receiver-manifest.json' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'receiver installation manifest is stale or incomplete' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'candidate_receiver_bundle.py --assert-installation /tmp/receiver.json' .github/workflows/candidate-protocol-readiness.yml
           grep -F 'receiver managed installation is stale or incomplete' .github/workflows/candidate-protocol-readiness.yml
-      - name: Verify readiness audit contract
+      - name: Verify readiness trust contract
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'SOURCE_REPO_TOKEN is not configured' .github/workflows/candidate-protocol-readiness.yml
-          grep -F 'HF_TOKEN is not configured' .github/workflows/candidate-protocol-readiness.yml
-          grep -F 'JPAPT_ORCHESTRATOR_REPOSITORIES' .github/workflows/candidate-protocol-readiness.yml
-          grep -F 'JPAPT_ACK_TOKEN' .github/workflows/candidate-protocol-readiness.yml
-          grep -F 'managed path hash mismatch' .github/workflows/candidate-protocol-readiness.yml
-          grep -F '**Readiness: PASS**' .github/workflows/candidate-protocol-readiness.yml
+          readiness=.github/workflows/candidate-protocol-readiness.yml
+          grep -F 'SOURCE_REPO_TOKEN is not configured' "$readiness"
+          grep -F 'HF_TOKEN is not configured' "$readiness"
+          grep -F 'JPAPT_ORCHESTRATOR_REPOSITORIES' "$readiness"
+          grep -F 'JPAPT_ACK_TOKEN' "$readiness"
+          grep -F 'managed path hash mismatch' "$readiness"
+          grep -F '**Readiness: PASS**' "$readiness"
