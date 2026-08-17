@@ -34,13 +34,18 @@ import json
 import sys
 from pathlib import Path
 
-snapshot = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+snapshot_path = Path(sys.argv[1])
+snapshot_bytes = snapshot_path.read_bytes()
+snapshot = json.loads(snapshot_bytes.decode("utf-8"))
 request_id = snapshot["request_id"]
 request_key = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
 state = snapshot["state"]
+snapshot_key = hashlib.sha256(snapshot_bytes).hexdigest()[:16]
 if state in {"planned", "dispatched", "rejected"}:
     run_id = snapshot.get("gateway_run_id")
-    evidence_key = f"gateway-{run_id or 'unknown'}-{state}"
+    # gateway_run_attempt is not part of LifecycleV1. Include the snapshot digest
+    # so a rerun cannot overwrite an earlier immutable event path.
+    evidence_key = f"gateway-{run_id or 'unknown'}-{state}-{snapshot_key}"
 elif state == "running":
     evidence_key = (
         f"evaluation-{snapshot['evaluation_run_id']}-"
