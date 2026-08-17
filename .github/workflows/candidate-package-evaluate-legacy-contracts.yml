@@ -1,0 +1,89 @@
+name: Candidate Package Evaluate Legacy Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-package-evaluate-legacy-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate legacy evaluator compatibility wrapper
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint legacy and V2 workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-package-evaluate.yml
+          .github/workflows/candidate-package-evaluate-v2.yml
+          .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+      - name: Require legacy entrypoint to forward to V2
+        shell: bash
+        run: |
+          set -euo pipefail
+          legacy=.github/workflows/candidate-package-evaluate.yml
+          grep -F 'jpapt.candidate-evaluate' "$legacy"
+          grep -F 'candidate-package-evaluate-v2.yml/dispatches' "$legacy"
+          grep -F 'actions: write' "$legacy"
+          grep -F 'legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' "$legacy"
+          grep -F 'receipt_repository="$source_repository"' "$legacy"
+          grep -F 'request_id: $request_id' "$legacy"
+          grep -F 'receipt_repository: $receipt_repository' "$legacy"
+          grep -F 'dry_run: $dry_run' "$legacy"
+      - name: Reject duplicated evaluator implementation in legacy entrypoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          legacy=.github/workflows/candidate-package-evaluate.yml
+          forbidden=(
+            'docker buildx build'
+            'hf-fetch-candidate.sh'
+            'generic-candidate-evaluate.py'
+            'run-candidate-package-evaluation.sh'
+            'Build digest-pinned candidate package'
+            'CUDAExecutionProvider'
+            'CoreMLExecutionProvider'
+            'DmlExecutionProvider'
+          )
+          for marker in "${forbidden[@]}"; do
+            if grep -F "$marker" "$legacy"; then
+              echo "legacy evaluator implementation marker unexpectedly present: $marker" >&2
+              exit 1
+            fi
+          done
+      - name: Require compatibility inputs to exist in V2
+        shell: bash
+        run: |
+          set -euo pipefail
+          v2=.github/workflows/candidate-package-evaluate-v2.yml
+          for input in \
+            request_id source_repository receipt_repository hf_bucket candidate_id \
+            package_name dataset_source dataset_id suite executor environment hf_flavor \
+            hf_jobs_image dry_run; do
+            grep -E "^[[:space:]]{6}${input}:$" "$v2"
+          done
