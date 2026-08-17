@@ -19,6 +19,18 @@ max_attempts="${3:-3}"
   echo "ERROR: max_attempts must be a positive integer" >&2
   exit 2
 }
+command -v jq >/dev/null 2>&1 || {
+  echo "ERROR: jq is required to validate repository dispatch body" >&2
+  exit 2
+}
+if ! jq -e '
+  type == "object"
+  and (.event_type | type == "string" and length > 0 and length <= 100)
+  and (.client_payload | type == "object")
+' "$body_file" >/dev/null 2>&1; then
+  echo "ERROR: repository dispatch body must contain event_type (1..100 chars) and object client_payload: $body_file" >&2
+  exit 2
+fi
 
 attempt=1
 while true; do
