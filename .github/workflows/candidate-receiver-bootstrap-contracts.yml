@@ -184,7 +184,7 @@ jobs:
           grep -F 'hf_bucket:' "$readiness"
           grep -F 'hf://buckets/$HF_BUCKET/candidates' "$readiness"
           grep -F 'hf buckets list --token "$HF_TOKEN" "$remote" -R -q' "$readiness"
-          grep -F "grep -Eo 'candidate-[0-9]{6}'" "$readiness"
+          grep -F "re.findall(r'candidate-[0-9]{6}', text)" "$readiness"
           grep -F 'E2E HF Bucket contains no candidate-NNNNNN under candidates/' "$readiness"
           grep -F 'E2E HF Bucket candidate collection: reachable and non-empty' "$readiness"
           if grep -F 'hf buckets sync' "$readiness"; then
