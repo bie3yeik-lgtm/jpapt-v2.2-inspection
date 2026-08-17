@@ -54,7 +54,7 @@ jobs:
           fi
 
           if [[ -n "${HF_TOKEN:-}" && -n "$bucket" ]]; then
-            for candidate_state in acknowledged completed rejected running planned; do
+            for candidate_state in acknowledged completed rejected running dispatched planned; do
               remote="hf://buckets/$bucket/requests/$request_key/states/$candidate_state.json"
               local_file=".ci/status/bucket-$candidate_state.json"
               if hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
@@ -81,7 +81,7 @@ jobs:
 
           if [[ "$found" != true ]]; then
             artifact_id=""
-            for candidate_state in acknowledged completed rejected running planned; do
+            for candidate_state in acknowledged completed rejected running dispatched planned; do
               artifact_name="candidate-lifecycle-$request_key-$candidate_state"
               artifact_id="$(gh api \
                 "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
