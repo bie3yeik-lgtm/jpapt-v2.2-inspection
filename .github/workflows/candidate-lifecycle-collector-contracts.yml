@@ -1,0 +1,130 @@
+name: Candidate Lifecycle Collector Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-lifecycle-collector-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-lifecycle-collector-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - scripts/ci/candidate_lifecycle_common.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-lifecycle-collector-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate persistent event collection contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint collector consumers
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-lifecycle-collector-contracts.yml
+          .github/workflows/candidate-request-status.yml
+          .github/workflows/candidate-request-timeline.yml
+      - name: Validate collector syntax and workflow reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/ci/candidate_lifecycle_common.py \
+            scripts/ci/collect-candidate-lifecycle-bucket-events.py
+          grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-status.yml
+          grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-timeline.yml
+          if grep -F 'from huggingface_hub import download_bucket_files, list_bucket_tree' \
+            .github/workflows/candidate-request-status.yml \
+            .github/workflows/candidate-request-timeline.yml; then
+            echo 'inline bucket event collector unexpectedly remains in workflow' >&2
+            exit 1
+          fi
+      - name: Filter and deterministically sort bucket event items without network
+        run: |
+          python - <<'PY'
+          import importlib.util
+          from dataclasses import dataclass
+          from pathlib import Path
+
+          path = Path('scripts/ci/collect-candidate-lifecycle-bucket-events.py')
+          spec = importlib.util.spec_from_file_location('collector', path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+
+          @dataclass
+          class Item:
+              path: str
+              type: str
+
+          selected = module.select_lifecycle_events([
+              Item('requests/key/events/z.lifecycle.json', 'file'),
+              Item('requests/key/events/a.lifecycle.json', 'file'),
+              Item('requests/key/events/ignore.json', 'file'),
+              Item('requests/key/events/subdir', 'directory'),
+          ])
+          assert [item.path for item in selected] == [
+              'requests/key/events/a.lifecycle.json',
+              'requests/key/events/z.lifecycle.json',
+          ]
+          PY
+      - name: Require timezone-aware lifecycle ordering timestamps
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=scripts/ci python - <<'PY'
+          from candidate_lifecycle_common import parse_time
+
+          assert parse_time('2026-08-17T10:00:00Z').utcoffset() is not None
+          assert parse_time('2026-08-17T19:00:00+09:00').utcoffset() is not None
+          try:
+              parse_time('2026-08-17T10:00:00')
+          except ValueError:
+              pass
+          else:
+              raise AssertionError('naive timestamp unexpectedly accepted')
+          PY
+      - name: Reject malformed collector identities before network access
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          if python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            --bucket invalid \
+            --request-key 0123456789abcdef01234567 \
+            --output-dir /tmp/events \
+            --manifest /tmp/events.tsv; then
+            echo 'invalid bucket unexpectedly accepted' >&2
+            exit 1
+          fi
+          if python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            --bucket owner/bucket \
+            --request-key invalid-key \
+            --output-dir /tmp/events \
+            --manifest /tmp/events.tsv; then
+            echo 'invalid request key unexpectedly accepted' >&2
+            exit 1
+          fi
