@@ -59,7 +59,7 @@ jobs:
           GATEWAY_RUN_ID=101 \
           UPDATED_AT=2026-08-17T10:00:00Z \
           python scripts/ci/build-candidate-request-lifecycle.py \
-            --state planned \
+            --state dispatched \
             --output /tmp/lifecycle.json >/dev/null
           env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
             bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json
@@ -70,4 +70,5 @@ jobs:
           grep -F '"$base/events/$evidence_key.lifecycle.json"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'for candidate_state in acknowledged completed rejected running planned' .github/workflows/candidate-request-status.yml
+          grep -F 'state in {"planned", "dispatched", "rejected"}' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'for candidate_state in acknowledged completed rejected running dispatched planned' .github/workflows/candidate-request-status.yml
