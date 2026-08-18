@@ -101,15 +101,51 @@ When only `request_id` is supplied, status considers all available executions an
 
 When `request_execution_id` is supplied, Status reads the execution-specific Bucket partition and filters GitHub artifact fallback evidence to the same execution. The reducer independently enforces the same execution ID.
 
+GitHub artifact fallback is paginated rather than capped at the first 100 matching artifacts. This matters when the persistent Bucket is temporarily unavailable and an older execution must still be recovered from unexpired Actions evidence.
+
 This means an older acknowledged execution cannot hide a newer retry, while a caller can still query the older execution explicitly.
 
 ## Timeline query semantics
 
 `Candidate Request Timeline` uses the same optional selector.
 
-Without `request_execution_id`, it returns the combined history for the logical `request_id`.
+Without `request_execution_id`, it returns the combined history for the logical `request_id`. The generated `CandidateRequestTimelineV1` does not add an execution-scope field in this mode.
 
-With `request_execution_id`, it returns only observations for that execution. Persistent history is read from the execution-specific Bucket partition and GitHub lifecycle artifacts are filtered by payload identity.
+With `request_execution_id`, it returns only observations for that execution. Persistent history is read from the execution-specific Bucket partition and GitHub lifecycle artifacts are filtered by payload identity. The generated timeline includes top-level:
+
+```json
+{
+  "request_execution_id": "gw-123-1"
+}
+```
+
+and every `events[].snapshot.request_execution_id` must match it. The builder/validator rejects cross-execution contamination.
+
+## Remote lifecycle storage smoke
+
+Repository contract tests validate path construction and filtering without mutating Hugging Face storage. They are not equivalent to proving that the configured account/token can perform a real Bucket write/read.
+
+`.github/workflows/candidate-lifecycle-storage-smoke.yml` provides that operational proof without model compute. It is intentionally **manual-only** and requires:
+
+```text
+confirm_write = true
+HF_TOKEN      = configured
+```
+
+It creates a unique synthetic request/execution identity from the workflow run, writes the lifecycle snapshot through the canonical `persist-candidate-lifecycle.sh`, and reads back all four storage views:
+
+```text
+request-level event
+request-level running state
+execution-level event
+execution-level running state
+```
+
+Each readback is schema-validated and its canonical observation SHA-256 must equal the source snapshot.
+
+The smoke does not run ONNX Runtime, Docker builds, GPU jobs, model inference, or HF Jobs. It intentionally leaves the uniquely keyed synthetic lifecycle evidence in the private lifecycle Bucket so the remote write/read proof remains auditable rather than becoming an ephemeral test.
+
+This workflow has not proven a particular Bucket until a manual run succeeds. Static/contract CI alone must not be reported as real remote storage verification.
 
 ## Compatibility rule
 
@@ -126,6 +162,7 @@ Candidate Request Execution Contracts
 Candidate Lifecycle Execution Storage Contracts
 Candidate Lifecycle Persist Contracts
 Candidate Request Timeline Contracts
+Candidate Protocol Synthetic E2E
 ```
 
-They cover orchestrator-owned generation, spoof rejection, evidence propagation, ACK binding, legacy v1 compatibility, execution-scoped storage, reducer filtering, and cross-execution materialized-state rejection.
+They cover orchestrator-owned generation, spoof rejection, evidence propagation, ACK binding, legacy v1 compatibility, execution-scoped storage, reducer filtering, scoped timelines, and cross-execution materialized-state rejection. `Candidate Lifecycle Storage Smoke` is the separate manual remote-storage proof.
