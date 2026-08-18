@@ -226,8 +226,14 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     if !execution_id.is_empty() {
         receipt.insert("request_execution_id".to_owned(), json!(execution_id));
     }
-    receipt.insert("source_repository".to_owned(), json!(environment("SOURCE_REPOSITORY")));
-    receipt.insert("receipt_repository".to_owned(), json!(environment("RECEIPT_REPOSITORY")));
+    receipt.insert(
+        "source_repository".to_owned(),
+        json!(environment("SOURCE_REPOSITORY")),
+    );
+    receipt.insert(
+        "receipt_repository".to_owned(),
+        json!(environment("RECEIPT_REPOSITORY")),
+    );
     receipt.insert("conclusion".to_owned(), json!(conclusion));
     receipt.insert("dry_run".to_owned(), json!(dry_run));
     receipt.insert("suite".to_owned(), json!(suite));
@@ -283,7 +289,8 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
 
 fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
     let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let value: Value = serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    let value: Value =
+        serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
     value
         .as_object()
         .cloned()
@@ -482,7 +489,10 @@ mod tests {
             ("github-windows-directml", "skipped".to_owned()),
             ("hf-jobs", "skipped".to_owned()),
         ];
-        assert_eq!(derive_conclusion(&results, true), ("success".to_owned(), vec![]));
+        assert_eq!(
+            derive_conclusion(&results, true),
+            ("success".to_owned(), vec![])
+        );
     }
 
     #[test]
