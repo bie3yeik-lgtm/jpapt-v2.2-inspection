@@ -16,6 +16,10 @@ on:
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
   pull_request:
     paths:
       - .github/actionlint.yaml
@@ -30,6 +34,10 @@ on:
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 permissions:
@@ -102,6 +110,31 @@ jobs:
           grep -F 'for state in acknowledged completed running' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'candidate-completion-$evaluation_run_id-$evaluation_run_attempt' .github/workflows/candidate-protocol-e2e.yml
           grep -F 'candidate-completion-ack-$receipt_sha' .github/workflows/candidate-protocol-e2e.yml
+      - name: Verify orchestrator evidence recovery uses Rust authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2e=.github/workflows/candidate-protocol-e2e.yml
+          grep -F 'dtolnay/rust-toolchain@stable' "$e2e"
+          grep -F 'asr-candidate-protocol --' "$e2e"
+          grep -F 'receipt-validate "$receipt"' "$e2e"
+          grep -F 'ack-validate "$ack"' "$e2e"
+          grep -F 'ack-binding \' "$e2e"
+          grep -F -- '--receipt "$receipt"' "$e2e"
+          grep -F -- '--ack "$ack"' "$e2e"
+          grep -F -- '--orchestrator "$GITHUB_REPOSITORY"' "$e2e"
+          if grep -F 'build-candidate-completion-receipt.py --validate' "$e2e"; then
+            echo 'orchestrator E2E unexpectedly reverted receipt validation to Python' >&2
+            exit 1
+          fi
+          if grep -F 'build-candidate-completion-ack.py --validate' "$e2e"; then
+            echo 'orchestrator E2E unexpectedly reverted ACK validation to Python' >&2
+            exit 1
+          fi
+          if grep -F 'validate-candidate-protocol-binding.py' "$e2e"; then
+            echo 'orchestrator E2E unexpectedly reverted ACK binding authority to Python' >&2
+            exit 1
+          fi
       - name: Verify receiver preflight contract
         shell: bash
         run: |
