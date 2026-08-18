@@ -2,72 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
-
-
-def load(path: str) -> dict:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise SystemExit(f"{path} must contain a JSON object")
-    return value
-
-
-def allowed_repositories(raw: str) -> set[str]:
-    return {item.strip() for item in raw.split(",") if item.strip()}
-
-
-def validate_receiver_binding(
-    value: dict,
-    receiver_repository: str,
-    allowed: set[str],
-    *,
-    label: str,
-) -> None:
-    if value.get("receipt_repository") != receiver_repository:
-        raise SystemExit(
-            f"{label} receipt_repository does not match receiver repository: "
-            f"{value.get('receipt_repository')} != {receiver_repository}"
-        )
-    orchestrator = value.get("orchestrator_repository")
-    if orchestrator == receiver_repository:
-        return
-    if not allowed:
-        raise SystemExit(
-            f"external {label} orchestrator is not allowed: configure "
-            "JPAPT_ORCHESTRATOR_REPOSITORIES"
-        )
-    if orchestrator not in allowed:
-        raise SystemExit(f"{label} orchestrator_repository is not allowlisted: {orchestrator}")
-
-
-def validate_receipt_binding(receipt: dict, receiver_repository: str, allowed: set[str]) -> None:
-    validate_receiver_binding(receipt, receiver_repository, allowed, label="receipt")
-
-
-def validate_rejection_binding(rejection: dict, receiver_repository: str, allowed: set[str]) -> None:
-    validate_receiver_binding(rejection, receiver_repository, allowed, label="rejection")
-
-
-def validate_ack_binding(receipt: dict, ack: dict, orchestrator_repository: str) -> None:
-    checks = {
-        "orchestrator_repository": orchestrator_repository,
-        "request_id": receipt.get("request_id"),
-        "receipt_repository": receipt.get("receipt_repository"),
-        "evaluation_run_id": receipt.get("run_id"),
-        "evaluation_run_attempt": receipt.get("run_attempt"),
-        "receiver_repository": receipt.get("receipt_repository"),
-    }
-    receipt_execution_id = receipt.get("request_execution_id")
-    ack_execution_id = ack.get("request_execution_id")
-    if receipt_execution_id is not None:
-        checks["request_execution_id"] = receipt_execution_id
-    elif ack_execution_id is not None:
-        raise SystemExit("ACK contains request_execution_id but legacy receipt does not")
-    for field, expected in checks.items():
-        actual = ack.get(field)
-        if actual != expected:
-            raise SystemExit(f"ACK binding mismatch for {field}: {actual!r} != {expected!r}")
+import os
 
 
 def main() -> int:
@@ -81,26 +16,68 @@ def main() -> int:
     parser.add_argument("--allowed-orchestrators", default="")
     args = parser.parse_args()
 
-    allowed = allowed_repositories(args.allowed_orchestrators)
+    command = [
+        "cargo",
+        "run",
+        "--quiet",
+        "--locked",
+        "-p",
+        "asr-contracts",
+        "--bin",
+        "asr-candidate-protocol",
+        "--",
+    ]
     if args.rejection:
         if args.ack:
             parser.error("--ack cannot be combined with --rejection")
         if not args.receiver_repository:
             parser.error("--receiver-repository is required with --rejection")
-        validate_rejection_binding(load(args.rejection), args.receiver_repository, allowed)
-        return 0
-
-    assert args.receipt is not None
-    receipt = load(args.receipt)
-    if args.ack:
+        command.extend(
+            [
+                "receiver-binding",
+                "--kind",
+                "rejection",
+                "--input",
+                args.rejection,
+                "--receiver",
+                args.receiver_repository,
+                "--allowed",
+                args.allowed_orchestrators,
+            ]
+        )
+    elif args.ack:
         if not args.orchestrator_repository:
             parser.error("--orchestrator-repository is required with --ack")
-        validate_ack_binding(receipt, load(args.ack), args.orchestrator_repository)
+        command.extend(
+            [
+                "ack-binding",
+                "--receipt",
+                args.receipt,
+                "--ack",
+                args.ack,
+                "--orchestrator",
+                args.orchestrator_repository,
+            ]
+        )
     else:
         if not args.receiver_repository:
             parser.error("--receiver-repository is required without --ack")
-        validate_receipt_binding(receipt, args.receiver_repository, allowed)
-    return 0
+        command.extend(
+            [
+                "receiver-binding",
+                "--kind",
+                "receipt",
+                "--input",
+                args.receipt,
+                "--receiver",
+                args.receiver_repository,
+                "--allowed",
+                args.allowed_orchestrators,
+            ]
+        )
+
+    os.execvp(command[0], command)
+    raise AssertionError("os.execvp returned unexpectedly")
 
 
 if __name__ == "__main__":
