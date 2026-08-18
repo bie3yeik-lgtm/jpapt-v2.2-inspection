@@ -1,0 +1,165 @@
+name: Candidate Lifecycle Persist Protocol Authority Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - .github/workflows/candidate-lifecycle-persist-protocol-authority-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - .github/workflows/candidate-lifecycle-persist-protocol-authority-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-lifecycle-persist-protocol-authority-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Rust authority before durable persistence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Validate persistence workflow wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint -color -ignore 'SC2016' \
+            .github/workflows/candidate-lifecycle-persist.yml \
+            .github/workflows/candidate-lifecycle-persist-protocol-authority-contracts.yml
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/candidate-lifecycle-persist.yml')
+          workflow = path.read_text(encoding='utf-8')
+          authority = 'cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol --'
+
+          assert '- uses: dtolnay/rust-toolchain@stable' in workflow
+          assert workflow.count(authority) >= 4
+          assert 'rejection-validate "$rejection_file"' in workflow
+          assert 'receipt-validate "$receipt_file"' in workflow
+          assert 'ack-validate "$ack_file"' in workflow
+          assert 'ack-binding \\' in workflow
+          assert '--receipt "$receipt_file"' in workflow
+          assert '--ack "$ack_file"' in workflow
+          assert '--orchestrator "$GITHUB_REPOSITORY"' in workflow
+          assert 'acknowledged lifecycle persistence requires its preserved completion receipt' in workflow
+          assert 'acknowledged lifecycle persistence requires its acknowledgement artifact' in workflow
+
+          forbidden = (
+              'build-candidate-completion-receipt.py --validate',
+              'build-candidate-completion-ack.py --validate',
+              'build-candidate-request-rejection.py --validate',
+          )
+          for needle in forbidden:
+              assert needle not in workflow, needle
+          PY
+
+      - name: Exercise Rust evidence validation and binding
+        shell: bash
+        env:
+          REQUEST_ID: persist-authority-001
+          REQUEST_EXECUTION_ID: eval-9101-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          HF_BUCKET: owner/source-bucket
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "9101"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/9101
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-18T10:55:00Z
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/receipt.json >/dev/null
+
+          RECEIVER_REPOSITORY=owner/receiver \
+          RECEIVER_RUN_ID=9201 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/9201 \
+          ACCEPTED_AT=2026-08-18T10:56:00Z \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            ack \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-validate /tmp/ack.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator owner/orchestrator >/dev/null
+
+          REQUEST_ID=persist-rejection-001 \
+          REQUEST_EXECUTION_ID=gw-9301-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=9301 \
+          GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/9301 \
+          REJECTED_AT=2026-08-18T10:57:00Z \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            rejection \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            rejection-validate /tmp/rejection.json >/dev/null
+
+      - name: Reject cross-receipt acknowledgement binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/receipt.json /tmp/other-receipt.json
+          jq '.request_id = "different-request"' /tmp/other-receipt.json > /tmp/mutated.json
+          mv /tmp/mutated.json /tmp/other-receipt.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding \
+            --receipt /tmp/other-receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator owner/orchestrator; then
+            echo 'cross-receipt ACK binding unexpectedly accepted' >&2
+            exit 1
+          fi
