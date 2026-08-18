@@ -137,7 +137,7 @@ jobs:
           grep -F 'group: candidate-lifecycle-persist-' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'github.repository' .github/workflows/candidate-lifecycle-persist.yml
           grep -F 'cancel-in-progress: false' .github/workflows/candidate-lifecycle-persist.yml
-          grep -F 'newer retry may legitimately be' .github/workflows/candidate-request-status.yml
+          grep -F 'Current state is selected by the newest lifecycle `updated_at` across executions; state rank is only a tie-breaker.' .github/workflows/candidate-request-status.yml
           grep -F 'scripts/ci/reduce-candidate-lifecycle.py' .github/workflows/candidate-request-status.yml
       - name: Verify materialized-state monotonic comparator
         shell: bash
