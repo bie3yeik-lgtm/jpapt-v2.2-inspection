@@ -220,7 +220,7 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     no_flags(flags)?;
     let plan = read_plan(&plan_path)?;
     validate_plan(&plan)?;
-    let token = required_hf_token()?;
+    required_hf_token()?;
     preflight_hardware(&plan)?;
 
     eprintln!(
@@ -235,7 +235,7 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
 
     let result_path = PathBuf::from(SMOKE_RESULT_PATH);
     if !status.success() {
-        match fetch_smoke_result(&plan, &token, &result_path) {
+        match fetch_smoke_result(&plan, &result_path) {
             Ok(()) => eprintln!(
                 "[asr-hf-job] preserved remote failure evidence at {}",
                 result_path.display()
@@ -247,7 +247,7 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         return Err(format!("hf jobs run failed with status {status}"));
     }
 
-    fetch_smoke_result(&plan, &token, &result_path)?;
+    fetch_smoke_result(&plan, &result_path)?;
     let result = read_json(&result_path)?;
     let summary = validate_smoke_result(&plan, &result)?;
     eprintln!(
@@ -257,11 +257,11 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
-fn required_hf_token() -> Result<String, String> {
-    env::var("HF_TOKEN")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "HF_TOKEN is required before invoking Hugging Face Jobs".to_owned())
+fn required_hf_token() -> Result<(), String> {
+    match env::var("HF_TOKEN") {
+        Ok(value) if !value.trim().is_empty() => Ok(()),
+        _ => Err("HF_TOKEN is required before invoking Hugging Face Jobs".to_owned()),
+    }
 }
 
 fn preflight_hardware(plan: &HfJobPlan) -> Result<(), String> {
@@ -291,7 +291,7 @@ fn preflight_hardware(plan: &HfJobPlan) -> Result<(), String> {
     Ok(())
 }
 
-fn fetch_smoke_result(plan: &HfJobPlan, token: &str, result_path: &Path) -> Result<(), String> {
+fn fetch_smoke_result(plan: &HfJobPlan, result_path: &Path) -> Result<(), String> {
     if let Some(parent) = result_path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
@@ -299,14 +299,7 @@ fn fetch_smoke_result(plan: &HfJobPlan, token: &str, result_path: &Path) -> Resu
         .to_str()
         .ok_or_else(|| "smoke result destination is not valid UTF-8".to_owned())?;
     let status = Command::new("hf")
-        .args([
-            "buckets",
-            "cp",
-            "--token",
-            token,
-            &plan.result_uri,
-            destination,
-        ])
+        .args(["buckets", "cp", &plan.result_uri, destination])
         .status()
         .map_err(|error| format!("failed to fetch HF Jobs smoke result: {error}"))?;
     if !status.success() {
