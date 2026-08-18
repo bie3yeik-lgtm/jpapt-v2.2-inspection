@@ -27,7 +27,7 @@
     },
     {
       "path": "scripts/ci/validate-candidate-protocol-binding.py",
-      "source": "scripts/ci/validate-candidate-protocol-binding.py"
+      "source": "scripts/ci/portable/validate-candidate-protocol-binding.py"
     },
     {
       "path": "scripts/ci/repository-dispatch-with-retry.sh",
