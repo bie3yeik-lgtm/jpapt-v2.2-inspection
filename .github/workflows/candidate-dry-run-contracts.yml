@@ -7,15 +7,21 @@ on:
       - .github/workflows/candidate-dry-run-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
-      - scripts/ci/build-candidate-completion-receipt.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
       - scripts/ci/build-candidate-dispatch-body.py
+      - Cargo.toml
+      - Cargo.lock
   pull_request:
     paths:
       - .github/workflows/candidate-dry-run-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
-      - scripts/ci/build-candidate-completion-receipt.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
       - scripts/ci/build-candidate-dispatch-body.py
+      - Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 permissions:
@@ -32,6 +38,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Verify V2 dry-run gates expensive jobs but still completes protocol
         shell: bash
         run: |
@@ -40,36 +47,42 @@ jobs:
           grep -F "always() && needs.resolve.result == 'success'" .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'DRY_RUN:' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'needs.resolve.outputs.dry_run' .github/workflows/candidate-package-evaluate-v2.yml
+          grep -F 'asr-candidate-protocol-build' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate-v2.yml
       - name: Build successful dry-run completion receipt with no package outputs
         shell: bash
+        env:
+          REQUEST_ID: dry-receipt-001
+          REQUEST_EXECUTION_ID: eval-12345-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "12345"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/12345
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-17T11:00:00Z
         run: |
           set -euo pipefail
-          REQUEST_ID=dry-receipt-001 \
-          SOURCE_REPOSITORY=owner/source \
-          RECEIPT_REPOSITORY=owner/receiver \
-          DRY_RUN=true \
-          SUITE=probe \
-          EXECUTOR=github \
-          ENVIRONMENT=linux-cpu \
-          PROVIDER=CPUExecutionProvider \
-          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
-          RUN_ID=12345 \
-          RUN_ATTEMPT=1 \
-          RUN_URL=https://github.com/owner/orchestrator/actions/runs/12345 \
-          COMMIT_SHA=0000000000000000000000000000000000000000 \
-          REQUESTED_CANDIDATE_ID=latest \
-          BUILD_RESULT=skipped \
-          CPU_RESULT=skipped \
-          CUDA_RESULT=skipped \
-          COREML_RESULT=skipped \
-          DIRECTML_RESULT=skipped \
-          HF_JOBS_RESULT=skipped \
-          COMPLETED_AT=2026-08-17T11:00:00Z \
-          python scripts/ci/build-candidate-completion-receipt.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
             --receipt /tmp/dry-receipt.json \
             --dispatch-body /tmp/dry-dispatch.json >/dev/null
-          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/dry-receipt.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/dry-receipt.json >/dev/null
+          test "$(jq -r .request_execution_id /tmp/dry-receipt.json)" = eval-12345-1
           test "$(jq -r .conclusion /tmp/dry-receipt.json)" = success
           test "$(jq -r .dry_run /tmp/dry-receipt.json)" = true
           test "$(jq -r .resolved_candidate_id /tmp/dry-receipt.json)" = null
@@ -80,61 +93,73 @@ jobs:
           test "$(jq -r .event_type /tmp/dry-dispatch.json)" = jpapt.candidate-completed
       - name: A non-dry request cannot succeed when every execution job is skipped
         shell: bash
+        env:
+          REQUEST_ID: non-dry-missing-001
+          REQUEST_EXECUTION_ID: eval-12346-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          DRY_RUN: "false"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "12346"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/12346
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-17T11:00:01Z
         run: |
           set -euo pipefail
-          REQUEST_ID=non-dry-missing-001 \
-          SOURCE_REPOSITORY=owner/source \
-          RECEIPT_REPOSITORY=owner/receiver \
-          DRY_RUN=false \
-          SUITE=probe \
-          EXECUTOR=github \
-          ENVIRONMENT=linux-cpu \
-          PROVIDER=CPUExecutionProvider \
-          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
-          RUN_ID=12346 \
-          RUN_ATTEMPT=1 \
-          RUN_URL=https://github.com/owner/orchestrator/actions/runs/12346 \
-          COMMIT_SHA=0000000000000000000000000000000000000000 \
-          REQUESTED_CANDIDATE_ID=latest \
-          BUILD_RESULT=skipped \
-          CPU_RESULT=skipped \
-          CUDA_RESULT=skipped \
-          COREML_RESULT=skipped \
-          DIRECTML_RESULT=skipped \
-          HF_JOBS_RESULT=skipped \
-          COMPLETED_AT=2026-08-17T11:00:01Z \
-          python scripts/ci/build-candidate-completion-receipt.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
             --receipt /tmp/non-dry-receipt.json \
             --dispatch-body /tmp/non-dry-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/non-dry-receipt.json >/dev/null
+          test "$(jq -r .request_execution_id /tmp/non-dry-receipt.json)" = eval-12346-1
           test "$(jq -r .conclusion /tmp/non-dry-receipt.json)" = failure
           test "$(jq -r '.failed_jobs[0]' /tmp/non-dry-receipt.json)" = evaluation:missing-terminal-result
       - name: Dry-run still reports real orchestration failures
         shell: bash
+        env:
+          REQUEST_ID: dry-failure-001
+          REQUEST_EXECUTION_ID: eval-12347-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "12347"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/12347
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: failure
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-17T11:00:02Z
         run: |
           set -euo pipefail
-          REQUEST_ID=dry-failure-001 \
-          SOURCE_REPOSITORY=owner/source \
-          RECEIPT_REPOSITORY=owner/receiver \
-          DRY_RUN=true \
-          SUITE=probe \
-          EXECUTOR=github \
-          ENVIRONMENT=linux-cpu \
-          PROVIDER=CPUExecutionProvider \
-          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
-          RUN_ID=12347 \
-          RUN_ATTEMPT=1 \
-          RUN_URL=https://github.com/owner/orchestrator/actions/runs/12347 \
-          COMMIT_SHA=0000000000000000000000000000000000000000 \
-          REQUESTED_CANDIDATE_ID=latest \
-          BUILD_RESULT=failure \
-          CPU_RESULT=skipped \
-          CUDA_RESULT=skipped \
-          COREML_RESULT=skipped \
-          DIRECTML_RESULT=skipped \
-          HF_JOBS_RESULT=skipped \
-          COMPLETED_AT=2026-08-17T11:00:02Z \
-          python scripts/ci/build-candidate-completion-receipt.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
             --receipt /tmp/dry-failure-receipt.json \
             --dispatch-body /tmp/dry-failure-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/dry-failure-receipt.json >/dev/null
+          test "$(jq -r .request_execution_id /tmp/dry-failure-receipt.json)" = eval-12347-1
           test "$(jq -r .conclusion /tmp/dry-failure-receipt.json)" = failure
           test "$(jq -r '.failed_jobs[0]' /tmp/dry-failure-receipt.json)" = build:failure
