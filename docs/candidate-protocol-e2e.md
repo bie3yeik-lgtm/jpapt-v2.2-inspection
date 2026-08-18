@@ -1,6 +1,6 @@
 # Candidate protocol cross-repository E2E
 
-`Candidate Protocol E2E` verifies the completion protocol against a real second GitHub repository without launching model evaluation or Hugging Face Jobs. It dispatches `Candidate Package Evaluate V2` with `dry_run=true`, waits for the request lifecycle to reach `acknowledged`, then validates the preserved completion receipt and acknowledgement against the same request.
+`Candidate Protocol E2E` verifies the completion protocol against a real second GitHub repository without launching model evaluation or Hugging Face Jobs. It dispatches `Candidate Package Evaluate V2` with `dry_run=true`, waits for the request lifecycle to reach `acknowledged`, then validates the preserved completion receipt and acknowledgement against the same logical request and execution identity.
 
 ## What the test proves
 
@@ -8,15 +8,25 @@ A successful run establishes the following chain across two repositories:
 
 ```text
 orchestrator V2 dry-run
+  -> execution identity created by V2
   -> CandidateCompletionReceiptV1 preserved
   -> jpapt.candidate-completed delivered to external receiver
   -> external receiver validates schema and repository binding
   -> CandidateCompletionAckV1 returned to orchestrator
   -> orchestrator recovers the original receipt
   -> canonical receipt SHA-256 matches
+  -> request_execution_id binding matches
   -> ACK binding validation succeeds
   -> lifecycle reaches acknowledged
 ```
+
+The E2E workflow dispatches V2 directly rather than through Candidate Request Gateway. Therefore the expected execution identity is:
+
+```text
+eval-<evaluation_run_id>-<evaluation_run_attempt>
+```
+
+The acknowledged lifecycle snapshot, completion receipt, and ACK must all carry that exact identity. A mismatch fails the E2E even if the logical `request_id` and receipt SHA happen to match.
 
 The test does **not** build a candidate package, run ONNX Runtime, launch a GPU, or launch Hugging Face Jobs. `dry_run=true` is asserted again from the final completion receipt before the E2E run can succeed.
 
@@ -134,7 +144,7 @@ It verifies:
 - receiver `JPAPT_ORCHESTRATOR_REPOSITORIES` contains the current orchestrator;
 - receiver secret metadata includes `JPAPT_ACK_TOKEN`.
 
-The HF check is intentionally metadata-only: readiness uses `hf buckets list` and never performs `hf buckets sync`, so candidate/model payload bytes are not downloaded. This catches a missing, inaccessible, or empty candidate collection before a synthetic V2 request is dispatched while preserving the dry-run cost boundary.
+The HF check is intentionally metadata-only: readiness lists the candidate collection and does not download candidate/model payload bytes. This catches a missing, inaccessible, or empty candidate collection before a synthetic V2 request is dispatched while preserving the dry-run cost boundary.
 
 The audit never reads secret values. A failure to read required metadata is treated as inability to prove readiness. A stale managed receiver fails readiness and should be updated with `Candidate Receiver Bootstrap` before E2E.
 
@@ -156,10 +166,16 @@ Optional inputs:
 - `source_repository`: defaults to the orchestrator repository.
 - `timeout_seconds`: defaults to 600 and is bounded to 60..1200.
 
-The request ID is generated deterministically from the E2E workflow run:
+The logical request ID is generated from the outer E2E workflow run:
 
 ```text
 e2e-<github.run_id>-<github.run_attempt>
+```
+
+This is deliberately different from execution identity. V2 is dispatched without a caller-selected execution ID, so the V2 run creates:
+
+```text
+eval-<V2 github.run_id>-<V2 github.run_attempt>
 ```
 
 The V2 submission uses the same bounded `scripts/ci/workflow-dispatch-with-retry.sh` ingress helper as normal Gateway/legacy forwarding. Malformed workflow-dispatch bodies fail before the GitHub API call; transient API failures receive bounded retries.
@@ -172,7 +188,19 @@ candidate-lifecycle-<request-key>-completed
 candidate-lifecycle-<request-key>-acknowledged
 ```
 
-The workflow does not need to guess the evaluation run ID. Once `acknowledged` appears, the lifecycle snapshot supplies the exact evaluation run ID, run attempt, receipt SHA-256, and receiver identity used to recover and revalidate canonical evidence.
+The workflow does not guess the evaluation run ID or execution ID. Once `acknowledged` appears, the lifecycle snapshot supplies the exact evaluation run ID, run attempt, receipt SHA-256, receiver identity, and `request_execution_id` used to recover and revalidate canonical evidence.
+
+Final evidence validation requires:
+
+```text
+lifecycle.request_id == receipt.request_id == ack.request_id
+lifecycle.request_execution_id == receipt.request_execution_id == ack.request_execution_id
+request_execution_id == eval-<evaluation_run_id>-<evaluation_run_attempt>
+receipt.receipt_repository == requested external receiver
+ack.receipt_sha256 == SHA-256(canonical receipt JSON)
+receipt.dry_run == true
+receipt.conclusion == success
+```
 
 ## Failure interpretation
 
@@ -189,6 +217,8 @@ acknowledged
 - only `running`: V2 started but no valid completion receipt was observed;
 - `completed` without `acknowledged`: the orchestrator has canonical completion evidence but the receiver/ACK path did not complete;
 - no `running`: V2 request normalization/resolution failed before the running lifecycle boundary.
+
+An execution-identity mismatch is a protocol binding failure even if the logical `request_id` is the same. Do not merge evidence from separate retries merely because they share `request_id`.
 
 Normal completion reconciliation remains active, so temporary completion dispatch loss may recover during the same E2E window.
 
@@ -208,3 +238,9 @@ Normal completion reconciliation remains active, so temporary completion dispatc
 ```
 
 The final receipt is also required to contain `dry_run=true` and `conclusion=success`; otherwise the E2E workflow fails.
+
+## Current external blocker
+
+The orchestrator-side harness is implemented. A real success still requires a dedicated second repository with the receiver bundle, allowlist, minimally scoped ACK token, orchestrator delivery capability, and an accessible candidate Bucket. This provisioning is tracked in GitHub Issue #70.
+
+Until that fixture exists, `Candidate Protocol Synthetic E2E` is the zero-network safety net for receipt/ACK/lifecycle/execution-identity bindings. It is not a substitute for proving cross-repository token scopes and callback routing.
