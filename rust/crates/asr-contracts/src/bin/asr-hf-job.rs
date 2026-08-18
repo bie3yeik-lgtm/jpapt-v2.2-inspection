@@ -232,11 +232,21 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         .args(&plan.hf_args)
         .status()
         .map_err(|error| format!("failed to execute hf CLI: {error}"))?;
+
+    let result_path = PathBuf::from(SMOKE_RESULT_PATH);
     if !status.success() {
+        match fetch_smoke_result(&plan, &token, &result_path) {
+            Ok(()) => eprintln!(
+                "[asr-hf-job] preserved remote failure evidence at {}",
+                result_path.display()
+            ),
+            Err(error) => eprintln!(
+                "[asr-hf-job] remote job failed and result evidence could not be fetched: {error}"
+            ),
+        }
         return Err(format!("hf jobs run failed with status {status}"));
     }
 
-    let result_path = PathBuf::from(SMOKE_RESULT_PATH);
     fetch_smoke_result(&plan, &token, &result_path)?;
     let result = read_json(&result_path)?;
     let summary = validate_smoke_result(&plan, &result)?;
@@ -566,7 +576,7 @@ fn validate_smoke_result(plan: &HfJobPlan, result: &Value) -> Result<Value, Stri
     if result.get("suite").and_then(Value::as_str) != Some(SMOKE_SUITE) {
         return Err("HF Jobs result suite must be smoke".to_owned());
     }
-    if result.get("requested_provider").and_then(Value::as_str) != Some(&plan.provider) {
+    if result.get("requested_provider").and_then(Value::as_str) != Some(plan.provider.as_str()) {
         return Err("result.requested_provider does not match the HF Jobs plan".to_owned());
     }
     if result
@@ -576,11 +586,19 @@ fn validate_smoke_result(plan: &HfJobPlan, result: &Value) -> Result<Value, Stri
     {
         return Err("requested provider was unavailable in HF Jobs smoke result".to_owned());
     }
-    if result.get("provider").and_then(Value::as_str) != Some(&plan.provider) {
+    if result.get("provider").and_then(Value::as_str) != Some(plan.provider.as_str()) {
         return Err("result.provider does not match the strict requested provider".to_owned());
     }
     if result.get("provider_fallback").and_then(Value::as_bool) != Some(false) {
         return Err("provider fallback is not permitted in HF Jobs smoke evidence".to_owned());
+    }
+    if plan.provider != "CPUExecutionProvider"
+        && result
+            .get("cpu_ep_fallback_disabled")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err("non-CPU HF Jobs smoke evidence must disable CPU EP fallback".to_owned());
     }
     if result.get("passed").and_then(Value::as_bool) != Some(true) {
         return Err(format!(
@@ -627,6 +645,12 @@ fn validate_smoke_result(plan: &HfJobPlan, result: &Value) -> Result<Value, Stri
         .and_then(Value::as_array)
         .filter(|cases| !cases.is_empty())
         .ok_or_else(|| "HF Jobs smoke result must contain smoke case evidence".to_owned())?;
+    if cases.len() != 1 {
+        return Err(format!(
+            "HF Jobs smoke result must contain exactly one case evidence entry; got {}",
+            cases.len()
+        ));
+    }
     for (index, case) in cases.iter().enumerate() {
         let case = case
             .as_object()
@@ -793,6 +817,7 @@ mod tests {
             "requested_provider_available": true,
             "provider": provider,
             "provider_fallback": false,
+            "cpu_ep_fallback_disabled": provider != "CPUExecutionProvider",
             "available_providers": [provider],
             "models": [{
                 "path": "encoder.onnx",
@@ -930,15 +955,35 @@ mod tests {
     }
 
     #[test]
+    fn validates_strict_cuda_smoke_result() {
+        let plan = build_plan(PlanInput {
+            environment: "linux-cuda".to_owned(),
+            provider: "CUDAExecutionProvider".to_owned(),
+            flavor: "a10g-small".to_owned(),
+            ..smoke_input()
+        })
+        .unwrap();
+        validate_smoke_result(&plan, &smoke_result("CUDAExecutionProvider")).unwrap();
+    }
+
+    #[test]
     fn rejects_smoke_result_fallback_or_provider_drift() {
         let plan = build_plan(smoke_input()).unwrap();
         let mut result = smoke_result("CPUExecutionProvider");
         result["provider_fallback"] = Value::Bool(true);
-        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("fallback"));
+        assert!(
+            validate_smoke_result(&plan, &result)
+                .unwrap_err()
+                .contains("fallback")
+        );
 
         let mut result = smoke_result("CPUExecutionProvider");
         result["provider"] = Value::String("CUDAExecutionProvider".to_owned());
-        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("provider"));
+        assert!(
+            validate_smoke_result(&plan, &result)
+                .unwrap_err()
+                .contains("provider")
+        );
     }
 
     #[test]
@@ -946,10 +991,33 @@ mod tests {
         let plan = build_plan(smoke_input()).unwrap();
         let mut result = smoke_result("CPUExecutionProvider");
         result["models"][0]["passed"] = Value::Bool(false);
-        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("models[0]"));
+        assert!(
+            validate_smoke_result(&plan, &result)
+                .unwrap_err()
+                .contains("models[0]")
+        );
 
         let mut result = smoke_result("CPUExecutionProvider");
         result["cases"][0]["passed"] = Value::Bool(false);
-        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("cases[0]"));
+        assert!(
+            validate_smoke_result(&plan, &result)
+                .unwrap_err()
+                .contains("cases[0]")
+        );
+    }
+
+    #[test]
+    fn rejects_multiple_smoke_cases() {
+        let plan = build_plan(smoke_input()).unwrap();
+        let mut result = smoke_result("CPUExecutionProvider");
+        result["cases"] = serde_json::json!([
+            {"case": "a", "passed": true},
+            {"case": "b", "passed": true}
+        ]);
+        assert!(
+            validate_smoke_result(&plan, &result)
+                .unwrap_err()
+                .contains("exactly one")
+        );
     }
 }
