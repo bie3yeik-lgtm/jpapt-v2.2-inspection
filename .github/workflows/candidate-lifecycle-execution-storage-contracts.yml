@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - docs/candidate-completion-protocol.md
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
       - scripts/ci/compare-candidate-lifecycle-state.py
@@ -15,6 +17,8 @@ on:
     paths:
       - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - .github/workflows/candidate-request-status.yml
+      - .github/workflows/candidate-request-timeline.yml
+      - docs/candidate-completion-protocol.md
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
       - scripts/ci/compare-candidate-lifecycle-state.py
@@ -42,10 +46,11 @@ jobs:
           cache: false
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-      - name: Lint status workflow and contract
+      - name: Lint execution-aware query workflows and contract
         run: >-
           actionlint -color -ignore 'SC2016'
           .github/workflows/candidate-request-status.yml
+          .github/workflows/candidate-request-timeline.yml
           .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - name: Compile lifecycle helpers
         run: |
@@ -62,10 +67,14 @@ jobs:
           grep -F 'executions/$execution_key' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'materialize_state "$execution_base" true' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$execution_base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F 'executions/{execution_key}/events' docs/candidate-completion-protocol.md || true
+          grep -F 'executions/' docs/candidate-completion-protocol.md
+          grep -F '<execution-key>/' docs/candidate-completion-protocol.md
           grep -F -- '--execution-key' scripts/ci/collect-candidate-lifecycle-bucket-events.py
           grep -F -- '--request-execution-id' scripts/ci/reduce-candidate-lifecycle.py
           grep -F 'request_execution_id:' .github/workflows/candidate-request-status.yml
+          grep -F 'request_execution_id:' .github/workflows/candidate-request-timeline.yml
+          grep -F -- '--execution-key "$execution_key"' .github/workflows/candidate-request-status.yml
+          grep -F -- '--execution-key "$EXECUTION_KEY"' .github/workflows/candidate-request-timeline.yml
       - name: Verify execution-aware reducer
         shell: bash
         run: |
@@ -122,3 +131,41 @@ jobs:
             --existing /tmp/execution-a.json \
             --incoming /tmp/execution-a.json \
             --require-execution-match)" = true
+      - name: Verify collector execution prefix without network
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-hf-execution
+          cat > /tmp/fake-hf-execution/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+          from pathlib import Path
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'requests/0123456789abcdef01234567/executions/89abcdef0123456789abcdef/events'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [Item(prefix + '/one.lifecycle.json')]
+
+          def download_bucket_files(bucket, *, files, token):
+              assert bucket == 'owner/bucket'
+              assert token == 'synthetic-token'
+              for item, local in files:
+                  Path(local).parent.mkdir(parents=True, exist_ok=True)
+                  Path(local).write_text('{"remote":"' + item.path + '"}\n', encoding='utf-8')
+          PY
+          PYTHONPATH=/tmp/fake-hf-execution python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            --bucket owner/bucket \
+            --request-key 0123456789abcdef01234567 \
+            --execution-key 89abcdef0123456789abcdef \
+            --output-dir /tmp/execution-events \
+            --manifest /tmp/execution-events.tsv >/dev/null
+          test "$(wc -l < /tmp/execution-events.tsv)" = 1
+          grep -F '/executions/89abcdef0123456789abcdef/events/' /tmp/execution-events.tsv
