@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Resolve evaluation run identity
         id: run
@@ -76,17 +77,11 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/completion-receipt.zip
           unzip -q /tmp/completion-receipt.zip -d .ci/reconcile
           test -f .ci/reconcile/candidate-completion-receipt.json
-          python scripts/ci/build-candidate-completion-receipt.py \
-            --validate .ci/reconcile/candidate-completion-receipt.json
-          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py \
-            --receipt-sha .ci/reconcile/candidate-completion-receipt.json)"
-          receipt_repository="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          receipt = json.loads(Path('.ci/reconcile/candidate-completion-receipt.json').read_text())
-          print(receipt['receipt_repository'])
-          PY
-          )"
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate .ci/reconcile/candidate-completion-receipt.json >/dev/null
+          receipt_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-sha .ci/reconcile/candidate-completion-receipt.json)"
+          receipt_repository="$(jq -er '.receipt_repository' .ci/reconcile/candidate-completion-receipt.json)"
           {
             echo "found=true"
             echo "receipt_sha=$receipt_sha"
@@ -120,17 +115,11 @@ jobs:
 
       - name: Rebuild completion dispatch envelope
         if: ${{ steps.receipt.outputs.found == 'true' && steps.ack.outputs.found != 'true' }}
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          receipt = json.loads(Path('.ci/reconcile/candidate-completion-receipt.json').read_text())
-          envelope = {'event_type': 'jpapt.candidate-completed', 'client_payload': receipt}
-          Path('.ci/reconcile/candidate-completion-dispatch.json').write_text(
-              json.dumps(envelope, separators=(',', ':'), ensure_ascii=False) + '\n',
-              encoding='utf-8',
-          )
-          PY
+        shell: bash
+        run: >-
+          jq -c '{event_type:"jpapt.candidate-completed",client_payload:.}'
+          .ci/reconcile/candidate-completion-receipt.json
+          > .ci/reconcile/candidate-completion-dispatch.json
 
       - name: Redispatch unacknowledged completion receipt
         if: ${{ steps.receipt.outputs.found == 'true' && steps.ack.outputs.found != 'true' }}
