@@ -102,7 +102,7 @@ jobs:
           grep -Eq '^plan_sha256=[0-9a-f]{64}$' /tmp/github-output
           grep -Eq '^[0-9a-f]{64}$' /tmp/plan-sha
 
-      - name: Prove hardware preflight precedes smoke run without network
+      - name: Prove hardware preflight run and result readback without network
         shell: bash
         run: |
           set -euo pipefail
@@ -116,12 +116,45 @@ jobs:
             printf 'FLAVOR CPU GPU\ncpu-basic 2 -\na10g-small 4 A10G\n'
             exit 0
           fi
-          : "${HF_FAKE_ARGS:?}"
-          echo run >> "$HF_FAKE_CALLS"
-          printf '%s\n' "$@" > "$HF_FAKE_ARGS"
+          if [[ "${1:-}" == jobs && "${2:-}" == run ]]; then
+            : "${HF_FAKE_ARGS:?}"
+            echo run >> "$HF_FAKE_CALLS"
+            printf '%s\n' "$@" > "$HF_FAKE_ARGS"
+            exit 0
+          fi
+          if [[ "${1:-}" == buckets && "${2:-}" == cp ]]; then
+            echo cp >> "$HF_FAKE_CALLS"
+            destination="${@: -1}"
+            mkdir -p "$(dirname "$destination")"
+            cat > "$destination" <<'JSON'
+          {
+            "schema_version": 2,
+            "suite": "smoke",
+            "requested_provider": "CPUExecutionProvider",
+            "requested_provider_available": true,
+            "provider": "CPUExecutionProvider",
+            "provider_fallback": false,
+            "cpu_ep_fallback_disabled": false,
+            "available_providers": ["CPUExecutionProvider"],
+            "models": [{
+              "path": "encoder.onnx",
+              "passed": true,
+              "active_providers": ["CPUExecutionProvider"],
+              "inputs": [],
+              "outputs": []
+            }],
+            "cases": [{"case": null, "passed": true, "note": "structural smoke"}],
+            "passed": true
+          }
+          JSON
+            exit 0
+          fi
+          echo "unexpected fake hf invocation: $*" >&2
+          exit 97
           EOF
           chmod +x /tmp/fake-bin/hf
           : > /tmp/hf-calls
+          rm -rf results/candidate-package
 
           PATH="/tmp/fake-bin:$PATH" \
           HF_TOKEN=fake-contract-token \
@@ -136,9 +169,69 @@ jobs:
           plan = json.loads(Path('/tmp/hf-job-plan.json').read_text(encoding='utf-8'))
           actual = Path('/tmp/actual-argv').read_text(encoding='utf-8').splitlines()
           calls = Path('/tmp/hf-calls').read_text(encoding='utf-8').splitlines()
+          result = json.loads(Path('results/candidate-package/result.json').read_text(encoding='utf-8'))
           assert actual == plan['hf_args'], (actual, plan['hf_args'])
-          assert calls == ['hardware', 'run'], calls
+          assert calls == ['hardware', 'run', 'cp'], calls
+          assert result['suite'] == 'smoke'
+          assert result['passed'] is True
           PY
+
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate-result \
+            --plan /tmp/hf-job-plan.json \
+            --result results/candidate-package/result.json >/tmp/result-summary.json
+          jq -e '
+            .suite == "smoke" and
+            .candidate_id == "candidate-000123" and
+            .provider == "CPUExecutionProvider" and
+            .model_count == 1 and
+            .case_count == 1 and
+            .passed == true
+          ' /tmp/result-summary.json >/dev/null
+
+      - name: Reject invalid remote smoke result after completed job
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bad-result-bin
+          cat > /tmp/bad-result-bin/hf <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "${1:-}" == jobs && "${2:-}" == hardware ]]; then
+            printf 'FLAVOR CPU GPU\ncpu-basic 2 -\n'
+            exit 0
+          fi
+          if [[ "${1:-}" == jobs && "${2:-}" == run ]]; then
+            exit 0
+          fi
+          if [[ "${1:-}" == buckets && "${2:-}" == cp ]]; then
+            destination="${@: -1}"
+            mkdir -p "$(dirname "$destination")"
+            cat > "$destination" <<'JSON'
+          {
+            "schema_version": 2,
+            "suite": "smoke",
+            "requested_provider": "CPUExecutionProvider",
+            "requested_provider_available": true,
+            "provider": "CPUExecutionProvider",
+            "provider_fallback": true,
+            "models": [{"path":"encoder.onnx","passed":true,"active_providers":["CPUExecutionProvider"]}],
+            "cases": [{"case":null,"passed":true}],
+            "passed": true
+          }
+          JSON
+            exit 0
+          fi
+          exit 98
+          EOF
+          chmod +x /tmp/bad-result-bin/hf
+          rm -rf results/candidate-package
+          if PATH="/tmp/bad-result-bin:$PATH" HF_TOKEN=fake \
+            cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+              run --plan /tmp/hf-job-plan.json; then
+            echo 'invalid remote smoke result unexpectedly accepted' >&2
+            exit 1
+          fi
 
       - name: Reject unavailable flavor before smoke job creation
         shell: bash
