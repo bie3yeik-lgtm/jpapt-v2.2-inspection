@@ -86,6 +86,9 @@ jobs:
           grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-timeline.yml
           grep -F 'build-candidate-request-timeline.py' .github/workflows/candidate-request-timeline.yml
           grep -F 'candidate-request-timeline-' .github/workflows/candidate-request-timeline.yml
+          grep -F 'request_execution_id:' .github/workflows/candidate-request-timeline.yml
+          grep -F -- '--request-execution-id "$REQUEST_EXECUTION_ID"' .github/workflows/candidate-request-timeline.yml
+          grep -F -- '--execution-key "$EXECUTION_KEY"' .github/workflows/candidate-request-timeline.yml
       - name: Build retry-aware lifecycle fixtures
         shell: bash
         run: |
@@ -136,7 +139,52 @@ jobs:
           test "$(jq -r .current_state /tmp/timeline.json)" = running
           test "$(jq -r '.events[1].sources | join(",")' /tmp/timeline.json)" = artifact,bucket
           test "$(jq -r '.events[2].snapshot.evaluation_run_id' /tmp/timeline.json)" = 400
-      - name: Validate generated timeline against Draft 2020-12 schema
+          jq -e 'has("request_execution_id") | not' /tmp/timeline.json >/dev/null
+      - name: Build execution-scoped timeline and reject cross-execution contamination
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=timeline-exec \
+          REQUEST_EXECUTION_ID=gw-500-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=500 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-18T08:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/exec-a.json >/dev/null
+
+          REQUEST_ID=timeline-exec \
+          REQUEST_EXECUTION_ID=gw-600-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=600 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-18T09:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/exec-b.json >/dev/null
+
+          python scripts/ci/build-candidate-request-timeline.py \
+            --request-id timeline-exec \
+            --request-execution-id gw-500-1 \
+            --candidate artifact=/tmp/exec-a.json \
+            --output /tmp/scoped-timeline.json >/dev/null
+          python scripts/ci/build-candidate-request-timeline.py --validate /tmp/scoped-timeline.json >/dev/null
+          test "$(jq -r .request_execution_id /tmp/scoped-timeline.json)" = gw-500-1
+          test "$(jq -r '.events | map(.snapshot.request_execution_id) | unique | length' /tmp/scoped-timeline.json)" = 1
+
+          if python scripts/ci/build-candidate-request-timeline.py \
+            --request-id timeline-exec \
+            --request-execution-id gw-500-1 \
+            --candidate artifact=/tmp/exec-a.json \
+            --candidate artifact=/tmp/exec-b.json \
+            --output /tmp/contaminated-timeline.json; then
+            echo 'cross-execution snapshot unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Validate generated timelines against Draft 2020-12 schema
         run: |
           python - <<'PY'
           import copy
@@ -149,6 +197,7 @@ jobs:
           lifecycle = json.loads(Path('contracts/candidate-request-lifecycle.schema.json').read_text())
           timeline = json.loads(Path('contracts/candidate-request-timeline.schema.json').read_text())
           instance = json.loads(Path('/tmp/timeline.json').read_text())
+          scoped = json.loads(Path('/tmp/scoped-timeline.json').read_text())
           Draft202012Validator.check_schema(lifecycle)
           Draft202012Validator.check_schema(timeline)
           registry = Registry().with_resource(lifecycle['$id'], Resource.from_contents(lifecycle))
@@ -158,6 +207,7 @@ jobs:
               format_checker=FormatChecker(),
           )
           validator.validate(instance)
+          validator.validate(scoped)
 
           invalid = copy.deepcopy(instance)
           invalid['events'][0]['snapshot']['updated_at'] = '2026-08-17T10:00:00'
