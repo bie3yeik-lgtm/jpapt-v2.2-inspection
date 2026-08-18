@@ -1,0 +1,124 @@
+name: Candidate Lifecycle Execution Storage Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/reduce-candidate-lifecycle.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
+      - .github/workflows/candidate-request-status.yml
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/collect-candidate-lifecycle-bucket-events.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/reduce-candidate-lifecycle.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-lifecycle-execution-storage-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate execution-scoped lifecycle storage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint status workflow and contract
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-request-status.yml
+          .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
+      - name: Compile lifecycle helpers
+        run: |
+          bash -n scripts/ci/persist-candidate-lifecycle.sh
+          python -m py_compile \
+            scripts/ci/build-candidate-request-lifecycle.py \
+            scripts/ci/collect-candidate-lifecycle-bucket-events.py \
+            scripts/ci/compare-candidate-lifecycle-state.py \
+            scripts/ci/reduce-candidate-lifecycle.py
+      - name: Verify execution-scoped storage layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'executions/$execution_key' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'materialize_state "$execution_base" true' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F '"$execution_base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'executions/{execution_key}/events' docs/candidate-completion-protocol.md || true
+          grep -F -- '--execution-key' scripts/ci/collect-candidate-lifecycle-bucket-events.py
+          grep -F -- '--request-execution-id' scripts/ci/reduce-candidate-lifecycle.py
+          grep -F 'request_execution_id:' .github/workflows/candidate-request-status.yml
+      - name: Verify execution-aware reducer
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=reused-request \
+          REQUEST_EXECUTION_ID=gw-100-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=100 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-18T08:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/execution-a.json >/dev/null
+
+          REQUEST_ID=reused-request \
+          REQUEST_EXECUTION_ID=gw-200-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/source \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=200 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-18T09:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/execution-b.json >/dev/null
+
+          python scripts/ci/reduce-candidate-lifecycle.py \
+            --request-id reused-request \
+            --request-execution-id gw-100-1 \
+            --candidate first=/tmp/execution-a.json \
+            --output /tmp/selected-a.json
+          test "$(jq -r .request_execution_id /tmp/selected-a.json)" = gw-100-1
+
+          if python scripts/ci/reduce-candidate-lifecycle.py \
+            --request-id reused-request \
+            --request-execution-id gw-100-1 \
+            --candidate wrong=/tmp/execution-b.json \
+            --output /tmp/should-not-exist.json; then
+            echo 'execution mismatch unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Verify scoped materialized state rejects cross-execution overwrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/execution-a.json \
+            --incoming /tmp/execution-b.json \
+            --require-execution-match; then
+            echo 'cross-execution materialized overwrite unexpectedly accepted' >&2
+            exit 1
+          fi
+          test "$(python scripts/ci/compare-candidate-lifecycle-state.py \
+            --existing /tmp/execution-a.json \
+            --incoming /tmp/execution-a.json \
+            --require-execution-match)" = true
