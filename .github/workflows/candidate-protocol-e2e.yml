@@ -252,6 +252,7 @@ jobs:
           from pathlib import Path
           value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
           print(value['request_id'])
+          print(value.get('request_execution_id', ''))
           print(value['state'])
           print(value['receipt_repository'])
           print(value['evaluation_run_id'])
@@ -260,11 +261,17 @@ jobs:
           PY
           )
           [[ "${fields[0]}" == "$REQUEST_ID" ]] || { echo "::error::E2E request_id mismatch"; exit 1; }
-          [[ "${fields[1]}" == acknowledged ]] || { echo "::error::E2E lifecycle is not acknowledged"; exit 1; }
-          [[ "${fields[2]}" == "$RECEIPT_REPOSITORY" ]] || { echo "::error::E2E receiver mismatch"; exit 1; }
-          evaluation_run_id="${fields[3]}"
-          evaluation_run_attempt="${fields[4]}"
-          receipt_sha="${fields[5]}"
+          request_execution_id="${fields[1]}"
+          [[ "${fields[2]}" == acknowledged ]] || { echo "::error::E2E lifecycle is not acknowledged"; exit 1; }
+          [[ "${fields[3]}" == "$RECEIPT_REPOSITORY" ]] || { echo "::error::E2E receiver mismatch"; exit 1; }
+          evaluation_run_id="${fields[4]}"
+          evaluation_run_attempt="${fields[5]}"
+          receipt_sha="${fields[6]}"
+          expected_execution_id="eval-$evaluation_run_id-$evaluation_run_attempt"
+          [[ "$request_execution_id" == "$expected_execution_id" ]] || {
+            echo "::error::E2E execution identity mismatch: expected=$expected_execution_id actual=$request_execution_id"
+            exit 1
+          }
 
           receipt_name="candidate-completion-$evaluation_run_id-$evaluation_run_attempt"
           receipt_artifact_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$evaluation_run_id/artifacts?per_page=100" \
@@ -288,17 +295,25 @@ jobs:
             --ack "$ack" \
             --orchestrator-repository "$GITHUB_REPOSITORY"
 
-          python - "$receipt" "$REQUEST_ID" "$RECEIPT_REPOSITORY" <<'PY'
+          python - "$receipt" "$ack" "$REQUEST_ID" "$request_execution_id" "$RECEIPT_REPOSITORY" <<'PY'
           import json
           import sys
           from pathlib import Path
           receipt = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          assert receipt['request_id'] == sys.argv[2]
-          assert receipt['receipt_repository'] == sys.argv[3]
+          ack = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          request_id = sys.argv[3]
+          request_execution_id = sys.argv[4]
+          receiver = sys.argv[5]
+          assert receipt['request_id'] == request_id
+          assert receipt['request_execution_id'] == request_execution_id
+          assert ack['request_id'] == request_id
+          assert ack['request_execution_id'] == request_execution_id
+          assert receipt['receipt_repository'] == receiver
           assert receipt['dry_run'] is True
           assert receipt['conclusion'] == 'success'
           PY
           {
+            echo "request_execution_id=$request_execution_id"
             echo "evaluation_run_id=$evaluation_run_id"
             echo "evaluation_run_attempt=$evaluation_run_attempt"
             echo "receipt_sha256=$receipt_sha"
@@ -315,6 +330,7 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ steps.config.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.evidence.outputs.request_execution_id }}
           RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           EVALUATION_RUN_ID: ${{ steps.evidence.outputs.evaluation_run_id }}
           RECEIPT_SHA256: ${{ steps.evidence.outputs.receipt_sha256 }}
@@ -323,6 +339,7 @@ jobs:
             echo '## Candidate protocol cross-repository E2E'
             echo
             printf -- '- request id: `%s`\n' "$REQUEST_ID"
+            printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
             printf -- '- receiver: `%s`\n' "$RECEIPT_REPOSITORY"
             printf -- '- evaluation run: `%s`\n' "$EVALUATION_RUN_ID"
             printf -- '- receipt sha256: `%s`\n' "$RECEIPT_SHA256"
