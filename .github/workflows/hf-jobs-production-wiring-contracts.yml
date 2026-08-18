@@ -1,0 +1,189 @@
+name: HF Jobs Production Wiring Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-production-wiring-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+      - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-production-wiring-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+      - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-jobs-production-wiring-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate Rust HF Jobs production wiring
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint production and contract workflows
+        run: >-
+          actionlint -color -shellcheck=
+          .github/workflows/candidate-package-evaluate-v2.yml
+          .github/workflows/hf-jobs-production-wiring-contracts.yml
+
+      - name: Require Rust plan and execution authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
+          hf = workflow[workflow.index('\n  hf-jobs:'):workflow.index('\n  completion:')]
+          completion = workflow[workflow.index('\n  completion:'):]
+
+          assert 'actions/checkout@v7' in hf
+          assert 'dtolnay/rust-toolchain@stable' in hf
+          assert 'asr-contracts --bin asr-hf-job --' in hf
+          assert '\n            plan \\' in hf
+          assert 'run --plan .ci/hf-jobs/hf-job-plan.json' in hf
+          assert 'hf-job-plan.json' in hf
+          assert 'Preserve validated HF Jobs plan before remote execution' in hf
+          assert hf.index('Preserve validated HF Jobs plan before remote execution') < hf.index('Run remote evaluation from validated Rust plan')
+          assert 'result_uri: ${{ steps.plan.outputs.result_uri }}' in hf
+          assert 'image_ref: ${{ steps.plan.outputs.image }}' in hf
+          assert 'image_digest: ${{ steps.plan.outputs.image_digest }}' in hf
+          assert 'plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}' in hf
+          assert 'hf jobs run' not in hf
+
+          assert 'HF_JOBS_IMAGE_REF: ${{ needs.hf-jobs.outputs.image_ref }}' in completion
+          assert 'HF_JOBS_IMAGE_DIGEST: ${{ needs.hf-jobs.outputs.image_digest }}' in completion
+          assert 'HF_JOBS_RESULT_URI: ${{ needs.hf-jobs.outputs.result_uri }}' in completion
+          PY
+
+      - name: Exercise request and receipt Rust contracts
+        run: >-
+          cargo test --locked -p asr-contracts
+          --bin asr-candidate-request
+          --bin asr-hf-job
+          --bin asr-candidate-protocol-build
+
+      - name: Build HF Jobs completion receipt from selected plan outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'd%.0s' {1..64})"
+          REQUEST_ID=hf-wiring-001 \
+          REQUEST_EXECUTION_ID=eval-9201-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=false \
+          SUITE=probe \
+          EXECUTOR=hf_jobs \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=9201 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/9201 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=candidate-000123 \
+          RESOLVED_CANDIDATE_ID=candidate-000123 \
+          IMAGE_REF="ghcr.io/owner/built@sha256:$(printf 'a%.0s' {1..64})" \
+          IMAGE_DIGEST="sha256:$(printf 'a%.0s' {1..64})" \
+          HF_JOBS_IMAGE_REF="registry.example.com/selected@sha256:$digest" \
+          HF_JOBS_IMAGE_DIGEST="sha256:$digest" \
+          HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9201-1/result.json \
+          BUILD_RESULT=success \
+          CPU_RESULT=skipped \
+          CUDA_RESULT=skipped \
+          COREML_RESULT=skipped \
+          DIRECTML_RESULT=skipped \
+          HF_JOBS_RESULT=success \
+          COMPLETED_AT=2026-08-18T12:00:00Z \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
+            --receipt /tmp/hf-receipt.json \
+            --dispatch-body /tmp/hf-dispatch.json >/dev/null
+
+          jq -e --arg digest "sha256:$digest" '
+            .executor == "hf_jobs" and
+            .conclusion == "success" and
+            .image_ref == ("registry.example.com/selected@" + $digest) and
+            .image_digest == $digest and
+            .result_uri == "hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9201-1/result.json"
+          ' /tmp/hf-receipt.json >/dev/null
+
+      - name: Reject result URI and selected image binding drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'd%.0s' {1..64})"
+          common_env=(
+            REQUEST_ID=hf-wiring-002
+            REQUEST_EXECUTION_ID=eval-9202-1
+            SOURCE_REPOSITORY=owner/source
+            RECEIPT_REPOSITORY=owner/receiver
+            HF_BUCKET=owner/source-bucket
+            DRY_RUN=false
+            SUITE=probe
+            EXECUTOR=hf_jobs
+            ENVIRONMENT=linux-cpu
+            PROVIDER=CPUExecutionProvider
+            ORCHESTRATOR_REPOSITORY=owner/orchestrator
+            RUN_ID=9202
+            RUN_ATTEMPT=1
+            RUN_URL=https://github.com/owner/orchestrator/actions/runs/9202
+            COMMIT_SHA=0000000000000000000000000000000000000000
+            REQUESTED_CANDIDATE_ID=candidate-000123
+            RESOLVED_CANDIDATE_ID=candidate-000123
+            IMAGE_REF=ghcr.io/owner/built@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            IMAGE_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            HF_JOBS_IMAGE_REF=registry.example.com/selected@sha256:$digest
+            HF_JOBS_IMAGE_DIGEST=sha256:$digest
+            BUILD_RESULT=success
+            CPU_RESULT=skipped
+            CUDA_RESULT=skipped
+            COREML_RESULT=skipped
+            DIRECTML_RESULT=skipped
+            HF_JOBS_RESULT=success
+            COMPLETED_AT=2026-08-18T12:01:00Z
+          )
+
+          if env "${common_env[@]}" \
+            HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/wrong/result.json \
+            cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+              receipt --receipt /tmp/bad-uri.json --dispatch-body /tmp/bad-uri-dispatch.json; then
+            echo 'mismatched HF Jobs result URI unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          if env "${common_env[@]}" \
+            HF_JOBS_IMAGE_DIGEST=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+            HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9202-1/result.json \
+            cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+              receipt --receipt /tmp/bad-image.json --dispatch-body /tmp/bad-image-dispatch.json; then
+            echo 'mismatched selected HF Jobs image digest unexpectedly accepted' >&2
+            exit 1
+          fi
