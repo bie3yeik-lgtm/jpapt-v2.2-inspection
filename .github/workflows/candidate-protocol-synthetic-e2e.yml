@@ -235,6 +235,7 @@ jobs:
           set -euo pipefail
           python scripts/ci/build-candidate-request-timeline.py \
             --request-id synthetic-e2e-001 \
+            --request-execution-id gw-1001-1 \
             --candidate gateway=/tmp/planned.json \
             --candidate gateway=/tmp/dispatched.json \
             --candidate evaluator=/tmp/running.json \
@@ -243,6 +244,7 @@ jobs:
             --output /tmp/timeline.json >/dev/null
 
           python scripts/ci/build-candidate-request-timeline.py --validate /tmp/timeline.json
+          test "$(jq -r .request_execution_id /tmp/timeline.json)" = gw-1001-1
           test "$(jq -r .event_count /tmp/timeline.json)" = 5
           test "$(jq -r .current_state /tmp/timeline.json)" = acknowledged
           test "$(jq -r '.events | map(.snapshot.request_execution_id) | unique | length' /tmp/timeline.json)" = 1
