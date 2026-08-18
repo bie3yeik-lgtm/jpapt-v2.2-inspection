@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
@@ -9,6 +10,7 @@ use std::process::Command;
 const SCHEMA_VERSION: u32 = 2;
 const SMOKE_SUITE: &str = "smoke";
 const SMOKE_TIMEOUT: &str = "30m";
+const SMOKE_RESULT_PATH: &str = "results/candidate-package/result.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +76,7 @@ fn run() -> Result<(), String> {
     match command.as_str() {
         "plan" => plan_command(flags),
         "validate" => validate_command(flags),
+        "validate-result" => validate_result_command(flags),
         "preflight" => preflight_command(flags),
         "run" => run_command(flags),
         _ => Err(usage()),
@@ -81,7 +84,7 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: asr-hf-job plan --built-image REF [--image-override REF] --candidate-id candidate-NNNNNN --suite smoke --environment linux-cpu|linux-cuda --provider PROVIDER --hf-bucket namespace/name --dataset-source bucket|repository|custom [--dataset-id namespace/name] --flavor FLAVOR --run-id N --run-attempt N --output-json PATH [--github-output PATH] | validate --plan PATH | preflight --plan PATH | run --plan PATH".to_owned()
+    "usage: asr-hf-job plan --built-image REF [--image-override REF] --candidate-id candidate-NNNNNN --suite smoke --environment linux-cpu|linux-cuda --provider PROVIDER --hf-bucket namespace/name --dataset-source bucket|repository|custom [--dataset-id namespace/name] --flavor FLAVOR --run-id N --run-attempt N --output-json PATH [--github-output PATH] | validate --plan PATH | validate-result --plan PATH --result PATH | preflight --plan PATH | run --plan PATH".to_owned()
 }
 
 fn parse_flags(args: Vec<String>) -> Result<BTreeMap<String, String>, String> {
@@ -186,12 +189,27 @@ fn validate_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_result_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
+    let plan_path = PathBuf::from(required(&mut flags, "--plan")?);
+    let result_path = PathBuf::from(required(&mut flags, "--result")?);
+    no_flags(flags)?;
+    let plan = read_plan(&plan_path)?;
+    validate_plan(&plan)?;
+    let result = read_json(&result_path)?;
+    let summary = validate_smoke_result(&plan, &result)?;
+    println!(
+        "{}",
+        serde_json::to_string(&summary).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
 fn preflight_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let plan_path = PathBuf::from(required(&mut flags, "--plan")?);
     no_flags(flags)?;
     let plan = read_plan(&plan_path)?;
     validate_plan(&plan)?;
-    require_hf_token()?;
+    required_hf_token()?;
     preflight_hardware(&plan)?;
     println!("{}", plan.flavor);
     Ok(())
@@ -202,7 +220,7 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     no_flags(flags)?;
     let plan = read_plan(&plan_path)?;
     validate_plan(&plan)?;
-    require_hf_token()?;
+    let token = required_hf_token()?;
     preflight_hardware(&plan)?;
 
     eprintln!(
@@ -217,18 +235,23 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     if !status.success() {
         return Err(format!("hf jobs run failed with status {status}"));
     }
+
+    let result_path = PathBuf::from(SMOKE_RESULT_PATH);
+    fetch_smoke_result(&plan, &token, &result_path)?;
+    let result = read_json(&result_path)?;
+    let summary = validate_smoke_result(&plan, &result)?;
+    eprintln!(
+        "[asr-hf-job] validated remote smoke result {}",
+        serde_json::to_string(&summary).map_err(|error| error.to_string())?
+    );
     Ok(())
 }
 
-fn require_hf_token() -> Result<(), String> {
-    if env::var("HF_TOKEN")
+fn required_hf_token() -> Result<String, String> {
+    env::var("HF_TOKEN")
         .ok()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
-        return Err("HF_TOKEN is required before invoking Hugging Face Jobs".to_owned());
-    }
-    Ok(())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "HF_TOKEN is required before invoking Hugging Face Jobs".to_owned())
 }
 
 fn preflight_hardware(plan: &HfJobPlan) -> Result<(), String> {
@@ -255,6 +278,33 @@ fn preflight_hardware(plan: &HfJobPlan) -> Result<(), String> {
         "[asr-hf-job] hardware preflight accepted flavor={}",
         plan.flavor
     );
+    Ok(())
+}
+
+fn fetch_smoke_result(plan: &HfJobPlan, token: &str, result_path: &Path) -> Result<(), String> {
+    if let Some(parent) = result_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    let destination = result_path
+        .to_str()
+        .ok_or_else(|| "smoke result destination is not valid UTF-8".to_owned())?;
+    let status = Command::new("hf")
+        .args([
+            "buckets",
+            "cp",
+            "--token",
+            token,
+            &plan.result_uri,
+            destination,
+        ])
+        .status()
+        .map_err(|error| format!("failed to fetch HF Jobs smoke result: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "failed to fetch HF Jobs smoke result {} with status {status}",
+            plan.result_uri
+        ));
+    }
     Ok(())
 }
 
@@ -506,6 +556,98 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_smoke_result(plan: &HfJobPlan, result: &Value) -> Result<Value, String> {
+    let result = result
+        .as_object()
+        .ok_or_else(|| "HF Jobs smoke result must be a JSON object".to_owned())?;
+    if result.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        return Err("HF Jobs smoke result schema_version must be 2".to_owned());
+    }
+    if result.get("suite").and_then(Value::as_str) != Some(SMOKE_SUITE) {
+        return Err("HF Jobs result suite must be smoke".to_owned());
+    }
+    if result.get("requested_provider").and_then(Value::as_str) != Some(&plan.provider) {
+        return Err("result.requested_provider does not match the HF Jobs plan".to_owned());
+    }
+    if result
+        .get("requested_provider_available")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err("requested provider was unavailable in HF Jobs smoke result".to_owned());
+    }
+    if result.get("provider").and_then(Value::as_str) != Some(&plan.provider) {
+        return Err("result.provider does not match the strict requested provider".to_owned());
+    }
+    if result.get("provider_fallback").and_then(Value::as_bool) != Some(false) {
+        return Err("provider fallback is not permitted in HF Jobs smoke evidence".to_owned());
+    }
+    if result.get("passed").and_then(Value::as_bool) != Some(true) {
+        return Err(format!(
+            "HF Jobs smoke result did not pass: failure={}",
+            result
+                .get("failure")
+                .and_then(Value::as_str)
+                .unwrap_or("unspecified")
+        ));
+    }
+    if result.get("failure").is_some_and(|value| !value.is_null()) {
+        return Err("passed HF Jobs smoke result must not contain failure evidence".to_owned());
+    }
+
+    let models = result
+        .get("models")
+        .and_then(Value::as_array)
+        .filter(|models| !models.is_empty())
+        .ok_or_else(|| "HF Jobs smoke result must contain at least one model".to_owned())?;
+    for (index, model) in models.iter().enumerate() {
+        let model = model
+            .as_object()
+            .ok_or_else(|| format!("result.models[{index}] must be an object"))?;
+        if model.get("passed").and_then(Value::as_bool) != Some(true) {
+            return Err(format!("result.models[{index}] did not pass"));
+        }
+        let active = model
+            .get("active_providers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("result.models[{index}].active_providers must be an array"))?;
+        if !active
+            .iter()
+            .any(|value| value.as_str() == Some(plan.provider.as_str()))
+        {
+            return Err(format!(
+                "result.models[{index}] does not register requested provider {}",
+                plan.provider
+            ));
+        }
+    }
+
+    let cases = result
+        .get("cases")
+        .and_then(Value::as_array)
+        .filter(|cases| !cases.is_empty())
+        .ok_or_else(|| "HF Jobs smoke result must contain smoke case evidence".to_owned())?;
+    for (index, case) in cases.iter().enumerate() {
+        let case = case
+            .as_object()
+            .ok_or_else(|| format!("result.cases[{index}] must be an object"))?;
+        if case.get("passed").and_then(Value::as_bool) != Some(true) {
+            return Err(format!("result.cases[{index}] did not pass"));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "suite": SMOKE_SUITE,
+        "candidate_id": plan.candidate_id,
+        "provider": plan.provider,
+        "result_uri": plan.result_uri,
+        "model_count": models.len(),
+        "case_count": cases.len(),
+        "passed": true
+    }))
+}
+
 fn validate_choice(name: &str, value: &str, choices: &[&str]) -> Result<(), String> {
     if choices.contains(&value) {
         Ok(())
@@ -608,6 +750,11 @@ fn read_plan(path: &Path) -> Result<HfJobPlan, String> {
     serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+fn read_json(path: &Path) -> Result<Value, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
 fn plan_sha256(plan: &HfJobPlan) -> Result<String, String> {
     let bytes = serde_json::to_vec(plan).map_err(|error| error.to_string())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -636,6 +783,25 @@ mod tests {
             run_id: 9001,
             run_attempt: 2,
         }
+    }
+
+    fn smoke_result(provider: &str) -> Value {
+        serde_json::json!({
+            "schema_version": 2,
+            "suite": "smoke",
+            "requested_provider": provider,
+            "requested_provider_available": true,
+            "provider": provider,
+            "provider_fallback": false,
+            "available_providers": [provider],
+            "models": [{
+                "path": "encoder.onnx",
+                "passed": true,
+                "active_providers": [provider]
+            }],
+            "cases": [{"case": null, "passed": true, "note": "structural smoke"}],
+            "passed": true
+        })
     }
 
     #[test]
@@ -752,5 +918,38 @@ mod tests {
         assert!(hardware_output_has_flavor(output, "a10g-small"));
         assert!(!hardware_output_has_flavor(output, "a10g"));
         assert!(!hardware_output_has_flavor(output, "h200"));
+    }
+
+    #[test]
+    fn validates_strict_smoke_result() {
+        let plan = build_plan(smoke_input()).unwrap();
+        let summary = validate_smoke_result(&plan, &smoke_result("CPUExecutionProvider")).unwrap();
+        assert_eq!(summary["passed"], true);
+        assert_eq!(summary["model_count"], 1);
+        assert_eq!(summary["case_count"], 1);
+    }
+
+    #[test]
+    fn rejects_smoke_result_fallback_or_provider_drift() {
+        let plan = build_plan(smoke_input()).unwrap();
+        let mut result = smoke_result("CPUExecutionProvider");
+        result["provider_fallback"] = Value::Bool(true);
+        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("fallback"));
+
+        let mut result = smoke_result("CPUExecutionProvider");
+        result["provider"] = Value::String("CUDAExecutionProvider".to_owned());
+        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("provider"));
+    }
+
+    #[test]
+    fn rejects_failed_smoke_model_or_case() {
+        let plan = build_plan(smoke_input()).unwrap();
+        let mut result = smoke_result("CPUExecutionProvider");
+        result["models"][0]["passed"] = Value::Bool(false);
+        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("models[0]"));
+
+        let mut result = smoke_result("CPUExecutionProvider");
+        result["cases"][0]["passed"] = Value::Bool(false);
+        assert!(validate_smoke_result(&plan, &result).unwrap_err().contains("cases[0]"));
     }
 }
