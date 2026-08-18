@@ -36,6 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # validation-only branch trigger: verify branch/tag ref hardening.
           bash -n scripts/ci/workflow-dispatch-with-retry.sh
           grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate.yml
           grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-request-gateway.yml
