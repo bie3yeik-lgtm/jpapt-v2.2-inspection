@@ -1,0 +1,8 @@
+schema_version = 3
+
+[runtime]
+profile_set = "whisper-autoregressive-v1"
+
+[storage]
+bucket = "gawohok7/tf-v2.2-onnx-dev-bucket"
+model_repo = "gawohok7/tf-v2.2-onnx-dev"
