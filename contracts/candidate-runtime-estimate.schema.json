@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-runtime-estimate.schema.json",
+  "title": "CandidateRuntimeEstimateV4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "method",
+    "cohort",
+    "samples",
+    "available_samples",
+    "estimate_minutes",
+    "p50_minutes",
+    "p90_minutes",
+    "suite",
+    "executor",
+    "environment",
+    "source_repository",
+    "hf_bucket",
+    "dataset_source",
+    "dataset_id",
+    "workload_probe_method",
+    "workload_warning",
+    "target_candidate_id",
+    "target_candidate_bytes",
+    "target_candidate_files",
+    "target_candidate_legacy_layout",
+    "observed_dataset_bytes_p50",
+    "observed_package_bytes_p50",
+    "observed_candidate_bytes_p50",
+    "candidate_size_ratio_p50",
+    "size_scaling_applied"
+  ],
+  "properties": {
+    "schema_version": {"const": 4},
+    "method": {"enum": ["fallback", "historical"]},
+    "cohort": {"enum": ["none", "exact-source-dataset", "source-repository", "global"]},
+    "samples": {"type": "integer", "minimum": 0},
+    "available_samples": {"type": "integer", "minimum": 0},
+    "estimate_minutes": {"type": "integer", "minimum": 1},
+    "p50_minutes": {
+      "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+    },
+    "p90_minutes": {
+      "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+    },
+    "suite": {"enum": ["probe", "smoke", "parity"]},
+    "executor": {"enum": ["github", "hf_jobs"]},
+    "environment": {"enum": ["linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"]},
+    "source_repository": {"type": "string"},
+    "hf_bucket": {"type": "string"},
+    "dataset_source": {"type": "string"},
+    "dataset_id": {"type": "string"},
+    "workload_probe_method": {"enum": ["none", "explicit", "metadata-only", "unavailable"]},
+    "workload_warning": {
+      "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+    },
+    "target_candidate_id": {
+      "anyOf": [
+        {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+        {"type": "null"}
+      ]
+    },
+    "target_candidate_bytes": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "target_candidate_files": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "target_candidate_legacy_layout": {
+      "anyOf": [{"type": "boolean"}, {"type": "null"}]
+    },
+    "observed_dataset_bytes_p50": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "observed_package_bytes_p50": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "observed_candidate_bytes_p50": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "candidate_size_ratio_p50": {
+      "anyOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}]
+    },
+    "size_scaling_applied": {"const": false},
+    "warning": {"type": "string", "minLength": 1}
+  }
+}
