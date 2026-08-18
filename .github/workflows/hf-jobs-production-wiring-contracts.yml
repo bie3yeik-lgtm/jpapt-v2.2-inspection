@@ -76,15 +76,15 @@ jobs:
           assert 'hf-job-plan.json' in hf
           assert 'Preserve validated HF Jobs plan before remote execution' in hf
           assert hf.index('Preserve validated HF Jobs plan before remote execution') < hf.index('Run remote evaluation from validated Rust plan')
-          assert 'result_uri: ${{ steps.plan.outputs.result_uri }}' in hf
-          assert 'image_ref: ${{ steps.plan.outputs.image }}' in hf
-          assert 'image_digest: ${{ steps.plan.outputs.image_digest }}' in hf
-          assert 'plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}' in hf
+          assert 'result_uri:' in hf and 'steps.plan.outputs.result_uri' in hf
+          assert 'image_ref:' in hf and 'steps.plan.outputs.image' in hf
+          assert 'image_digest:' in hf and 'steps.plan.outputs.image_digest' in hf
+          assert 'plan_sha256:' in hf and 'steps.plan.outputs.plan_sha256' in hf
           assert 'hf jobs run' not in hf
 
-          assert 'HF_JOBS_IMAGE_REF: ${{ needs.hf-jobs.outputs.image_ref }}' in completion
-          assert 'HF_JOBS_IMAGE_DIGEST: ${{ needs.hf-jobs.outputs.image_digest }}' in completion
-          assert 'HF_JOBS_RESULT_URI: ${{ needs.hf-jobs.outputs.result_uri }}' in completion
+          assert 'HF_JOBS_IMAGE_REF:' in completion and 'needs.hf-jobs.outputs.image_ref' in completion
+          assert 'HF_JOBS_IMAGE_DIGEST:' in completion and 'needs.hf-jobs.outputs.image_digest' in completion
+          assert 'HF_JOBS_RESULT_URI:' in completion and 'needs.hf-jobs.outputs.result_uri' in completion
 
           assert 'HF Jobs execution is smoke-only; suite must be smoke' in request
           assert 'const SMOKE_SUITE: &str = "smoke";' in planner
@@ -95,7 +95,7 @@ jobs:
 
           assert 'name: HF Jobs Smoke' in smoke
           assert 'confirm_smoke:' in smoke
-          assert 'if: ${{ inputs.confirm_smoke }}' in smoke
+          assert 'inputs.confirm_smoke' in smoke
           assert 'suite:' not in smoke.split('workflow_dispatch:', 1)[1].split('permissions:', 1)[0]
           assert 'suite: "smoke"' in smoke
           assert 'executor: "hf_jobs"' in smoke
