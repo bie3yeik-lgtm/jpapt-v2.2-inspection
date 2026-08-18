@@ -5,13 +5,21 @@ on:
     branches: [main]
     paths:
       - .github/workflows/dataset-workload-probe-contracts.yml
+      - contracts/candidate-workload-probe.schema.json
       - contracts/dataset-workload-probe.schema.json
+      - contracts/runtime-workload-evidence.schema.json
+      - scripts/ci/measure-candidate-bucket-size.py
       - scripts/ci/measure-dataset-source-size.py
+      - scripts/ci/measure-runtime-workload.py
   pull_request:
     paths:
       - .github/workflows/dataset-workload-probe-contracts.yml
+      - contracts/candidate-workload-probe.schema.json
       - contracts/dataset-workload-probe.schema.json
+      - contracts/runtime-workload-evidence.schema.json
+      - scripts/ci/measure-candidate-bucket-size.py
       - scripts/ci/measure-dataset-source-size.py
+      - scripts/ci/measure-runtime-workload.py
   workflow_dispatch:
 
 permissions:
@@ -39,11 +47,16 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
-      - name: Lint workflow and compile helper
+      - name: Lint workflow and compile helpers
         run: |
           actionlint -color .github/workflows/dataset-workload-probe-contracts.yml
-          python -m py_compile scripts/ci/measure-dataset-source-size.py
+          python -m py_compile \
+            scripts/ci/measure-candidate-bucket-size.py \
+            scripts/ci/measure-dataset-source-size.py \
+            scripts/ci/measure-runtime-workload.py
+          python -m json.tool contracts/candidate-workload-probe.schema.json >/dev/null
           python -m json.tool contracts/dataset-workload-probe.schema.json >/dev/null
+          python -m json.tool contracts/runtime-workload-evidence.schema.json >/dev/null
       - name: Validate bucket and dataset repository metadata paths
         shell: bash
         env:
@@ -117,6 +130,77 @@ jobs:
           assert repo['probe_method'] == 'dataset-repo-metadata'
           assert custom['dataset_bytes'] == 250
           assert custom['dataset_source'] == 'custom'
+          PY
+      - name: Validate composed runtime workload evidence
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-runtime-workload/bin /tmp/fake-runtime-workload/python
+          cat > /tmp/fake-runtime-workload/python/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+              size: int = 0
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              if prefix == 'candidates':
+                  return [
+                      Item('candidates/candidate-000002/model.onnx', size=200),
+                      Item('candidates/candidate-000002/metadata.json', size=25),
+                  ]
+              if prefix == 'datasets':
+                  return [
+                      Item('datasets/a.wav', size=100),
+                      Item('datasets/data.jsonl', size=25),
+                  ]
+              raise AssertionError(prefix)
+          PY
+          cat > /tmp/fake-runtime-workload/bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' \
+            'candidate_id=candidate-000002' \
+            'relative_path=candidate-000002' \
+            'legacy=false'
+          SH
+          chmod +x /tmp/fake-runtime-workload/bin/cargo
+
+          PATH="/tmp/fake-runtime-workload/bin:$PATH" \
+          PYTHONPATH=/tmp/fake-runtime-workload/python \
+            python scripts/ci/measure-runtime-workload.py \
+              --bucket owner/bucket \
+              --candidate-id latest \
+              --dataset-source bucket > /tmp/runtime-workload.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator, RefResolver
+
+          root = Path('contracts')
+          candidate = json.loads((root / 'candidate-workload-probe.schema.json').read_text())
+          dataset = json.loads((root / 'dataset-workload-probe.schema.json').read_text())
+          schema = json.loads((root / 'runtime-workload-evidence.schema.json').read_text())
+          resolver = RefResolver.from_schema(
+              schema,
+              store={
+                  'candidate-workload-probe.schema.json': candidate,
+                  'dataset-workload-probe.schema.json': dataset,
+              },
+          )
+          value = json.loads(Path('/tmp/runtime-workload.json').read_text())
+          Draft202012Validator(schema, resolver=resolver).validate(value)
+          assert value['fully_available'] is True
+          assert value['candidate']['candidate_bytes'] == 225
+          assert value['dataset']['dataset_bytes'] == 125
           PY
       - name: Validate unavailable and malformed input boundaries
         shell: bash
