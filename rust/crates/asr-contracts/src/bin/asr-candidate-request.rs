@@ -176,6 +176,42 @@ fn validate_correlation_id(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_safe_token(value: &str, field: &str, max_len: usize) -> Result<(), String> {
+    if value.is_empty() || value.len() > max_len {
+        return Err(format!("{field} must contain 1..{max_len} characters"));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ".-_".contains(ch))
+    {
+        return Err(format!("{field} contains unsupported characters"));
+    }
+    Ok(())
+}
+
+fn validate_digest_pinned_image(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "{field} is empty, too long, or contains whitespace"
+        ));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || "./:@_-".contains(ch))
+    {
+        return Err(format!("{field} contains unsupported characters"));
+    }
+    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
+        return Err(format!(
+            "{field} must be immutable and digest-pinned with @sha256:<64 hex>"
+        ));
+    };
+    if name.is_empty() || digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!("{field} has an invalid sha256 digest"));
+    }
+    Ok(())
+}
+
 fn resolve(
     inputs: &Map<String, Value>,
     config: &Map<String, Value>,
@@ -209,17 +245,11 @@ fn resolve(
         }
         hf_bucket = format!("{default_namespace}/{repo_name}-bucket");
     }
-    let bucket_parts = hf_bucket.split('/').collect::<Vec<_>>();
-    if bucket_parts.len() != 2 || bucket_parts.iter().any(|part| part.is_empty()) {
-        return Err("hf_bucket must use namespace/bucket".to_owned());
-    }
+    validate_repository(&hf_bucket, "hf_bucket")?;
 
     let mut candidate_id = string(inputs, "candidate_id")?;
     let explicit_latest = candidate_id == "latest";
     if explicit_latest {
-        // Downstream Bucket resolution represents latest as an omitted concrete ID.
-        // Preserve the caller's intent by preventing a configured concrete default
-        // from replacing an explicit latest request.
         candidate_id.clear();
     }
     if candidate_id.is_empty() && !explicit_latest {
@@ -266,10 +296,12 @@ fn resolve(
     if dataset_source == "repository" && dataset_id.is_empty() {
         dataset_id = nested_string(config, "datasets", "repository_dataset");
     }
-    if (dataset_source == "repository" || dataset_source == "custom") && dataset_id.is_empty() {
-        return Err(format!(
-            "dataset_id is required for dataset_source={dataset_source}"
-        ));
+    if dataset_source == "bucket" {
+        if !dataset_id.is_empty() {
+            return Err("dataset_id must be empty for dataset_source=bucket".to_owned());
+        }
+    } else {
+        validate_repository(&dataset_id, "dataset_id")?;
     }
 
     let suite = choose(string(inputs, "suite")?, "smoke");
@@ -289,6 +321,15 @@ fn resolve(
     )?;
     if executor == "hf_jobs" && !environment.starts_with("linux-") {
         return Err("HF Jobs execution is restricted to Linux environments".to_owned());
+    }
+
+    let hf_flavor = choose(string(inputs, "hf_flavor")?, "cpu-basic");
+    let hf_jobs_image = string(inputs, "hf_jobs_image")?;
+    if executor == "hf_jobs" {
+        validate_safe_token(&hf_flavor, "hf_flavor", 64)?;
+        if !hf_jobs_image.is_empty() {
+            validate_digest_pinned_image(&hf_jobs_image, "hf_jobs_image")?;
+        }
     }
 
     let (provider, ort_package) = match environment.as_str() {
@@ -325,8 +366,8 @@ fn resolve(
         environment,
         provider: provider.to_owned(),
         ort_package: ort_package.to_owned(),
-        hf_flavor: choose(string(inputs, "hf_flavor")?, "cpu-basic"),
-        hf_jobs_image: string(inputs, "hf_jobs_image")?,
+        hf_flavor,
+        hf_jobs_image,
         dry_run: boolean(inputs, "dry_run", false)?,
     })
 }
@@ -397,5 +438,52 @@ mod tests {
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("request_execution_id"));
+    }
+
+    #[test]
+    fn rejects_unsafe_hf_flavor_before_build() {
+        let inputs = object(
+            r#"{"request_id":"req-hf-flavor","request_execution_id":"gw-104-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_flavor":"cpu basic"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("hf_flavor"));
+    }
+
+    #[test]
+    fn rejects_mutable_hf_jobs_image_before_build() {
+        let inputs = object(
+            r#"{"request_id":"req-hf-image","request_execution_id":"gw-105-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_jobs_image":"ghcr.io/owner/package:latest"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("digest-pinned"));
+    }
+
+    #[test]
+    fn accepts_digest_pinned_hf_jobs_image() {
+        let image = format!("ghcr.io/owner/package@sha256:{}", "a".repeat(64));
+        let inputs = object(
+            &format!(
+                r#"{{"request_id":"req-hf-image-ok","request_execution_id":"gw-106-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_jobs_image":"{image}"}}"#
+            ),
+            "inputs",
+        )
+        .unwrap();
+        let resolved = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap();
+        assert_eq!(resolved.hf_jobs_image, image);
+    }
+
+    #[test]
+    fn rejects_malformed_dataset_id_before_build() {
+        let inputs = object(
+            r#"{"request_id":"req-dataset","request_execution_id":"gw-107-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","dataset_source":"custom","dataset_id":"not-a-repository"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("dataset_id"));
     }
 }
