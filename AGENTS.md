@@ -86,7 +86,9 @@ Python-only boundary behavior may live under:
 python/src/parakeet_onnx/
 ```
 
-Do not add a Python implementation merely because invoking Python is easier.
+Existing protocol/CI compatibility helpers under `scripts/ci/` may remain while
+their contracts are being migrated, but do not expand them into a second
+runtime authority when the same responsibility can live in Rust.
 
 ## Git restrictions
 
@@ -128,17 +130,33 @@ Do not use final transcript equality as the only numerical correctness test.
 
 ## Execution Providers
 
-Supported logical EPs:
+Supported logical EPs in the current project specification:
 
 ```text
 cpu
 cuda
+directml
 coreml
 ```
 
-CoreML means ONNX Runtime CoreML Execution Provider only.
+Platform boundaries are part of the contract:
 
-Do not introduce DirectML or MLX or native Core ML model conversion into the canonical
+```text
+CPU       Linux / Windows / macOS
+CUDA      Linux GPU
+DirectML  Windows
+CoreML    macOS / Apple Silicon
+```
+
+CoreML means ONNX Runtime CoreML Execution Provider only. DirectML means ONNX
+Runtime DirectML Execution Provider on Windows. Linux HF Jobs cannot substitute
+for DirectML or CoreML execution proof.
+
+Keep provider registration, successful session creation, successful inference,
+provider execution proof, and node-assignment proof separate. Non-CPU strict
+provider runs must not silently pass through CPU fallback.
+
+Do not introduce MLX or native Core ML model conversion into the canonical
 runtime path unless the project specification is explicitly changed.
 
 ## Hugging Face lifecycle
