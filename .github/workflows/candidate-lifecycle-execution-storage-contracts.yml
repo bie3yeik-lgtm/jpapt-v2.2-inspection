@@ -103,6 +103,59 @@ jobs:
             echo 'storage smoke unexpectedly contains model/container evaluation compute' >&2
             exit 1
           fi
+      - name: Reject cross-identity canonical evidence before remote writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=evidence-binding-001 \
+          REQUEST_EXECUTION_ID=gw-501-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          EVALUATION_RUN_ID=501 \
+          EVALUATION_RUN_ATTEMPT=1 \
+          UPDATED_AT=2026-08-18T08:30:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running --output /tmp/evidence-snapshot.json >/dev/null
+
+          cat > /tmp/evidence-match.json <<'JSON'
+          {
+            "request_id": "evidence-binding-001",
+            "request_execution_id": "gw-501-1",
+            "kind": "synthetic"
+          }
+          JSON
+          env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
+            bash scripts/ci/persist-candidate-lifecycle.sh \
+              /tmp/evidence-snapshot.json /tmp/evidence-match.json
+
+          cat > /tmp/evidence-wrong-request.json <<'JSON'
+          {
+            "request_id": "other-request",
+            "request_execution_id": "gw-501-1",
+            "kind": "synthetic"
+          }
+          JSON
+          if env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
+            bash scripts/ci/persist-candidate-lifecycle.sh \
+              /tmp/evidence-snapshot.json /tmp/evidence-wrong-request.json; then
+            echo 'cross-request canonical evidence unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          cat > /tmp/evidence-wrong-execution.json <<'JSON'
+          {
+            "request_id": "evidence-binding-001",
+            "request_execution_id": "gw-999-1",
+            "kind": "synthetic"
+          }
+          JSON
+          if env -u HF_LIFECYCLE_BUCKET -u HF_TOKEN \
+            bash scripts/ci/persist-candidate-lifecycle.sh \
+              /tmp/evidence-snapshot.json /tmp/evidence-wrong-execution.json; then
+            echo 'cross-execution canonical evidence unexpectedly accepted' >&2
+            exit 1
+          fi
       - name: Verify execution-aware reducer
         shell: bash
         run: |
