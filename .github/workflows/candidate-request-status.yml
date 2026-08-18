@@ -126,14 +126,15 @@ jobs:
             done < .ci/status/events.tsv
           fi
 
-          # GitHub artifacts are an independent short-term source. Inspect matching
-          # artifacts newest-first because the newest state artifact may belong to a
-          # different execution when a request_id is intentionally reused.
+          # GitHub artifacts are an independent short-term source. Paginate the
+          # complete matching set so an old execution remains queryable when the
+          # lifecycle Bucket is temporarily unavailable. GitHub returns artifacts
+          # newest-first; for each state we stop at the first matching payload.
           for candidate_state in planned dispatched running rejected completed acknowledged; do
             artifact_name="candidate-lifecycle-$request_key-$candidate_state"
-            mapfile -t artifact_ids < <(gh api \
+            mapfile -t artifact_ids < <(gh api --paginate \
               "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
-              --jq '.artifacts | sort_by(.created_at) | reverse | .[].id')
+              --jq '.artifacts[] | select(.expired == false) | .id')
             for artifact_id in "${artifact_ids[@]}"; do
               artifact_dir=".ci/status/artifact-$candidate_state-$artifact_id"
               mkdir -p "$artifact_dir"
