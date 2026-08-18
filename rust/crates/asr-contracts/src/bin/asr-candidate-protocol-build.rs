@@ -222,6 +222,9 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let resolved_candidate_id = environment("RESOLVED_CANDIDATE_ID");
     let executor = environment("EXECUTOR");
     let suite = environment("SUITE");
+    if executor == "hf_jobs" && suite != "smoke" {
+        return Err("HF Jobs completion receipts require suite=smoke".to_owned());
+    }
     let runtime_environment = environment("ENVIRONMENT");
     let run_id = environment_u64("RUN_ID", None)?;
     let run_attempt = environment_u64("RUN_ATTEMPT", Some(1))?;
@@ -258,7 +261,11 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
                     "HF_JOBS_RESULT_URI does not match canonical job output: expected={expected} actual={supplied}"
                 ));
             }
-            result_uri = Value::String(if supplied.is_empty() { expected } else { supplied });
+            result_uri = Value::String(if supplied.is_empty() {
+                expected
+            } else {
+                supplied
+            });
         } else {
             result_artifact = Value::String(format!(
                 "candidate-package-{resolved_candidate_id}-{runtime_environment}-{suite}"
@@ -565,10 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn hf_jobs_result_uri_uses_canonical_layout() {
+    fn hf_jobs_result_uri_uses_smoke_layout() {
         assert_eq!(
-            canonical_hf_jobs_result_uri("owner/bucket", "candidate-000123", "probe", 9001, 2),
-            "hf://buckets/owner/bucket/runs/hf-jobs/candidate-000123/probe-9001-2/result.json"
+            canonical_hf_jobs_result_uri("owner/bucket", "candidate-000123", "smoke", 9001, 2),
+            "hf://buckets/owner/bucket/runs/hf-jobs/candidate-000123/smoke-9001-2/result.json"
         );
     }
 
