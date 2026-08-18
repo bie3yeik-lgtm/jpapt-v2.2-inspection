@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Resolve evaluation run
         id: run
         shell: bash
@@ -48,7 +49,7 @@ jobs:
             echo "run_id=$run_id"
             echo "run_attempt=$run_attempt"
           } >> "$GITHUB_OUTPUT"
-      - name: Download completion receipt
+      - name: Download and validate completion receipt with Rust authority
         id: receipt
         shell: bash
         env:
@@ -69,17 +70,12 @@ jobs:
           mkdir -p .ci/lifecycle
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/receipt.zip
           unzip -q /tmp/receipt.zip -d .ci/lifecycle
-          python scripts/ci/build-candidate-completion-receipt.py \
-            --validate .ci/lifecycle/candidate-completion-receipt.json
-          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py \
-            --receipt-sha .ci/lifecycle/candidate-completion-receipt.json)"
-          request_id="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/lifecycle/candidate-completion-receipt.json').read_text())
-          print(value['request_id'])
-          PY
-          )"
+          receipt=.ci/lifecycle/candidate-completion-receipt.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate "$receipt" >/dev/null
+          receipt_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-sha "$receipt")"
+          request_id="$(jq -er '.request_id' "$receipt")"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
           {
             echo "found=true"
