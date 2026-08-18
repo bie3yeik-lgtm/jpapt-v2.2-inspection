@@ -7,6 +7,11 @@ on:
         description: Candidate request correlation ID
         required: true
         type: string
+      request_execution_id:
+        description: Optional execution correlation ID; blank returns all executions
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -34,9 +39,14 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
         run: |
           set -euo pipefail
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          execution_key=""
+          if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+            execution_key="$(python scripts/ci/build-candidate-request-lifecycle.py --execution-key "$REQUEST_EXECUTION_ID")"
+          fi
           bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
           bucket_source=override
           if [[ -z "$bucket" ]]; then
@@ -57,6 +67,7 @@ jobs:
           : > .ci/timeline/candidates.args
           {
             echo "request_key=$request_key"
+            echo "execution_key=$execution_key"
             echo "bucket=$bucket"
             echo "bucket_source=$bucket_source"
           } >> "$GITHUB_OUTPUT"
@@ -66,6 +77,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
           REQUEST_KEY: ${{ steps.resolve.outputs.request_key }}
         run: |
           set -euo pipefail
@@ -90,6 +102,10 @@ jobs:
                 echo "::error::artifact $artifact_id request_id mismatch"
                 exit 1
               }
+              if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+                actual_execution_id="$(jq -r '.request_execution_id // ""' "$snapshot")"
+                [[ "$actual_execution_id" == "$REQUEST_EXECUTION_ID" ]] || continue
+              fi
               printf 'github-artifact:%s\t%s\n' "$artifact_id" "$snapshot" >> .ci/timeline/candidates.args
               count=$((count + 1))
             done < <(
@@ -105,17 +121,22 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
           REQUEST_KEY: ${{ steps.resolve.outputs.request_key }}
+          EXECUTION_KEY: ${{ steps.resolve.outputs.execution_key }}
           HF_LIFECYCLE_BUCKET: ${{ steps.resolve.outputs.bucket }}
         run: |
           set -euo pipefail
-          python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
-            --bucket "$HF_LIFECYCLE_BUCKET" \
-            --request-key "$REQUEST_KEY" \
-            --output-dir .ci/timeline/bucket \
-            --manifest .ci/timeline/bucket-events.tsv \
-            --allow-unavailable \
-            --github-output "$GITHUB_OUTPUT" >/dev/null
+          collector_args=(
+            --bucket "$HF_LIFECYCLE_BUCKET"
+            --request-key "$REQUEST_KEY"
+            --output-dir .ci/timeline/bucket
+            --manifest .ci/timeline/bucket-events.tsv
+            --allow-unavailable
+            --github-output "$GITHUB_OUTPUT"
+          )
+          [[ -n "$EXECUTION_KEY" ]] && collector_args+=(--execution-key "$EXECUTION_KEY")
+          python scripts/ci/collect-candidate-lifecycle-bucket-events.py "${collector_args[@]}" >/dev/null
           while IFS=$'\t' read -r remote snapshot; do
             [[ -n "$remote" ]] || continue
             python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
@@ -124,6 +145,13 @@ jobs:
               echo "::error::persistent event $remote request_id mismatch"
               exit 1
             }
+            if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+              actual_execution_id="$(jq -r '.request_execution_id // ""' "$snapshot")"
+              [[ "$actual_execution_id" == "$REQUEST_EXECUTION_ID" ]] || {
+                echo "::error::persistent event $remote execution identity mismatch"
+                exit 1
+              }
+            fi
             printf 'hf-bucket:%s\t%s\n' "$remote" "$snapshot" >> .ci/timeline/candidates.args
           done < .ci/timeline/bucket-events.tsv
       - name: Require at least one lifecycle observation
@@ -131,13 +159,16 @@ jobs:
         env:
           ARTIFACT_COUNT: ${{ steps.artifacts.outputs.count }}
           BUCKET_COUNT: ${{ steps.bucket_events.outputs.count }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
         run: |
           set -euo pipefail
           artifact_count="${ARTIFACT_COUNT:-0}"
           bucket_count="${BUCKET_COUNT:-0}"
           total=$((artifact_count + bucket_count))
           [[ "$total" -gt 0 ]] || {
-            echo "::error::no lifecycle evidence found for request_id=${{ inputs.request_id }}"
+            scope="request_id=${{ inputs.request_id }}"
+            [[ -n "$REQUEST_EXECUTION_ID" ]] && scope="$scope request_execution_id=$REQUEST_EXECUTION_ID"
+            echo "::error::no lifecycle evidence found for $scope"
             exit 1
           }
       - name: Build canonical timeline
@@ -159,6 +190,7 @@ jobs:
       - name: Write timeline summary
         shell: bash
         env:
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
           ARTIFACT_COUNT: ${{ steps.artifacts.outputs.count }}
           BUCKET_COUNT: ${{ steps.bucket_events.outputs.count }}
           BUCKET: ${{ steps.resolve.outputs.bucket }}
@@ -169,7 +201,9 @@ jobs:
             echo '## Candidate request timeline'
             echo
             printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
+            [[ -n "$REQUEST_EXECUTION_ID" ]] && printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
             printf -- '- request key: `%s`\n' '${{ steps.resolve.outputs.request_key }}'
+            [[ -n '${{ steps.resolve.outputs.execution_key }}' ]] && printf -- '- execution key: `%s`\n' '${{ steps.resolve.outputs.execution_key }}'
             printf -- '- GitHub artifact observations: `%s`\n' "${ARTIFACT_COUNT:-0}"
             printf -- '- persistent bucket observations: `%s`\n' "${BUCKET_COUNT:-0}"
             if [[ -n "$BUCKET" ]]; then
