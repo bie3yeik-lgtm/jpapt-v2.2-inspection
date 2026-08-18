@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, Protocol
 
 BUCKET_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-REQUEST_KEY_RE = re.compile(r"^[0-9a-f]{24}$")
+KEY_RE = re.compile(r"^[0-9a-f]{24}$")
 
 
 class BucketItemLike(Protocol):
@@ -32,6 +32,7 @@ def collect(
     *,
     bucket: str,
     request_key: str,
+    execution_key: str | None,
     output_dir: Path,
     manifest: Path,
     token: str,
@@ -39,14 +40,19 @@ def collect(
 ) -> int:
     if not BUCKET_RE.fullmatch(bucket):
         raise SystemExit("bucket must use namespace/name")
-    if not REQUEST_KEY_RE.fullmatch(request_key):
+    if not KEY_RE.fullmatch(request_key):
         raise SystemExit("request_key must be 24 lowercase hex characters")
+    if execution_key is not None and not KEY_RE.fullmatch(execution_key):
+        raise SystemExit("execution_key must be 24 lowercase hex characters")
     if not token:
         raise SystemExit("HF_TOKEN is required")
 
     from huggingface_hub import download_bucket_files, list_bucket_tree
 
-    prefix = f"requests/{request_key}/events"
+    if execution_key:
+        prefix = f"requests/{request_key}/executions/{execution_key}/events"
+    else:
+        prefix = f"requests/{request_key}/events"
     try:
         items = select_lifecycle_events(
             list_bucket_tree(
@@ -89,6 +95,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--request-key", required=True)
+    parser.add_argument("--execution-key")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--allow-unavailable", action="store_true")
@@ -98,6 +105,7 @@ def main() -> int:
     count = collect(
         bucket=args.bucket,
         request_key=args.request_key,
+        execution_key=args.execution_key,
         output_dir=Path(args.output_dir),
         manifest=Path(args.manifest),
         token=os.environ.get("HF_TOKEN", ""),
