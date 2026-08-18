@@ -139,10 +139,7 @@ fn plan_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         dataset_id: optional(&mut flags, "--dataset-id"),
         flavor: required(&mut flags, "--flavor")?,
         run_id: positive_u64(required(&mut flags, "--run-id")?, "--run-id")?,
-        run_attempt: positive_u64(
-            required(&mut flags, "--run-attempt")?,
-            "--run-attempt",
-        )?,
+        run_attempt: positive_u64(required(&mut flags, "--run-attempt")?, "--run-attempt")?,
     };
     let output_json = PathBuf::from(required(&mut flags, "--output-json")?);
     let github_output = optional(&mut flags, "--github-output");
@@ -164,8 +161,7 @@ fn plan_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
             plan.dataset_dir,
             digest
         );
-        fs::write(&github_output, text)
-            .map_err(|error| format!("{github_output}: {error}"))?;
+        fs::write(&github_output, text).map_err(|error| format!("{github_output}: {error}"))?;
     }
 
     println!(
@@ -485,7 +481,9 @@ fn validate_job_name(value: &str) -> Result<(), String> {
 
 fn image_digest(value: &str) -> Result<String, String> {
     if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
-        return Err("HF Jobs image reference is empty, too long, or contains whitespace".to_owned());
+        return Err(
+            "HF Jobs image reference is empty, too long, or contains whitespace".to_owned(),
+        );
     }
     if !value
         .chars()
@@ -494,7 +492,9 @@ fn image_digest(value: &str) -> Result<String, String> {
         return Err("HF Jobs image reference contains unsupported characters".to_owned());
     }
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {
-        return Err("HF Jobs image must be immutable and digest-pinned with @sha256:<64 hex>".to_owned());
+        return Err(
+            "HF Jobs image must be immutable and digest-pinned with @sha256:<64 hex>".to_owned(),
+        );
     };
     if name.is_empty() || digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return Err("HF Jobs image has an invalid sha256 digest".to_owned());
