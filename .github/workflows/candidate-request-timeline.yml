@@ -175,9 +175,11 @@ jobs:
         shell: bash
         env:
           REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
         run: |
           set -euo pipefail
           args=(--request-id "$REQUEST_ID")
+          [[ -n "$REQUEST_EXECUTION_ID" ]] && args+=(--request-execution-id "$REQUEST_EXECUTION_ID")
           while IFS=$'\t' read -r source snapshot; do
             [[ -n "$source" && -n "$snapshot" ]] || continue
             args+=(--candidate "$source=$snapshot")
@@ -187,6 +189,11 @@ jobs:
             --output .ci/timeline/candidate-request-timeline.json >/dev/null
           python scripts/ci/build-candidate-request-timeline.py \
             --validate .ci/timeline/candidate-request-timeline.json >/dev/null
+          if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+            test "$(jq -r '.request_execution_id // ""' .ci/timeline/candidate-request-timeline.json)" = "$REQUEST_EXECUTION_ID"
+          else
+            jq -e 'has("request_execution_id") | not' .ci/timeline/candidate-request-timeline.json >/dev/null
+          fi
       - name: Write timeline summary
         shell: bash
         env:
