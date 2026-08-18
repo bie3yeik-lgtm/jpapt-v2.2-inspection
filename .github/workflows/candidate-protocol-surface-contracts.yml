@@ -10,6 +10,8 @@ on:
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
       - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - .github/workflows/candidate-lifecycle-storage-smoke.yml
+      - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - .github/workflows/candidate-protocol-surface-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
@@ -20,6 +22,7 @@ on:
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
       - scripts/ci/reduce-candidate-lifecycle.py
       - scripts/ci/compare-candidate-lifecycle-state.py
+      - scripts/ci/persist-candidate-lifecycle.sh
   pull_request:
     paths:
       - .github/actionlint.yaml
@@ -28,6 +31,8 @@ on:
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
       - .github/workflows/candidate-protocol-synthetic-e2e.yml
+      - .github/workflows/candidate-lifecycle-storage-smoke.yml
+      - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - .github/workflows/candidate-protocol-surface-contracts.yml
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
@@ -38,6 +43,7 @@ on:
       - scripts/ci/collect-candidate-lifecycle-bucket-events.py
       - scripts/ci/reduce-candidate-lifecycle.py
       - scripts/ci/compare-candidate-lifecycle-state.py
+      - scripts/ci/persist-candidate-lifecycle.sh
   workflow_dispatch:
 
 permissions:
@@ -68,6 +74,8 @@ jobs:
           .github/workflows/candidate-request-status.yml
           .github/workflows/candidate-request-timeline.yml
           .github/workflows/candidate-protocol-synthetic-e2e.yml
+          .github/workflows/candidate-lifecycle-storage-smoke.yml
+          .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
           .github/workflows/candidate-protocol-surface-contracts.yml
       - name: Compile lifecycle and query helpers
         run: |
@@ -79,6 +87,7 @@ jobs:
             scripts/ci/reduce-candidate-lifecycle.py \
             scripts/ci/compare-candidate-lifecycle-state.py
           bash -n scripts/ci/workflow-dispatch-with-retry.sh
+          bash -n scripts/ci/persist-candidate-lifecycle.sh
       - name: Parse lifecycle schemas
         run: |
           python -m json.tool contracts/candidate-request-lifecycle.schema.json >/dev/null
@@ -93,6 +102,8 @@ jobs:
           grep -F 'candidate_lifecycle_common' scripts/ci/compare-candidate-lifecycle-state.py
           grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-status.yml
           grep -F 'collect-candidate-lifecycle-bucket-events.py' .github/workflows/candidate-request-timeline.yml
+          grep -F 'executions/$execution_key' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F -- '--request-execution-id' scripts/ci/reduce-candidate-lifecycle.py
       - name: Require one canonical evaluator implementation
         shell: bash
         run: |
@@ -110,7 +121,7 @@ jobs:
             echo 'legacy entrypoint unexpectedly bypasses bounded workflow dispatch helper' >&2
             exit 1
           fi
-      - name: Require synthetic chain to cover terminal acknowledgement
+      - name: Require synthetic chain to cover execution-scoped acknowledgement
         shell: bash
         run: |
           set -euo pipefail
@@ -118,4 +129,18 @@ jobs:
           grep -F 'build-candidate-completion-receipt.py' "$e2e"
           grep -F 'build-candidate-completion-ack.py' "$e2e"
           grep -F 'build-candidate-request-timeline.py' "$e2e"
+          grep -F -- '--request-execution-id gw-1001-1' "$e2e"
+          grep -F 'request_execution_id /tmp/timeline.json)" = gw-1001-1' "$e2e"
           grep -F 'current_state /tmp/timeline.json)" = acknowledged' "$e2e"
+      - name: Require remote storage proof to stay manual-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke=.github/workflows/candidate-lifecycle-storage-smoke.yml
+          grep -F 'confirm_write:' "$smoke"
+          grep -F 'hf buckets create "$bucket" --exist-ok --private --token "$HF_TOKEN"' "$smoke"
+          grep -F 'persist-candidate-lifecycle.sh' "$smoke"
+          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' "$smoke"; then
+            echo 'lifecycle storage smoke unexpectedly became automatic' >&2
+            exit 1
+          fi
