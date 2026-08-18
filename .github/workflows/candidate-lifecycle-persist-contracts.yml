@@ -129,7 +129,9 @@ jobs:
           set -euo pipefail
           grep -F 'build-candidate-lifecycle-event-key.py' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/events/$evidence_key.lifecycle.json"' scripts/ci/persist-candidate-lifecycle.sh
-          grep -F '"$base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'local remote="$target_base/states/$state.json"' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'materialize_state "$base" false' scripts/ci/persist-candidate-lifecycle.sh
+          grep -F 'materialize_state "$execution_base" true' scripts/ci/persist-candidate-lifecycle.sh
           grep -F '"$base/evidence/$digest-$name"' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'compare-candidate-lifecycle-state.py' scripts/ci/persist-candidate-lifecycle.sh
           grep -F 'group: candidate-lifecycle-persist-' .github/workflows/candidate-lifecycle-persist.yml
