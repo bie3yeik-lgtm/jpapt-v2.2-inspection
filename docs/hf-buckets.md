@@ -29,6 +29,12 @@ gawohok7/tf-v1-onnx-dev-bucket
   upstream: kotoba-tech/kotoba-whisper-v1.0
   profile_set: whisper-autoregressive-v1
   model_repo: gawohok7/tf-v1-onnx-dev
+
+gawohok7/tf-v2.2-onnx-dev-bucket
+  target: kotoba-whisper-v2.2
+  upstream: kotoba-tech/kotoba-whisper-v2.2
+  profile_set: whisper-autoregressive-v1
+  model_repo: gawohok7/tf-v2.2-onnx-dev
 ```
 
 routing sourceは `config/hf-targets/*.toml` と `config/models/*.toml` / `config/asr-catalog.json` です。
