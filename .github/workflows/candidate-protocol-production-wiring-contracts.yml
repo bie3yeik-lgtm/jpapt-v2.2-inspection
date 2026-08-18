@@ -1,0 +1,144 @@
+name: Candidate Protocol Production Wiring Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-production-wiring-contracts.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - rust/crates/asr-contracts/**
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-production-wiring-contracts.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - rust/crates/asr-contracts/**
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-production-wiring-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate production Rust protocol wiring
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Validate workflow syntax and production wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint -color \
+            .github/workflows/candidate-protocol-production-wiring-contracts.yml \
+            .github/workflows/candidate-package-evaluate-v2.yml \
+            .github/workflows/candidate-request-gateway.yml
+
+          python - <<'PY'
+          from pathlib import Path
+
+          builder = "cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build --"
+
+          v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
+          gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
+
+          completion = v2[v2.index('\n  completion:'):]
+          rejection = gateway[gateway.index('\n  reject:'):]
+
+          assert '- uses: dtolnay/rust-toolchain@stable' in completion
+          assert builder in completion
+          assert '\n          receipt\n' in completion
+          assert '--receipt .ci/candidate-completion-receipt.json' in completion
+          assert '--dispatch-body .ci/candidate-completion-dispatch.json' in completion
+          assert 'python scripts/ci/build-candidate-completion-receipt.py' not in v2
+
+          assert '- uses: dtolnay/rust-toolchain@stable' in rejection
+          assert builder in rejection
+          assert 'rejection \\' in rejection
+          assert '--rejection .ci/rejection/candidate-request-rejection.json' in rejection
+          assert '--dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json' in rejection
+          assert 'python scripts/ci/build-candidate-request-rejection.py' not in gateway
+          assert "jq -er '.request_id'" in rejection
+          assert "jq -er '.receipt_repository'" in rejection
+          PY
+
+      - name: Build and validate dry-run completion receipt with production Rust builder
+        shell: bash
+        env:
+          REQUEST_ID: production-wiring-receipt-001
+          REQUEST_EXECUTION_ID: eval-8101-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          HF_BUCKET: owner/source-bucket
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "8101"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/8101
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-18T10:30:00Z
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/receipt.json >/dev/null
+          jq -e '.event_type == "jpapt.candidate-completed" and .client_payload.request_execution_id == "eval-8101-1"' \
+            /tmp/completion-dispatch.json >/dev/null
+
+      - name: Build and validate rejection with production Rust builder
+        shell: bash
+        env:
+          REQUEST_ID: production-wiring-rejection-001
+          REQUEST_EXECUTION_ID: gw-8201-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          GATEWAY_RUN_ID: "8201"
+          GATEWAY_RUN_ATTEMPT: "1"
+          GATEWAY_RUN_URL: https://github.com/owner/orchestrator/actions/runs/8201
+          REJECTED_AT: 2026-08-18T10:31:00Z
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            rejection \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            rejection-validate /tmp/rejection.json >/dev/null
+          jq -e '.event_type == "jpapt.candidate-rejected" and .client_payload.request_execution_id == "gw-8201-1"' \
+            /tmp/rejection-dispatch.json >/dev/null
