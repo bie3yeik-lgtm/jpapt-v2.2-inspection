@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'EOF'
 Usage: persist-candidate-lifecycle.sh <snapshot.json> [canonical-evidence.json ...]
 
-Requires HF_LIFECYCLE_BUCKET and HF_TOKEN. When HF_LIFECYCLE_BUCKET is empty,
-the helper exits successfully without writing remote state.
+Requires HF_LIFECYCLE_BUCKET and HF_TOKEN for remote writes. Local lifecycle
+and evidence identity validation always runs, even when persistent storage is
+not configured.
 EOF
 }
 
@@ -15,9 +16,57 @@ snapshot="$1"
 shift
 
 [[ -f "$snapshot" ]] || { echo "ERROR: lifecycle snapshot not found: $snapshot" >&2; exit 2; }
+python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
+
+readarray -t snapshot_identity < <(
+  python - "$snapshot" <<'PY'
+import json
+import sys
+from pathlib import Path
+value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+print(value['request_id'])
+print(value.get('request_execution_id', ''))
+PY
+)
+request_id="${snapshot_identity[0]}"
+request_execution_id="${snapshot_identity[1]}"
+
+# Canonical evidence placed under a lifecycle request/execution partition must
+# belong to exactly that same identity. Validate this before any network access
+# so caller mistakes cannot pollute durable evidence paths.
+for evidence in "$@"; do
+  [[ -f "$evidence" ]] || { echo "ERROR: canonical evidence not found: $evidence" >&2; exit 2; }
+  python - "$evidence" "$request_id" "$request_execution_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+expected_request_id = sys.argv[2]
+expected_execution_id = sys.argv[3]
+try:
+    value = json.loads(path.read_text(encoding='utf-8'))
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"canonical evidence is not valid JSON: {path}: {error}") from error
+if not isinstance(value, dict):
+    raise SystemExit(f"canonical evidence must be a JSON object: {path}")
+actual_request_id = value.get('request_id')
+actual_execution_id = value.get('request_execution_id', '')
+if actual_request_id != expected_request_id:
+    raise SystemExit(
+        f"canonical evidence request_id mismatch: {path}: "
+        f"expected={expected_request_id} actual={actual_request_id}"
+    )
+if actual_execution_id != expected_execution_id:
+    raise SystemExit(
+        f"canonical evidence request_execution_id mismatch: {path}: "
+        f"expected={expected_execution_id or '<legacy>'} "
+        f"actual={actual_execution_id or '<legacy>'}"
+    )
+PY
+done
 
 if [[ -z "${HF_LIFECYCLE_BUCKET:-}" ]]; then
-  echo "[lifecycle-persist] HF_LIFECYCLE_BUCKET is not configured; keeping GitHub artifact evidence only."
+  echo "[lifecycle-persist] HF_LIFECYCLE_BUCKET is not configured; validated local evidence and kept GitHub artifact evidence only."
   exit 0
 fi
 [[ -n "${HF_TOKEN:-}" ]] || { echo "ERROR: HF_TOKEN is required when HF_LIFECYCLE_BUCKET is configured." >&2; exit 2; }
@@ -25,8 +74,6 @@ fi
   echo "ERROR: HF_LIFECYCLE_BUCKET must use namespace/name." >&2
   exit 2
 }
-
-python scripts/ci/build-candidate-request-lifecycle.py --validate "$snapshot" >/dev/null
 
 readarray -t metadata < <(
   python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot "$snapshot"
@@ -36,13 +83,6 @@ state="${metadata[1]}"
 evidence_key="${metadata[2]}"
 observation_sha256="${metadata[3]}"
 base="hf://buckets/$HF_LIFECYCLE_BUCKET/requests/$request_key"
-request_execution_id="$(python - "$snapshot" <<'PY'
-import json
-import sys
-from pathlib import Path
-print(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('request_execution_id', ''))
-PY
-)"
 execution_key=""
 execution_base=""
 if [[ -n "$request_execution_id" ]]; then
@@ -89,7 +129,6 @@ if [[ -n "$execution_base" ]]; then
 fi
 
 for evidence in "$@"; do
-  [[ -f "$evidence" ]] || { echo "ERROR: canonical evidence not found: $evidence" >&2; exit 2; }
   name="$(basename "$evidence")"
   digest="$(python - "$evidence" <<'PY'
 import hashlib
