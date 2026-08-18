@@ -8,7 +8,7 @@
 |---|---|---|
 | human-authored | candidate `metadata.json`, revision source 3文書 | はい。ただし最小限 |
 | source-controlled | ASR catalog, model/provider/environment/evaluation/evaluator/HF target config | PRとしてのみ |
-| generated | `runtime.json`, allocation response, `resolved.json`, generated candidate contract, `run-context.json`, `metrics.json`, `run.parquet`, `promotion.json` | いいえ |
+| generated | `runtime.json`, allocation response, `resolved.json`, generated candidate contract, `run-context.json`, `metrics.json`, `run.parquet`, `promotion.json`, candidate protocol receipt/ACK/lifecycle/timeline | いいえ |
 
 最大の原則は **generated/derived valueをhuman-authored fileへコピーして正本を二重化しないこと**です。
 
@@ -17,7 +17,7 @@
 execution-critical contractでは以下を基本とします。
 
 - unknown fieldを拒否する。
-- execution identityに `null` / empty stringを許さない。
+- current-versionで必須と定義されたexecution identityに `null` / empty stringを許さない。
 - SHA-256は64 hexとして検証する。
 - artifact pathがcandidate root外へescapeすることを拒否する。
 - artifact存在、size、SHAをactual fileから再検証する。
@@ -28,6 +28,8 @@ execution-critical contractでは以下を基本とします。
 - run-contextのcandidate/revision/config/catalog/provider identityをcross-checkする。
 
 仕様上のcatalog defaultを選ぶことと、値がないから推測でdefaultを作ることは別です。前者だけを許可します。
+
+後方互換contractでoptional fieldとして定義されているidentityを、同じschema versionのまま突然requiredへ変更してはいけません。特にcandidate protocol v1の `request_execution_id` はhistorical evidence互換のためoptionalです。新規Gateway/V2 evidenceでは生成しますが、v1 validatorはfield欠落を許容します。
 
 ## 3. Minimal HF target contract
 
@@ -251,7 +253,48 @@ execution snapshot時にはdataset revision/hash/manifest identityが確定し�
 
 外部から読んだrun-contextもJSON Schemaだけでなくtyped semantic cross-checkを行います。
 
-## 12. Sample / metrics nullable policy
+## 12. Candidate protocol identity
+
+外部candidate orchestrationでは3種類のidentityを分離します。
+
+```text
+request_id            caller-visible logical correlation
+request_execution_id  one Gateway/V2 execution
+receipt_sha256         canonical completion receipt content
+```
+
+生成規則:
+
+```text
+Gateway        gw-<github.run_id>-<github.run_attempt>
+Direct V2      eval-<github.run_id>-<github.run_attempt>
+```
+
+`repository_dispatch` callerが送った `request_execution_id` をGatewayのtrusted identityとして採用しません。Gateway normalizationが自身の `gw-*` identityへ置換し、その値をV2へforwardします。V2 direct invocationではinputが空の場合のみ `eval-*` を生成します。
+
+新規evidenceではexecution identityを次へ伝播します。
+
+```text
+planned / dispatched / running lifecycle
+rejection
+completion receipt
+ACK
+completed / acknowledged lifecycle
+execution-scoped timeline
+```
+
+`CandidateRequestTimelineV1.request_execution_id` はqueryが特定executionへ絞られた場合だけtop-levelへ出力します。fieldが存在するtimelineでは、全 `events[].snapshot.request_execution_id` が同じ値でなければbuilder/validatorが拒否します。
+
+persistent lifecycleはrequest aggregateとexecution partitionを分けます。
+
+```text
+requests/<request-key>/...
+requests/<request-key>/executions/<execution-key>/...
+```
+
+`request_execution_id` の詳細は `docs/request-execution-identity.md`、delivery/state semanticsは `docs/candidate-completion-protocol.md` を正規説明とします。
+
+## 13. Sample / metrics nullable policy
 
 `run-context` identityはnull禁止ですが、観測結果には `null` が必要です。
 
@@ -265,7 +308,7 @@ device memory未取得 -> peak_device_memory_mb: null
 
 未観測を0/falseへ捏造しません。
 
-## 13. ExperimentCapsuleV1
+## 14. ExperimentCapsuleV1
 
 `run.parquet` はgenerated durable analytical contractです。
 
@@ -283,7 +326,7 @@ JSON/JSONL execution evidenceとidentityを一致させ、run upload前に検証
 
 large artifactはParquetへ複製せず、immutable external URI/hash/sizeを参照します。
 
-## 14. Promotion contract
+## 15. Promotion contract
 
 promotion前に再検証します。
 
@@ -299,7 +342,7 @@ acceptance.passed == true
 
 さらにBucket candidateを再fetchしてactual bundle/runtime contractを検証します。
 
-## 15. Rust / Python boundary
+## 16. Rust / Python boundary
 
 PythonはCTC/TDT/Whisper runtimeおよびML/tooling/reference pathを持ちます。Rust evaluatorは現時点でCTCのみです。
 
