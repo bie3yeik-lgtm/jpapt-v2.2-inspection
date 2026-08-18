@@ -18,6 +18,7 @@ def load(path: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request-id", required=True)
+    parser.add_argument("--request-execution-id")
     parser.add_argument("--candidate", action="append", default=[], metavar="SOURCE=PATH")
     parser.add_argument("--output", required=True)
     parser.add_argument("--github-output")
@@ -31,6 +32,8 @@ def main() -> int:
         value = load(path)
         if value.get("request_id") != args.request_id:
             raise SystemExit(f"candidate request_id mismatch: {path}")
+        if args.request_execution_id and value.get("request_execution_id") != args.request_execution_id:
+            raise SystemExit(f"candidate request_execution_id mismatch: {path}")
         state = value.get("state")
         if state not in STATE_RANK:
             raise SystemExit(f"unsupported lifecycle state in {path}: {state}")
@@ -41,8 +44,11 @@ def main() -> int:
             raise SystemExit(f"candidate updated_at is invalid: {path}: {error}") from error
         candidates.append((observed_at, STATE_RANK[state], source, path, value))
 
+    scope = f"request_id={args.request_id}"
+    if args.request_execution_id:
+        scope += f" request_execution_id={args.request_execution_id}"
     if not candidates:
-        raise SystemExit(f"no lifecycle candidates found for request_id={args.request_id}")
+        raise SystemExit(f"no lifecycle candidates found for {scope}")
 
     # Current status means the most recently observed lifecycle snapshot. State
     # rank is only a deterministic tie-breaker for equal timestamps; it does not
@@ -61,11 +67,13 @@ def main() -> int:
             handle.write(f"selected_path={path}\n")
             handle.write(f"updated_at={selected['updated_at']}\n")
             handle.write(f"candidate_count={len(candidates)}\n")
+            handle.write(f"request_execution_id={selected.get('request_execution_id', '')}\n")
 
     print(
         json.dumps(
             {
                 "request_id": args.request_id,
+                "request_execution_id": selected.get("request_execution_id"),
                 "state": selected["state"],
                 "source": source,
                 "updated_at": selected["updated_at"],
