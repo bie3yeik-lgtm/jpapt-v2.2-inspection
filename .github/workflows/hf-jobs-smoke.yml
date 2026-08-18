@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           jq -n \
-            --arg ref "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF_NAME" \
             --arg source_repository "$SOURCE_REPOSITORY" \
             --arg receipt_repository "$RECEIPT_REPOSITORY" \
             --arg hf_bucket "$HF_BUCKET" \
@@ -119,6 +119,7 @@ jobs:
             }' > /tmp/hf-jobs-smoke-dispatch.json
 
           jq -e '
+            (.ref | length) > 0 and
             .inputs.suite == "smoke" and
             .inputs.executor == "hf_jobs" and
             .inputs.dry_run == "false" and
@@ -145,6 +146,7 @@ jobs:
             echo '- executor: `hf_jobs` (fixed)'
             echo '- dry run: `false` (fixed)'
             printf -- '- source repository: `%s`\n' '${{ inputs.source_repository }}'
+            printf -- '- evaluator ref: `%s`\n' "$GITHUB_REF_NAME"
             printf -- '- environment: `%s`\n' '${{ inputs.environment }}'
             printf -- '- flavor: `%s`\n' '${{ inputs.hf_flavor }}'
             echo '- remote plan authority: Rust `asr-hf-job`'
