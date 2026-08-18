@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
+      - .github/workflows/candidate-lifecycle-storage-smoke.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
       - docs/candidate-completion-protocol.md
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
+      - .github/workflows/candidate-lifecycle-storage-smoke.yml
       - .github/workflows/candidate-request-status.yml
       - .github/workflows/candidate-request-timeline.yml
       - docs/candidate-completion-protocol.md
@@ -51,6 +53,7 @@ jobs:
           actionlint -color -ignore 'SC2016'
           .github/workflows/candidate-request-status.yml
           .github/workflows/candidate-request-timeline.yml
+          .github/workflows/candidate-lifecycle-storage-smoke.yml
           .github/workflows/candidate-lifecycle-execution-storage-contracts.yml
       - name: Compile lifecycle helpers
         run: |
@@ -75,6 +78,30 @@ jobs:
           grep -F 'request_execution_id:' .github/workflows/candidate-request-timeline.yml
           grep -F -- '--execution-key "$execution_key"' .github/workflows/candidate-request-status.yml
           grep -F -- '--execution-key "$EXECUTION_KEY"' .github/workflows/candidate-request-timeline.yml
+          grep -F 'gh api --paginate' .github/workflows/candidate-request-status.yml
+      - name: Verify storage smoke remains manual and no-compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke=.github/workflows/candidate-lifecycle-storage-smoke.yml
+          test "$(grep -c '^  workflow_dispatch:' "$smoke")" = 1
+          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' "$smoke"; then
+            echo 'storage smoke unexpectedly has an automatic trigger' >&2
+            exit 1
+          fi
+          grep -F 'confirm_write:' "$smoke"
+          grep -F 'confirm_write=true is required' "$smoke"
+          grep -F 'persist-candidate-lifecycle.sh' "$smoke"
+          grep -F 'execution-event.json' "$smoke"
+          grep -F 'execution-state.json' "$smoke"
+          if grep -F 'hf jobs run' "$smoke"; then
+            echo 'storage smoke unexpectedly launches HF Jobs' >&2
+            exit 1
+          fi
+          if grep -E 'docker (build|run)|run-candidate-package-evaluation|onnxruntime' "$smoke"; then
+            echo 'storage smoke unexpectedly contains model/container evaluation compute' >&2
+            exit 1
+          fi
       - name: Verify execution-aware reducer
         shell: bash
         run: |
