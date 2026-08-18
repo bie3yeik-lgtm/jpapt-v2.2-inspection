@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/runtime-workload-evidence.schema.json",
+  "title": "RuntimeWorkloadEvidenceV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate", "dataset", "fully_available"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "candidate": {"$ref": "candidate-workload-probe.schema.json"},
+    "dataset": {"$ref": "dataset-workload-probe.schema.json"},
+    "fully_available": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "candidate": {"properties": {"available": {"const": true}}, "required": ["available"]},
+          "dataset": {"properties": {"available": {"const": true}}, "required": ["available"]}
+        },
+        "required": ["candidate", "dataset"]
+      },
+      "then": {"properties": {"fully_available": {"const": true}}},
+      "else": {"properties": {"fully_available": {"const": false}}}
+    }
+  ]
+}
