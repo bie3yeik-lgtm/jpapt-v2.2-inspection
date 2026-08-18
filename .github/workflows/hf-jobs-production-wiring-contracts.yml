@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-smoke.yml
       - .github/workflows/hf-jobs-production-wiring-contracts.yml
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-smoke.yml
       - .github/workflows/hf-jobs-production-wiring-contracts.yml
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
@@ -31,7 +33,7 @@ concurrency:
 
 jobs:
   contracts:
-    name: Validate Rust HF Jobs production wiring
+    name: Validate Rust HF Jobs smoke production wiring
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -45,13 +47,14 @@ jobs:
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
-      - name: Lint production and contract workflows
+      - name: Lint production, smoke entrypoint and contract workflows
         run: >-
           actionlint -color -shellcheck=
           .github/workflows/candidate-package-evaluate-v2.yml
+          .github/workflows/hf-jobs-smoke.yml
           .github/workflows/hf-jobs-production-wiring-contracts.yml
 
-      - name: Require Rust plan and execution authority
+      - name: Require Rust smoke plan and execution authority
         shell: bash
         run: |
           set -euo pipefail
@@ -59,6 +62,9 @@ jobs:
           from pathlib import Path
 
           workflow = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
+          smoke = Path('.github/workflows/hf-jobs-smoke.yml').read_text(encoding='utf-8')
+          request = Path('rust/crates/asr-contracts/src/bin/asr-candidate-request.rs').read_text(encoding='utf-8')
+          planner = Path('rust/crates/asr-contracts/src/bin/asr-hf-job.rs').read_text(encoding='utf-8')
           hf = workflow[workflow.index('\n  hf-jobs:'):workflow.index('\n  completion:')]
           completion = workflow[workflow.index('\n  completion:'):]
 
@@ -79,16 +85,34 @@ jobs:
           assert 'HF_JOBS_IMAGE_REF: ${{ needs.hf-jobs.outputs.image_ref }}' in completion
           assert 'HF_JOBS_IMAGE_DIGEST: ${{ needs.hf-jobs.outputs.image_digest }}' in completion
           assert 'HF_JOBS_RESULT_URI: ${{ needs.hf-jobs.outputs.result_uri }}' in completion
+
+          assert 'HF Jobs execution is smoke-only; suite must be smoke' in request
+          assert 'const SMOKE_SUITE: &str = "smoke";' in planner
+          assert 'const SMOKE_TIMEOUT: &str = "30m";' in planner
+          assert 'preflight_hardware(&plan)?;' in planner
+          assert '["jobs", "hardware"]' in planner
+          assert 'jpapt-purpose=smoke-validation' in planner
+
+          assert 'name: HF Jobs Smoke' in smoke
+          assert 'confirm_smoke:' in smoke
+          assert 'if: ${{ inputs.confirm_smoke }}' in smoke
+          assert 'suite:' not in smoke.split('workflow_dispatch:', 1)[1].split('permissions:', 1)[0]
+          assert 'suite: "smoke"' in smoke
+          assert 'executor: "hf_jobs"' in smoke
+          assert 'dry_run: "false"' in smoke
+          assert 'workflow-dispatch-with-retry.sh' in smoke
+          assert 'candidate-package-evaluate-v2.yml' in smoke
+          assert 'hf jobs run' not in smoke
           PY
 
-      - name: Exercise request and receipt Rust contracts
+      - name: Exercise request, smoke plan and receipt Rust contracts
         run: >-
           cargo test --locked -p asr-contracts
           --bin asr-candidate-request
           --bin asr-hf-job
           --bin asr-candidate-protocol-build
 
-      - name: Build HF Jobs completion receipt from selected plan outputs
+      - name: Build HF Jobs smoke completion receipt from selected plan outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -99,7 +123,7 @@ jobs:
           RECEIPT_REPOSITORY=owner/receiver \
           HF_BUCKET=owner/source-bucket \
           DRY_RUN=false \
-          SUITE=probe \
+          SUITE=smoke \
           EXECUTOR=hf_jobs \
           ENVIRONMENT=linux-cpu \
           PROVIDER=CPUExecutionProvider \
@@ -114,7 +138,7 @@ jobs:
           IMAGE_DIGEST="sha256:$(printf 'a%.0s' {1..64})" \
           HF_JOBS_IMAGE_REF="registry.example.com/selected@sha256:$digest" \
           HF_JOBS_IMAGE_DIGEST="sha256:$digest" \
-          HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9201-1/result.json \
+          HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/smoke-9201-1/result.json \
           BUILD_RESULT=success \
           CPU_RESULT=skipped \
           CUDA_RESULT=skipped \
@@ -129,10 +153,11 @@ jobs:
 
           jq -e --arg digest "sha256:$digest" '
             .executor == "hf_jobs" and
+            .suite == "smoke" and
             .conclusion == "success" and
             .image_ref == ("registry.example.com/selected@" + $digest) and
             .image_digest == $digest and
-            .result_uri == "hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9201-1/result.json"
+            .result_uri == "hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/smoke-9201-1/result.json"
           ' /tmp/hf-receipt.json >/dev/null
 
       - name: Reject result URI and selected image binding drift
@@ -147,7 +172,7 @@ jobs:
             RECEIPT_REPOSITORY=owner/receiver
             HF_BUCKET=owner/source-bucket
             DRY_RUN=false
-            SUITE=probe
+            SUITE=smoke
             EXECUTOR=hf_jobs
             ENVIRONMENT=linux-cpu
             PROVIDER=CPUExecutionProvider
@@ -181,7 +206,7 @@ jobs:
 
           if env "${common_env[@]}" \
             HF_JOBS_IMAGE_DIGEST=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
-            HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/probe-9202-1/result.json \
+            HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/smoke-9202-1/result.json \
             cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
               receipt --receipt /tmp/bad-image.json --dispatch-body /tmp/bad-image-dispatch.json; then
             echo 'mismatched selected HF Jobs image digest unexpectedly accepted' >&2
