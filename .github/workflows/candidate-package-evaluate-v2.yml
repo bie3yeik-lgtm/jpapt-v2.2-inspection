@@ -555,6 +555,11 @@ jobs:
           name: candidate-hf-job-plan-${{ needs.build.outputs.candidate_id }}-${{ needs.resolve.outputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci/hf-jobs/hf-job-plan.json
           retention-days: 30
+      - name: Verify selected HF Jobs image is anonymously pullable
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.plan.outputs.image }}
+        run: bash scripts/ci/hf-jobs-image-preflight.sh "$IMAGE_REF"
       - name: Run remote evaluation from validated Rust plan
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
