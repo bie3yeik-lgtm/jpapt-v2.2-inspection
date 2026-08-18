@@ -11,6 +11,7 @@ on:
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-request-rejection.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/portable/validate-candidate-protocol-binding.py
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-request-rejection.schema.json
@@ -23,6 +24,7 @@ on:
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-request-rejection.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - scripts/ci/portable/validate-candidate-protocol-binding.py
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-completion-ack.schema.json
       - contracts/candidate-request-rejection.schema.json
@@ -60,7 +62,8 @@ jobs:
             scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-completion-ack.py \
             scripts/ci/build-candidate-request-rejection.py \
-            scripts/ci/validate-candidate-protocol-binding.py
+            scripts/ci/validate-candidate-protocol-binding.py \
+            scripts/ci/portable/validate-candidate-protocol-binding.py
           cargo test --locked -p asr-contracts --bin asr-candidate-protocol
       - name: Generate canonical Python receipt and validate with Rust
         shell: bash
@@ -99,7 +102,7 @@ jobs:
           python_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
           rust_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha /tmp/receipt.json)"
           test "$python_sha" = "$rust_sha"
-      - name: Generate Python ACK and prove Rust validation and binding parity
+      - name: Generate Python ACK and prove Rust/portable binding parity
         shell: bash
         run: |
           set -euo pipefail
@@ -127,15 +130,15 @@ jobs:
             --ack /tmp/ack.json \
             --orchestrator owner/orchestrator
 
-          python scripts/ci/validate-candidate-protocol-binding.py \
+          python scripts/ci/portable/validate-candidate-protocol-binding.py \
             --receipt /tmp/receipt.json \
             --receiver-repository owner/receiver \
             --allowed-orchestrators owner/orchestrator
-          python scripts/ci/validate-candidate-protocol-binding.py \
+          python scripts/ci/portable/validate-candidate-protocol-binding.py \
             --receipt /tmp/receipt.json \
             --ack /tmp/ack.json \
             --orchestrator-repository owner/orchestrator
-      - name: Generate Python rejection and prove Rust receiver binding parity
+      - name: Generate Python rejection and prove Rust/portable receiver parity
         shell: bash
         run: |
           set -euo pipefail
@@ -160,6 +163,10 @@ jobs:
             --input /tmp/rejection.json \
             --receiver owner/receiver \
             --allowed owner/orchestrator
+          python scripts/ci/portable/validate-candidate-protocol-binding.py \
+            --rejection /tmp/rejection.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/orchestrator
       - name: Reject cross-execution and cross-repository bindings
         shell: bash
         run: |
