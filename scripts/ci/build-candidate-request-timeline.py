@@ -9,7 +9,6 @@ from pathlib import Path
 
 from candidate_lifecycle_common import (
     STATE_RANK,
-    STATES,
     load_json_object,
     observation_sha256,
     parse_time,
@@ -21,7 +20,7 @@ REQUEST_KEY_RE = re.compile(r"^[0-9a-f]{24}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def load_snapshot(path: str, request_id: str) -> dict:
+def load_snapshot(path: str, request_id: str, request_execution_id: str | None = None) -> dict:
     try:
         value = load_json_object(path)
     except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -29,6 +28,11 @@ def load_snapshot(path: str, request_id: str) -> dict:
     if value.get("request_id") != request_id:
         raise SystemExit(
             f"lifecycle snapshot request_id mismatch: expected={request_id} actual={value.get('request_id')} path={path}"
+        )
+    if request_execution_id and value.get("request_execution_id") != request_execution_id:
+        raise SystemExit(
+            "lifecycle snapshot request_execution_id mismatch: "
+            f"expected={request_execution_id} actual={value.get('request_execution_id')} path={path}"
         )
     state = value.get("state")
     if state not in STATE_RANK:
@@ -50,7 +54,7 @@ def parse_candidate(text: str) -> tuple[str, str]:
 
 
 def validate_timeline(value: dict) -> None:
-    expected = {
+    required = {
         "schema_version",
         "request_id",
         "request_key",
@@ -58,13 +62,20 @@ def validate_timeline(value: dict) -> None:
         "event_count",
         "events",
     }
-    if set(value) != expected:
+    optional = {"request_execution_id"}
+    fields = set(value)
+    if required - fields or fields - required - optional:
         raise SystemExit("timeline fields mismatch")
     if value.get("schema_version") != 1:
         raise SystemExit("schema_version must be 1")
     request_id = value.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    request_execution_id = value.get("request_execution_id")
+    if request_execution_id is not None and (
+        not isinstance(request_execution_id, str) or not REQUEST_ID_RE.fullmatch(request_execution_id)
+    ):
+        raise SystemExit("request_execution_id is invalid")
     timeline_request_key = value.get("request_key")
     expected_key = build_request_key(request_id)
     if not isinstance(timeline_request_key, str) or not REQUEST_KEY_RE.fullmatch(timeline_request_key):
@@ -100,6 +111,8 @@ def validate_timeline(value: dict) -> None:
             raise SystemExit("snapshot must be object")
         if snapshot.get("request_id") != request_id:
             raise SystemExit("timeline snapshot request_id mismatch")
+        if request_execution_id and snapshot.get("request_execution_id") != request_execution_id:
+            raise SystemExit("timeline snapshot request_execution_id mismatch")
         state = snapshot.get("state")
         if state not in STATE_RANK:
             raise SystemExit("timeline snapshot state invalid")
@@ -117,13 +130,20 @@ def validate_timeline(value: dict) -> None:
         raise SystemExit("current_state does not match latest event")
 
 
-def build(request_id: str, candidates: list[str], output: str) -> None:
+def build(
+    request_id: str,
+    request_execution_id: str | None,
+    candidates: list[str],
+    output: str,
+) -> None:
     if not REQUEST_ID_RE.fullmatch(request_id):
         raise SystemExit("request_id is invalid")
+    if request_execution_id and not REQUEST_ID_RE.fullmatch(request_execution_id):
+        raise SystemExit("request_execution_id is invalid")
     observations: dict[str, dict] = {}
     for candidate in candidates:
         source, path = parse_candidate(candidate)
-        snapshot = load_snapshot(path, request_id)
+        snapshot = load_snapshot(path, request_id, request_execution_id)
         digest = observation_sha256(snapshot)
         if digest not in observations:
             observations[digest] = {"snapshot": snapshot, "sources": set()}
@@ -155,6 +175,8 @@ def build(request_id: str, candidates: list[str], output: str) -> None:
         "event_count": len(events),
         "events": events,
     }
+    if request_execution_id:
+        timeline["request_execution_id"] = request_execution_id
     validate_timeline(timeline)
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -165,12 +187,13 @@ def build(request_id: str, candidates: list[str], output: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request-id")
+    parser.add_argument("--request-execution-id")
     parser.add_argument("--candidate", action="append", default=[])
     parser.add_argument("--output")
     parser.add_argument("--validate")
     args = parser.parse_args()
     if args.validate:
-        if args.request_id or args.candidate or args.output:
+        if args.request_id or args.request_execution_id or args.candidate or args.output:
             raise SystemExit("--validate cannot be combined with build arguments")
         try:
             value = load_json_object(args.validate)
@@ -181,7 +204,7 @@ def main() -> int:
         return 0
     if not args.request_id or not args.output:
         raise SystemExit("build mode requires --request-id and --output")
-    build(args.request_id, args.candidate, args.output)
+    build(args.request_id, args.request_execution_id, args.candidate, args.output)
     return 0
 
 
