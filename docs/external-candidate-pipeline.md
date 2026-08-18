@@ -83,7 +83,7 @@ Important inputs:
 | `executor` | `github` | `github` or `hf_jobs`. `hf_jobs` is intentionally smoke-only. |
 | `environment` | `linux-cpu` | `linux-cpu`, `linux-cuda`, `macos-coreml`, `windows-directml`. HF Jobs accepts only the two Linux environments. |
 | `hf_flavor` | `cpu-basic` | HF Jobs hardware flavor; availability is checked with `hf jobs hardware` immediately before job creation. |
-| `hf_jobs_image` | empty | Optional immutable image override. When set for HF Jobs it must use `@sha256:<64 hex>`. |
+| `hf_jobs_image` | empty | Optional immutable image override. When set for HF Jobs it must use `@sha256:<64 hex>` and must resolve anonymously. |
 | `dry_run` | false | Resolve routing and print a coarse time estimate without candidate download/build/evaluation. |
 
 All `repository_dispatch` values are validated explicitly. Manual `choice` inputs are not considered sufficient validation because dispatch payloads do not inherit GitHub UI choice constraints.
@@ -174,7 +174,12 @@ The Rust HF Jobs plan is schema version 2 and is the authority for remote invoca
 - smoke-identifying labels;
 - the exact `hf jobs run` argv.
 
-Before job creation, `asr-hf-job run` executes `hf jobs hardware` and requires the requested `hf_flavor` to appear in the returned hardware list. An unavailable flavor therefore fails before `hf jobs run` is invoked.
+Before any paid remote Job is created, the GitHub-side execution path performs two independent preflights:
+
+1. `scripts/ci/hf-jobs-image-preflight.sh` resolves the selected digest-pinned OCI manifest with a fresh empty `DOCKER_CONFIG`. This proves the image is anonymously pullable and deliberately prevents a GitHub runner registry login from masking a private-image failure.
+2. `asr-hf-job run` executes `hf jobs hardware` and requires the requested `hf_flavor` to appear in the returned hardware list.
+
+A private/unreachable image or unavailable hardware flavor therefore fails before `hf jobs run` is invoked. The image preflight is intentionally anonymous because Hugging Face Jobs cannot depend on the GitHub runner's GHCR login state when it pulls the remote execution image.
 
 The validated plan is uploaded as an Actions artifact **before remote execution**. The plan's canonical result location is:
 
@@ -186,9 +191,9 @@ When `dataset_source=bucket`, `/jpapt-output/datasets` is used directly. Reposit
 
 The workflow invokes `hf jobs run` through the validated Rust plan without detach mode. The remote invocation includes the Rust-enforced `30m` timeout. Completion receipt generation independently rejects HF Jobs receipts whose suite is not `smoke`, and validates the selected image/digest and supplied result URI against the canonical smoke layout.
 
-`hf_jobs_image` exists because the execution image must be pullable by Hugging Face Jobs. The default is the digest-pinned image built by the workflow; deployments whose registry policy does not permit that image should provide a pullable, digest-pinned mirror explicitly.
+`hf_jobs_image` exists because the execution image must be pullable by Hugging Face Jobs. The default is the digest-pinned image built by the workflow. If that package is private or otherwise not anonymously resolvable, the preflight fails before remote Job creation; provide a public digest-pinned mirror through `hf_jobs_image` or publish the package for anonymous pull.
 
-Pull-request and contract CI never create a real HF Job. They use fake `hf` executables to prove hardware-preflight ordering, exact argv forwarding, unavailable-flavor rejection, and fail-closed behavior for tampered plans.
+Pull-request and contract CI never create a real HF Job. They use fake `hf`/`docker` executables to prove hardware-preflight ordering, anonymous-image-preflight behavior, exact argv forwarding, unavailable-flavor rejection, and fail-closed behavior for tampered plans.
 
 ## Evaluation provenance
 
