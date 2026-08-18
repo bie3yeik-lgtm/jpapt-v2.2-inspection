@@ -67,7 +67,10 @@ fn run() -> Result<(), String> {
         let mut lines = String::new();
         for (key, value) in [
             ("request_id", resolved.request_id.clone()),
-            ("request_execution_id", resolved.request_execution_id.clone()),
+            (
+                "request_execution_id",
+                resolved.request_execution_id.clone(),
+            ),
             ("source_repository", resolved.source_repository.clone()),
             ("receipt_repository", resolved.receipt_repository.clone()),
             ("hf_bucket", resolved.hf_bucket.clone()),
@@ -249,7 +252,10 @@ fn resolve(
 
     let mut dataset_source = choose(string(inputs, "dataset_source")?, "auto");
     if dataset_source == "auto" {
-        dataset_source = choose(nested_string(config, "datasets", "default_source"), "bucket");
+        dataset_source = choose(
+            nested_string(config, "datasets", "default_source"),
+            "bucket",
+        );
     }
     require_choice(
         "dataset_source",
@@ -261,7 +267,9 @@ fn resolve(
         dataset_id = nested_string(config, "datasets", "repository_dataset");
     }
     if (dataset_source == "repository" || dataset_source == "custom") && dataset_id.is_empty() {
-        return Err(format!("dataset_id is required for dataset_source={dataset_source}"));
+        return Err(format!(
+            "dataset_id is required for dataset_source={dataset_source}"
+        ));
     }
 
     let suite = choose(string(inputs, "suite")?, "smoke");
@@ -272,7 +280,12 @@ fn resolve(
     require_choice(
         "environment",
         &environment,
-        &["linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"],
+        &[
+            "linux-cpu",
+            "linux-cuda",
+            "macos-coreml",
+            "windows-directml",
+        ],
     )?;
     if executor == "hf_jobs" && !environment.starts_with("linux-") {
         return Err("HF Jobs execution is restricted to Linux environments".to_owned());
@@ -290,7 +303,11 @@ fn resolve(
     } else {
         registry_owner
     };
-    let image = format!("ghcr.io/{}/{}", registry_owner.to_ascii_lowercase(), package_name);
+    let image = format!(
+        "ghcr.io/{}/{}",
+        registry_owner.to_ascii_lowercase(),
+        package_name
+    );
 
     Ok(ResolvedRequest {
         request_id,
@@ -344,11 +361,7 @@ mod tests {
             "inputs",
         )
         .unwrap();
-        let config = object(
-            r#"{"candidate":{"default":"candidate-000777"}}"#,
-            "config",
-        )
-        .unwrap();
+        let config = object(r#"{"candidate":{"default":"candidate-000777"}}"#, "config").unwrap();
         let resolved = resolve(&inputs, &config, "hf-user", "registry-owner").unwrap();
         assert_eq!(resolved.candidate_id, "");
     }
