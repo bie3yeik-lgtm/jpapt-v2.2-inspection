@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/dataset-workload-probe.schema.json",
+  "title": "DatasetWorkloadProbeV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "available",
+    "dataset_source",
+    "dataset_id",
+    "dataset_bytes",
+    "dataset_files",
+    "probe_method",
+    "warning"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "available": {"type": "boolean"},
+    "dataset_source": {"enum": ["bucket", "repository", "custom"]},
+    "dataset_id": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        {"type": "null"}
+      ]
+    },
+    "dataset_bytes": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "dataset_files": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "probe_method": {"enum": ["bucket-metadata", "dataset-repo-metadata", "unavailable"]},
+    "warning": {
+      "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"available": {"const": true}}, "required": ["available"]},
+      "then": {
+        "properties": {
+          "dataset_bytes": {"type": "integer", "minimum": 1},
+          "dataset_files": {"type": "integer", "minimum": 1},
+          "probe_method": {"enum": ["bucket-metadata", "dataset-repo-metadata"]},
+          "warning": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"available": {"const": false}}, "required": ["available"]},
+      "then": {
+        "properties": {
+          "dataset_bytes": {"type": "null"},
+          "dataset_files": {"type": "null"},
+          "probe_method": {"const": "unavailable"},
+          "warning": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"dataset_source": {"const": "bucket"}}, "required": ["dataset_source"]},
+      "then": {"properties": {"dataset_id": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"dataset_source": {"enum": ["repository", "custom"]}}, "required": ["dataset_source"]},
+      "then": {
+        "properties": {
+          "dataset_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}
+        }
+      }
+    }
+  ]
+}
