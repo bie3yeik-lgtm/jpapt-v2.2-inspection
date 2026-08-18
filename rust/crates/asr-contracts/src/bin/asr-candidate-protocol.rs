@@ -420,11 +420,15 @@ fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
     let failed = required(value, "failed_jobs")?
         .as_array()
         .ok_or_else(|| "failed_jobs is invalid".to_owned())?;
-    if failed
-        .iter()
-        .any(|item| item.as_str().map(str::is_empty).unwrap_or(true))
-    {
-        return Err("failed_jobs is invalid".to_owned());
+    let mut seen_failed_jobs = BTreeSet::new();
+    for item in failed {
+        let job = item
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| "failed_jobs is invalid".to_owned())?;
+        if !seen_failed_jobs.insert(job) {
+            return Err("failed_jobs must contain unique values".to_owned());
+        }
     }
     validate_rfc3339(required_string(value, "completed_at")?, "completed_at")
 }
@@ -655,6 +659,16 @@ mod tests {
     #[test]
     fn validates_dry_run_receipt() {
         validate_receipt(&receipt()).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_failed_jobs() {
+        let mut value = receipt();
+        value.insert(
+            "failed_jobs".to_owned(),
+            json!(["build:failure", "build:failure"]),
+        );
+        assert!(validate_receipt(&value).is_err());
     }
 
     #[test]

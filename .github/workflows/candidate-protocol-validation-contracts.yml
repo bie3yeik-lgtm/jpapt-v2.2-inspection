@@ -172,6 +172,15 @@ jobs:
             echo 'unknown lifecycle field unexpectedly accepted' >&2
             exit 1
           fi
+      - name: Reject duplicate failed job evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.failed_jobs=["build:failure","build:failure"]' /tmp/receipt.json > /tmp/duplicate-failed-jobs.json
+          if python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/duplicate-failed-jobs.json; then
+            echo 'duplicate failed_jobs unexpectedly accepted' >&2
+            exit 1
+          fi
       - name: Require HTTPS run URL schema constraints
         shell: bash
         run: |
