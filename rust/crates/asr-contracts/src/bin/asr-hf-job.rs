@@ -248,12 +248,11 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
     };
     validate_digest_pinned_image(&image)?;
 
-    let suffix = format!(
-        "{}-{}-{}-{}",
-        input.candidate_id, input.suite, input.run_id, input.run_attempt
+    let suffix = format!("{}-{}-{}", input.suite, input.run_id, input.run_attempt);
+    let output_dir = format!(
+        "/jpapt-output/runs/hf-jobs/{}/{}",
+        input.candidate_id, suffix
     );
-    let output_dir = format!("/jpapt-output/runs/hf-jobs/{}/{}/", input.candidate_id, suffix);
-    let output_dir = output_dir.trim_end_matches('/').to_owned();
     let result_uri = format!(
         "hf://buckets/{}/runs/hf-jobs/{}/{}/result.json",
         input.hf_bucket, input.candidate_id, suffix
@@ -371,20 +370,15 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
     }
 
     let expected_output_dir = format!(
-        "/jpapt-output/runs/hf-jobs/{}/{}-{}-{}-{}",
-        plan.candidate_id, plan.candidate_id, plan.suite, plan.run_id, plan.run_attempt
+        "/jpapt-output/runs/hf-jobs/{}/{}-{}-{}",
+        plan.candidate_id, plan.suite, plan.run_id, plan.run_attempt
     );
     if plan.output_dir != expected_output_dir {
         return Err("output_dir does not match canonical HF Jobs layout".to_owned());
     }
     let expected_result_uri = format!(
-        "hf://buckets/{}/runs/hf-jobs/{}/{}-{}-{}-{}/result.json",
-        plan.hf_bucket,
-        plan.candidate_id,
-        plan.candidate_id,
-        plan.suite,
-        plan.run_id,
-        plan.run_attempt
+        "hf://buckets/{}/runs/hf-jobs/{}/{}-{}-{}/result.json",
+        plan.hf_bucket, plan.candidate_id, plan.suite, plan.run_id, plan.run_attempt
     );
     if plan.result_uri != expected_result_uri {
         return Err("result_uri does not match canonical HF Jobs layout".to_owned());
@@ -552,10 +546,13 @@ mod tests {
         assert_eq!(plan.dataset_dir, "/jpapt-output/datasets");
         assert_eq!(
             plan.result_uri,
-            "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/candidate-000123-probe-9001-2/result.json"
+            "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9001-2/result.json"
         );
         assert_eq!(plan.hf_args[0..2], ["jobs", "run"]);
-        assert_eq!(plan.hf_args.last().unwrap(), &format!("{}/result.json", plan.output_dir));
+        assert_eq!(
+            plan.hf_args.last().unwrap(),
+            &format!("{}/result.json", plan.output_dir)
+        );
     }
 
     #[test]
@@ -578,7 +575,11 @@ mod tests {
         validate_plan(&plan).unwrap();
         assert_eq!(plan.mounts.len(), 2);
         assert_eq!(plan.dataset_dir, "/data");
-        assert!(plan.hf_args.iter().any(|arg| arg == "hf://datasets/japanese-asr/jsut:/data:ro"));
+        assert!(
+            plan.hf_args
+                .iter()
+                .any(|arg| arg == "hf://datasets/japanese-asr/jsut:/data:ro")
+        );
     }
 
     #[test]
