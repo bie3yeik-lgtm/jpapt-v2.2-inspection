@@ -154,9 +154,7 @@ fn derive_conclusion(results: &[(&str, String)], dry_run: bool) -> (String, Vec<
     }
     let selected = results
         .iter()
-        .filter(|(name, result)| {
-            *name != "build" && !result.is_empty() && result != "skipped"
-        })
+        .filter(|(name, result)| *name != "build" && !result.is_empty() && result != "skipped")
         .map(|(_, result)| result.as_str())
         .collect::<Vec<_>>();
     if selected == ["success"] {
@@ -181,7 +179,11 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let (conclusion, failed_jobs) = derive_conclusion(&results, dry_run);
     let requested_candidate_id = {
         let value = environment("REQUESTED_CANDIDATE_ID");
-        if value.is_empty() { "latest".to_owned() } else { value }
+        if value.is_empty() {
+            "latest".to_owned()
+        } else {
+            value
+        }
     };
     let resolved_candidate_id = environment("RESOLVED_CANDIDATE_ID");
     let executor = environment("EXECUTOR");
@@ -207,6 +209,15 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
             ));
         }
     }
+
+    let completed_at = {
+        let value = environment("COMPLETED_AT");
+        if value.is_empty() {
+            now_rfc3339()
+        } else {
+            value
+        }
+    };
 
     let mut receipt = Map::new();
     receipt.insert("schema_version".to_owned(), json!(1));
@@ -254,13 +265,7 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     receipt.insert("result_artifact".to_owned(), result_artifact);
     receipt.insert("result_uri".to_owned(), result_uri);
     receipt.insert("failed_jobs".to_owned(), json!(failed_jobs));
-    receipt.insert(
-        "completed_at".to_owned(),
-        json!({
-            let value = environment("COMPLETED_AT");
-            if value.is_empty() { now_rfc3339() } else { value }
-        }),
-    );
+    receipt.insert("completed_at".to_owned(), json!(completed_at));
 
     let receipt = Value::Object(receipt);
     write_json(&receipt_path, &receipt, true)?;
@@ -269,7 +274,10 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         &dispatch("jpapt.candidate-completed", &receipt),
         false,
     )?;
-    println!("{}", serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())?
+    );
     Ok(())
 }
 
@@ -363,7 +371,11 @@ fn build_ack(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let accepted_at = environment("ACCEPTED_AT");
     ack.insert(
         "accepted_at".to_owned(),
-        json!(if accepted_at.is_empty() { now_rfc3339() } else { accepted_at }),
+        json!(if accepted_at.is_empty() {
+            now_rfc3339()
+        } else {
+            accepted_at
+        }),
     );
     let ack = Value::Object(ack);
     write_json(&ack_path, &ack, true)?;
@@ -372,7 +384,10 @@ fn build_ack(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         &dispatch("jpapt.candidate-completion-ack", &ack),
         false,
     )?;
-    println!("{}", serde_json::to_string_pretty(&ack).map_err(|error| error.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ack).map_err(|error| error.to_string())?
+    );
     Ok(())
 }
 
@@ -383,7 +398,11 @@ fn build_rejection(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let source_repository = environment("SOURCE_REPOSITORY");
     let receipt_repository = {
         let value = environment("RECEIPT_REPOSITORY");
-        if value.is_empty() { source_repository.clone() } else { value }
+        if value.is_empty() {
+            source_repository.clone()
+        } else {
+            value
+        }
     };
     let request_id = {
         let value = environment("REQUEST_ID");
@@ -393,6 +412,14 @@ fn build_rejection(mut flags: BTreeMap<String, String>) -> Result<(), String> {
                 environment("GITHUB_RUN_ID"),
                 environment_or("GITHUB_RUN_ATTEMPT", "1")
             )
+        } else {
+            value
+        }
+    };
+    let rejected_at = {
+        let value = environment("REJECTED_AT");
+        if value.is_empty() {
+            now_rfc3339()
         } else {
             value
         }
@@ -426,11 +453,7 @@ fn build_rejection(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         "gateway_run_url".to_owned(),
         json!(environment("GATEWAY_RUN_URL")),
     );
-    let rejected_at = environment("REJECTED_AT");
-    rejection.insert(
-        "rejected_at".to_owned(),
-        json!(if rejected_at.is_empty() { now_rfc3339() } else { rejected_at }),
-    );
+    rejection.insert("rejected_at".to_owned(), json!(rejected_at));
     let rejection = Value::Object(rejection);
     write_json(&rejection_path, &rejection, true)?;
     write_json(
