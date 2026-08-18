@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Validation-only marker for revalidating lifecycle persistence contracts; do not merge.
+
 usage() {
   cat >&2 <<'EOF'
 Usage: persist-candidate-lifecycle.sh <snapshot.json> [canonical-evidence.json ...]
