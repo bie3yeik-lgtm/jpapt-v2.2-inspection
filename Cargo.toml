@@ -43,3 +43,5 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# validation-only: final smoke-only HF Jobs Rust foundation verification.
