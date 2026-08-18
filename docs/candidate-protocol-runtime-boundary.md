@@ -42,9 +42,16 @@ The principal workflow bindings are:
   receipt validation   -> asr-candidate-protocol receipt-validate
   ACK validation       -> asr-candidate-protocol ack-validate
   ACK/receipt binding  -> asr-candidate-protocol ack-binding
+
+.github/workflows/candidate-protocol-e2e.yml
+  recovered receipt validation -> asr-candidate-protocol receipt-validate
+  recovered ACK validation     -> asr-candidate-protocol ack-validate
+  recovered ACK/receipt binding -> asr-candidate-protocol ack-binding
 ```
 
 Durable lifecycle persistence is fail-closed at the canonical evidence boundary. Rejection, completion receipt, and acknowledgement evidence are validated with Rust before being passed to the lifecycle Bucket writer. An `acknowledged` snapshot additionally requires both its preserved completion receipt and acknowledgement artifact, and their binding is revalidated before durable storage.
+
+The cross-repository E2E harness preserves the portability boundary in the opposite direction: the external receiver still validates and constructs ACKs with its self-contained Python/shell bundle, while the orchestrator revalidates the returned receipt/ACK evidence with Rust before declaring the E2E evidence valid.
 
 Focused production-authority contracts are:
 
@@ -53,9 +60,10 @@ Focused production-authority contracts are:
 .github/workflows/candidate-lifecycle-persist-protocol-authority-contracts.yml
 .github/workflows/candidate-lifecycle-persist-contracts.yml
 .github/workflows/candidate-protocol-surface-contracts.yml
+.github/workflows/candidate-protocol-e2e-contracts.yml
 ```
 
-They verify Rust toolchain wiring, absence of superseded Python production builders/validators from orchestrator-owned authority paths, functional receipt/rejection/ACK validation and binding, current lifecycle materialization semantics, and the cross-language synthetic boundary.
+They verify Rust toolchain wiring, absence of superseded Python production builders/validators from orchestrator-owned authority paths, functional receipt/rejection/ACK validation and binding, current lifecycle materialization semantics, the manual cross-repository E2E authority boundary, and the cross-language synthetic boundary.
 
 ## Receiver bootstrap remains portable Python
 
@@ -120,6 +128,14 @@ No-compute dry-run receipt semantics are also exercised with the production Rust
 
 It covers successful dry-run completion, non-dry execution with no terminal evaluator result, and real orchestration failure without launching candidate/model evaluation compute.
 
+The manual cross-repository harness is protected statically by:
+
+```text
+.github/workflows/candidate-protocol-e2e-contracts.yml
+```
+
+That contract proves the harness remains manual-only, hard-codes the dry-run cost boundary, uses bounded V2 dispatch, preserves external receiver preflight, and uses Rust authority for recovered receipt/ACK validation and ACK binding. A real successful cross-repository routing run still requires the dedicated external fixture tracked by Issue #70.
+
 ## Migration rule
 
 Do not migrate an external receiver workflow to Rust merely because a Rust implementation exists in the orchestrator repository.
@@ -128,6 +144,7 @@ A receiver-side Rust migration is valid only if the receiver installation contra
 
 - orchestrator-owned request/completion/rejection construction and canonical protocol validation should prefer Rust;
 - orchestrator-owned durable persistence must validate canonical protocol evidence with Rust before storage;
+- orchestrator-side recovery of externally returned protocol evidence should use Rust authority;
 - external receiver validation and ACK construction should remain portable;
 - lifecycle/timeline query utilities may remain Python when they are not protocol trust authority;
 - parity CI must protect the boundary between the two implementations.
