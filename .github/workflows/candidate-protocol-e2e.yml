@@ -40,6 +40,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Validate E2E configuration
         id: config
         shell: bash
@@ -280,7 +281,8 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$receipt_artifact_id/zip" > /tmp/receipt.zip
           unzip -q /tmp/receipt.zip -d .ci/e2e/receipt
           receipt=.ci/e2e/receipt/candidate-completion-receipt.json
-          python scripts/ci/build-candidate-completion-receipt.py --validate "$receipt"
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate "$receipt" >/dev/null
 
           ack_name="candidate-completion-ack-$receipt_sha"
           ack_artifact_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$ack_name" \
@@ -289,11 +291,13 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_artifact_id/zip" > /tmp/ack.zip
           unzip -q /tmp/ack.zip -d .ci/e2e/ack
           ack=.ci/e2e/ack/candidate-completion-ack.json
-          python scripts/ci/build-candidate-completion-ack.py --validate "$ack"
-          python scripts/ci/validate-candidate-protocol-binding.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-validate "$ack" >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding \
             --receipt "$receipt" \
             --ack "$ack" \
-            --orchestrator-repository "$GITHUB_REPOSITORY"
+            --orchestrator "$GITHUB_REPOSITORY"
 
           python - "$receipt" "$ack" "$REQUEST_ID" "$request_execution_id" "$RECEIPT_REPOSITORY" <<'PY'
           import json
