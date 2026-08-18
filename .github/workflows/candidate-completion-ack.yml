@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Materialize acknowledgement payload
         shell: bash
         env:
@@ -37,30 +38,18 @@ jobs:
           else
             printf '%s\n' "$ACK_JSON" > .ci/candidate-completion-ack.json
           fi
-      - name: Validate CandidateCompletionAckV1
+      - name: Validate CandidateCompletionAckV1 with Rust authority
         run: >-
-          python scripts/ci/build-candidate-completion-ack.py
-          --validate .ci/candidate-completion-ack.json
-      - name: Recover acknowledged receipt
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol --
+          ack-validate .ci/candidate-completion-ack.json
+      - name: Recover and validate acknowledged receipt
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          evaluation_run_id="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
-          print(value['evaluation_run_id'])
-          PY
-          )"
-          evaluation_run_attempt="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
-          print(value['evaluation_run_attempt'])
-          PY
-          )"
+          evaluation_run_id="$(jq -er '.evaluation_run_id' .ci/candidate-completion-ack.json)"
+          evaluation_run_attempt="$(jq -er '.evaluation_run_attempt' .ci/candidate-completion-ack.json)"
           artifact_name="candidate-completion-$evaluation_run_id-$evaluation_run_attempt"
           artifact_id="$(gh api \
             "/repos/$GITHUB_REPOSITORY/actions/runs/$evaluation_run_id/artifacts?per_page=100" \
@@ -69,35 +58,25 @@ jobs:
           mkdir -p .ci/receipt
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/receipt.zip
           unzip -q /tmp/receipt.zip -d .ci/receipt
-          python scripts/ci/build-candidate-completion-receipt.py \
-            --validate .ci/receipt/candidate-completion-receipt.json
-          expected="$(python scripts/ci/build-candidate-completion-ack.py \
-            --receipt-sha .ci/receipt/candidate-completion-receipt.json)"
-          actual="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/candidate-completion-ack.json').read_text())
-          print(value['receipt_sha256'])
-          PY
-          )"
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate .ci/receipt/candidate-completion-receipt.json >/dev/null
+          expected="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-sha .ci/receipt/candidate-completion-receipt.json)"
+          actual="$(jq -er '.receipt_sha256' .ci/candidate-completion-ack.json)"
           [[ "$expected" == "$actual" ]] || { echo "::error::acknowledgement receipt hash mismatch"; exit 1; }
-      - name: Validate acknowledgement binding
+      - name: Validate acknowledgement binding with Rust authority
         run: >-
-          python scripts/ci/validate-candidate-protocol-binding.py
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol --
+          ack-binding
           --receipt .ci/receipt/candidate-completion-receipt.json
           --ack .ci/candidate-completion-ack.json
-          --orchestrator-repository "${{ github.repository }}"
+          --orchestrator "${{ github.repository }}"
       - name: Build acknowledged lifecycle snapshot
         id: lifecycle
         shell: bash
         run: |
           set -euo pipefail
-          request_id="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          print(json.loads(Path('.ci/candidate-completion-ack.json').read_text())['request_id'])
-          PY
-          )"
+          request_id="$(jq -er '.request_id' .ci/candidate-completion-ack.json)"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
           python scripts/ci/build-candidate-request-lifecycle.py \
             --state acknowledged \
