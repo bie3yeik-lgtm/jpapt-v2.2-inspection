@@ -168,8 +168,98 @@ jobs:
               --target-candidate-bytes 225 > /tmp/estimate.json
           jq -e '.schema_version == 4' /tmp/estimate.json >/dev/null
           jq -e '.target_candidate_bytes == 225' /tmp/estimate.json >/dev/null
+          jq -e '.workload_probe_method == "explicit"' /tmp/estimate.json >/dev/null
           jq -e '.size_scaling_applied == false' /tmp/estimate.json >/dev/null
           jq -e '.estimate_minutes == 8' /tmp/estimate.json >/dev/null
+      - name: Verify estimator auto-wires normalized request to metadata probe
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+          HF_BUCKET: owner/bucket
+          CANDIDATE_REQUEST_JSON: /tmp/auto-request.json
+          CANDIDATE_SOURCE_CONFIG_JSON: /tmp/auto-source.json
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-auto/bin /tmp/fake-auto/python
+          cat > /tmp/auto-request.json <<'JSON'
+          {
+            "request_id": "auto-workload-001",
+            "request_execution_id": "gw-900-1",
+            "source_repository": "owner/source",
+            "receipt_repository": "owner/source",
+            "hf_bucket": "",
+            "candidate_id": "",
+            "package_name": "",
+            "dataset_source": "bucket",
+            "dataset_id": "",
+            "suite": "smoke",
+            "executor": "github",
+            "environment": "linux-cpu",
+            "hf_flavor": "cpu-basic",
+            "hf_jobs_image": "",
+            "dry_run": true
+          }
+          JSON
+          cat > /tmp/auto-source.json <<'JSON'
+          {
+            "candidate": {"default": "candidate-000002"}
+          }
+          JSON
+          cat > /tmp/fake-auto/python/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+              size: int = 0
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'candidates'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item('candidates/candidate-000002/model.onnx', size=200),
+                  Item('candidates/candidate-000002/metadata.json', size=25),
+                  Item('candidates/candidate-000003/model.onnx', size=999),
+              ]
+          PY
+          cat > /tmp/fake-auto/bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args="$*"
+          if [[ "$args" == *'--bin asr-candidate-request'* ]]; then
+            printf '%s\n' '{"request_id":"auto-workload-001","request_execution_id":"gw-900-1","source_repository":"owner/source","receipt_repository":"owner/source","hf_bucket":"owner/bucket","candidate_id":"candidate-000002","package_name":"source","image":"ghcr.io/workload-probe/source","dataset_source":"bucket","dataset_id":"","suite":"smoke","executor":"github","environment":"linux-cpu","provider":"CPUExecutionProvider","ort_package":"onnxruntime","hf_flavor":"cpu-basic","hf_jobs_image":"","dry_run":true}'
+            exit 0
+          fi
+          if [[ "$args" == *'resolve-candidate-location'* ]]; then
+            [[ "$args" == *'--candidate-id candidate-000002'* ]] || {
+              echo 'concrete candidate from request contract was not forwarded' >&2
+              exit 3
+            }
+            printf '%s\n' \
+              'candidate_id=candidate-000002' \
+              'relative_path=candidate-000002' \
+              'legacy=false'
+            exit 0
+          fi
+          echo "unexpected cargo invocation: $args" >&2
+          exit 4
+          SH
+          chmod +x /tmp/fake-auto/bin/cargo
+
+          PATH="/tmp/fake-auto/bin:$PATH" PYTHONPATH=/tmp/fake-auto/python \
+            env -u GH_TOKEN -u GITHUB_TOKEN \
+            python scripts/ci/estimate-candidate-runtime.py \
+              --repository owner/orchestrator \
+              --suite smoke \
+              --executor github \
+              --environment linux-cpu > /tmp/auto-estimate.json
+          jq -e '.workload_probe_method == "metadata-only"' /tmp/auto-estimate.json >/dev/null
+          jq -e '.target_candidate_id == "candidate-000002"' /tmp/auto-estimate.json >/dev/null
+          jq -e '.target_candidate_bytes == 225 and .target_candidate_files == 2' /tmp/auto-estimate.json >/dev/null
+          jq -e '.size_scaling_applied == false and .estimate_minutes == 8' /tmp/auto-estimate.json >/dev/null
       - name: Fail closed on malformed identity and degrade only when requested
         shell: bash
         env:
