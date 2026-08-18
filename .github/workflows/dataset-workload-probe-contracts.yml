@@ -1,0 +1,160 @@
+name: Dataset Workload Probe Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/dataset-workload-probe-contracts.yml
+      - contracts/dataset-workload-probe.schema.json
+      - scripts/ci/measure-dataset-source-size.py
+  pull_request:
+    paths:
+      - .github/workflows/dataset-workload-probe-contracts.yml
+      - contracts/dataset-workload-probe.schema.json
+      - scripts/ci/measure-dataset-source-size.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dataset-workload-probe-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate dataset workload metadata probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install validation tools
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
+      - name: Lint workflow and compile helper
+        run: |
+          actionlint -color .github/workflows/dataset-workload-probe-contracts.yml
+          python -m py_compile scripts/ci/measure-dataset-source-size.py
+          python -m json.tool contracts/dataset-workload-probe.schema.json >/dev/null
+      - name: Validate bucket and dataset repository metadata paths
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-dataset-probe/python
+          cat > /tmp/fake-dataset-probe/python/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+              size: int = 0
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'datasets'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item('datasets/a.wav', size=100),
+                  Item('datasets/metadata.jsonl', size=25),
+              ]
+
+          def list_repo_tree(repo_id, *, repo_type, recursive, token):
+              assert repo_id == 'owner/dataset'
+              assert repo_type == 'dataset'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item('audio/a.wav', size=200),
+                  Item('data.jsonl', size=50),
+              ]
+          PY
+
+          PYTHONPATH=/tmp/fake-dataset-probe/python \
+            python scripts/ci/measure-dataset-source-size.py \
+              --source bucket \
+              --bucket owner/bucket > /tmp/bucket-dataset.json
+          PYTHONPATH=/tmp/fake-dataset-probe/python \
+            python scripts/ci/measure-dataset-source-size.py \
+              --source repository \
+              --dataset-id owner/dataset > /tmp/repo-dataset.json
+          PYTHONPATH=/tmp/fake-dataset-probe/python \
+            python scripts/ci/measure-dataset-source-size.py \
+              --source custom \
+              --dataset-id owner/dataset > /tmp/custom-dataset.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          schema = json.loads(Path('contracts/dataset-workload-probe.schema.json').read_text())
+          Draft202012Validator.check_schema(schema)
+          validator = Draft202012Validator(schema)
+          bucket = json.loads(Path('/tmp/bucket-dataset.json').read_text())
+          repo = json.loads(Path('/tmp/repo-dataset.json').read_text())
+          custom = json.loads(Path('/tmp/custom-dataset.json').read_text())
+          for value in (bucket, repo, custom):
+              validator.validate(value)
+          assert bucket['dataset_bytes'] == 125
+          assert bucket['dataset_files'] == 2
+          assert bucket['dataset_id'] is None
+          assert bucket['probe_method'] == 'bucket-metadata'
+          assert repo['dataset_bytes'] == 250
+          assert repo['dataset_files'] == 2
+          assert repo['dataset_id'] == 'owner/dataset'
+          assert repo['probe_method'] == 'dataset-repo-metadata'
+          assert custom['dataset_bytes'] == 250
+          assert custom['dataset_source'] == 'custom'
+          PY
+      - name: Validate unavailable and malformed input boundaries
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-dataset-unavailable/python
+          cat > /tmp/fake-dataset-unavailable/python/huggingface_hub.py <<'PY'
+          def list_bucket_tree(*args, **kwargs):
+              raise RuntimeError('synthetic unavailable')
+          def list_repo_tree(*args, **kwargs):
+              raise RuntimeError('synthetic unavailable')
+          PY
+          PYTHONPATH=/tmp/fake-dataset-unavailable/python \
+            python scripts/ci/measure-dataset-source-size.py \
+              --source bucket \
+              --bucket owner/bucket \
+              --allow-unavailable > /tmp/unavailable.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          schema = json.loads(Path('contracts/dataset-workload-probe.schema.json').read_text())
+          value = json.loads(Path('/tmp/unavailable.json').read_text())
+          Draft202012Validator(schema).validate(value)
+          assert value['available'] is False
+          assert value['dataset_bytes'] is None
+          assert value['probe_method'] == 'unavailable'
+          PY
+
+          if python scripts/ci/measure-dataset-source-size.py \
+            --source bucket --bucket invalid; then
+            echo 'malformed bucket unexpectedly accepted' >&2
+            exit 1
+          fi
+          if python scripts/ci/measure-dataset-source-size.py \
+            --source repository --dataset-id invalid; then
+            echo 'malformed dataset repository unexpectedly accepted' >&2
+            exit 1
+          fi
