@@ -308,6 +308,10 @@ fn resolve(
     require_choice("suite", &suite, &["smoke", "parity", "probe"])?;
     let executor = choose(string(inputs, "executor")?, "github");
     require_choice("executor", &executor, &["github", "hf_jobs"])?;
+    if executor == "hf_jobs" && suite != "smoke" {
+        return Err("HF Jobs execution is smoke-only; suite must be smoke".to_owned());
+    }
+
     let environment = choose(string(inputs, "environment")?, "linux-cpu");
     require_choice(
         "environment",
@@ -410,12 +414,43 @@ mod tests {
     #[test]
     fn rejects_non_linux_hf_jobs() {
         let inputs = object(
-            r#"{"request_id":"req-002","request_execution_id":"gw-101-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"macos-coreml"}"#,
+            r#"{"request_id":"req-002","request_execution_id":"gw-101-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"macos-coreml"}"#,
             "inputs",
         )
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("Linux"));
+    }
+
+    #[test]
+    fn rejects_non_smoke_hf_jobs_before_build() {
+        for suite in ["probe", "parity"] {
+            let inputs = object(
+                &format!(
+                    r#"{{"request_id":"req-hf-{suite}","request_execution_id":"gw-108-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"{suite}","environment":"linux-cpu"}}"#
+                ),
+                "inputs",
+            )
+            .unwrap();
+            let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+            assert!(error.contains("smoke-only"));
+        }
+    }
+
+    #[test]
+    fn github_executor_still_allows_probe_and_parity() {
+        for suite in ["probe", "parity"] {
+            let inputs = object(
+                &format!(
+                    r#"{{"request_id":"req-gh-{suite}","request_execution_id":"gw-109-1","source_repository":"owner/repo","executor":"github","suite":"{suite}","environment":"linux-cpu"}}"#
+                ),
+                "inputs",
+            )
+            .unwrap();
+            let resolved = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap();
+            assert_eq!(resolved.suite, suite);
+            assert_eq!(resolved.executor, "github");
+        }
     }
 
     #[test]
@@ -443,7 +478,7 @@ mod tests {
     #[test]
     fn rejects_unsafe_hf_flavor_before_build() {
         let inputs = object(
-            r#"{"request_id":"req-hf-flavor","request_execution_id":"gw-104-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_flavor":"cpu basic"}"#,
+            r#"{"request_id":"req-hf-flavor","request_execution_id":"gw-104-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","hf_flavor":"cpu basic"}"#,
             "inputs",
         )
         .unwrap();
@@ -454,7 +489,7 @@ mod tests {
     #[test]
     fn rejects_mutable_hf_jobs_image_before_build() {
         let inputs = object(
-            r#"{"request_id":"req-hf-image","request_execution_id":"gw-105-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_jobs_image":"ghcr.io/owner/package:latest"}"#,
+            r#"{"request_id":"req-hf-image","request_execution_id":"gw-105-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","hf_jobs_image":"ghcr.io/owner/package:latest"}"#,
             "inputs",
         )
         .unwrap();
@@ -467,19 +502,20 @@ mod tests {
         let image = format!("ghcr.io/owner/package@sha256:{}", "a".repeat(64));
         let inputs = object(
             &format!(
-                r#"{{"request_id":"req-hf-image-ok","request_execution_id":"gw-106-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","hf_jobs_image":"{image}"}}"#
+                r#"{{"request_id":"req-hf-image-ok","request_execution_id":"gw-106-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","hf_jobs_image":"{image}"}}"#
             ),
             "inputs",
         )
         .unwrap();
         let resolved = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap();
         assert_eq!(resolved.hf_jobs_image, image);
+        assert_eq!(resolved.suite, "smoke");
     }
 
     #[test]
     fn rejects_malformed_dataset_id_before_build() {
         let inputs = object(
-            r#"{"request_id":"req-dataset","request_execution_id":"gw-107-1","source_repository":"owner/repo","executor":"hf_jobs","environment":"linux-cpu","dataset_source":"custom","dataset_id":"not-a-repository"}"#,
+            r#"{"request_id":"req-dataset","request_execution_id":"gw-107-1","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","dataset_source":"custom","dataset_id":"not-a-repository"}"#,
             "inputs",
         )
         .unwrap();
