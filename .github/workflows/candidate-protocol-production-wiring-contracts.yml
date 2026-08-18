@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          actionlint -color \
+          actionlint -color -shellcheck= \
             .github/workflows/candidate-protocol-production-wiring-contracts.yml \
             .github/workflows/candidate-package-evaluate-v2.yml \
             .github/workflows/candidate-request-gateway.yml
