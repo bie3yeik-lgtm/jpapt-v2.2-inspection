@@ -72,7 +72,7 @@ on:
         default: cpu-basic
         type: string
       hf_jobs_image:
-        description: Optional image override that HF Jobs can pull; blank = built digest
+        description: Optional immutable digest-pinned image override; blank = built digest
         required: false
         default: ""
         type: string
@@ -503,18 +503,27 @@ jobs:
     if: ${{ needs.resolve.outputs.executor == 'hf_jobs' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      result_uri: ${{ steps.plan.outputs.result_uri }}
+      image_ref: ${{ steps.plan.outputs.image }}
+      image_digest: ${{ steps.plan.outputs.image_digest }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install HF CLI
         run: python -m pip install --upgrade "huggingface_hub>=1.0,<2"
-      - name: Run remote evaluation
+      - name: Plan remote evaluation with Rust
+        id: plan
         shell: bash
         env:
           BUILT_IMAGE: ${{ needs.build.outputs.image_ref }}
           HF_JOBS_IMAGE_OVERRIDE: ${{ needs.resolve.outputs.hf_jobs_image }}
           SUITE: ${{ needs.resolve.outputs.suite }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           PROVIDER: ${{ needs.resolve.outputs.provider }}
           HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
           DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
@@ -523,32 +532,44 @@ jobs:
           CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
         run: |
           set -euo pipefail
-          image="${HF_JOBS_IMAGE_OVERRIDE:-$BUILT_IMAGE}"
-          output_dir="/jpapt-output/runs/hf-jobs/$CANDIDATE_ID/$SUITE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          volumes=(-v "hf://buckets/$HF_BUCKET:/jpapt-output:rw")
-          dataset_dir=/data
-          if [[ "$DATASET_SOURCE" == "bucket" ]]; then
-            dataset_dir=/jpapt-output/datasets
-          else
-            volumes+=(-v "hf://datasets/$DATASET_ID:/data:ro")
-          fi
-          hf jobs run \
-            --flavor "$FLAVOR" \
-            --name "jpapt-$CANDIDATE_ID-$SUITE" \
-            "${volumes[@]}" \
-            "$image" \
+          mkdir -p .ci/hf-jobs
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image "$BUILT_IMAGE" \
+            --image-override "$HF_JOBS_IMAGE_OVERRIDE" \
+            --candidate-id "$CANDIDATE_ID" \
             --suite "$SUITE" \
+            --environment "$ENVIRONMENT" \
             --provider "$PROVIDER" \
-            --dataset-dir "$dataset_dir" \
-            --output "$output_dir/result.json"
+            --hf-bucket "$HF_BUCKET" \
+            --dataset-source "$DATASET_SOURCE" \
+            --dataset-id "$DATASET_ID" \
+            --flavor "$FLAVOR" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output-json .ci/hf-jobs/hf-job-plan.json \
+            --github-output "$GITHUB_OUTPUT" >/dev/null
+      - name: Preserve validated HF Jobs plan before remote execution
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-hf-job-plan-${{ needs.build.outputs.candidate_id }}-${{ needs.resolve.outputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/hf-jobs/hf-job-plan.json
+          retention-days: 30
+      - name: Run remote evaluation from validated Rust plan
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: >-
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job --
+          run --plan .ci/hf-jobs/hf-job-plan.json
       - name: Write HF Jobs provenance artifact
+        if: always()
         shell: bash
         env:
           SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
           HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          IMAGE_REF: ${{ steps.plan.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.plan.outputs.image_digest }}
           SUITE: ${{ needs.resolve.outputs.suite }}
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           PROVIDER: ${{ needs.resolve.outputs.provider }}
@@ -556,6 +577,9 @@ jobs:
           DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
         run: |
           mkdir -p results/candidate-package
+          if [[ -f .ci/hf-jobs/hf-job-plan.json ]]; then
+            cp .ci/hf-jobs/hf-job-plan.json results/candidate-package/hf-job-plan.json
+          fi
           jq -n \
             --arg source_repository "$SOURCE_REPOSITORY" \
             --arg hf_bucket "$HF_BUCKET" \
@@ -614,6 +638,9 @@ jobs:
           RESOLVED_CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
           IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          HF_JOBS_IMAGE_REF: ${{ needs.hf-jobs.outputs.image_ref }}
+          HF_JOBS_IMAGE_DIGEST: ${{ needs.hf-jobs.outputs.image_digest }}
+          HF_JOBS_RESULT_URI: ${{ needs.hf-jobs.outputs.result_uri }}
           BUILD_RESULT: ${{ needs.build.result }}
           CPU_RESULT: ${{ needs.github-linux-cpu.result }}
           CUDA_RESULT: ${{ needs.github-linux-cuda.result }}
