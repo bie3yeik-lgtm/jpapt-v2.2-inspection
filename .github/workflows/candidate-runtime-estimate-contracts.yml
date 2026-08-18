@@ -7,15 +7,19 @@ on:
       - .github/workflows/candidate-runtime-estimate-contracts.yml
       - contracts/candidate-runtime-estimate.schema.json
       - contracts/candidate-workload-probe.schema.json
+      - contracts/dataset-workload-probe.schema.json
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/measure-candidate-bucket-size.py
+      - scripts/ci/measure-dataset-source-size.py
   pull_request:
     paths:
       - .github/workflows/candidate-runtime-estimate-contracts.yml
       - contracts/candidate-runtime-estimate.schema.json
       - contracts/candidate-workload-probe.schema.json
+      - contracts/dataset-workload-probe.schema.json
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/measure-candidate-bucket-size.py
+      - scripts/ci/measure-dataset-source-size.py
   workflow_dispatch:
 
 permissions:
@@ -49,53 +53,11 @@ jobs:
         run: |
           python -m py_compile \
             scripts/ci/estimate-candidate-runtime.py \
-            scripts/ci/measure-candidate-bucket-size.py
+            scripts/ci/measure-candidate-bucket-size.py \
+            scripts/ci/measure-dataset-source-size.py
           python -m json.tool contracts/candidate-runtime-estimate.schema.json >/dev/null
           python -m json.tool contracts/candidate-workload-probe.schema.json >/dev/null
-      - name: Validate workload probe available and unavailable shapes
-        run: |
-          python - <<'PY'
-          import copy
-          import json
-          from pathlib import Path
-          from jsonschema import Draft202012Validator
-          from jsonschema.exceptions import ValidationError
-
-          schema = json.loads(Path('contracts/candidate-workload-probe.schema.json').read_text())
-          Draft202012Validator.check_schema(schema)
-          validator = Draft202012Validator(schema)
-          available = {
-              'schema_version': 1,
-              'available': True,
-              'candidate_id': 'candidate-000002',
-              'candidate_relative_path': 'candidate-000002',
-              'candidate_bytes': 225,
-              'candidate_files': 2,
-              'legacy_candidate_layout': False,
-              'warning': None,
-          }
-          unavailable = {
-              'schema_version': 1,
-              'available': False,
-              'candidate_id': None,
-              'candidate_relative_path': None,
-              'candidate_bytes': None,
-              'candidate_files': None,
-              'legacy_candidate_layout': None,
-              'warning': 'synthetic unavailable',
-          }
-          validator.validate(available)
-          validator.validate(unavailable)
-
-          invalid = copy.deepcopy(unavailable)
-          invalid['candidate_id'] = 'candidate-000002'
-          try:
-              validator.validate(invalid)
-          except ValidationError:
-              pass
-          else:
-              raise AssertionError('unavailable workload unexpectedly retained candidate identity')
-          PY
+          python -m json.tool contracts/dataset-workload-probe.schema.json >/dev/null
       - name: Validate generated fallback estimate against Draft 2020-12 schema
         shell: bash
         run: |
@@ -106,7 +68,8 @@ jobs:
               --suite smoke \
               --executor github \
               --environment linux-cpu \
-              --target-candidate-bytes 225 > /tmp/runtime-estimate.json
+              --target-candidate-bytes 225 \
+              --target-dataset-bytes 125 > /tmp/runtime-estimate.json
           python - <<'PY'
           import copy
           import json
@@ -119,9 +82,11 @@ jobs:
           Draft202012Validator.check_schema(schema)
           validator = Draft202012Validator(schema)
           validator.validate(value)
-          assert value['schema_version'] == 4
+          assert value['schema_version'] == 5
           assert value['target_candidate_bytes'] == 225
+          assert value['target_dataset_bytes'] == 125
           assert value['workload_probe_method'] == 'explicit'
+          assert value['dataset_workload_probe_method'] == 'explicit'
           assert value['estimate_minutes'] == 8
           assert value['size_scaling_applied'] is False
 
@@ -134,14 +99,55 @@ jobs:
           else:
               raise AssertionError('runtime estimate unexpectedly allowed size scaling')
           PY
-      - name: Require candidate-size comparison to remain evidence-only
+      - name: Verify dataset metadata auto-probe without changing fallback runtime
+        shell: bash
+        env:
+          ENABLE_WORKLOAD_PROBE: "true"
+          HF_TOKEN: synthetic-token
+          HF_BUCKET: owner/bucket
+          DATASET_SOURCE: bucket
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-runtime-dataset/python
+          cat > /tmp/fake-runtime-dataset/python/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+              size: int = 0
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'datasets'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item('datasets/a.wav', size=100),
+                  Item('datasets/data.jsonl', size=25),
+              ]
+          PY
+          PYTHONPATH=/tmp/fake-runtime-dataset/python \
+            env -u GH_TOKEN -u GITHUB_TOKEN \
+            python scripts/ci/estimate-candidate-runtime.py \
+              --repository owner/orchestrator \
+              --suite smoke \
+              --executor github \
+              --environment linux-cpu > /tmp/runtime-dataset-estimate.json
+          jq -e '.schema_version == 5' /tmp/runtime-dataset-estimate.json >/dev/null
+          jq -e '.dataset_workload_probe_method == "metadata-only"' /tmp/runtime-dataset-estimate.json >/dev/null
+          jq -e '.target_dataset_bytes == 125 and .target_dataset_files == 2' /tmp/runtime-dataset-estimate.json >/dev/null
+          jq -e '.estimate_minutes == 8 and .size_scaling_applied == false' /tmp/runtime-dataset-estimate.json >/dev/null
+      - name: Require workload-size comparison to remain evidence-only
         shell: bash
         run: |
           set -euo pipefail
           grep -F '"size_scaling_applied": False' scripts/ci/estimate-candidate-runtime.py
           grep -F 'candidate_size_ratio_p50' scripts/ci/estimate-candidate-runtime.py
-          if grep -E 'estimate_minutes.*candidate_size_ratio|candidate_size_ratio.*estimate_minutes' \
+          grep -F 'dataset_size_ratio_p50' scripts/ci/estimate-candidate-runtime.py
+          if grep -E 'estimate_minutes.*(candidate|dataset)_size_ratio|(candidate|dataset)_size_ratio.*estimate_minutes' \
             scripts/ci/estimate-candidate-runtime.py; then
-            echo 'candidate size ratio unexpectedly participates directly in estimate calculation' >&2
+            echo 'workload size ratio unexpectedly participates directly in estimate calculation' >&2
             exit 1
           fi
