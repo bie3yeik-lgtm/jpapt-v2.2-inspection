@@ -23,6 +23,7 @@ struct HfJobPlan {
     job_name: String,
     flavor: String,
     image: String,
+    image_digest: String,
     candidate_id: String,
     suite: String,
     environment: String,
@@ -154,9 +155,10 @@ fn plan_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
 
     if !github_output.is_empty() {
         let text = format!(
-            "job_name={}\nimage={}\nresult_uri={}\noutput_dir={}\ndataset_dir={}\nplan_sha256={}\n",
+            "job_name={}\nimage={}\nimage_digest={}\nresult_uri={}\noutput_dir={}\ndataset_dir={}\nplan_sha256={}\n",
             plan.job_name,
             plan.image,
+            plan.image_digest,
             plan.result_uri,
             plan.output_dir,
             plan.dataset_dir,
@@ -246,7 +248,7 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
     } else {
         input.image_override
     };
-    validate_digest_pinned_image(&image)?;
+    let image_digest = image_digest(&image)?;
 
     let suffix = format!("{}-{}-{}", input.suite, input.run_id, input.run_attempt);
     let output_dir = format!(
@@ -284,6 +286,7 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
         job_name,
         flavor: input.flavor,
         image,
+        image_digest,
         candidate_id: input.candidate_id,
         suite: input.suite,
         environment: input.environment,
@@ -346,7 +349,9 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
     )?;
     validate_bucket(&plan.hf_bucket)?;
     validate_flavor(&plan.flavor)?;
-    validate_digest_pinned_image(&plan.image)?;
+    if plan.image_digest != image_digest(&plan.image)? {
+        return Err("image_digest does not match the selected immutable image".to_owned());
+    }
     validate_job_name(&plan.job_name)?;
     if plan.run_id == 0 || plan.run_attempt == 0 {
         return Err("run_id and run_attempt must be positive".to_owned());
@@ -478,7 +483,7 @@ fn validate_job_name(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_digest_pinned_image(value: &str) -> Result<(), String> {
+fn image_digest(value: &str) -> Result<String, String> {
     if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
         return Err("HF Jobs image reference is empty, too long, or contains whitespace".to_owned());
     }
@@ -494,7 +499,7 @@ fn validate_digest_pinned_image(value: &str) -> Result<(), String> {
     if name.is_empty() || digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return Err("HF Jobs image has an invalid sha256 digest".to_owned());
     }
-    Ok(())
+    Ok(format!("sha256:{}", digest.to_ascii_lowercase()))
 }
 
 fn write_plan(path: &Path, plan: &HfJobPlan) -> Result<(), String> {
@@ -544,6 +549,7 @@ mod tests {
         validate_plan(&plan).unwrap();
         assert_eq!(plan.mounts.len(), 1);
         assert_eq!(plan.dataset_dir, "/jpapt-output/datasets");
+        assert_eq!(plan.image_digest, format!("sha256:{}", "a".repeat(64)));
         assert_eq!(
             plan.result_uri,
             "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9001-2/result.json"
@@ -575,6 +581,7 @@ mod tests {
         validate_plan(&plan).unwrap();
         assert_eq!(plan.mounts.len(), 2);
         assert_eq!(plan.dataset_dir, "/data");
+        assert_eq!(plan.image_digest, format!("sha256:{}", "b".repeat(64)));
         assert!(
             plan.hf_args
                 .iter()
@@ -642,5 +649,27 @@ mod tests {
         plan.hf_args.push("--unexpected".to_owned());
         let error = validate_plan(&plan).unwrap_err();
         assert!(error.contains("hf_args"));
+    }
+
+    #[test]
+    fn rejects_tampered_image_digest() {
+        let mut plan = build_plan(PlanInput {
+            built_image: digest_image(),
+            image_override: String::new(),
+            candidate_id: "candidate-000001".to_owned(),
+            suite: "probe".to_owned(),
+            environment: "linux-cpu".to_owned(),
+            provider: "CPUExecutionProvider".to_owned(),
+            hf_bucket: "owner/project-bucket".to_owned(),
+            dataset_source: "bucket".to_owned(),
+            dataset_id: String::new(),
+            flavor: "cpu-basic".to_owned(),
+            run_id: 1,
+            run_attempt: 1,
+        })
+        .unwrap();
+        plan.image_digest = format!("sha256:{}", "f".repeat(64));
+        let error = validate_plan(&plan).unwrap_err();
+        assert!(error.contains("image_digest"));
     }
 }
