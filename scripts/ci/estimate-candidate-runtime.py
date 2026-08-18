@@ -186,8 +186,34 @@ def optional_positive_int(value: str | None, name: str) -> int | None:
     return parsed
 
 
+def workload_auto_enabled() -> bool:
+    return os.environ.get("GITHUB_ACTIONS", "").lower() == "true" or os.environ.get(
+        "ENABLE_WORKLOAD_PROBE", ""
+    ).lower() == "true"
+
+
+def helper_json(command: list[str], label: str) -> dict:
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
+        return {"method": "unavailable", "warning": f"{label}: {detail}".replace("\n", " ")}
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {"method": "unavailable", "warning": f"{label} returned invalid JSON"}
+    if not isinstance(value, dict):
+        return {"method": "unavailable", "warning": f"{label} returned non-object JSON"}
+    return value
+
+
 def auto_candidate_workload(hf_bucket: str) -> dict:
-    if not hf_bucket:
+    if not hf_bucket or not workload_auto_enabled():
         return {"method": "none"}
     request_path = Path(os.environ.get("CANDIDATE_REQUEST_JSON", "/tmp/request.json"))
     config_path = Path(os.environ.get("CANDIDATE_SOURCE_CONFIG_JSON", "/tmp/source.json"))
@@ -206,22 +232,9 @@ def auto_candidate_workload(hf_bucket: str) -> dict:
     ]
     if config_path.is_file():
         command.extend(["--config-json", str(config_path)])
-    completed = subprocess.run(
-        command,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
-        return {"method": "unavailable", "warning": detail.replace("\n", " ")}
-    try:
-        value = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return {"method": "unavailable", "warning": "workload probe returned invalid JSON"}
-    if not isinstance(value, dict):
-        return {"method": "unavailable", "warning": "workload probe returned non-object JSON"}
+    value = helper_json(command, "candidate workload probe")
+    if value.get("method") == "unavailable":
+        return value
     if value.get("available") is not True:
         return {
             "method": "unavailable",
@@ -237,13 +250,57 @@ def auto_candidate_workload(hf_bucket: str) -> dict:
         or not isinstance(candidate_files, int)
         or candidate_files <= 0
     ):
-        return {"method": "unavailable", "warning": "workload probe returned invalid size evidence"}
+        return {"method": "unavailable", "warning": "candidate workload probe returned invalid size evidence"}
     return {
         "method": "metadata-only",
         "candidate_id": candidate_id,
         "candidate_bytes": candidate_bytes,
         "candidate_files": candidate_files,
         "legacy_candidate_layout": value.get("legacy_candidate_layout"),
+    }
+
+
+def auto_dataset_workload(hf_bucket: str, dataset_source: str, dataset_id: str) -> dict:
+    if not workload_auto_enabled() or dataset_source not in {"bucket", "repository", "custom"}:
+        return {"method": "none"}
+    probe = Path(__file__).with_name("measure-dataset-source-size.py")
+    command = [
+        sys.executable,
+        str(probe),
+        "--source",
+        dataset_source,
+        "--allow-unavailable",
+    ]
+    if dataset_source == "bucket":
+        if not hf_bucket:
+            return {"method": "none"}
+        command.extend(["--bucket", hf_bucket])
+    else:
+        if not dataset_id:
+            return {"method": "none"}
+        command.extend(["--dataset-id", dataset_id])
+    value = helper_json(command, "dataset workload probe")
+    if value.get("method") == "unavailable":
+        return value
+    if value.get("available") is not True:
+        return {
+            "method": "unavailable",
+            "warning": str(value.get("warning") or "dataset workload unavailable"),
+        }
+    dataset_bytes = value.get("dataset_bytes")
+    dataset_files = value.get("dataset_files")
+    if (
+        not isinstance(dataset_bytes, int)
+        or dataset_bytes <= 0
+        or not isinstance(dataset_files, int)
+        or dataset_files <= 0
+    ):
+        return {"method": "unavailable", "warning": "dataset workload probe returned invalid size evidence"}
+    return {
+        "method": "metadata-only",
+        "dataset_bytes": dataset_bytes,
+        "dataset_files": dataset_files,
+        "probe_method": value.get("probe_method"),
     }
 
 
@@ -264,7 +321,12 @@ def main() -> int:
     parser.add_argument(
         "--target-candidate-bytes",
         default=os.environ.get("TARGET_CANDIDATE_BYTES", ""),
-        help="Metadata-only size of the concrete candidate. Evidence only; does not scale estimate yet.",
+        help="Metadata-only size of the concrete candidate. Evidence only; does not scale estimate.",
+    )
+    parser.add_argument(
+        "--target-dataset-bytes",
+        default=os.environ.get("TARGET_DATASET_BYTES", ""),
+        help="Metadata-only size of the selected dataset source. Evidence only; does not scale estimate.",
     )
     parser.add_argument("--workflow", default="candidate-package-evaluate-v2.yml")
     parser.add_argument("--limit", type=int, default=30)
@@ -274,17 +336,29 @@ def main() -> int:
     target_candidate_bytes = optional_positive_int(
         args.target_candidate_bytes, "target_candidate_bytes"
     )
-    workload = {"method": "explicit" if target_candidate_bytes is not None else "none"}
+    candidate_workload = {"method": "explicit" if target_candidate_bytes is not None else "none"}
     if target_candidate_bytes is None:
-        workload = auto_candidate_workload(args.hf_bucket)
-        probed_bytes = workload.get("candidate_bytes")
+        candidate_workload = auto_candidate_workload(args.hf_bucket)
+        probed_bytes = candidate_workload.get("candidate_bytes")
         if isinstance(probed_bytes, int) and probed_bytes > 0:
             target_candidate_bytes = probed_bytes
+
+    target_dataset_bytes = optional_positive_int(
+        args.target_dataset_bytes, "target_dataset_bytes"
+    )
+    dataset_workload = {"method": "explicit" if target_dataset_bytes is not None else "none"}
+    if target_dataset_bytes is None:
+        dataset_workload = auto_dataset_workload(
+            args.hf_bucket, args.dataset_source, args.dataset_id
+        )
+        probed_dataset_bytes = dataset_workload.get("dataset_bytes")
+        if isinstance(probed_dataset_bytes, int) and probed_dataset_bytes > 0:
+            target_dataset_bytes = probed_dataset_bytes
 
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     fallback = fallback_minutes(args.suite, args.executor, args.environment)
     result = {
-        "schema_version": 4,
+        "schema_version": 5,
         "method": "fallback",
         "cohort": "none",
         "samples": 0,
@@ -299,16 +373,21 @@ def main() -> int:
         "hf_bucket": args.hf_bucket,
         "dataset_source": args.dataset_source,
         "dataset_id": args.dataset_id,
-        "workload_probe_method": workload.get("method", "none"),
-        "workload_warning": workload.get("warning"),
-        "target_candidate_id": workload.get("candidate_id"),
+        "workload_probe_method": candidate_workload.get("method", "none"),
+        "workload_warning": candidate_workload.get("warning"),
+        "target_candidate_id": candidate_workload.get("candidate_id"),
         "target_candidate_bytes": target_candidate_bytes,
-        "target_candidate_files": workload.get("candidate_files"),
-        "target_candidate_legacy_layout": workload.get("legacy_candidate_layout"),
+        "target_candidate_files": candidate_workload.get("candidate_files"),
+        "target_candidate_legacy_layout": candidate_workload.get("legacy_candidate_layout"),
+        "dataset_workload_probe_method": dataset_workload.get("method", "none"),
+        "dataset_workload_warning": dataset_workload.get("warning"),
+        "target_dataset_bytes": target_dataset_bytes,
+        "target_dataset_files": dataset_workload.get("dataset_files"),
         "observed_dataset_bytes_p50": None,
         "observed_package_bytes_p50": None,
         "observed_candidate_bytes_p50": None,
         "candidate_size_ratio_p50": None,
+        "dataset_size_ratio_p50": None,
         "size_scaling_applied": False,
     }
 
@@ -372,6 +451,7 @@ def main() -> int:
                 p50 = statistics.median(values)
                 p90 = percentile(values, 0.90)
                 observed_candidate_bytes = median_metric(selected, "candidate_bytes")
+                observed_dataset_bytes = median_metric(selected, "dataset_bytes")
                 result.update(
                     method="historical",
                     cohort=cohort,
@@ -379,11 +459,14 @@ def main() -> int:
                     estimate_minutes=max(1, math.ceil(p90)),
                     p50_minutes=round(p50, 2),
                     p90_minutes=round(p90, 2),
-                    observed_dataset_bytes_p50=median_metric(selected, "dataset_bytes"),
+                    observed_dataset_bytes_p50=observed_dataset_bytes,
                     observed_package_bytes_p50=median_metric(selected, "package_bytes"),
                     observed_candidate_bytes_p50=observed_candidate_bytes,
                     candidate_size_ratio_p50=size_ratio(
                         target_candidate_bytes, observed_candidate_bytes
+                    ),
+                    dataset_size_ratio_p50=size_ratio(
+                        target_dataset_bytes, observed_dataset_bytes
                     ),
                 )
         except (
@@ -411,10 +494,15 @@ def main() -> int:
                 "target_candidate_bytes",
                 "target_candidate_files",
                 "target_candidate_legacy_layout",
+                "dataset_workload_probe_method",
+                "dataset_workload_warning",
+                "target_dataset_bytes",
+                "target_dataset_files",
                 "observed_dataset_bytes_p50",
                 "observed_package_bytes_p50",
                 "observed_candidate_bytes_p50",
                 "candidate_size_ratio_p50",
+                "dataset_size_ratio_p50",
                 "size_scaling_applied",
             ):
                 value = result[key]
