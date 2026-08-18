@@ -1,0 +1,213 @@
+name: HF Jobs Rust Plan Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/hf-jobs-rust-plan-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - .github/workflows/hf-jobs-rust-plan-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-jobs-rust-plan-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate zero-network HF Jobs planning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint contract workflow
+        run: actionlint -color -shellcheck= .github/workflows/hf-jobs-rust-plan-contracts.yml
+
+      - name: Run focused Rust unit tests
+        run: cargo test --locked -p asr-contracts --bin asr-hf-job
+
+      - name: Build canonical CPU Bucket plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'a%.0s' {1..64})"
+          : > /tmp/github-output
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image "ghcr.io/owner/package@sha256:$digest" \
+            --candidate-id candidate-000123 \
+            --suite probe \
+            --environment linux-cpu \
+            --provider CPUExecutionProvider \
+            --hf-bucket owner/project-bucket \
+            --dataset-source bucket \
+            --flavor cpu-basic \
+            --run-id 9101 \
+            --run-attempt 2 \
+            --output-json /tmp/hf-job-plan.json \
+            --github-output /tmp/github-output >/dev/null
+
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate --plan /tmp/hf-job-plan.json >/tmp/plan-sha
+
+          jq -e '
+            .schema_version == 1 and
+            .candidate_id == "candidate-000123" and
+            .suite == "probe" and
+            .environment == "linux-cpu" and
+            .provider == "CPUExecutionProvider" and
+            .dataset_source == "bucket" and
+            .dataset_dir == "/jpapt-output/datasets" and
+            (.mounts | length) == 1 and
+            .mounts[0].source == "hf://buckets/owner/project-bucket" and
+            .mounts[0].target == "/jpapt-output" and
+            .mounts[0].mode == "rw" and
+            .result_uri == "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/candidate-000123-probe-9101-2/result.json" and
+            .hf_args[0] == "jobs" and
+            .hf_args[1] == "run"
+          ' /tmp/hf-job-plan.json >/dev/null
+          grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/candidate-000123-probe-9101-2/result.json' /tmp/github-output
+          grep -Eq '^plan_sha256=[0-9a-f]{64}$' /tmp/github-output
+          grep -Eq '^[0-9a-f]{64}$' /tmp/plan-sha
+
+      - name: Prove run uses the validated argv without network
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/hf <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${HF_FAKE_ARGS:?}"
+          printf '%s\n' "$@" > "$HF_FAKE_ARGS"
+          EOF
+          chmod +x /tmp/fake-bin/hf
+
+          PATH="/tmp/fake-bin:$PATH" \
+          HF_TOKEN=fake-contract-token \
+          HF_FAKE_ARGS=/tmp/actual-argv \
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            run --plan /tmp/hf-job-plan.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          plan = json.loads(Path('/tmp/hf-job-plan.json').read_text(encoding='utf-8'))
+          actual = Path('/tmp/actual-argv').read_text(encoding='utf-8').splitlines()
+          assert actual == plan['hf_args'], (actual, plan['hf_args'])
+          PY
+
+      - name: Build canonical CUDA custom-dataset plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'b%.0s' {1..64})"
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image "ghcr.io/owner/package@sha256:$digest" \
+            --candidate-id candidate-000999 \
+            --suite smoke \
+            --environment linux-cuda \
+            --provider CUDAExecutionProvider \
+            --hf-bucket owner/project-bucket \
+            --dataset-source custom \
+            --dataset-id japanese-asr/jsut \
+            --flavor a10g-small \
+            --run-id 9102 \
+            --run-attempt 1 \
+            --output-json /tmp/hf-job-cuda.json >/dev/null
+
+          jq -e '
+            .environment == "linux-cuda" and
+            .provider == "CUDAExecutionProvider" and
+            .dataset_dir == "/data" and
+            (.mounts | length) == 2 and
+            .mounts[1].source == "hf://datasets/japanese-asr/jsut" and
+            .mounts[1].target == "/data" and
+            .mounts[1].mode == "ro"
+          ' /tmp/hf-job-cuda.json >/dev/null
+
+      - name: Reject mutable image and inconsistent routing before execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image ghcr.io/owner/package:latest \
+            --candidate-id candidate-000001 \
+            --suite probe \
+            --environment linux-cpu \
+            --provider CPUExecutionProvider \
+            --hf-bucket owner/project-bucket \
+            --dataset-source bucket \
+            --flavor cpu-basic \
+            --run-id 1 \
+            --run-attempt 1 \
+            --output-json /tmp/mutable.json; then
+            echo 'mutable image unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          digest="$(printf 'c%.0s' {1..64})"
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image "ghcr.io/owner/package@sha256:$digest" \
+            --candidate-id candidate-000001 \
+            --suite probe \
+            --environment linux-cuda \
+            --provider CPUExecutionProvider \
+            --hf-bucket owner/project-bucket \
+            --dataset-source bucket \
+            --flavor cpu-basic \
+            --run-id 1 \
+            --run-attempt 1 \
+            --output-json /tmp/provider-mismatch.json; then
+            echo 'provider mismatch unexpectedly accepted' >&2
+            exit 1
+          fi
+
+      - name: Reject tampered persisted plan before subprocess
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.hf_args += ["--tampered"]' /tmp/hf-job-plan.json > /tmp/tampered.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate --plan /tmp/tampered.json; then
+            echo 'tampered argv unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/never-bin
+          cat > /tmp/never-bin/hf <<'EOF'
+          #!/usr/bin/env bash
+          echo invoked > /tmp/unexpected-hf-invocation
+          exit 99
+          EOF
+          chmod +x /tmp/never-bin/hf
+          rm -f /tmp/unexpected-hf-invocation
+          if PATH="/tmp/never-bin:$PATH" HF_TOKEN=fake \
+            cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+              run --plan /tmp/tampered.json; then
+            echo 'tampered plan unexpectedly executed' >&2
+            exit 1
+          fi
+          test ! -e /tmp/unexpected-hf-invocation
