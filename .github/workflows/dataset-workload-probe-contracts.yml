@@ -192,8 +192,8 @@ jobs:
           resolver = RefResolver.from_schema(
               schema,
               store={
-                  'candidate-workload-probe.schema.json': candidate,
-                  'dataset-workload-probe.schema.json': dataset,
+                  candidate['$id']: candidate,
+                  dataset['$id']: dataset,
               },
           )
           value = json.loads(Path('/tmp/runtime-workload.json').read_text())
