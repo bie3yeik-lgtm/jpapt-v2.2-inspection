@@ -1,0 +1,36 @@
+name: Protocol Production Switch V2
+
+on:
+  push:
+    branches:
+      - agent/protocol-production-switch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protocol-production-switch-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/protocol-production-switch
+      - name: Apply focused protocol production patch
+        run: python scripts/ci/protocol-production-switch.py
+      - name: Commit production workflow switch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            .github/workflows/candidate-package-evaluate-v2.yml \
+            .github/workflows/candidate-request-gateway.yml
+          git commit -m 'refactor: use Rust candidate protocol builders'
+          git push origin HEAD:agent/protocol-production-switch
