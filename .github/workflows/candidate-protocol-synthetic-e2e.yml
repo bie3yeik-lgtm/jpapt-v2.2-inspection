@@ -9,14 +9,17 @@ on:
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
       - scripts/ci/build-candidate-completion-ack.py
-      - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/normalize-candidate-request.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - Cargo.toml
+      - Cargo.lock
   pull_request:
     paths:
       - .github/workflows/candidate-protocol-synthetic-e2e.yml
@@ -24,14 +27,17 @@ on:
       - contracts/candidate-completion-receipt.schema.json
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-request-timeline.schema.json
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
       - scripts/ci/build-candidate-completion-ack.py
-      - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-dispatch-body.py
       - scripts/ci/build-candidate-request-lifecycle.py
       - scripts/ci/build-candidate-request-timeline.py
       - scripts/ci/candidate_lifecycle_common.py
       - scripts/ci/normalize-candidate-request.py
       - scripts/ci/validate-candidate-protocol-binding.py
+      - Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 permissions:
@@ -48,11 +54,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Compile protocol helpers
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile portable protocol helpers
         run: |
           python -m py_compile \
             scripts/ci/build-candidate-completion-ack.py \
-            scripts/ci/build-candidate-completion-receipt.py \
             scripts/ci/build-candidate-dispatch-body.py \
             scripts/ci/build-candidate-request-lifecycle.py \
             scripts/ci/build-candidate-request-timeline.py \
@@ -151,39 +157,41 @@ jobs:
           UPDATED_AT=2026-08-17T10:02:00Z \
           python scripts/ci/build-candidate-request-lifecycle.py \
             --state running --output /tmp/running.json >/dev/null
-      - name: Build synthetic dry-run completion receipt
+      - name: Build synthetic dry-run completion receipt with Rust
         shell: bash
+        env:
+          REQUEST_ID: synthetic-e2e-001
+          REQUEST_EXECUTION_ID: gw-1001-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          HF_BUCKET: owner/source-bucket
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "2001"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/2001
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: candidate-000001
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-17T10:03:00Z
         run: |
           set -euo pipefail
-          REQUEST_ID=synthetic-e2e-001 \
-          REQUEST_EXECUTION_ID=gw-1001-1 \
-          SOURCE_REPOSITORY=owner/source \
-          RECEIPT_REPOSITORY=owner/receiver \
-          HF_BUCKET=owner/source-bucket \
-          DRY_RUN=true \
-          SUITE=probe \
-          EXECUTOR=github \
-          ENVIRONMENT=linux-cpu \
-          PROVIDER=CPUExecutionProvider \
-          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
-          WORKFLOW_FILE=candidate-package-evaluate-v2.yml \
-          RUN_ID=2001 \
-          RUN_ATTEMPT=1 \
-          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
-          COMMIT_SHA=0000000000000000000000000000000000000000 \
-          REQUESTED_CANDIDATE_ID=candidate-000001 \
-          BUILD_RESULT=skipped \
-          CPU_RESULT=skipped \
-          CUDA_RESULT=skipped \
-          COREML_RESULT=skipped \
-          DIRECTML_RESULT=skipped \
-          HF_JOBS_RESULT=skipped \
-          COMPLETED_AT=2026-08-17T10:03:00Z \
-          python scripts/ci/build-candidate-completion-receipt.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
             --receipt /tmp/receipt.json \
             --dispatch-body /tmp/completion-dispatch.json >/dev/null
 
-          python scripts/ci/build-candidate-completion-receipt.py --validate /tmp/receipt.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/receipt.json >/dev/null
           jq -e '.conclusion == "success" and .dry_run == true' /tmp/receipt.json >/dev/null
           jq -e '.request_execution_id == "gw-1001-1"' /tmp/receipt.json >/dev/null
           jq -e '.event_type == "jpapt.candidate-completed"' /tmp/completion-dispatch.json >/dev/null
@@ -191,11 +199,11 @@ jobs:
             --receipt /tmp/receipt.json \
             --receiver-repository owner/receiver \
             --allowed-orchestrators owner/orchestrator
-      - name: Build completion lifecycle and acknowledgement
+      - name: Build completion lifecycle and portable acknowledgement
         shell: bash
         run: |
           set -euo pipefail
-          receipt_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+          receipt_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha /tmp/receipt.json)"
 
           RECEIPT_SHA256="$receipt_sha" \
           UPDATED_AT=2026-08-17T10:03:00Z \
@@ -215,6 +223,7 @@ jobs:
             --dispatch-body /tmp/ack-dispatch.json >/dev/null
 
           python scripts/ci/build-candidate-completion-ack.py --validate /tmp/ack.json
+          test "$(jq -r .receipt_sha256 /tmp/ack.json)" = "$receipt_sha"
           jq -e '.request_execution_id == "gw-1001-1"' /tmp/ack.json >/dev/null
           jq -e '.event_type == "jpapt.candidate-completion-ack"' /tmp/ack-dispatch.json >/dev/null
           python scripts/ci/validate-candidate-protocol-binding.py \
@@ -251,4 +260,4 @@ jobs:
           test "$(jq -r '.events[0].snapshot.request_execution_id' /tmp/timeline.json)" = gw-1001-1
           test "$(jq -r '.events[-1].snapshot.receiver_run_id' /tmp/timeline.json)" = 3001
           test "$(jq -r '.events[-1].snapshot.receipt_sha256' /tmp/timeline.json)" = \
-            "$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+            "$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha /tmp/receipt.json)"
