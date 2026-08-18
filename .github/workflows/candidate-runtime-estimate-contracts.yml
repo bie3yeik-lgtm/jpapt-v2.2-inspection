@@ -6,12 +6,14 @@ on:
     paths:
       - .github/workflows/candidate-runtime-estimate-contracts.yml
       - contracts/candidate-runtime-estimate.schema.json
+      - contracts/candidate-workload-probe.schema.json
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/measure-candidate-bucket-size.py
   pull_request:
     paths:
       - .github/workflows/candidate-runtime-estimate-contracts.yml
       - contracts/candidate-runtime-estimate.schema.json
+      - contracts/candidate-workload-probe.schema.json
       - scripts/ci/estimate-candidate-runtime.py
       - scripts/ci/measure-candidate-bucket-size.py
   workflow_dispatch:
@@ -43,12 +45,57 @@ jobs:
           python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
       - name: Lint runtime estimate contract
         run: actionlint -color .github/workflows/candidate-runtime-estimate-contracts.yml
-      - name: Compile helpers and parse schema
+      - name: Compile helpers and parse schemas
         run: |
           python -m py_compile \
             scripts/ci/estimate-candidate-runtime.py \
             scripts/ci/measure-candidate-bucket-size.py
           python -m json.tool contracts/candidate-runtime-estimate.schema.json >/dev/null
+          python -m json.tool contracts/candidate-workload-probe.schema.json >/dev/null
+      - name: Validate workload probe available and unavailable shapes
+        run: |
+          python - <<'PY'
+          import copy
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          from jsonschema.exceptions import ValidationError
+
+          schema = json.loads(Path('contracts/candidate-workload-probe.schema.json').read_text())
+          Draft202012Validator.check_schema(schema)
+          validator = Draft202012Validator(schema)
+          available = {
+              'schema_version': 1,
+              'available': True,
+              'candidate_id': 'candidate-000002',
+              'candidate_relative_path': 'candidate-000002',
+              'candidate_bytes': 225,
+              'candidate_files': 2,
+              'legacy_candidate_layout': False,
+              'warning': None,
+          }
+          unavailable = {
+              'schema_version': 1,
+              'available': False,
+              'candidate_id': None,
+              'candidate_relative_path': None,
+              'candidate_bytes': None,
+              'candidate_files': None,
+              'legacy_candidate_layout': None,
+              'warning': 'synthetic unavailable',
+          }
+          validator.validate(available)
+          validator.validate(unavailable)
+
+          invalid = copy.deepcopy(unavailable)
+          invalid['candidate_id'] = 'candidate-000002'
+          try:
+              validator.validate(invalid)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError('unavailable workload unexpectedly retained candidate identity')
+          PY
       - name: Validate generated fallback estimate against Draft 2020-12 schema
         shell: bash
         run: |
