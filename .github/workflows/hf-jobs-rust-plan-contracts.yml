@@ -81,11 +81,11 @@ jobs:
             .mounts[0].source == "hf://buckets/owner/project-bucket" and
             .mounts[0].target == "/jpapt-output" and
             .mounts[0].mode == "rw" and
-            .result_uri == "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/candidate-000123-probe-9101-2/result.json" and
+            .result_uri == "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9101-2/result.json" and
             .hf_args[0] == "jobs" and
             .hf_args[1] == "run"
           ' /tmp/hf-job-plan.json >/dev/null
-          grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/candidate-000123-probe-9101-2/result.json' /tmp/github-output
+          grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9101-2/result.json' /tmp/github-output
           grep -Eq '^plan_sha256=[0-9a-f]{64}$' /tmp/github-output
           grep -Eq '^[0-9a-f]{64}$' /tmp/plan-sha
 
