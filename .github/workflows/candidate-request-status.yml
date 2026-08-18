@@ -7,6 +7,11 @@ on:
         description: Candidate request correlation ID
         required: true
         type: string
+      request_execution_id:
+        description: Optional execution correlation ID; blank selects the newest execution
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -34,9 +39,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ inputs.request_execution_id }}
         run: |
           set -euo pipefail
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          execution_key=""
+          if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+            execution_key="$(python scripts/ci/build-candidate-request-lifecycle.py --execution-key "$REQUEST_EXECUTION_ID")"
+          fi
           mkdir -p .ci/status
           bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
           candidates=()
@@ -46,17 +56,23 @@ jobs:
             local file="$1"
             local label="$2"
             python scripts/ci/build-candidate-request-lifecycle.py --validate "$file" >/dev/null
-            actual_request_id="$(python - "$file" <<'PY'
+            readarray -t identity < <(python - "$file" <<'PY'
           import json
           import sys
           from pathlib import Path
-          print(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))['request_id'])
+          value = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          print(value['request_id'])
+          print(value.get('request_execution_id', ''))
           PY
-          )"
-            [[ "$actual_request_id" == "$REQUEST_ID" ]] || {
+          )
+            [[ "${identity[0]}" == "$REQUEST_ID" ]] || {
               echo "::error::$label lifecycle request_id mismatch"
               exit 1
             }
+            if [[ -n "$REQUEST_EXECUTION_ID" && "${identity[1]}" != "$REQUEST_EXECUTION_ID" ]]; then
+              return 1
+            fi
+            return 0
           }
 
           if [[ -n "${HF_TOKEN:-}" && -z "$bucket" ]]; then
@@ -73,69 +89,88 @@ jobs:
             exit 1
           fi
 
-          # Collect every materialized state available from persistent storage.
-          # We do not stop at the highest state: a newer retry may legitimately be
-          # running after an older attempt reached completed/acknowledged.
+          # Without an execution selector, request-level states are the aggregate
+          # materialized view. With one, read the isolated execution partition.
           if [[ -n "${HF_TOKEN:-}" && -n "$bucket" ]]; then
+            persistent_base="hf://buckets/$bucket/requests/$request_key"
+            if [[ -n "$execution_key" ]]; then
+              persistent_base="$persistent_base/executions/$execution_key"
+            fi
             for candidate_state in planned dispatched running rejected completed acknowledged; do
-              remote="hf://buckets/$bucket/requests/$request_key/states/$candidate_state.json"
+              remote="$persistent_base/states/$candidate_state.json"
               local_file=".ci/status/bucket-$candidate_state.json"
               if hf buckets cp --token "$HF_TOKEN" "$remote" "$local_file" >/dev/null 2>&1; then
-                validate_candidate "$local_file" persistent-state
-                candidates+=(--candidate "hf-state:$candidate_state=$local_file")
+                if validate_candidate "$local_file" persistent-state; then
+                  candidates+=(--candidate "hf-state:$candidate_state=$local_file")
+                fi
               fi
             done
 
-            # Immutable events are an independent recovery source when a persister
-            # appended events/ but stopped before refreshing states/.
-            python scripts/ci/collect-candidate-lifecycle-bucket-events.py \
-              --bucket "$bucket" \
-              --request-key "$request_key" \
-              --output-dir .ci/status/events \
-              --manifest .ci/status/events.tsv \
-              --allow-unavailable >/dev/null
+            collector_args=(
+              --bucket "$bucket"
+              --request-key "$request_key"
+              --output-dir .ci/status/events
+              --manifest .ci/status/events.tsv
+              --allow-unavailable
+            )
+            if [[ -n "$execution_key" ]]; then
+              collector_args+=(--execution-key "$execution_key")
+            fi
+            python scripts/ci/collect-candidate-lifecycle-bucket-events.py "${collector_args[@]}" >/dev/null
             while IFS=$'\t' read -r remote local_file; do
               [[ -n "$remote" ]] || continue
-              validate_candidate "$local_file" persistent-event
-              candidates+=(--candidate "hf-event:$remote=$local_file")
-              persistent_event_count=$((persistent_event_count + 1))
+              if validate_candidate "$local_file" persistent-event; then
+                candidates+=(--candidate "hf-event:$remote=$local_file")
+                persistent_event_count=$((persistent_event_count + 1))
+              fi
             done < .ci/status/events.tsv
           fi
 
-          # GitHub artifacts are a short-term independent evidence source. Collect
-          # the newest artifact for each state even when Bucket evidence exists so
-          # a persistence delay cannot hide a newer lifecycle observation.
+          # GitHub artifacts are an independent short-term source. Inspect matching
+          # artifacts newest-first because the newest state artifact may belong to a
+          # different execution when a request_id is intentionally reused.
           for candidate_state in planned dispatched running rejected completed acknowledged; do
             artifact_name="candidate-lifecycle-$request_key-$candidate_state"
-            artifact_id="$(gh api \
+            mapfile -t artifact_ids < <(gh api \
               "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$artifact_name" \
-              --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty')"
-            [[ -n "$artifact_id" ]] || continue
-            artifact_dir=".ci/status/artifact-$candidate_state"
-            mkdir -p "$artifact_dir"
-            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "/tmp/lifecycle-$candidate_state.zip"
-            unzip -q "/tmp/lifecycle-$candidate_state.zip" -d "$artifact_dir"
-            lifecycle_file="$(find "$artifact_dir" -type f -name 'candidate-request-lifecycle.json' -print -quit)"
-            [[ -n "$lifecycle_file" ]] || {
-              echo "::error::lifecycle artifact payload missing for state=$candidate_state"
-              exit 1
-            }
-            validate_candidate "$lifecycle_file" artifact
-            candidates+=(--candidate "github-artifact:$artifact_id=$lifecycle_file")
+              --jq '.artifacts | sort_by(.created_at) | reverse | .[].id')
+            for artifact_id in "${artifact_ids[@]}"; do
+              artifact_dir=".ci/status/artifact-$candidate_state-$artifact_id"
+              mkdir -p "$artifact_dir"
+              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "/tmp/lifecycle-$artifact_id.zip"
+              unzip -q "/tmp/lifecycle-$artifact_id.zip" -d "$artifact_dir"
+              lifecycle_file="$(find "$artifact_dir" -type f -name 'candidate-request-lifecycle.json' -print -quit)"
+              [[ -n "$lifecycle_file" ]] || {
+                echo "::error::lifecycle artifact payload missing for state=$candidate_state artifact=$artifact_id"
+                exit 1
+              }
+              if validate_candidate "$lifecycle_file" artifact; then
+                candidates+=(--candidate "github-artifact:$artifact_id=$lifecycle_file")
+                break
+              fi
+            done
           done
 
           (( ${#candidates[@]} > 0 )) || {
-            echo "::error::no lifecycle evidence found for request_id=$REQUEST_ID"
+            scope="request_id=$REQUEST_ID"
+            [[ -n "$REQUEST_EXECUTION_ID" ]] && scope="$scope request_execution_id=$REQUEST_EXECUTION_ID"
+            echo "::error::no lifecycle evidence found for $scope"
             exit 1
           }
 
-          python scripts/ci/reduce-candidate-lifecycle.py \
-            --request-id "$REQUEST_ID" \
-            "${candidates[@]}" \
-            --output .ci/candidate-request-lifecycle.json \
+          reduce_args=(
+            --request-id "$REQUEST_ID"
+            "${candidates[@]}"
+            --output .ci/candidate-request-lifecycle.json
             --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+            reduce_args+=(--request-execution-id "$REQUEST_EXECUTION_ID")
+          fi
+          python scripts/ci/reduce-candidate-lifecycle.py "${reduce_args[@]}"
           {
             echo "request_key=$request_key"
+            echo "execution_key=$execution_key"
             echo "bucket=$bucket"
             echo "persistent_event_count=$persistent_event_count"
           } >> "$GITHUB_OUTPUT"
@@ -144,7 +179,9 @@ jobs:
         shell: bash
         env:
           STATE: ${{ steps.lifecycle.outputs.state }}
+          REQUEST_EXECUTION_ID: ${{ steps.lifecycle.outputs.request_execution_id }}
           REQUEST_KEY: ${{ steps.lifecycle.outputs.request_key }}
+          EXECUTION_KEY: ${{ steps.lifecycle.outputs.execution_key }}
           SOURCE: ${{ steps.lifecycle.outputs.source }}
           UPDATED_AT: ${{ steps.lifecycle.outputs.updated_at }}
           CANDIDATE_COUNT: ${{ steps.lifecycle.outputs.candidate_count }}
@@ -155,7 +192,13 @@ jobs:
             echo '## Candidate request status'
             echo
             printf -- '- request id: `%s`\n' '${{ inputs.request_id }}'
+            if [[ -n "$REQUEST_EXECUTION_ID" ]]; then
+              printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
+            else
+              echo '- request execution id: `legacy / unavailable`'
+            fi
             printf -- '- request key: `%s`\n' "$REQUEST_KEY"
+            [[ -n "$EXECUTION_KEY" ]] && printf -- '- execution key: `%s`\n' "$EXECUTION_KEY"
             printf -- '- current state: **%s**\n' "$STATE"
             printf -- '- selected evidence source: `%s`\n' "$SOURCE"
             printf -- '- selected updated_at: `%s`\n' "$UPDATED_AT"
@@ -165,7 +208,11 @@ jobs:
               printf -- '- lifecycle bucket checked: `hf://buckets/%s`\n' "$BUCKET"
             fi
             echo
-            echo '> Current state is selected by the newest lifecycle `updated_at`; state rank is only a tie-breaker. This prevents an older terminal attempt from hiding a newer retry.'
+            if [[ -n '${{ inputs.request_execution_id }}' ]]; then
+              echo '> Status is restricted to the requested execution identity.'
+            else
+              echo '> Current state is selected by the newest lifecycle `updated_at` across executions; state rank is only a tie-breaker.'
+            fi
             echo
             echo '```json'
             cat .ci/candidate-request-lifecycle.json
