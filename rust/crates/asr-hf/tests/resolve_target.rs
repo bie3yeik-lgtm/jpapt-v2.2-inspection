@@ -79,6 +79,37 @@ fn resolves_whisper_framework_and_profile() {
 }
 
 #[test]
+fn resolves_kotoba_whisper_v2_2_target_and_bucket() {
+    let resolved = resolve_target(&ResolveTargetOptions {
+        repository_root: repository_root(),
+        selector: TargetSelector::Id("kotoba-whisper-v2.2".into()),
+        runtime_variant: None,
+    })
+    .expect("Kotoba Whisper v2.2 target must resolve");
+
+    assert_eq!(resolved.target_id, "kotoba-whisper-v2.2");
+    assert_eq!(resolved.hf_bucket, "gawohok7/tf-v2.2-onnx-dev-bucket");
+    assert_eq!(resolved.hf_model_repo, "gawohok7/tf-v2.2-onnx-dev");
+    assert_eq!(resolved.expected_framework, "transformers");
+    assert_eq!(
+        resolved.expected_upstream_repo_id,
+        "kotoba-tech/kotoba-whisper-v2.2"
+    );
+    assert_eq!(resolved.profile_set, "whisper-autoregressive-v1");
+    assert_eq!(resolved.runtime_variant, "whisper");
+    assert_eq!(resolved.runtime_profile, "whisper-autoregressive-v1");
+    assert_eq!(resolved.decoder, "whisper_autoregressive");
+
+    let by_bucket = resolve_target(&ResolveTargetOptions {
+        repository_root: repository_root(),
+        selector: TargetSelector::Bucket("gawohok7/tf-v2.2-onnx-dev-bucket".into()),
+        runtime_variant: None,
+    })
+    .expect("Kotoba Whisper v2.2 bucket must resolve");
+    assert_eq!(by_bucket.target_id, "kotoba-whisper-v2.2");
+}
+
+#[test]
 fn unknown_bucket_is_rejected() {
     let error = resolve_target(&ResolveTargetOptions {
         repository_root: repository_root(),
