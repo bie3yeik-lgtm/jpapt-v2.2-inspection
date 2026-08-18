@@ -262,7 +262,9 @@ fn hardware_output_has_flavor(output: &str, flavor: &str) -> bool {
     output
         .lines()
         .flat_map(|line| line.split_whitespace())
-        .map(|token| token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !".-_".contains(ch)))
+        .map(|token| {
+            token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !".-_".contains(ch))
+        })
         .any(|token| token == flavor)
 }
 
@@ -650,7 +652,11 @@ mod tests {
             plan.result_uri,
             "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/smoke-9001-2/result.json"
         );
-        assert!(plan.hf_args.windows(2).any(|pair| pair == ["--timeout", "30m"]));
+        assert!(
+            plan.hf_args
+                .windows(2)
+                .any(|pair| pair == ["--timeout", "30m"])
+        );
         assert!(
             plan.hf_args
                 .windows(2)
