@@ -165,6 +165,24 @@ def median_metric(samples: list[dict], key: str) -> int | None:
     return int(statistics.median(values))
 
 
+def size_ratio(target_bytes: int | None, observed_bytes: int | None) -> float | None:
+    if target_bytes is None or observed_bytes is None or target_bytes <= 0 or observed_bytes <= 0:
+        return None
+    return round(target_bytes / observed_bytes, 4)
+
+
+def optional_positive_int(value: str | None, name: str) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise SystemExit(f"{name} must be a positive integer") from error
+    if parsed <= 0:
+        raise SystemExit(f"{name} must be a positive integer")
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", required=True)
@@ -179,15 +197,23 @@ def main() -> int:
     parser.add_argument("--hf-bucket", default=os.environ.get("HF_BUCKET", ""))
     parser.add_argument("--dataset-source", default=os.environ.get("DATASET_SOURCE", ""))
     parser.add_argument("--dataset-id", default=os.environ.get("DATASET_ID", ""))
+    parser.add_argument(
+        "--target-candidate-bytes",
+        default=os.environ.get("TARGET_CANDIDATE_BYTES", ""),
+        help="Metadata-only size of the concrete candidate. Evidence only; does not scale estimate yet.",
+    )
     parser.add_argument("--workflow", default="candidate-package-evaluate-v2.yml")
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--github-output")
     args = parser.parse_args()
 
+    target_candidate_bytes = optional_positive_int(
+        args.target_candidate_bytes, "target_candidate_bytes"
+    )
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     fallback = fallback_minutes(args.suite, args.executor, args.environment)
     result = {
-        "schema_version": 3,
+        "schema_version": 4,
         "method": "fallback",
         "cohort": "none",
         "samples": 0,
@@ -202,9 +228,12 @@ def main() -> int:
         "hf_bucket": args.hf_bucket,
         "dataset_source": args.dataset_source,
         "dataset_id": args.dataset_id,
+        "target_candidate_bytes": target_candidate_bytes,
         "observed_dataset_bytes_p50": None,
         "observed_package_bytes_p50": None,
         "observed_candidate_bytes_p50": None,
+        "candidate_size_ratio_p50": None,
+        "size_scaling_applied": False,
     }
 
     if token:
@@ -266,6 +295,7 @@ def main() -> int:
                 values = [float(sample["minutes"]) for sample in selected]
                 p50 = statistics.median(values)
                 p90 = percentile(values, 0.90)
+                observed_candidate_bytes = median_metric(selected, "candidate_bytes")
                 result.update(
                     method="historical",
                     cohort=cohort,
@@ -275,7 +305,10 @@ def main() -> int:
                     p90_minutes=round(p90, 2),
                     observed_dataset_bytes_p50=median_metric(selected, "dataset_bytes"),
                     observed_package_bytes_p50=median_metric(selected, "package_bytes"),
-                    observed_candidate_bytes_p50=median_metric(selected, "candidate_bytes"),
+                    observed_candidate_bytes_p50=observed_candidate_bytes,
+                    candidate_size_ratio_p50=size_ratio(
+                        target_candidate_bytes, observed_candidate_bytes
+                    ),
                 )
         except (
             urllib.error.URLError,
@@ -296,12 +329,19 @@ def main() -> int:
                 "estimate_minutes",
                 "p50_minutes",
                 "p90_minutes",
+                "target_candidate_bytes",
                 "observed_dataset_bytes_p50",
                 "observed_package_bytes_p50",
                 "observed_candidate_bytes_p50",
+                "candidate_size_ratio_p50",
+                "size_scaling_applied",
             ):
                 value = result[key]
-                handle.write(f"{key}={'' if value is None else value}\n")
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                else:
+                    rendered = "" if value is None else value
+                handle.write(f"{key}={rendered}\n")
     return 0
 
 
