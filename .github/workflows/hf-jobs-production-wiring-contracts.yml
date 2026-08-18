@@ -107,6 +107,8 @@ jobs:
           assert 'dry_run: "false"' in smoke
           assert 'workflow-dispatch-with-retry.sh' in smoke
           assert 'candidate-package-evaluate-v2.yml' in smoke
+          assert 'GITHUB_REF_NAME' in smoke
+          assert '--arg ref "$GITHUB_SHA"' not in smoke
           assert 'hf jobs run' not in smoke
 
           assert 'HF Jobs is deliberately restricted to **smoke validation on Linux**' in docs
