@@ -6,12 +6,14 @@ on:
     paths:
       - .github/workflows/hf-jobs-rust-plan-contracts.yml
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - Cargo.toml
       - Cargo.lock
   pull_request:
     paths:
       - .github/workflows/hf-jobs-rust-plan-contracts.yml
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - Cargo.toml
       - Cargo.lock
   workflow_dispatch:
@@ -25,7 +27,7 @@ concurrency:
 
 jobs:
   contracts:
-    name: Validate zero-network HF Jobs planning
+    name: Validate zero-network HF Jobs smoke planning
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -43,9 +45,12 @@ jobs:
         run: actionlint -color -shellcheck= .github/workflows/hf-jobs-rust-plan-contracts.yml
 
       - name: Run focused Rust unit tests
-        run: cargo test --locked -p asr-contracts --bin asr-hf-job
+        run: >-
+          cargo test --locked -p asr-contracts
+          --bin asr-hf-job
+          --bin asr-candidate-request
 
-      - name: Build canonical CPU Bucket plan
+      - name: Build canonical CPU Bucket smoke plan
         shell: bash
         run: |
           set -euo pipefail
@@ -55,7 +60,7 @@ jobs:
             plan \
             --built-image "ghcr.io/owner/package@sha256:$digest" \
             --candidate-id candidate-000123 \
-            --suite probe \
+            --suite smoke \
             --environment linux-cpu \
             --provider CPUExecutionProvider \
             --hf-bucket owner/project-bucket \
@@ -70,28 +75,34 @@ jobs:
             validate --plan /tmp/hf-job-plan.json >/tmp/plan-sha
 
           jq -e --arg digest "sha256:$digest" '
-            .schema_version == 1 and
+            .schema_version == 2 and
             .candidate_id == "candidate-000123" and
-            .suite == "probe" and
+            .suite == "smoke" and
+            .timeout == "30m" and
             .environment == "linux-cpu" and
             .provider == "CPUExecutionProvider" and
             .image_digest == $digest and
             .dataset_source == "bucket" and
             .dataset_dir == "/jpapt-output/datasets" and
             (.mounts | length) == 1 and
+            (.labels | index("jpapt-purpose=smoke-validation")) != null and
+            (.labels | index("jpapt-candidate=candidate-000123")) != null and
             .mounts[0].source == "hf://buckets/owner/project-bucket" and
             .mounts[0].target == "/jpapt-output" and
             .mounts[0].mode == "rw" and
-            .result_uri == "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9101-2/result.json" and
+            .result_uri == "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/smoke-9101-2/result.json" and
+            (.hf_args | index("--timeout")) != null and
+            (.hf_args | index("30m")) != null and
             .hf_args[0] == "jobs" and
             .hf_args[1] == "run"
           ' /tmp/hf-job-plan.json >/dev/null
           grep -F "image_digest=sha256:$digest" /tmp/github-output
-          grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9101-2/result.json' /tmp/github-output
+          grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/smoke-9101-2/result.json' /tmp/github-output
+          grep -F 'timeout=30m' /tmp/github-output
           grep -Eq '^plan_sha256=[0-9a-f]{64}$' /tmp/github-output
           grep -Eq '^[0-9a-f]{64}$' /tmp/plan-sha
 
-      - name: Prove run uses the validated argv without network
+      - name: Prove hardware preflight precedes smoke run without network
         shell: bash
         run: |
           set -euo pipefail
@@ -99,14 +110,23 @@ jobs:
           cat > /tmp/fake-bin/hf <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
+          : "${HF_FAKE_CALLS:?}"
+          if [[ "${1:-}" == jobs && "${2:-}" == hardware ]]; then
+            echo hardware >> "$HF_FAKE_CALLS"
+            printf 'FLAVOR CPU GPU\ncpu-basic 2 -\na10g-small 4 A10G\n'
+            exit 0
+          fi
           : "${HF_FAKE_ARGS:?}"
+          echo run >> "$HF_FAKE_CALLS"
           printf '%s\n' "$@" > "$HF_FAKE_ARGS"
           EOF
           chmod +x /tmp/fake-bin/hf
+          : > /tmp/hf-calls
 
           PATH="/tmp/fake-bin:$PATH" \
           HF_TOKEN=fake-contract-token \
           HF_FAKE_ARGS=/tmp/actual-argv \
+          HF_FAKE_CALLS=/tmp/hf-calls \
           cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
             run --plan /tmp/hf-job-plan.json
 
@@ -115,10 +135,52 @@ jobs:
           from pathlib import Path
           plan = json.loads(Path('/tmp/hf-job-plan.json').read_text(encoding='utf-8'))
           actual = Path('/tmp/actual-argv').read_text(encoding='utf-8').splitlines()
+          calls = Path('/tmp/hf-calls').read_text(encoding='utf-8').splitlines()
           assert actual == plan['hf_args'], (actual, plan['hf_args'])
+          assert calls == ['hardware', 'run'], calls
           PY
 
-      - name: Build canonical CUDA custom-dataset plan
+      - name: Reject unavailable flavor before smoke job creation
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'a%.0s' {1..64})"
+          cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            plan \
+            --built-image "ghcr.io/owner/package@sha256:$digest" \
+            --candidate-id candidate-000124 \
+            --suite smoke \
+            --environment linux-cpu \
+            --provider CPUExecutionProvider \
+            --hf-bucket owner/project-bucket \
+            --dataset-source bucket \
+            --flavor cpu-performance \
+            --run-id 9103 \
+            --run-attempt 1 \
+            --output-json /tmp/unavailable-plan.json >/dev/null
+
+          mkdir -p /tmp/unavailable-bin
+          cat > /tmp/unavailable-bin/hf <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "${1:-}" == jobs && "${2:-}" == hardware ]]; then
+            printf 'FLAVOR CPU GPU\ncpu-basic 2 -\n'
+            exit 0
+          fi
+          echo invoked > /tmp/unexpected-hf-run
+          exit 99
+          EOF
+          chmod +x /tmp/unavailable-bin/hf
+          rm -f /tmp/unexpected-hf-run
+          if PATH="/tmp/unavailable-bin:$PATH" HF_TOKEN=fake \
+            cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+              run --plan /tmp/unavailable-plan.json; then
+            echo 'unavailable flavor unexpectedly executed' >&2
+            exit 1
+          fi
+          test ! -e /tmp/unexpected-hf-run
+
+      - name: Build canonical CUDA custom-dataset smoke plan
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +202,8 @@ jobs:
             --output-json /tmp/hf-job-cuda.json >/dev/null
 
           jq -e --arg digest "sha256:$digest" '
+            .suite == "smoke" and
+            .timeout == "30m" and
             .environment == "linux-cuda" and
             .provider == "CUDAExecutionProvider" and
             .image == ("registry.example.com/model@" + $digest) and
@@ -151,6 +215,31 @@ jobs:
             .mounts[1].mode == "ro"
           ' /tmp/hf-job-cuda.json >/dev/null
 
+      - name: Reject non-smoke suites before any HF Jobs plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'c%.0s' {1..64})"
+          for suite in probe parity; do
+            if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+              plan \
+              --built-image "ghcr.io/owner/package@sha256:$digest" \
+              --candidate-id candidate-000001 \
+              --suite "$suite" \
+              --environment linux-cpu \
+              --provider CPUExecutionProvider \
+              --hf-bucket owner/project-bucket \
+              --dataset-source bucket \
+              --flavor cpu-basic \
+              --run-id 1 \
+              --run-attempt 1 \
+              --output-json "/tmp/non-smoke-$suite.json"; then
+              echo "$suite unexpectedly accepted for HF Jobs" >&2
+              exit 1
+            fi
+            test ! -e "/tmp/non-smoke-$suite.json"
+          done
+
       - name: Reject mutable image and inconsistent routing before execution
         shell: bash
         run: |
@@ -159,7 +248,7 @@ jobs:
             plan \
             --built-image ghcr.io/owner/package:latest \
             --candidate-id candidate-000001 \
-            --suite probe \
+            --suite smoke \
             --environment linux-cpu \
             --provider CPUExecutionProvider \
             --hf-bucket owner/project-bucket \
@@ -177,7 +266,7 @@ jobs:
             plan \
             --built-image "ghcr.io/owner/package@sha256:$digest" \
             --candidate-id candidate-000001 \
-            --suite probe \
+            --suite smoke \
             --environment linux-cuda \
             --provider CPUExecutionProvider \
             --hf-bucket owner/project-bucket \
@@ -206,6 +295,20 @@ jobs:
           if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
             validate --plan /tmp/tampered-digest.json; then
             echo 'tampered image digest unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          jq '.suite = "parity"' /tmp/hf-job-plan.json > /tmp/tampered-suite.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate --plan /tmp/tampered-suite.json; then
+            echo 'tampered non-smoke suite unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          jq '.timeout = "2h"' /tmp/hf-job-plan.json > /tmp/tampered-timeout.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate --plan /tmp/tampered-timeout.json; then
+            echo 'tampered timeout unexpectedly accepted' >&2
             exit 1
           fi
 
