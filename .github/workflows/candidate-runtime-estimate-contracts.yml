@@ -139,6 +139,36 @@ jobs:
           jq -e '.dataset_workload_probe_method == "metadata-only"' /tmp/runtime-dataset-estimate.json >/dev/null
           jq -e '.target_dataset_bytes == 125 and .target_dataset_files == 2' /tmp/runtime-dataset-estimate.json >/dev/null
           jq -e '.estimate_minutes == 8 and .size_scaling_applied == false' /tmp/runtime-dataset-estimate.json >/dev/null
+      - name: Degrade unavailable workload metadata without failing planning
+        shell: bash
+        env:
+          ENABLE_WORKLOAD_PROBE: "true"
+          HF_TOKEN: synthetic-token
+          HF_BUCKET: owner/bucket
+          DATASET_SOURCE: bucket
+          CANDIDATE_REQUEST_JSON: /tmp/unavailable-request.json
+        run: |
+          set -euo pipefail
+          cat > /tmp/unavailable-request.json <<'JSON'
+          {"request_id":"unavailable-001","request_execution_id":"gw-1-1","source_repository":"owner/source","receipt_repository":"owner/source","hf_bucket":"owner/bucket","candidate_id":"latest","package_name":"source","dataset_source":"bucket","dataset_id":"","suite":"smoke","executor":"github","environment":"linux-cpu","hf_flavor":"cpu-basic","hf_jobs_image":"","dry_run":true}
+          JSON
+          mkdir -p /tmp/fake-runtime-unavailable/python
+          cat > /tmp/fake-runtime-unavailable/python/huggingface_hub.py <<'PY'
+          def list_bucket_tree(*args, **kwargs):
+              raise RuntimeError('synthetic metadata outage')
+          PY
+          PYTHONPATH=/tmp/fake-runtime-unavailable/python \
+            env -u GH_TOKEN -u GITHUB_TOKEN \
+            python scripts/ci/estimate-candidate-runtime.py \
+              --repository owner/orchestrator \
+              --suite smoke \
+              --executor github \
+              --environment linux-cpu > /tmp/unavailable-estimate.json
+          jq -e '.schema_version == 5' /tmp/unavailable-estimate.json >/dev/null
+          jq -e '.workload_probe_method == "unavailable"' /tmp/unavailable-estimate.json >/dev/null
+          jq -e '.dataset_workload_probe_method == "unavailable"' /tmp/unavailable-estimate.json >/dev/null
+          jq -e '.target_candidate_bytes == null and .target_dataset_bytes == null' /tmp/unavailable-estimate.json >/dev/null
+          jq -e '.estimate_minutes == 8 and .size_scaling_applied == false' /tmp/unavailable-estimate.json >/dev/null
       - name: Require workload-size comparison to remain evidence-only
         shell: bash
         run: |
