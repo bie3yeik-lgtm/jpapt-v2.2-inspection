@@ -592,6 +592,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build completion receipt and dispatch body
         env:
           REQUEST_ID: ${{ needs.resolve.outputs.request_id }}
@@ -620,7 +621,8 @@ jobs:
           DIRECTML_RESULT: ${{ needs.github-windows-directml.result }}
           HF_JOBS_RESULT: ${{ needs.hf-jobs.result }}
         run: >-
-          python scripts/ci/build-candidate-completion-receipt.py
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build --
+          receipt
           --receipt .ci/candidate-completion-receipt.json
           --dispatch-body .ci/candidate-completion-dispatch.json
       - name: Preserve completion receipt

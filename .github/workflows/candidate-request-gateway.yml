@@ -349,6 +349,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build rejection evidence
         id: rejection
         shell: bash
@@ -364,23 +365,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .ci/rejection
-          python scripts/ci/build-candidate-request-rejection.py \
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            rejection \
             --rejection .ci/rejection/candidate-request-rejection.json \
             --dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json
-          request_id="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())
-          print(value['request_id'])
-          PY
-          )"
-          receipt_repository="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())
-          print(value['receipt_repository'])
-          PY
-          )"
+          request_id="$(jq -er '.request_id' .ci/rejection/candidate-request-rejection.json)"
+          receipt_repository="$(jq -er '.receipt_repository' .ci/rejection/candidate-request-rejection.json)"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
           python scripts/ci/build-candidate-request-lifecycle.py \
             --state rejected \
