@@ -1,0 +1,77 @@
+name: Protocol Production Switch
+
+on:
+  push:
+    branches:
+      - agent/protocol-production-switch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protocol-production-switch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/protocol-production-switch
+      - name: Switch protocol builders to Rust authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one replacement target, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          v2 = '.github/workflows/candidate-package-evaluate-v2.yml'
+          replace_once(
+              v2,
+              '''    steps:\n      - uses: actions/checkout@v7\n      - name: Build completion receipt and dispatch body\n''',
+              '''    steps:\n      - uses: actions/checkout@v7\n      - uses: dtolnay/rust-toolchain@stable\n      - name: Build completion receipt and dispatch body\n''',
+          )
+          replace_once(
+              v2,
+              '''        run: >-\n          python scripts/ci/build-candidate-completion-receipt.py\n          --receipt .ci/candidate-completion-receipt.json\n          --dispatch-body .ci/candidate-completion-dispatch.json\n''',
+              '''        run: >-\n          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build --\n          receipt\n          --receipt .ci/candidate-completion-receipt.json\n          --dispatch-body .ci/candidate-completion-dispatch.json\n''',
+          )
+
+          gateway = '.github/workflows/candidate-request-gateway.yml'
+          marker = '''  reject:\n    name: Emit candidate request rejection\n    needs: plan\n    if: ${{ always() && needs.plan.result == 'failure' }}\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - name: Build rejection evidence\n'''
+          replace_once(
+              gateway,
+              marker,
+              marker.replace(
+                  '      - name: Build rejection evidence\\n',
+                  '      - uses: dtolnay/rust-toolchain@stable\\n      - name: Build rejection evidence\\n',
+              ),
+          )
+          replace_once(
+              gateway,
+              '''          python scripts/ci/build-candidate-request-rejection.py \\\n            --rejection .ci/rejection/candidate-request-rejection.json \\\n            --dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json\n          request_id="$(python - <<'PY'\n          import json\n          from pathlib import Path\n          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())\n          print(value['request_id'])\n          PY\n          )"\n          receipt_repository="$(python - <<'PY'\n          import json\n          from pathlib import Path\n          value = json.loads(Path('.ci/rejection/candidate-request-rejection.json').read_text())\n          print(value['receipt_repository'])\n          PY\n          )"\n''',
+              '''          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \\\n            rejection \\\n            --rejection .ci/rejection/candidate-request-rejection.json \\\n            --dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json\n          request_id="$(jq -er '.request_id' .ci/rejection/candidate-request-rejection.json)"\n          receipt_repository="$(jq -er '.receipt_repository' .ci/rejection/candidate-request-rejection.json)"\n''',
+          )
+          PY
+      - name: Commit production workflow switch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            .github/workflows/candidate-package-evaluate-v2.yml \
+            .github/workflows/candidate-request-gateway.yml
+          git commit -m 'refactor: use Rust candidate protocol builders'
+          git push origin HEAD:agent/protocol-production-switch
