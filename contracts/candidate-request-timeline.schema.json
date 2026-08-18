@@ -20,6 +20,12 @@
       "minLength": 1,
       "maxLength": 128
     },
+    "request_execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "minLength": 1,
+      "maxLength": 128
+    },
     "request_key": {
       "type": "string",
       "pattern": "^[0-9a-f]{24}$"
