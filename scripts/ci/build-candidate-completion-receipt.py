@@ -122,8 +122,11 @@ def validate(receipt: dict) -> None:
         for field in ("resolved_candidate_id", "image_ref", "image_digest", "result_artifact"):
             if not receipt.get(field):
                 raise SystemExit(f"successful evaluation receipt requires {field}")
-    if not isinstance(receipt.get("failed_jobs"), list) or not all(isinstance(item, str) and item for item in receipt["failed_jobs"]):
+    failed_jobs = receipt.get("failed_jobs")
+    if not isinstance(failed_jobs, list) or not all(isinstance(item, str) and item for item in failed_jobs):
         raise SystemExit("failed_jobs is invalid")
+    if len(set(failed_jobs)) != len(failed_jobs):
+        raise SystemExit("failed_jobs must contain unique values")
     try:
         parse_rfc3339_time(receipt.get("completed_at"), "completed_at")
     except ValueError as error:
