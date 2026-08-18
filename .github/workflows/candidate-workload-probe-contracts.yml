@@ -1,0 +1,153 @@
+name: Candidate Workload Probe Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-workload-probe-contracts.yml
+      - scripts/ci/measure-candidate-bucket-size.py
+      - rust/crates/asr-hf/**
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  pull_request:
+    paths:
+      - .github/workflows/candidate-workload-probe-contracts.yml
+      - scripts/ci/measure-candidate-bucket-size.py
+      - rust/crates/asr-hf/**
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-workload-probe-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate metadata-only candidate workload probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Compile workload probe
+        run: python -m py_compile scripts/ci/measure-candidate-bucket-size.py
+      - name: Verify candidate file selection and resolver parsing
+        run: |
+          python - <<'PY'
+          import importlib.util
+          from dataclasses import dataclass
+          from pathlib import Path
+
+          path = Path('scripts/ci/measure-candidate-bucket-size.py')
+          spec = importlib.util.spec_from_file_location('probe', path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+
+          @dataclass
+          class Item:
+              path: str
+              type: str
+              size: int
+
+          items = [
+              Item('candidates/candidate-000002/model.onnx', 'file', 100),
+              Item('candidates/candidate-000002/metadata.json', 'file', 20),
+              Item('candidates/candidate-000003/model.onnx', 'file', 999),
+              Item('candidates/ctc/candidate-000001/model.onnx', 'file', 50),
+              Item('candidates/candidate-000002/subdir', 'directory', 0),
+          ]
+          canonical = module.candidate_files(items, 'candidate-000002')
+          assert [item.size for item in canonical] == [100, 20]
+          historical = module.candidate_files(items, 'ctc/candidate-000001')
+          assert [item.size for item in historical] == [50]
+
+          parsed = module.parse_resolver_output(
+              'candidate_id=candidate-000002\nrelative_path=candidate-000002\nlegacy=false\n'
+          )
+          assert parsed == {
+              'candidate_id': 'candidate-000002',
+              'relative_path': 'candidate-000002',
+              'legacy': 'false',
+          }
+          PY
+      - name: Exercise metadata-only probe with fake HF and Rust resolver
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-probe/bin /tmp/fake-probe/python
+          cat > /tmp/fake-probe/python/huggingface_hub.py <<'PY'
+          from dataclasses import dataclass
+
+          @dataclass
+          class Item:
+              path: str
+              type: str = 'file'
+              size: int = 0
+
+          def list_bucket_tree(bucket, *, prefix, recursive, token):
+              assert bucket == 'owner/bucket'
+              assert prefix == 'candidates'
+              assert recursive is True
+              assert token == 'synthetic-token'
+              return [
+                  Item('candidates/candidate-000001/model.onnx', size=50),
+                  Item('candidates/candidate-000002/model.onnx', size=200),
+                  Item('candidates/candidate-000002/metadata.json', size=25),
+              ]
+          PY
+          cat > /tmp/fake-probe/bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if printf '%s\n' "$*" | grep -q -- '--candidate-id'; then
+            echo 'explicit candidate unexpectedly passed for latest request' >&2
+            exit 2
+          fi
+          printf '%s\n' \
+            'candidate_id=candidate-000002' \
+            'relative_path=candidate-000002' \
+            'legacy=false'
+          SH
+          chmod +x /tmp/fake-probe/bin/cargo
+          : > /tmp/probe.out
+          PATH="/tmp/fake-probe/bin:$PATH" PYTHONPATH=/tmp/fake-probe/python \
+            python scripts/ci/measure-candidate-bucket-size.py \
+              --bucket owner/bucket \
+              --candidate-id latest \
+              --github-output /tmp/probe.out > /tmp/probe.json
+          jq -e '.available == true' /tmp/probe.json >/dev/null
+          jq -e '.candidate_id == "candidate-000002"' /tmp/probe.json >/dev/null
+          jq -e '.candidate_bytes == 225 and .candidate_files == 2' /tmp/probe.json >/dev/null
+          grep -Fx 'candidate_bytes=225' /tmp/probe.out
+          grep -Fx 'candidate_files=2' /tmp/probe.out
+      - name: Fail closed on malformed identity and degrade only when requested
+        shell: bash
+        env:
+          HF_TOKEN: synthetic-token
+        run: |
+          set -euo pipefail
+          if python scripts/ci/measure-candidate-bucket-size.py \
+            --bucket invalid \
+            --candidate-id latest; then
+            echo 'invalid bucket unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/fake-unavailable/python
+          cat > /tmp/fake-unavailable/python/huggingface_hub.py <<'PY'
+          def list_bucket_tree(*args, **kwargs):
+              raise RuntimeError('synthetic unavailable')
+          PY
+          PYTHONPATH=/tmp/fake-unavailable/python \
+            python scripts/ci/measure-candidate-bucket-size.py \
+              --bucket owner/bucket \
+              --allow-unavailable > /tmp/unavailable.json
+          jq -e '.available == false and .candidate_bytes == null' /tmp/unavailable.json >/dev/null
+      - name: Preserve explicit latest semantics in Rust request contract
+        run: cargo test --locked -p asr-contracts --bin asr-candidate-request explicit_latest_overrides_configured_candidate_default
