@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/contracts/candidate-workload-probe.schema.json",
+  "title": "CandidateWorkloadProbeV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "available",
+    "candidate_id",
+    "candidate_relative_path",
+    "candidate_bytes",
+    "candidate_files",
+    "legacy_candidate_layout",
+    "warning"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "available": {"type": "boolean"},
+    "candidate_id": {
+      "anyOf": [
+        {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+        {"type": "null"}
+      ]
+    },
+    "candidate_relative_path": {
+      "anyOf": [
+        {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).+$"},
+        {"type": "null"}
+      ]
+    },
+    "candidate_bytes": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "candidate_files": {
+      "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+    },
+    "legacy_candidate_layout": {
+      "anyOf": [{"type": "boolean"}, {"type": "null"}]
+    },
+    "warning": {
+      "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"available": {"const": true}}},
+      "then": {
+        "properties": {
+          "candidate_id": {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+          "candidate_relative_path": {"type": "string", "minLength": 1},
+          "candidate_bytes": {"type": "integer", "minimum": 1},
+          "candidate_files": {"type": "integer", "minimum": 1},
+          "legacy_candidate_layout": {"type": "boolean"},
+          "warning": {"type": "null"}
+        }
+      },
+      "else": {
+        "properties": {
+          "candidate_id": {"type": "null"},
+          "candidate_relative_path": {"type": "null"},
+          "candidate_bytes": {"type": "null"},
+          "candidate_files": {"type": "null"},
+          "legacy_candidate_layout": {"type": "null"},
+          "warning": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ]
+}
