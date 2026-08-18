@@ -128,7 +128,7 @@ jobs:
           e2e=.github/workflows/candidate-protocol-synthetic-e2e.yml
           grep -F 'dtolnay/rust-toolchain@stable' "$e2e"
           grep -F 'asr-candidate-protocol-build --' "$e2e"
-          grep -F 'receipt \' "$e2e"
+          grep -F -- '--receipt /tmp/receipt.json' "$e2e"
           grep -F 'build-candidate-completion-ack.py' "$e2e"
           grep -F 'build-candidate-request-timeline.py' "$e2e"
           grep -F -- '--request-execution-id gw-1001-1' "$e2e"
