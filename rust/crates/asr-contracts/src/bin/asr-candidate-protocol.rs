@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::Path;
 
 const RECEIPT_REQUIRED: &[&str] = &[
     "schema_version",
