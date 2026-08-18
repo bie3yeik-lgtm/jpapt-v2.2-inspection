@@ -24,15 +24,38 @@ The principal workflow bindings are:
 .github/workflows/candidate-package-evaluate-v2.yml
   request resolution -> asr-candidate-request
   completion builder -> asr-candidate-protocol-build receipt
+
+.github/workflows/candidate-request-lifecycle-observer.yml
+  completion receipt validation -> asr-candidate-protocol receipt-validate
+  canonical receipt SHA-256     -> asr-candidate-protocol receipt-sha
+
+.github/workflows/candidate-completion-ack.yml
+  ACK/receipt validation -> asr-candidate-protocol
+  ACK binding             -> asr-candidate-protocol ack-binding
+
+.github/workflows/candidate-completion-reconcile.yml
+  preserved receipt validation -> asr-candidate-protocol receipt-validate
+  canonical receipt SHA-256    -> asr-candidate-protocol receipt-sha
+
+.github/workflows/candidate-lifecycle-persist.yml
+  rejection validation -> asr-candidate-protocol rejection-validate
+  receipt validation   -> asr-candidate-protocol receipt-validate
+  ACK validation       -> asr-candidate-protocol ack-validate
+  ACK/receipt binding  -> asr-candidate-protocol ack-binding
 ```
 
-The production-wiring contract is:
+Durable lifecycle persistence is fail-closed at the canonical evidence boundary. Rejection, completion receipt, and acknowledgement evidence are validated with Rust before being passed to the lifecycle Bucket writer. An `acknowledged` snapshot additionally requires both its preserved completion receipt and acknowledgement artifact, and their binding is revalidated before durable storage.
+
+Focused production-authority contracts are:
 
 ```text
 .github/workflows/candidate-protocol-production-wiring-contracts.yml
+.github/workflows/candidate-lifecycle-persist-protocol-authority-contracts.yml
+.github/workflows/candidate-lifecycle-persist-contracts.yml
+.github/workflows/candidate-protocol-surface-contracts.yml
 ```
 
-It verifies workflow syntax, Rust toolchain wiring, absence of the superseded Python completion/rejection builders from those orchestrator production jobs, and functional receipt/rejection generation plus Rust validation.
+They verify Rust toolchain wiring, absence of superseded Python production builders/validators from orchestrator-owned authority paths, functional receipt/rejection/ACK validation and binding, current lifecycle materialization semantics, and the cross-language synthetic boundary.
 
 ## Receiver bootstrap remains portable Python
 
@@ -57,6 +80,8 @@ scripts/ci/portable/validate-candidate-protocol-binding.py
 ```
 
 These Python implementations are compatibility/portability surfaces, not the preferred orchestrator production implementation.
+
+Lifecycle/timeline indexing and query utilities may also remain Python where they are not protocol construction or trust-boundary authority. The migration rule is based on responsibility, not language elimination.
 
 ## Cross-language compatibility is required
 
@@ -87,12 +112,22 @@ That test lives in:
 
 A matching canonical receipt SHA-256 across the Rust receipt implementation and portable Python ACK implementation is part of the test contract.
 
+No-compute dry-run receipt semantics are also exercised with the production Rust builder by:
+
+```text
+.github/workflows/candidate-dry-run-contracts.yml
+```
+
+It covers successful dry-run completion, non-dry execution with no terminal evaluator result, and real orchestration failure without launching candidate/model evaluation compute.
+
 ## Migration rule
 
 Do not migrate an external receiver workflow to Rust merely because a Rust implementation exists in the orchestrator repository.
 
 A receiver-side Rust migration is valid only if the receiver installation contract is changed to provide a self-contained Rust executable or another portable artifact with an explicit version/distribution policy. Until then:
 
-- orchestrator-owned request/completion/rejection logic should prefer Rust;
+- orchestrator-owned request/completion/rejection construction and canonical protocol validation should prefer Rust;
+- orchestrator-owned durable persistence must validate canonical protocol evidence with Rust before storage;
 - external receiver validation and ACK construction should remain portable;
+- lifecycle/timeline query utilities may remain Python when they are not protocol trust authority;
 - parity CI must protect the boundary between the two implementations.
