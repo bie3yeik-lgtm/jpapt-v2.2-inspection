@@ -1,3 +1,4 @@
+<!-- validation-only trigger: anonymous HF Jobs image preflight wiring -->
 # External candidate package pipeline
 
 This repository accepts requests from arbitrary GitHub repositories. `largoyo/Premiere-AutoProcess-Plugin` is not special-cased.
