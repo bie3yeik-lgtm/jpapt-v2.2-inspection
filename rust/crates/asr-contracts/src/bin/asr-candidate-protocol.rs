@@ -205,7 +205,12 @@ fn print_pretty(value: &Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
 
-fn exact_fields(value: &Map<String, Value>, required: &[&str], optional: &[&str], label: &str) -> Result<(), String> {
+fn exact_fields(
+    value: &Map<String, Value>,
+    required: &[&str],
+    optional: &[&str],
+    label: &str,
+) -> Result<(), String> {
     let required = required.iter().copied().collect::<BTreeSet<_>>();
     let optional = optional.iter().copied().collect::<BTreeSet<_>>();
     let actual = value.keys().map(String::as_str).collect::<BTreeSet<_>>();
@@ -237,7 +242,10 @@ fn required_string<'a>(value: &'a Map<String, Value>, field: &str) -> Result<&'a
         .ok_or_else(|| format!("{field} must be a non-empty string"))
 }
 
-fn optional_string<'a>(value: &'a Map<String, Value>, field: &str) -> Result<Option<&'a str>, String> {
+fn optional_string<'a>(
+    value: &'a Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a str>, String> {
     match required(value, field)? {
         Value::Null => Ok(None),
         Value::String(text) if !text.is_empty() => Ok(Some(text)),
@@ -299,7 +307,11 @@ fn validate_hex(value: &str, len: usize, prefix: &str, field: &str) -> Result<()
     let raw = value
         .strip_prefix(prefix)
         .ok_or_else(|| format!("{field} is invalid"))?;
-    if raw.len() == len && raw.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()) {
+    if raw.len() == len
+        && raw
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
         Ok(())
     } else {
         Err(format!("{field} is invalid"))
@@ -325,7 +337,12 @@ fn validate_rfc3339(value: &str, field: &str) -> Result<(), String> {
 }
 
 fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
-    exact_fields(value, RECEIPT_REQUIRED, &["request_execution_id"], "receipt")?;
+    exact_fields(
+        value,
+        RECEIPT_REQUIRED,
+        &["request_execution_id"],
+        "receipt",
+    )?;
     if required(value, "schema_version")?.as_u64() != Some(1) {
         return Err("schema_version must be 1".to_owned());
     }
@@ -338,7 +355,11 @@ fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
             "request_execution_id",
         )?;
     }
-    for field in ["source_repository", "receipt_repository", "orchestrator_repository"] {
+    for field in [
+        "source_repository",
+        "receipt_repository",
+        "orchestrator_repository",
+    ] {
         validate_repository(required_string(value, field)?, field)?;
     }
     if !["success", "failure", "cancelled"].contains(&required_string(value, "conclusion")?) {
@@ -353,8 +374,13 @@ fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
     if !["github", "hf_jobs"].contains(&required_string(value, "executor")?) {
         return Err("executor is invalid".to_owned());
     }
-    if !["linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"]
-        .contains(&required_string(value, "environment")?)
+    if ![
+        "linux-cpu",
+        "linux-cuda",
+        "macos-coreml",
+        "windows-directml",
+    ]
+    .contains(&required_string(value, "environment")?)
     {
         return Err("environment is invalid".to_owned());
     }
@@ -381,7 +407,12 @@ fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
         validate_hex(digest, 64, "sha256:", "image_digest")?;
     }
     if required_string(value, "conclusion")? == "success" && !dry_run {
-        for field in ["resolved_candidate_id", "image_ref", "image_digest", "result_artifact"] {
+        for field in [
+            "resolved_candidate_id",
+            "image_ref",
+            "image_digest",
+            "result_artifact",
+        ] {
             if optional_string(value, field)?.is_none() {
                 return Err(format!("successful evaluation receipt requires {field}"));
             }
@@ -413,8 +444,17 @@ fn validate_ack(value: &Map<String, Value>) -> Result<(), String> {
             "request_execution_id",
         )?;
     }
-    validate_hex(required_string(value, "receipt_sha256")?, 64, "", "receipt_sha256")?;
-    for field in ["receipt_repository", "orchestrator_repository", "receiver_repository"] {
+    validate_hex(
+        required_string(value, "receipt_sha256")?,
+        64,
+        "",
+        "receipt_sha256",
+    )?;
+    for field in [
+        "receipt_repository",
+        "orchestrator_repository",
+        "receiver_repository",
+    ] {
         validate_repository(required_string(value, field)?, field)?;
     }
     for field in [
@@ -425,12 +465,20 @@ fn validate_ack(value: &Map<String, Value>) -> Result<(), String> {
     ] {
         positive_integer(value, field)?;
     }
-    validate_https_url(required_string(value, "receiver_run_url")?, "receiver_run_url")?;
+    validate_https_url(
+        required_string(value, "receiver_run_url")?,
+        "receiver_run_url",
+    )?;
     validate_rfc3339(required_string(value, "accepted_at")?, "accepted_at")
 }
 
 fn validate_rejection(value: &Map<String, Value>) -> Result<(), String> {
-    exact_fields(value, REJECTION_REQUIRED, &["request_execution_id"], "rejection")?;
+    exact_fields(
+        value,
+        REJECTION_REQUIRED,
+        &["request_execution_id"],
+        "rejection",
+    )?;
     if required(value, "schema_version")?.as_u64() != Some(1) {
         return Err("schema_version must be 1".to_owned());
     }
@@ -443,7 +491,11 @@ fn validate_rejection(value: &Map<String, Value>) -> Result<(), String> {
             "request_execution_id",
         )?;
     }
-    for field in ["source_repository", "receipt_repository", "orchestrator_repository"] {
+    for field in [
+        "source_repository",
+        "receipt_repository",
+        "orchestrator_repository",
+    ] {
         validate_repository(required_string(value, field)?, field)?;
     }
     if required_string(value, "reason_code")? != "REQUEST_NORMALIZATION_OR_RESOLUTION_FAILED" {
@@ -451,7 +503,10 @@ fn validate_rejection(value: &Map<String, Value>) -> Result<(), String> {
     }
     positive_integer(value, "gateway_run_id")?;
     positive_integer(value, "gateway_run_attempt")?;
-    validate_https_url(required_string(value, "gateway_run_url")?, "gateway_run_url")?;
+    validate_https_url(
+        required_string(value, "gateway_run_url")?,
+        "gateway_run_url",
+    )?;
     validate_rfc3339(required_string(value, "rejected_at")?, "rejected_at")
 }
 
@@ -517,7 +572,10 @@ fn validate_ack_binding(
     orchestrator: &str,
 ) -> Result<(), String> {
     let checks = [
-        ("orchestrator_repository", Value::String(orchestrator.to_owned())),
+        (
+            "orchestrator_repository",
+            Value::String(orchestrator.to_owned()),
+        ),
         ("request_id", required(receipt, "request_id")?.clone()),
         (
             "receipt_repository",
@@ -550,7 +608,9 @@ fn validate_ack_binding(
             "ACK binding mismatch for request_execution_id: {actual:?} != {expected:?}"
         )),
         (Some(_), None) => Err("ACK binding mismatch for request_execution_id: missing".to_owned()),
-        (None, Some(_)) => Err("ACK contains request_execution_id but legacy receipt does not".to_owned()),
+        (None, Some(_)) => {
+            Err("ACK contains request_execution_id but legacy receipt does not".to_owned())
+        }
         (None, None) => Ok(()),
     }
 }
@@ -587,7 +647,10 @@ mod tests {
             "result_uri":null,
             "failed_jobs":[],
             "completed_at":"2026-08-18T10:00:00Z"
-        }).as_object().unwrap().clone()
+        })
+        .as_object()
+        .unwrap()
+        .clone()
     }
 
     #[test]
@@ -602,7 +665,10 @@ mod tests {
         for (key, value) in first.iter().rev() {
             reversed.insert(key.clone(), value.clone());
         }
-        assert_eq!(canonical_sha256(&first).unwrap(), canonical_sha256(&reversed).unwrap());
+        assert_eq!(
+            canonical_sha256(&first).unwrap(),
+            canonical_sha256(&reversed).unwrap()
+        );
     }
 
     #[test]
@@ -635,7 +701,10 @@ mod tests {
             "receiver_run_attempt":1,
             "receiver_run_url":"https://github.com/owner/receiver/actions/runs/300",
             "accepted_at":"2026-08-18T10:01:00Z"
-        }).as_object().unwrap().clone();
+        })
+        .as_object()
+        .unwrap()
+        .clone();
         validate_ack(&ack).unwrap();
         validate_ack_binding(&receipt, &ack, "owner/orchestrator").unwrap();
     }
