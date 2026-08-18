@@ -79,14 +79,16 @@ Important inputs:
 | `package_name` | source config/repo name | GHCR package name. |
 | `dataset_source` | `auto` | Resolve from source config, otherwise `bucket`. Explicit values are `bucket`, `repository`, `custom`. |
 | `dataset_id` | empty | HF dataset repository for `custom`, or override for `repository`. |
-| `suite` | `smoke` | `smoke`, `parity`, or `probe`. |
-| `executor` | `github` | `github` or `hf_jobs`. |
-| `environment` | `linux-cpu` | `linux-cpu`, `linux-cuda`, `macos-coreml`, `windows-directml`. |
-| `hf_flavor` | `cpu-basic` | HF Jobs hardware flavor. |
-| `hf_jobs_image` | empty | Optional image that HF Jobs can pull. Empty uses the digest-pinned image built by this workflow. |
+| `suite` | `smoke` | `smoke`, `parity`, or `probe` for GitHub execution. **HF Jobs accepts only `smoke`.** |
+| `executor` | `github` | `github` or `hf_jobs`. `hf_jobs` is intentionally smoke-only. |
+| `environment` | `linux-cpu` | `linux-cpu`, `linux-cuda`, `macos-coreml`, `windows-directml`. HF Jobs accepts only the two Linux environments. |
+| `hf_flavor` | `cpu-basic` | HF Jobs hardware flavor; availability is checked with `hf jobs hardware` immediately before job creation. |
+| `hf_jobs_image` | empty | Optional immutable image override. When set for HF Jobs it must use `@sha256:<64 hex>`. |
 | `dry_run` | false | Resolve routing and print a coarse time estimate without candidate download/build/evaluation. |
 
 All `repository_dispatch` values are validated explicitly. Manual `choice` inputs are not considered sufficient validation because dispatch payloads do not inherit GitHub UI choice constraints.
+
+For `executor=hf_jobs`, Rust request resolution rejects `probe` and `parity` **before the candidate package build**. Those suites remain available with `executor=github`.
 
 ## Package identity and cache
 
@@ -119,6 +121,8 @@ For the generic package evaluator, parity cases are `.npz` files containing arra
 - `smoke` loads every ONNX model and, when an `.npz` case exists, performs one inference.
 - `parity` requires reference `.npz` cases and checks outputs with numerical tolerances.
 
+The HF Jobs operational test surface deliberately uses only `smoke`; `probe` and `parity` are not remote-HF test modes.
+
 ## Strict provider evidence
 
 The generic evaluator does **not** silently fall back to CPU anymore.
@@ -134,7 +138,7 @@ If the requested provider is absent from `onnxruntime.get_available_providers()`
 
 and exits non-zero. The report also records platform information, ONNX Runtime version, requested provider, available providers, and active providers for every session.
 
-This rule is important for CoreML, DirectML and CUDA probes: a successful CPU inference is not evidence that the requested provider works.
+This rule is important for CoreML, DirectML and CUDA validation: a successful CPU inference is not evidence that the requested provider works.
 
 ## GitHub runner behavior
 
@@ -143,23 +147,48 @@ This rule is important for CoreML, DirectML and CUDA probes: a successful CPU in
 - `windows-directml` uses `windows-latest` with `onnxruntime-directml` and evaluates natively.
 - `linux-cuda` with `executor=github` requires a self-hosted runner carrying labels `self-hosted`, `linux`, `x64`, `gpu` and a Docker/NVIDIA runtime capable of `docker run --gpus all`.
 
-`ubuntu-latest` is deliberately not treated as CUDA-capable. If no suitable self-hosted GPU runner exists, select `executor=hf_jobs` instead.
+`ubuntu-latest` is deliberately not treated as CUDA-capable. If no suitable self-hosted GPU runner exists, the guarded HF Jobs smoke route can validate the Linux CUDA package remotely.
 
 Hosted macOS and Windows runners cannot execute the Linux OCI package as a native CoreML/DirectML environment, so those paths fetch the identical candidate and run the strict evaluator natively. The GHCR package remains provenance for the candidate/runtime build, while provider evidence is produced by the target OS.
 
-## HF Jobs behavior
+## HF Jobs smoke behavior
 
-HF Jobs is restricted by this workflow to Linux environments. Hugging Face Jobs accepts a Docker image plus hardware flavor and supports Dataset/Bucket mounts. Bucket mounts are writable by default, so the workflow mounts the target Bucket at `/jpapt-output` and stores the evaluation result under:
+HF Jobs is deliberately restricted to **smoke validation on Linux**. The operational entrypoint is the manual-only **HF Jobs Smoke** workflow (`.github/workflows/hf-jobs-smoke.yml`). It has no suite input and requires `confirm_smoke=true`. It dispatches the canonical evaluator with fixed values:
 
 ```text
-runs/hf-jobs/<candidate-id>/<suite>-<github-run-id>-<attempt>/result.json
+suite = smoke
+executor = hf_jobs
+dry_run = false
+```
+
+The generic V2 evaluator remains defensive: Rust `asr-candidate-request` rejects a non-smoke HF Jobs request before build, and Rust `asr-hf-job` rejects a non-smoke or tampered persisted plan before any HF CLI invocation.
+
+The Rust HF Jobs plan is schema version 2 and is the authority for remote invocation. It binds:
+
+- concrete candidate ID;
+- Linux environment and ONNX Runtime provider;
+- dataset routing and mounts;
+- immutable digest-pinned selected image and digest;
+- canonical output URI;
+- fixed remote timeout `30m`;
+- smoke-identifying labels;
+- the exact `hf jobs run` argv.
+
+Before job creation, `asr-hf-job run` executes `hf jobs hardware` and requires the requested `hf_flavor` to appear in the returned hardware list. An unavailable flavor therefore fails before `hf jobs run` is invoked.
+
+The validated plan is uploaded as an Actions artifact **before remote execution**. The plan's canonical result location is:
+
+```text
+runs/hf-jobs/<candidate-id>/smoke-<github-run-id>-<attempt>/result.json
 ```
 
 When `dataset_source=bucket`, `/jpapt-output/datasets` is used directly. Repository/custom datasets are mounted separately read-only.
 
-The workflow invokes `hf jobs run` without detach mode. Current HF Jobs CLI semantics wait for the Job and return non-zero when the Job fails, making the GitHub Action reflect the remote validation outcome.
+The workflow invokes `hf jobs run` through the validated Rust plan without detach mode. The remote invocation includes the Rust-enforced `30m` timeout. Completion receipt generation independently rejects HF Jobs receipts whose suite is not `smoke`, and validates the selected image/digest and supplied result URI against the canonical smoke layout.
 
-`hf_jobs_image` exists because the execution image must be pullable by Hugging Face Jobs. The default is the digest-pinned image built by the workflow; deployments whose registry policy does not permit that image should provide a pullable mirror explicitly.
+`hf_jobs_image` exists because the execution image must be pullable by Hugging Face Jobs. The default is the digest-pinned image built by the workflow; deployments whose registry policy does not permit that image should provide a pullable, digest-pinned mirror explicitly.
+
+Pull-request and contract CI never create a real HF Job. They use fake `hf` executables to prove hardware-preflight ordering, exact argv forwarding, unavailable-flavor rejection, and fail-closed behavior for tampered plans.
 
 ## Evaluation provenance
 
@@ -170,6 +199,8 @@ results/candidate-package/
 ├── result.json
 └── evaluation-provenance.json
 ```
+
+HF Jobs evaluation artifacts additionally preserve the validated `hf-job-plan.json`.
 
 `evaluation-provenance.json` binds the evidence to:
 
@@ -183,22 +214,21 @@ results/candidate-package/
 
 This prevents a later `latest` tag movement from changing the meaning of a historical evaluation artifact.
 
-## Dispatch example
+## Guarded HF Jobs smoke example
+
+Prefer manually running **HF Jobs Smoke** rather than dispatching `Candidate Package Evaluate V2` directly. A corresponding fixed internal V2 request is equivalent to:
 
 ```json
 {
-  "event_type": "jpapt.candidate-evaluate",
-  "client_payload": {
-    "source_repository": "owner/source-repository",
-    "candidate_id": "candidate-000042",
-    "dataset_source": "bucket",
-    "suite": "parity",
-    "executor": "hf_jobs",
-    "environment": "linux-cuda",
-    "hf_flavor": "a10g-small",
-    "dry_run": false
-  }
+  "source_repository": "owner/source-repository",
+  "candidate_id": "candidate-000042",
+  "dataset_source": "bucket",
+  "suite": "smoke",
+  "executor": "hf_jobs",
+  "environment": "linux-cpu",
+  "hf_flavor": "cpu-basic",
+  "dry_run": false
 }
 ```
 
-A request from any other repository uses the same contract; no source-repository allow-list is hard-coded in these workflows.
+A request using `executor=hf_jobs` with `suite=probe` or `suite=parity` is rejected. A request from any source repository otherwise uses the same routing contract; no source-repository allow-list is hard-coded in these workflows.
