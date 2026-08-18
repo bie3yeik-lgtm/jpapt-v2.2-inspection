@@ -91,6 +91,8 @@ def resolve_candidate(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    # Invalid resolver output is an internal contract violation, not an external
+    # availability problem. Keep it fail-closed even with --allow-unavailable.
     return parse_resolver_output(completed.stdout)
 
 
@@ -130,6 +132,14 @@ def unavailable(message: str) -> dict:
     }
 
 
+def availability_failure(error: Exception, *, allow_unavailable: bool) -> dict:
+    if not allow_unavailable:
+        raise SystemExit(f"candidate workload probe failed: {error}") from error
+    result = unavailable(str(error))
+    print(f"::warning::candidate workload probe unavailable: {error}", file=sys.stderr)
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket", required=True)
@@ -156,48 +166,71 @@ def main() -> int:
                 token=token,
             )
         )
-        file_paths = sorted(
-            item.path
-            for item in items
-            if getattr(item, "type", None) == "file"
-            and isinstance(getattr(item, "path", None), str)
-        )
-        if not file_paths:
-            raise RuntimeError("candidate collection contains no files")
+    except Exception as error:  # HF client/network/auth boundary.
+        result = availability_failure(error, allow_unavailable=args.allow_unavailable)
+        write_github_output(args.github_output, result)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
 
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
-            listing = Path(handle.name)
-            for path in file_paths:
-                handle.write(path + "\n")
+    file_paths = sorted(
+        item.path
+        for item in items
+        if getattr(item, "type", None) == "file"
+        and isinstance(getattr(item, "path", None), str)
+    )
+    if not file_paths:
+        result = availability_failure(
+            RuntimeError("candidate collection contains no files"),
+            allow_unavailable=args.allow_unavailable,
+        )
+        write_github_output(args.github_output, result)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+        listing = Path(handle.name)
+        for path in file_paths:
+            handle.write(path + "\n")
+    try:
         try:
             resolved = resolve_candidate(
                 listing,
                 candidate_id=args.candidate_id,
                 runtime_variant=args.runtime_variant,
             )
-        finally:
-            listing.unlink(missing_ok=True)
+        except subprocess.CalledProcessError as error:
+            message = error.stderr.strip() or str(error)
+            result = availability_failure(
+                RuntimeError(f"candidate resolver unavailable: {message}"),
+                allow_unavailable=args.allow_unavailable,
+            )
+            write_github_output(args.github_output, result)
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0
+    finally:
+        listing.unlink(missing_ok=True)
 
-        files = candidate_files(items, resolved["relative_path"])
-        if not files:
-            raise RuntimeError("resolved candidate contains no file metadata")
-        total_bytes = sum(int(item.size) for item in files)
-        result = {
-            "schema_version": 1,
-            "available": True,
-            "candidate_id": resolved["candidate_id"],
-            "candidate_relative_path": resolved["relative_path"],
-            "candidate_bytes": total_bytes,
-            "candidate_files": len(files),
-            "legacy_candidate_layout": resolved["legacy"] == "true",
-            "warning": None,
-        }
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
-        if not args.allow_unavailable:
-            raise SystemExit(f"candidate workload probe failed: {error}") from error
-        result = unavailable(str(error))
-        print(f"::warning::candidate workload probe unavailable: {error}", file=sys.stderr)
+    files = candidate_files(items, resolved["relative_path"])
+    if not files:
+        result = availability_failure(
+            RuntimeError("resolved candidate contains no file metadata"),
+            allow_unavailable=args.allow_unavailable,
+        )
+        write_github_output(args.github_output, result)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
 
+    total_bytes = sum(int(item.size) for item in files)
+    result = {
+        "schema_version": 1,
+        "available": True,
+        "candidate_id": resolved["candidate_id"],
+        "candidate_relative_path": resolved["relative_path"],
+        "candidate_bytes": total_bytes,
+        "candidate_files": len(files),
+        "legacy_candidate_layout": resolved["legacy"] == "true",
+        "warning": None,
+    }
     write_github_output(args.github_output, result)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
