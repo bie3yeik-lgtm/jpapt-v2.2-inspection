@@ -5,14 +5,48 @@
 It separates request planning from execution:
 
 1. normalize the incoming manual or `repository_dispatch` request;
-2. read `.jpapt/hf-bucket.yml` from the source repository when available;
-3. resolve and validate the request with the Rust `asr-candidate-request` contract;
-4. estimate runtime from completed GitHub Actions history and evaluation provenance;
-5. stop after planning by default;
-6. dispatch `Candidate Package Evaluate V2` only when `execute=true`;
-7. emit a correlated completion receipt after execution terminates.
+2. assign the current Gateway execution identity;
+3. read `.jpapt/hf-bucket.yml` from the source repository when available;
+4. resolve and validate the request with the Rust `asr-candidate-request` contract;
+5. estimate runtime from completed GitHub Actions history and evaluation provenance;
+6. stop after planning by default;
+7. dispatch `Candidate Package Evaluate V2` only when `execute=true`;
+8. preserve correlated lifecycle/completion evidence after execution terminates.
 
-This keeps dry-run, execution, and completion on one normalized request identity instead of maintaining separate interpretations in workflow shell code.
+The protocol distinguishes a caller-visible logical request from one execution attempt. This is required because a caller may intentionally reuse the same `request_id` for a retry.
+
+## Request and execution identity
+
+The external correlation ID is:
+
+```text
+request_id
+```
+
+The Gateway execution identity is:
+
+```text
+request_execution_id = gw-<github.run_id>-<github.run_attempt>
+```
+
+These fields have different semantics:
+
+```text
+request_id            logical request / retry group
+request_execution_id  exactly one Gateway/V2 execution
+```
+
+`request_id` is optional. When omitted, normal request normalization generates a correlation ID. When supplied, the caller value is preserved so multiple executions can be grouped deliberately.
+
+`request_execution_id` is **not** caller authority for `repository_dispatch`. Gateway normalization replaces any caller-provided value with the identity of the current Gateway run. When `execute=true`, that `gw-*` value is forwarded to V2 and must remain unchanged through running/completed/acknowledged lifecycle evidence, completion receipt, and ACK.
+
+A direct V2 invocation that is not forwarded by Gateway instead creates:
+
+```text
+request_execution_id = eval-<V2 github.run_id>-<V2 github.run_attempt>
+```
+
+See `docs/request-execution-identity.md` for storage/query semantics.
 
 ## Request event contract
 
@@ -35,21 +69,22 @@ Use event type `jpapt.candidate-request`:
 }
 ```
 
-`request_id` is optional. When omitted, the gateway generates `gh-<run-id>-<attempt>`. It is preserved unchanged through V2 execution and the completion receipt.
+Do not send a trusted execution identity in this payload. The Gateway owns it.
 
-`receipt_repository` is optional. When omitted, it resolves to `source_repository`. It names the repository that receives the completion `repository_dispatch` event.
+`receipt_repository` is optional. When omitted, it resolves to `source_repository`. It names the repository that receives completion/rejection callback events.
 
-`execute=false` is the recommended first call. It performs request resolution and runtime estimation without candidate download, Docker build, package publication, or model evaluation.
+`execute=false` is the recommended first call. It performs request resolution and runtime estimation without candidate download, Docker build, package publication, model evaluation, or HF Jobs compute.
 
-After inspecting the plan, submit the same request with `execute=true`. The gateway sends only normalized inputs to `candidate-package-evaluate-v2.yml` through `workflow_dispatch`.
+After inspecting the plan, a caller may submit the same logical `request_id` with `execute=true`. This is a **new Gateway execution** and therefore receives a new `request_execution_id`. Logical correlation is preserved without collapsing two executions into one evidence stream.
 
 ## Rust request contract
 
 `rust/crates/asr-contracts/src/bin/asr-candidate-request.rs` owns candidate request semantics that previously lived primarily in workflow Bash.
 
-It validates and resolves:
+It validates/resolves:
 
 - `request_id` correlation identity;
+- `request_execution_id` execution correlation when present;
 - `source_repository` as `owner/name`;
 - `receipt_repository` as `owner/name`, defaulting to source repository;
 - explicit Bucket, source-repository Bucket config, then `<repo>-bucket` convention;
@@ -60,40 +95,70 @@ It validates and resolves:
 - `smoke`, `parity`, and `probe` suites;
 - GitHub or HF Jobs execution;
 - Linux CPU/CUDA, macOS CoreML, and Windows DirectML environments;
-- the environment-to-Execution-Provider mapping;
-- the environment-to-Python-ORT-package mapping;
+- environment-to-Execution-Provider mapping;
+- environment-to-Python-ORT-package mapping;
 - the restriction that HF Jobs execution is Linux-only.
 
 The binary writes normalized values directly to `GITHUB_OUTPUT`, so later orchestration does not repeat these policy decisions.
 
+## Lifecycle boundaries
+
+Gateway/V2 lifecycle states are deliberately not synonyms:
+
+```text
+planned
+  -> dispatched
+  -> running
+  -> completed
+  -> acknowledged
+```
+
+with rejection as the pre-execution failure path:
+
+```text
+planned/resolution failure -> rejected
+```
+
+Meaning:
+
+- `planned`: Gateway normalization/Rust resolution succeeded;
+- `dispatched`: GitHub accepted the V2 workflow dispatch;
+- `running`: the actual V2 workflow exists and completed its own Rust request-resolution boundary, with concrete evaluation run ID/attempt;
+- `completed`: canonical completion receipt exists;
+- `acknowledged`: receiver ACK was validated against the preserved receipt;
+- `rejected`: Gateway did not reach accepted execution.
+
+GitHub accepting a workflow dispatch is therefore not treated as proof that evaluation is running.
+
 ## Completion event contract
 
-Canonical completion transport:
+Canonical completion transport is:
 
 ```text
 event_type = jpapt.candidate-completed
 ```
 
-The event is emitted by the final `completion` job in `candidate-package-evaluate-v2.yml` after all possible execution jobs have reached a terminal state.
+The final `completion` job in `candidate-package-evaluate-v2.yml` emits the event after all possible execution jobs reach a terminal state.
 
-The exact `client_payload` schema is source-controlled at:
+The schema is:
 
 ```text
 contracts/candidate-completion-receipt.schema.json
 ```
 
-and is built/validated by:
+and the builder/validator is:
 
 ```text
 scripts/ci/build-candidate-completion-receipt.py
 ```
 
-Example receipt:
+A current receipt includes both logical and execution correlation when generated by Gateway/V2:
 
 ```json
 {
   "schema_version": 1,
   "request_id": "caller-job-000123",
+  "request_execution_id": "gw-987654321-1",
   "source_repository": "owner/repository",
   "receipt_repository": "owner/repository",
   "conclusion": "success",
@@ -108,7 +173,7 @@ Example receipt:
   "run_attempt": 1,
   "run_url": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/123456789",
   "commit_sha": "0123456789012345678901234567890123456789",
-  "requested_candidate_id": "latest",
+  "requested_candidate_id": "candidate-000123",
   "resolved_candidate_id": "candidate-000123",
   "image_ref": "ghcr.io/bie3yeik-lgtm/repository@sha256:...",
   "image_digest": "sha256:...",
@@ -119,54 +184,49 @@ Example receipt:
 }
 ```
 
-`conclusion` is one of `success`, `failure`, or `cancelled`. A successful non-dry evaluation must carry a resolved candidate ID, immutable image reference/digest, and result artifact name. Failure receipts may contain null artifact fields because the failure can occur before candidate/package resolution completes.
+`request_execution_id` remains optional in schema version 1 only for historical compatibility. New Gateway/V2 evidence should contain it. Do not make it mandatory in v1; introduce a new schema version if mandatory execution identity is required later.
+
+`conclusion` is `success`, `failure`, or `cancelled`. A successful non-dry evaluation must carry a resolved candidate ID, immutable image reference/digest, and result artifact name. Failure receipts may contain null artifact fields because failure can occur before candidate/package resolution completes.
 
 For HF Jobs, `result_uri` points to the persistent Bucket result. For GitHub-runner execution, the GitHub artifact name is authoritative and `result_uri` may be null.
 
-The receipt is persisted as a GitHub artifact **before** callback delivery. Therefore callback authentication or receiver failure cannot erase the completion evidence. Callback delivery failure still fails the final completion job, making integration breakage visible.
+The receipt is persisted as a GitHub artifact **before** callback delivery. Callback authentication/receiver failure therefore cannot erase canonical completion evidence.
 
-External callback delivery uses `SOURCE_REPO_TOKEN`. If the receipt target is the orchestrator repository itself, the workflow can fall back to its `GITHUB_TOKEN` with job-level `contents: write` permission.
+External callback delivery uses `SOURCE_REPO_TOKEN`. Same-repository delivery may fall back to the workflow `GITHUB_TOKEN` when permissions allow it.
 
-This repository also contains a reference receiver:
+The reference receiver is:
 
 ```text
 .github/workflows/candidate-completion-receipt.yml
 ```
 
-It listens for `jpapt.candidate-completed`, validates the payload, and preserves the received receipt as an artifact. External repositories can implement the same event type and schema without copying any execution logic.
+It validates schema, receipt destination, external orchestrator allowlist, and then emits an ACK. ACK binding validates receipt SHA-256, logical request identity, execution identity when present, receipt repository, and evaluation run ID/attempt.
 
-## Empirical runtime estimator
+## Runtime estimator
 
 `scripts/ci/estimate-candidate-runtime.py` replaces fixed-duration assumptions when enough history exists.
 
-For successful historical `candidate-package-evaluate-v2.yml` runs it reads:
+For successful historical `candidate-package-evaluate-v2.yml` runs it reads workflow/job timing and matching `evaluation-provenance.json` when available.
 
-- workflow runs;
-- executed job durations;
-- candidate evaluation artifact names;
-- `evaluation-provenance.json` from the matching artifact when available.
+For GitHub execution, the estimator considers the durations of:
 
-For GitHub execution, artifact names identify the requested `suite/environment` pair. The estimator sums the durations of:
+```text
+Resolve request
+Build digest-pinned candidate package
+target execution job
+```
 
-- `Resolve request`;
-- `Build digest-pinned candidate package`;
-- the selected execution job.
+Historical cohorts prefer:
 
-Historical samples are segmented into cohorts. The preferred cohort is the same source repository and dataset identity. When at least three such samples do not exist, the estimator falls back to the same source repository, then to the global `suite/environment` history. This prevents unrelated external repositories or datasets from dominating the estimate while still allowing sparse projects to benefit from shared history.
+1. same source repository + dataset identity;
+2. same source repository;
+3. global suite/environment history.
 
-The estimator reports selected sample count, available sample count, cohort, p50, and p90, and uses the observed p90 rounded upward as the planning estimate. p90 is intentionally used instead of the mean because CI planning should be conservative in the presence of cache misses and runner variance.
+A cohort needs enough samples before it replaces the fallback estimate. The planning estimate uses observed p90 rather than the mean so cache misses and runner variance are not hidden.
 
-Evaluation provenance schema version 2 also records workload-size evidence for future prediction refinement:
+Provenance also retains workload-size evidence such as dataset/package/candidate bytes. These are evidence for later size-aware modeling; they are not silently treated as a linear runtime multiplier today.
 
-- `dataset_bytes` and `dataset_files` for every GitHub evaluation;
-- `package_bytes` for Linux OCI evaluation;
-- `candidate_bytes` and `candidate_files` for native macOS/Windows evaluation.
-
-The gateway surfaces cohort median size evidence when historical artifacts contain it. These fields are evidence, not yet a linear runtime scaling factor: they are retained so later estimators can introduce size-aware regression without changing the artifact contract again.
-
-For HF Jobs, the estimator uses successful `Hugging Face Jobs` execution history when available. If no usable historical samples exist, it falls back to the conservative suite/environment heuristic and marks the method as `fallback`.
-
-The estimate excludes unpredictable external queue delays when GitHub does not expose them as job execution duration.
+For HF Jobs, successful HF Jobs history is used when available. External queue delay is not invented when GitHub does not expose it as job duration.
 
 ## Recommended external flow
 
@@ -177,23 +237,22 @@ arbitrary GitHub repository
         v
 Candidate Request Gateway
         |
-        +-- request_id / receipt_repository
+        +-- request_id = logical correlation
+        +-- request_execution_id = gw-<run>-<attempt>
         +-- source .jpapt/hf-bucket.yml
         +-- Rust request normalization
-        +-- provenance-cohort p50/p90 estimate
+        +-- provenance-matched runtime estimate
         |
         +-- execute=false --> plan only
         |
         `-- execute=true
                 |
+                | forwards the same request_execution_id
                 v
        Candidate Package Evaluate V2
                 |
-                +-- candidate resolution
-                +-- digest-pinned OCI package
-                +-- smoke/parity/probe
-                +-- provenance v2 size evidence
-                +-- GitHub runner or HF Jobs
+                +-- running lifecycle with evaluation run identity
+                +-- candidate/package/evaluation or dry-run
                 |
                 v
        CandidateCompletionReceiptV1 artifact
@@ -202,22 +261,44 @@ Candidate Request Gateway
                             |
                             v
                     receipt_repository
+                            |
+                            `-- ACK -> orchestrator -> acknowledged
 ```
+
+## Retry and query behavior
+
+Reusing a `request_id` does not overwrite execution history.
+
+Persistent lifecycle storage keeps:
+
+```text
+requests/<request-key>/...                       aggregate logical request view
+requests/<request-key>/executions/<execution-key>/...  isolated execution view
+```
+
+`Candidate Request Status` with only `request_id` chooses the newest lifecycle `updated_at` across executions. Supplying `request_execution_id` restricts the query to exactly one execution.
+
+`Candidate Request Timeline` behaves similarly: no selector returns combined request history; an execution selector produces an execution-scoped `CandidateRequestTimelineV1` whose top-level `request_execution_id` and every event snapshot must agree.
 
 ## Compatibility
 
-`candidate-package-evaluate.yml` remains as a compatibility path for existing direct callers. New integrations should use `jpapt.candidate-request` through the gateway and `candidate-package-evaluate-v2.yml` because the V2 path makes Rust normalization, runtime estimation, request correlation, and completion receipts mandatory.
+`candidate-package-evaluate.yml` remains a compatibility entrypoint for existing direct callers. It forwards to V2 and must not reintroduce a second evaluator implementation.
+
+New integrations should use Candidate Request Gateway for external requests. Direct V2 remains useful for controlled/manual orchestration and for the dedicated cross-repository E2E harness.
 
 ## CI protection
 
-`External Candidate Workflow Contracts` checks:
+Protocol protection is distributed across focused suites rather than hidden in one broad workflow:
 
-- the gateway, V2 evaluation workflow, completion receiver, Bucket workflow, and compatibility workflow with actionlint;
-- all candidate Python helpers with `py_compile`;
-- `run-candidate-package-evaluation.sh` with `bash -n`;
-- the completion receipt JSON Schema as parseable JSON;
-- a complete success receipt build/validate/dispatch-envelope round trip;
-- `asr-candidate-request` with `cargo test --locked`;
-- the candidate Dockerfile with `docker buildx build --check`.
+```text
+External Candidate Workflow Contracts
+Candidate Request Execution Contracts
+Candidate Lifecycle Persist Contracts
+Candidate Lifecycle Execution Storage Contracts
+Candidate Request Timeline Contracts
+Candidate Protocol Synthetic E2E
+```
 
-Changes to request semantics, receipt semantics, provenance, or estimator cohorts should update the associated contract checks and this document together.
+The verified `Candidate Request Execution Contracts` run 32032887712 proved orchestrator-owned execution identity, spoof resistance, receipt/ACK/rejection/lifecycle propagation, legacy v1 compatibility, Gateway/V2 wiring, and Rust request tests.
+
+The newer execution-storage/timeline/E2E changes must not be reported as remotely verified HF storage or real cross-repository success until their corresponding workflows/manual smoke actually run successfully.
