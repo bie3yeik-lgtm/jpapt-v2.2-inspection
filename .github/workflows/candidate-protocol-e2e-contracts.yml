@@ -119,7 +119,7 @@ jobs:
           grep -F 'asr-candidate-protocol --' "$e2e"
           grep -F 'receipt-validate "$receipt"' "$e2e"
           grep -F 'ack-validate "$ack"' "$e2e"
-          grep -F 'ack-binding \' "$e2e"
+          grep -F 'ack-binding' "$e2e"
           grep -F -- '--receipt "$receipt"' "$e2e"
           grep -F -- '--ack "$ack"' "$e2e"
           grep -F -- '--orchestrator "$GITHUB_REPOSITORY"' "$e2e"
