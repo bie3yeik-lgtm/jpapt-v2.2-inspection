@@ -52,7 +52,7 @@ jobs:
           }
       - name: Install HF client
         run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2"
-      - name: Resolve lifecycle Bucket
+      - name: Resolve and prepare lifecycle Bucket
         id: bucket
         shell: bash
         env:
@@ -75,6 +75,9 @@ jobs:
             echo '::error::lifecycle Bucket must use namespace/name'
             exit 1
           }
+          # Match the canonical persister: create the lifecycle Bucket when it is
+          # absent and keep it private. --exist-ok makes repeated smoke runs safe.
+          hf buckets create "$bucket" --exist-ok --private --token "$HF_TOKEN"
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
       - name: Build isolated synthetic lifecycle snapshot
         id: fixture
