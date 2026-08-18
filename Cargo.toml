@@ -43,3 +43,5 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# validation-only: exercise HF Jobs Rust plan contracts against current main.
