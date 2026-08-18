@@ -1,0 +1,152 @@
+name: HF Jobs Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_smoke:
+        description: Explicitly confirm one real HF Jobs smoke evaluation
+        required: true
+        default: false
+        type: boolean
+      source_repository:
+        description: Source GitHub repository owner/name
+        required: true
+        type: string
+      receipt_repository:
+        description: Completion receipt repository; blank = source repository
+        required: false
+        default: ""
+        type: string
+      hf_bucket:
+        description: HF Bucket namespace/name; blank = source/default resolution
+        required: false
+        default: ""
+        type: string
+      candidate_id:
+        description: candidate-NNNNNN; blank = repository default/latest
+        required: false
+        default: ""
+        type: string
+      dataset_source:
+        description: Dataset routing
+        required: false
+        default: auto
+        type: choice
+        options: [auto, bucket, repository, custom]
+      dataset_id:
+        description: Dataset namespace/name for repository/custom source
+        required: false
+        default: ""
+        type: string
+      environment:
+        description: HF Jobs runtime environment
+        required: false
+        default: linux-cpu
+        type: choice
+        options: [linux-cpu, linux-cuda]
+      hf_flavor:
+        description: HF Jobs hardware flavor
+        required: false
+        default: cpu-basic
+        type: string
+      hf_jobs_image:
+        description: Optional immutable image override with @sha256:<64 hex>
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: hf-jobs-smoke-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Dispatch one guarded HF Jobs smoke
+    if: ${{ inputs.confirm_smoke }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build fixed smoke dispatch body
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          HF_BUCKET: ${{ inputs.hf_bucket }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          DATASET_SOURCE: ${{ inputs.dataset_source }}
+          DATASET_ID: ${{ inputs.dataset_id }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          HF_FLAVOR: ${{ inputs.hf_flavor }}
+          HF_JOBS_IMAGE: ${{ inputs.hf_jobs_image }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg ref "$GITHUB_SHA" \
+            --arg source_repository "$SOURCE_REPOSITORY" \
+            --arg receipt_repository "$RECEIPT_REPOSITORY" \
+            --arg hf_bucket "$HF_BUCKET" \
+            --arg candidate_id "$CANDIDATE_ID" \
+            --arg dataset_source "$DATASET_SOURCE" \
+            --arg dataset_id "$DATASET_ID" \
+            --arg environment "$ENVIRONMENT" \
+            --arg hf_flavor "$HF_FLAVOR" \
+            --arg hf_jobs_image "$HF_JOBS_IMAGE" \
+            '{
+              ref: $ref,
+              inputs: {
+                request_id: "",
+                request_execution_id: "",
+                source_repository: $source_repository,
+                receipt_repository: $receipt_repository,
+                hf_bucket: $hf_bucket,
+                candidate_id: $candidate_id,
+                package_name: "",
+                dataset_source: $dataset_source,
+                dataset_id: $dataset_id,
+                suite: "smoke",
+                executor: "hf_jobs",
+                environment: $environment,
+                hf_flavor: $hf_flavor,
+                hf_jobs_image: $hf_jobs_image,
+                dry_run: "false"
+              }
+            }' > /tmp/hf-jobs-smoke-dispatch.json
+
+          jq -e '
+            .inputs.suite == "smoke" and
+            .inputs.executor == "hf_jobs" and
+            .inputs.dry_run == "false" and
+            (.inputs.environment == "linux-cpu" or .inputs.environment == "linux-cuda")
+          ' /tmp/hf-jobs-smoke-dispatch.json >/dev/null
+
+      - name: Dispatch canonical evaluator with bounded retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash scripts/ci/workflow-dispatch-with-retry.sh
+          "$GITHUB_REPOSITORY"
+          candidate-package-evaluate-v2.yml
+          /tmp/hf-jobs-smoke-dispatch.json
+          3
+
+      - name: Summarize immutable smoke request
+        shell: bash
+        run: |
+          {
+            echo '## HF Jobs smoke dispatch accepted'
+            echo
+            echo '- suite: `smoke` (fixed)'
+            echo '- executor: `hf_jobs` (fixed)'
+            echo '- dry run: `false` (fixed)'
+            printf -- '- source repository: `%s`\n' '${{ inputs.source_repository }}'
+            printf -- '- environment: `%s`\n' '${{ inputs.environment }}'
+            printf -- '- flavor: `%s`\n' '${{ inputs.hf_flavor }}'
+            echo '- remote plan authority: Rust `asr-hf-job`'
+            echo '- remote runtime cap: `30m` enforced by the Rust plan'
+          } >> "$GITHUB_STEP_SUMMARY"
