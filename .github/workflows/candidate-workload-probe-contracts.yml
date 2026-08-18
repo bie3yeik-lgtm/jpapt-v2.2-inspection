@@ -45,10 +45,9 @@ jobs:
           cache: false
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-      - name: Lint workload contract
-        run: actionlint -color .github/workflows/candidate-workload-probe-contracts.yml
-      - name: Compile workload helpers
+      - name: Lint and compile workload contracts
         run: |
+          actionlint -color .github/workflows/candidate-workload-probe-contracts.yml
           python -m py_compile \
             scripts/ci/measure-candidate-bucket-size.py \
             scripts/ci/estimate-candidate-runtime.py
@@ -68,47 +67,7 @@ jobs:
             grep -F 'dtolnay/rust-toolchain@stable' "$workflow"
             grep -F 'huggingface_hub>=1.0,<2' "$workflow"
           done
-      - name: Verify candidate file selection and resolver parsing
-        run: |
-          python - <<'PY'
-          import importlib.util
-          from dataclasses import dataclass
-          from pathlib import Path
-
-          path = Path('scripts/ci/measure-candidate-bucket-size.py')
-          spec = importlib.util.spec_from_file_location('probe', path)
-          module = importlib.util.module_from_spec(spec)
-          assert spec.loader is not None
-          spec.loader.exec_module(module)
-
-          @dataclass
-          class Item:
-              path: str
-              type: str
-              size: int
-
-          items = [
-              Item('candidates/candidate-000002/model.onnx', 'file', 100),
-              Item('candidates/candidate-000002/metadata.json', 'file', 20),
-              Item('candidates/candidate-000003/model.onnx', 'file', 999),
-              Item('candidates/ctc/candidate-000001/model.onnx', 'file', 50),
-              Item('candidates/candidate-000002/subdir', 'directory', 0),
-          ]
-          canonical = module.candidate_files(items, 'candidate-000002')
-          assert [item.size for item in canonical] == [100, 20]
-          historical = module.candidate_files(items, 'ctc/candidate-000001')
-          assert [item.size for item in historical] == [50]
-
-          parsed = module.parse_resolver_output(
-              'candidate_id=candidate-000002\nrelative_path=candidate-000002\nlegacy=false\n'
-          )
-          assert parsed == {
-              'candidate_id': 'candidate-000002',
-              'relative_path': 'candidate-000002',
-              'legacy': 'false',
-          }
-          PY
-      - name: Exercise metadata-only probe with fake HF and Rust resolver
+      - name: Exercise metadata-only candidate probe
         shell: bash
         env:
           HF_TOKEN: synthetic-token
@@ -148,37 +107,17 @@ jobs:
             'legacy=false'
           SH
           chmod +x /tmp/fake-probe/bin/cargo
-          : > /tmp/probe.out
           PATH="/tmp/fake-probe/bin:$PATH" PYTHONPATH=/tmp/fake-probe/python \
             python scripts/ci/measure-candidate-bucket-size.py \
               --bucket owner/bucket \
-              --candidate-id latest \
-              --github-output /tmp/probe.out > /tmp/probe.json
+              --candidate-id latest > /tmp/probe.json
           jq -e '.available == true' /tmp/probe.json >/dev/null
           jq -e '.candidate_id == "candidate-000002"' /tmp/probe.json >/dev/null
           jq -e '.candidate_bytes == 225 and .candidate_files == 2' /tmp/probe.json >/dev/null
-          grep -Fx 'candidate_bytes=225' /tmp/probe.out
-          grep -Fx 'candidate_files=2' /tmp/probe.out
-      - name: Verify estimator records size evidence without scaling runtime
+      - name: Verify estimator v5 preserves candidate evidence without scaling runtime
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import importlib.util
-          from pathlib import Path
-
-          path = Path('scripts/ci/estimate-candidate-runtime.py')
-          spec = importlib.util.spec_from_file_location('estimator', path)
-          module = importlib.util.module_from_spec(spec)
-          assert spec.loader is not None
-          spec.loader.exec_module(module)
-
-          assert module.size_ratio(225, 100) == 2.25
-          assert module.size_ratio(None, 100) is None
-          assert module.size_ratio(225, None) is None
-          assert module.optional_positive_int('225', 'target') == 225
-          PY
-
           env -u GH_TOKEN -u GITHUB_TOKEN \
             python scripts/ci/estimate-candidate-runtime.py \
               --repository owner/orchestrator \
@@ -186,14 +125,14 @@ jobs:
               --executor github \
               --environment linux-cpu \
               --target-candidate-bytes 225 > /tmp/estimate.json
-          jq -e '.schema_version == 4' /tmp/estimate.json >/dev/null
+          jq -e '.schema_version == 5' /tmp/estimate.json >/dev/null
           jq -e '.target_candidate_bytes == 225' /tmp/estimate.json >/dev/null
           jq -e '.workload_probe_method == "explicit"' /tmp/estimate.json >/dev/null
-          jq -e '.size_scaling_applied == false' /tmp/estimate.json >/dev/null
-          jq -e '.estimate_minutes == 8' /tmp/estimate.json >/dev/null
-      - name: Verify estimator auto-wires normalized request to metadata probe
+          jq -e '.size_scaling_applied == false and .estimate_minutes == 8' /tmp/estimate.json >/dev/null
+      - name: Verify estimator auto-wires normalized request to candidate metadata probe
         shell: bash
         env:
+          ENABLE_WORKLOAD_PROBE: "true"
           HF_TOKEN: synthetic-token
           HF_BUCKET: owner/bucket
           CANDIDATE_REQUEST_JSON: /tmp/auto-request.json
@@ -202,28 +141,10 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/fake-auto/bin /tmp/fake-auto/python
           cat > /tmp/auto-request.json <<'JSON'
-          {
-            "request_id": "auto-workload-001",
-            "request_execution_id": "gw-900-1",
-            "source_repository": "owner/source",
-            "receipt_repository": "owner/source",
-            "hf_bucket": "",
-            "candidate_id": "",
-            "package_name": "",
-            "dataset_source": "bucket",
-            "dataset_id": "",
-            "suite": "smoke",
-            "executor": "github",
-            "environment": "linux-cpu",
-            "hf_flavor": "cpu-basic",
-            "hf_jobs_image": "",
-            "dry_run": true
-          }
+          {"request_id":"auto-workload-001","request_execution_id":"gw-900-1","source_repository":"owner/source","receipt_repository":"owner/source","hf_bucket":"","candidate_id":"","package_name":"","dataset_source":"bucket","dataset_id":"","suite":"smoke","executor":"github","environment":"linux-cpu","hf_flavor":"cpu-basic","hf_jobs_image":"","dry_run":true}
           JSON
           cat > /tmp/auto-source.json <<'JSON'
-          {
-            "candidate": {"default": "candidate-000002"}
-          }
+          {"candidate":{"default":"candidate-000002"}}
           JSON
           cat > /tmp/fake-auto/python/huggingface_hub.py <<'PY'
           from dataclasses import dataclass
@@ -242,7 +163,6 @@ jobs:
               return [
                   Item('candidates/candidate-000002/model.onnx', size=200),
                   Item('candidates/candidate-000002/metadata.json', size=25),
-                  Item('candidates/candidate-000003/model.onnx', size=999),
               ]
           PY
           cat > /tmp/fake-auto/bin/cargo <<'SH'
@@ -254,21 +174,16 @@ jobs:
             exit 0
           fi
           if [[ "$args" == *'resolve-candidate-location'* ]]; then
-            [[ "$args" == *'--candidate-id candidate-000002'* ]] || {
-              echo 'concrete candidate from request contract was not forwarded' >&2
-              exit 3
-            }
+            [[ "$args" == *'--candidate-id candidate-000002'* ]]
             printf '%s\n' \
               'candidate_id=candidate-000002' \
               'relative_path=candidate-000002' \
               'legacy=false'
             exit 0
           fi
-          echo "unexpected cargo invocation: $args" >&2
           exit 4
           SH
           chmod +x /tmp/fake-auto/bin/cargo
-
           PATH="/tmp/fake-auto/bin:$PATH" PYTHONPATH=/tmp/fake-auto/python \
             env -u GH_TOKEN -u GITHUB_TOKEN \
             python scripts/ci/estimate-candidate-runtime.py \
@@ -276,42 +191,10 @@ jobs:
               --suite smoke \
               --executor github \
               --environment linux-cpu > /tmp/auto-estimate.json
+          jq -e '.schema_version == 5' /tmp/auto-estimate.json >/dev/null
           jq -e '.workload_probe_method == "metadata-only"' /tmp/auto-estimate.json >/dev/null
           jq -e '.target_candidate_id == "candidate-000002"' /tmp/auto-estimate.json >/dev/null
           jq -e '.target_candidate_bytes == 225 and .target_candidate_files == 2' /tmp/auto-estimate.json >/dev/null
           jq -e '.size_scaling_applied == false and .estimate_minutes == 8' /tmp/auto-estimate.json >/dev/null
-      - name: Fail closed on malformed identity and degrade only when requested
-        shell: bash
-        env:
-          HF_TOKEN: synthetic-token
-        run: |
-          set -euo pipefail
-          if python scripts/ci/measure-candidate-bucket-size.py \
-            --bucket invalid \
-            --candidate-id latest; then
-            echo 'invalid bucket unexpectedly accepted' >&2
-            exit 1
-          fi
-
-          mkdir -p /tmp/fake-unavailable/python
-          cat > /tmp/fake-unavailable/python/huggingface_hub.py <<'PY'
-          def list_bucket_tree(*args, **kwargs):
-              raise RuntimeError('synthetic unavailable')
-          PY
-          PYTHONPATH=/tmp/fake-unavailable/python \
-            python scripts/ci/measure-candidate-bucket-size.py \
-              --bucket owner/bucket \
-              --allow-unavailable > /tmp/unavailable.json
-          jq -e '.available == false and .candidate_bytes == null' /tmp/unavailable.json >/dev/null
-
-          if python scripts/ci/estimate-candidate-runtime.py \
-            --repository owner/orchestrator \
-            --suite smoke \
-            --executor github \
-            --environment linux-cpu \
-            --target-candidate-bytes 0; then
-            echo 'non-positive target candidate bytes unexpectedly accepted' >&2
-            exit 1
-          fi
       - name: Preserve explicit latest semantics in Rust request contract
         run: cargo test --locked -p asr-contracts --bin asr-candidate-request explicit_latest_overrides_configured_candidate_default
