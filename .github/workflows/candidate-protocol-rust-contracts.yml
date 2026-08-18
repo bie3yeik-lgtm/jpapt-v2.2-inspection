@@ -1,0 +1,184 @@
+name: Candidate Protocol Rust Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-rust-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - scripts/ci/candidate_protocol_common.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-request-rejection.schema.json
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-rust-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - scripts/ci/candidate_protocol_common.py
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+      - scripts/ci/validate-candidate-protocol-binding.py
+      - contracts/candidate-completion-receipt.schema.json
+      - contracts/candidate-completion-ack.schema.json
+      - contracts/candidate-request-rejection.schema.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-rust-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Validate Rust protocol parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint and compile contracts
+        run: |
+          actionlint -color .github/workflows/candidate-protocol-rust-contracts.yml
+          python -m py_compile \
+            scripts/ci/candidate_protocol_common.py \
+            scripts/ci/build-candidate-completion-receipt.py \
+            scripts/ci/build-candidate-completion-ack.py \
+            scripts/ci/build-candidate-request-rejection.py \
+            scripts/ci/validate-candidate-protocol-binding.py
+          cargo test --locked -p asr-contracts --bin asr-candidate-protocol
+      - name: Generate canonical Python receipt and validate with Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=rust-parity-001 \
+          REQUEST_EXECUTION_ID=eval-2001-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          HF_BUCKET=owner/source-bucket \
+          DRY_RUN=true \
+          SUITE=probe \
+          EXECUTOR=github \
+          ENVIRONMENT=linux-cpu \
+          PROVIDER=CPUExecutionProvider \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          RUN_ID=2001 \
+          RUN_ATTEMPT=1 \
+          RUN_URL=https://github.com/owner/orchestrator/actions/runs/2001 \
+          COMMIT_SHA=0000000000000000000000000000000000000000 \
+          REQUESTED_CANDIDATE_ID=latest \
+          BUILD_RESULT=skipped \
+          CPU_RESULT=skipped \
+          CUDA_RESULT=skipped \
+          COREML_RESULT=skipped \
+          DIRECTML_RESULT=skipped \
+          HF_JOBS_RESULT=skipped \
+          COMPLETED_AT=2026-08-18T10:00:00Z \
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/receipt.json >/dev/null
+
+          python_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/receipt.json)"
+          rust_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha /tmp/receipt.json)"
+          test "$python_sha" = "$rust_sha"
+      - name: Generate Python ACK and prove Rust validation and binding parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIVER_REPOSITORY=owner/receiver \
+          RECEIVER_RUN_ID=3001 \
+          RECEIVER_RUN_ATTEMPT=1 \
+          RECEIVER_RUN_URL=https://github.com/owner/receiver/actions/runs/3001 \
+          ACCEPTED_AT=2026-08-18T10:01:00Z \
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --dispatch-body /tmp/ack-dispatch.json >/dev/null
+
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-validate /tmp/ack.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receiver-binding \
+            --kind receipt \
+            --input /tmp/receipt.json \
+            --receiver owner/receiver \
+            --allowed owner/orchestrator
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator owner/orchestrator
+
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --receiver-repository owner/receiver \
+            --allowed-orchestrators owner/orchestrator
+          python scripts/ci/validate-candidate-protocol-binding.py \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/ack.json \
+            --orchestrator-repository owner/orchestrator
+      - name: Generate Python rejection and prove Rust receiver binding parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=rust-rejection-001 \
+          REQUEST_EXECUTION_ID=gw-4001-1 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=4001 \
+          GATEWAY_RUN_ATTEMPT=1 \
+          GATEWAY_RUN_URL=https://github.com/owner/orchestrator/actions/runs/4001 \
+          REJECTED_AT=2026-08-18T10:02:00Z \
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/rejection.json \
+            --dispatch-body /tmp/rejection-dispatch.json >/dev/null
+
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            rejection-validate /tmp/rejection.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receiver-binding \
+            --kind rejection \
+            --input /tmp/rejection.json \
+            --receiver owner/receiver \
+            --allowed owner/orchestrator
+      - name: Reject cross-execution and cross-repository bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq '.request_execution_id="eval-9999-1"' /tmp/ack.json > /tmp/bad-ack.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding \
+            --receipt /tmp/receipt.json \
+            --ack /tmp/bad-ack.json \
+            --orchestrator owner/orchestrator; then
+            echo 'cross-execution ACK unexpectedly accepted' >&2
+            exit 1
+          fi
+          if cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receiver-binding \
+            --kind receipt \
+            --input /tmp/receipt.json \
+            --receiver owner/other \
+            --allowed owner/orchestrator; then
+            echo 'cross-repository receipt unexpectedly accepted' >&2
+            exit 1
+          fi
