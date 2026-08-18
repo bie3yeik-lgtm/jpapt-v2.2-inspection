@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # validation-only branch trigger for anonymous image pull gating.
           bash -n scripts/ci/hf-jobs-image-preflight.sh
           python - <<'PY'
           from pathlib import Path
