@@ -69,12 +69,13 @@ jobs:
           cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
             validate --plan /tmp/hf-job-plan.json >/tmp/plan-sha
 
-          jq -e '
+          jq -e --arg digest "sha256:$digest" '
             .schema_version == 1 and
             .candidate_id == "candidate-000123" and
             .suite == "probe" and
             .environment == "linux-cpu" and
             .provider == "CPUExecutionProvider" and
+            .image_digest == $digest and
             .dataset_source == "bucket" and
             .dataset_dir == "/jpapt-output/datasets" and
             (.mounts | length) == 1 and
@@ -85,6 +86,7 @@ jobs:
             .hf_args[0] == "jobs" and
             .hf_args[1] == "run"
           ' /tmp/hf-job-plan.json >/dev/null
+          grep -F "image_digest=sha256:$digest" /tmp/github-output
           grep -F 'result_uri=hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9101-2/result.json' /tmp/github-output
           grep -Eq '^plan_sha256=[0-9a-f]{64}$' /tmp/github-output
           grep -Eq '^[0-9a-f]{64}$' /tmp/plan-sha
@@ -123,7 +125,8 @@ jobs:
           digest="$(printf 'b%.0s' {1..64})"
           cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
             plan \
-            --built-image "ghcr.io/owner/package@sha256:$digest" \
+            --built-image "ghcr.io/owner/package@sha256:$(printf 'a%.0s' {1..64})" \
+            --image-override "registry.example.com/model@sha256:$digest" \
             --candidate-id candidate-000999 \
             --suite smoke \
             --environment linux-cuda \
@@ -136,9 +139,11 @@ jobs:
             --run-attempt 1 \
             --output-json /tmp/hf-job-cuda.json >/dev/null
 
-          jq -e '
+          jq -e --arg digest "sha256:$digest" '
             .environment == "linux-cuda" and
             .provider == "CUDAExecutionProvider" and
+            .image == ("registry.example.com/model@" + $digest) and
+            .image_digest == $digest and
             .dataset_dir == "/data" and
             (.mounts | length) == 2 and
             .mounts[1].source == "hf://datasets/japanese-asr/jsut" and
@@ -189,10 +194,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          jq '.hf_args += ["--tampered"]' /tmp/hf-job-plan.json > /tmp/tampered.json
+          jq '.hf_args += ["--tampered"]' /tmp/hf-job-plan.json > /tmp/tampered-argv.json
           if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
-            validate --plan /tmp/tampered.json; then
+            validate --plan /tmp/tampered-argv.json; then
             echo 'tampered argv unexpectedly accepted' >&2
+            exit 1
+          fi
+
+          jq '.image_digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+            /tmp/hf-job-plan.json > /tmp/tampered-digest.json
+          if cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
+            validate --plan /tmp/tampered-digest.json; then
+            echo 'tampered image digest unexpectedly accepted' >&2
             exit 1
           fi
 
@@ -206,7 +219,7 @@ jobs:
           rm -f /tmp/unexpected-hf-invocation
           if PATH="/tmp/never-bin:$PATH" HF_TOKEN=fake \
             cargo run --quiet --locked -p asr-contracts --bin asr-hf-job -- \
-              run --plan /tmp/tampered.json; then
+              run --plan /tmp/tampered-argv.json; then
             echo 'tampered plan unexpectedly executed' >&2
             exit 1
           fi
