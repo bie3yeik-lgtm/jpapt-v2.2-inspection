@@ -8,12 +8,14 @@ on:
       - scripts/ci/workflow-dispatch-with-retry.sh
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/hf-jobs-smoke.yml
   pull_request:
     paths:
       - .github/workflows/candidate-workflow-dispatch-retry-contracts.yml
       - scripts/ci/workflow-dispatch-with-retry.sh
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-package-evaluate.yml
+      - .github/workflows/hf-jobs-smoke.yml
   workflow_dispatch:
 
 permissions:
@@ -37,6 +39,12 @@ jobs:
           bash -n scripts/ci/workflow-dispatch-with-retry.sh
           grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate.yml
           grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/candidate-request-gateway.yml
+          grep -F 'workflow-dispatch-with-retry.sh' .github/workflows/hf-jobs-smoke.yml
+          grep -F 'GITHUB_REF_NAME' .github/workflows/hf-jobs-smoke.yml
+          if grep -F -- '--arg ref "$GITHUB_SHA"' .github/workflows/hf-jobs-smoke.yml; then
+            echo 'HF Jobs Smoke must dispatch a branch/tag ref, not a commit SHA' >&2
+            exit 1
+          fi
       - name: Retry transient failures and succeed on third attempt
         shell: bash
         run: |
@@ -105,8 +113,16 @@ jobs:
           printf '{"inputs":{}}\n' > /tmp/missing-ref.json
           printf '{"ref":"","inputs":{}}\n' > /tmp/empty-ref.json
           printf '{"ref":"main","inputs":[]}\n' > /tmp/bad-inputs.json
+          printf '{"ref":"0123456789abcdef0123456789abcdef01234567","inputs":{}}\n' > /tmp/raw-sha40.json
+          printf '{"ref":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","inputs":{}}\n' > /tmp/raw-sha64.json
 
-          for body in /tmp/invalid-json.json /tmp/missing-ref.json /tmp/empty-ref.json /tmp/bad-inputs.json; do
+          for body in \
+            /tmp/invalid-json.json \
+            /tmp/missing-ref.json \
+            /tmp/empty-ref.json \
+            /tmp/bad-inputs.json \
+            /tmp/raw-sha40.json \
+            /tmp/raw-sha64.json; do
             if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
               bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo workflow.yml "$body" 3; then
               echo "invalid dispatch body unexpectedly succeeded: $body" >&2
