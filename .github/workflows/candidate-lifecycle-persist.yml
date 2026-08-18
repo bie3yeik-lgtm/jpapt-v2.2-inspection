@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -127,6 +128,8 @@ jobs:
             request_id="${fields[3]}"
             request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
             evidence=()
+            receipt_file=""
+            ack_file=""
 
             if [[ "$state" == "rejected" ]]; then
               rejection_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
@@ -135,7 +138,12 @@ jobs:
                 mkdir -p .ci/persist/rejection
                 gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$rejection_id/zip" > /tmp/rejection.zip
                 unzip -oq /tmp/rejection.zip -d .ci/persist/rejection
-                [[ -f .ci/persist/rejection/candidate-request-rejection.json ]] && evidence+=(.ci/persist/rejection/candidate-request-rejection.json)
+                rejection_file=.ci/persist/rejection/candidate-request-rejection.json
+                if [[ -f "$rejection_file" ]]; then
+                  cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+                    rejection-validate "$rejection_file" >/dev/null
+                  evidence+=("$rejection_file")
+                fi
               fi
             fi
 
@@ -150,7 +158,8 @@ jobs:
                 unzip -oq /tmp/receipt.zip -d "$receipt_dir"
                 receipt_file="$receipt_dir/candidate-completion-receipt.json"
                 if [[ -f "$receipt_file" ]]; then
-                  python scripts/ci/build-candidate-completion-receipt.py --validate "$receipt_file" >/dev/null
+                  cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+                    receipt-validate "$receipt_file" >/dev/null
                   evidence+=("$receipt_file")
                 fi
               fi
@@ -163,12 +172,26 @@ jobs:
                 mkdir -p .ci/persist/ack
                 gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_id/zip" > /tmp/ack.zip
                 unzip -oq /tmp/ack.zip -d .ci/persist/ack
-                ack_file=".ci/persist/ack/candidate-completion-ack.json"
+                ack_file=.ci/persist/ack/candidate-completion-ack.json
                 if [[ -f "$ack_file" ]]; then
-                  python scripts/ci/build-candidate-completion-ack.py --validate "$ack_file" >/dev/null
+                  cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+                    ack-validate "$ack_file" >/dev/null
                   evidence+=("$ack_file")
                 fi
               fi
+              [[ -n "$receipt_file" && -f "$receipt_file" ]] || {
+                echo "::error::acknowledged lifecycle persistence requires its preserved completion receipt"
+                exit 1
+              }
+              [[ -n "$ack_file" && -f "$ack_file" ]] || {
+                echo "::error::acknowledged lifecycle persistence requires its acknowledgement artifact"
+                exit 1
+              }
+              cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+                ack-binding \
+                --receipt "$receipt_file" \
+                --ack "$ack_file" \
+                --orchestrator "$GITHUB_REPOSITORY" >/dev/null
             fi
 
             HF_TOKEN="$HF_TOKEN" HF_LIFECYCLE_BUCKET="$HF_LIFECYCLE_BUCKET" \
