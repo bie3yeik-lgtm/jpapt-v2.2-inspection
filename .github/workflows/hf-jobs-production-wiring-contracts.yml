@@ -10,6 +10,7 @@ on:
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
       - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - docs/external-candidate-pipeline.md
       - Cargo.toml
       - Cargo.lock
   pull_request:
@@ -20,6 +21,7 @@ on:
       - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
       - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
       - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - docs/external-candidate-pipeline.md
       - Cargo.toml
       - Cargo.lock
   workflow_dispatch:
@@ -65,6 +67,8 @@ jobs:
           smoke = Path('.github/workflows/hf-jobs-smoke.yml').read_text(encoding='utf-8')
           request = Path('rust/crates/asr-contracts/src/bin/asr-candidate-request.rs').read_text(encoding='utf-8')
           planner = Path('rust/crates/asr-contracts/src/bin/asr-hf-job.rs').read_text(encoding='utf-8')
+          receipt = Path('rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs').read_text(encoding='utf-8')
+          docs = Path('docs/external-candidate-pipeline.md').read_text(encoding='utf-8')
           hf = workflow[workflow.index('\n  hf-jobs:'):workflow.index('\n  completion:')]
           completion = workflow[workflow.index('\n  completion:'):]
 
@@ -92,6 +96,7 @@ jobs:
           assert 'preflight_hardware(&plan)?;' in planner
           assert '["jobs", "hardware"]' in planner
           assert 'jpapt-purpose=smoke-validation' in planner
+          assert 'HF Jobs completion receipts require suite=smoke' in receipt
 
           assert 'name: HF Jobs Smoke' in smoke
           assert 'confirm_smoke:' in smoke
@@ -103,6 +108,12 @@ jobs:
           assert 'workflow-dispatch-with-retry.sh' in smoke
           assert 'candidate-package-evaluate-v2.yml' in smoke
           assert 'hf jobs run' not in smoke
+
+          assert 'HF Jobs is deliberately restricted to **smoke validation on Linux**' in docs
+          assert 'confirm_smoke=true' in docs
+          assert 'fixed remote timeout `30m`' in docs
+          assert '`hf jobs hardware`' in docs
+          assert 'Pull-request and contract CI never create a real HF Job.' in docs
           PY
 
       - name: Exercise request, smoke plan and receipt Rust contracts
@@ -160,7 +171,7 @@ jobs:
             .result_uri == "hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/smoke-9201-1/result.json"
           ' /tmp/hf-receipt.json >/dev/null
 
-      - name: Reject result URI and selected image binding drift
+      - name: Reject non-smoke receipt, result URI and selected image binding drift
         shell: bash
         run: |
           set -euo pipefail
@@ -195,6 +206,13 @@ jobs:
             HF_JOBS_RESULT=success
             COMPLETED_AT=2026-08-18T12:01:00Z
           )
+
+          if env "${common_env[@]}" SUITE=parity \
+            cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+              receipt --receipt /tmp/bad-suite.json --dispatch-body /tmp/bad-suite-dispatch.json; then
+            echo 'non-smoke HF Jobs receipt unexpectedly accepted' >&2
+            exit 1
+          fi
 
           if env "${common_env[@]}" \
             HF_JOBS_RESULT_URI=hf://buckets/owner/source-bucket/runs/hf-jobs/candidate-000123/wrong/result.json \
