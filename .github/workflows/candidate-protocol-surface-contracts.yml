@@ -121,17 +121,23 @@ jobs:
             echo 'legacy entrypoint unexpectedly bypasses bounded workflow dispatch helper' >&2
             exit 1
           fi
-      - name: Require synthetic chain to cover execution-scoped acknowledgement
+      - name: Require synthetic chain to cover Rust completion and portable acknowledgement
         shell: bash
         run: |
           set -euo pipefail
           e2e=.github/workflows/candidate-protocol-synthetic-e2e.yml
-          grep -F 'build-candidate-completion-receipt.py' "$e2e"
+          grep -F 'dtolnay/rust-toolchain@stable' "$e2e"
+          grep -F 'asr-candidate-protocol-build --' "$e2e"
+          grep -F 'receipt \' "$e2e"
           grep -F 'build-candidate-completion-ack.py' "$e2e"
           grep -F 'build-candidate-request-timeline.py' "$e2e"
           grep -F -- '--request-execution-id gw-1001-1' "$e2e"
           grep -F 'request_execution_id /tmp/timeline.json)" = gw-1001-1' "$e2e"
           grep -F 'current_state /tmp/timeline.json)" = acknowledged' "$e2e"
+          if grep -F 'build-candidate-completion-receipt.py' "$e2e"; then
+            echo 'synthetic E2E unexpectedly reverted completion construction to Python' >&2
+            exit 1
+          fi
       - name: Require remote storage proof to stay manual-only
         shell: bash
         run: |
