@@ -18,6 +18,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--existing", required=True)
     parser.add_argument("--incoming", required=True)
+    parser.add_argument("--require-execution-match", action="store_true")
     args = parser.parse_args()
 
     existing = load(args.existing)
@@ -25,6 +26,11 @@ def main() -> int:
     for field in ("request_id", "state"):
         if existing.get(field) != incoming.get(field):
             raise SystemExit(f"materialized lifecycle {field} mismatch")
+    if args.require_execution_match:
+        existing_execution = existing.get("request_execution_id")
+        incoming_execution = incoming.get("request_execution_id")
+        if not existing_execution or existing_execution != incoming_execution:
+            raise SystemExit("materialized lifecycle request_execution_id mismatch")
 
     try:
         existing_time = parse_time(existing.get("updated_at"))
