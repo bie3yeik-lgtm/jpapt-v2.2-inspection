@@ -27,19 +27,18 @@ jobs:
           ref: agent/protocol-production-switch
       - name: Apply focused production patch
         run: python scripts/ci/protocol-production-switch.py
-      - name: Commit patched production workflows to validation branch
+      - name: Materialize local commit and report object IDs
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
-          if git diff --quiet; then
-            echo 'No patch changes found.'
-            exit 0
-          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             .github/workflows/candidate-package-evaluate-v2.yml \
             .github/workflows/candidate-request-gateway.yml
           git commit -m 'refactor: use Rust candidate protocol builders'
-          git push origin HEAD:agent/protocol-production-switch
+          echo "LOCAL_COMMIT=$(git rev-parse HEAD)"
+          git ls-tree HEAD \
+            .github/workflows/candidate-package-evaluate-v2.yml \
+            .github/workflows/candidate-request-gateway.yml
