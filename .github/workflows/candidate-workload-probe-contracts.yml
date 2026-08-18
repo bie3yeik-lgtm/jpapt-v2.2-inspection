@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - .github/workflows/candidate-workload-probe-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/measure-candidate-bucket-size.py
       - scripts/ci/estimate-candidate-runtime.py
       - rust/crates/asr-hf/**
@@ -12,6 +14,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/candidate-workload-probe-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/measure-candidate-bucket-size.py
       - scripts/ci/estimate-candidate-runtime.py
       - rust/crates/asr-hf/**
@@ -48,6 +52,22 @@ jobs:
           python -m py_compile \
             scripts/ci/measure-candidate-bucket-size.py \
             scripts/ci/estimate-candidate-runtime.py
+      - name: Pin Gateway and V2 automatic workload wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '"/tmp/request.json"' scripts/ci/estimate-candidate-runtime.py
+          grep -F '"/tmp/source.json"' scripts/ci/estimate-candidate-runtime.py
+          for workflow in \
+            .github/workflows/candidate-request-gateway.yml \
+            .github/workflows/candidate-package-evaluate-v2.yml; do
+            grep -F -- '--output /tmp/request.json' "$workflow"
+            grep -F '/tmp/source.json' "$workflow"
+            grep -F 'estimate-candidate-runtime.py' "$workflow"
+            grep -F 'HF_BUCKET:' "$workflow"
+            grep -F 'dtolnay/rust-toolchain@stable' "$workflow"
+            grep -F 'huggingface_hub>=1.0,<2' "$workflow"
+          done
       - name: Verify candidate file selection and resolver parsing
         run: |
           python - <<'PY'
