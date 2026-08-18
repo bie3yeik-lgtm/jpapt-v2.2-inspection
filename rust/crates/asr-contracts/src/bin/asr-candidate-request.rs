@@ -212,7 +212,14 @@ fn resolve(
     }
 
     let mut candidate_id = string(inputs, "candidate_id")?;
-    if candidate_id.is_empty() {
+    let explicit_latest = candidate_id == "latest";
+    if explicit_latest {
+        // Downstream Bucket resolution represents latest as an omitted concrete ID.
+        // Preserve the caller's intent by preventing a configured concrete default
+        // from replacing an explicit latest request.
+        candidate_id.clear();
+    }
+    if candidate_id.is_empty() && !explicit_latest {
         let configured = nested_string(config, "candidate", "default");
         if !configured.is_empty() && configured != "latest" {
             candidate_id = configured;
@@ -328,6 +335,22 @@ mod tests {
         assert_eq!(resolved.dataset_source, "bucket");
         assert_eq!(resolved.image, "ghcr.io/registry-owner/repo");
         assert_eq!(resolved.receipt_repository, "owner/repo");
+    }
+
+    #[test]
+    fn explicit_latest_overrides_configured_candidate_default() {
+        let inputs = object(
+            r#"{"request_id":"req-latest","request_execution_id":"gw-103-1","source_repository":"owner/repo","candidate_id":"latest"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let config = object(
+            r#"{"candidate":{"default":"candidate-000777"}}"#,
+            "config",
+        )
+        .unwrap();
+        let resolved = resolve(&inputs, &config, "hf-user", "registry-owner").unwrap();
+        assert_eq!(resolved.candidate_id, "");
     }
 
     #[test]
