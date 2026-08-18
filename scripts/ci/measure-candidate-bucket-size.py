@@ -62,6 +62,70 @@ def parse_resolver_output(text: str) -> dict[str, str]:
     }
 
 
+def load_object(path: str, label: str) -> dict:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"{label} is invalid: {error}") from error
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} must be a JSON object")
+    return value
+
+
+def resolve_request_candidate(
+    request_json: str,
+    config_json: str | None,
+    *,
+    bucket: str,
+) -> str:
+    request = load_object(request_json, "request_json")
+    config = load_object(config_json, "config_json") if config_json else {}
+
+    # Bucket routing has already been resolved by Gateway/V2. Pin that concrete
+    # value here so candidate selection can be replayed without depending on the
+    # original namespace inference environment.
+    request["hf_bucket"] = bucket
+    command = [
+        "cargo",
+        "run",
+        "--quiet",
+        "--locked",
+        "-p",
+        "asr-contracts",
+        "--bin",
+        "asr-candidate-request",
+        "--",
+        "resolve",
+        "--inputs-json",
+        json.dumps(request, ensure_ascii=False, separators=(",", ":")),
+        "--config-json",
+        json.dumps(config, ensure_ascii=False, separators=(",", ":")),
+        "--default-namespace",
+        "workload-probe",
+        "--registry-owner",
+        "workload-probe",
+    ]
+    completed = subprocess.run(
+        command,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        resolved = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("request resolver returned invalid JSON") from error
+    if not isinstance(resolved, dict):
+        raise ValueError("request resolver returned non-object JSON")
+    candidate_id = resolved.get("candidate_id")
+    if not isinstance(candidate_id, str):
+        raise ValueError("request resolver returned invalid candidate_id")
+    if candidate_id and not CANDIDATE_RE.fullmatch(candidate_id):
+        raise ValueError("request resolver returned invalid candidate_id")
+    return candidate_id
+
+
 def resolve_candidate(
     listing: Path,
     *,
@@ -144,6 +208,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--candidate-id", default="")
+    parser.add_argument("--request-json")
+    parser.add_argument("--config-json")
     parser.add_argument("--runtime-variant", default="")
     parser.add_argument("--github-output")
     parser.add_argument("--allow-unavailable", action="store_true")
@@ -153,6 +219,22 @@ def main() -> int:
         raise SystemExit("bucket must use namespace/name")
     if args.candidate_id not in {"", "latest"} and not CANDIDATE_RE.fullmatch(args.candidate_id):
         raise SystemExit("candidate_id must be candidate-NNNNNN, latest, or blank")
+    if args.candidate_id and args.request_json:
+        raise SystemExit("--candidate-id and --request-json are mutually exclusive")
+    if args.config_json and not args.request_json:
+        raise SystemExit("--config-json requires --request-json")
+
+    candidate_id = args.candidate_id
+    if args.request_json:
+        try:
+            candidate_id = resolve_request_candidate(
+                args.request_json,
+                args.config_json,
+                bucket=args.bucket,
+            )
+        except subprocess.CalledProcessError as error:
+            message = error.stderr.strip() or str(error)
+            raise SystemExit(f"request candidate resolution failed: {message}") from error
 
     token = os.environ.get("HF_TOKEN") or None
     try:
@@ -195,7 +277,7 @@ def main() -> int:
         try:
             resolved = resolve_candidate(
                 listing,
-                candidate_id=args.candidate_id,
+                candidate_id=candidate_id,
                 runtime_variant=args.runtime_variant,
             )
         except subprocess.CalledProcessError as error:
