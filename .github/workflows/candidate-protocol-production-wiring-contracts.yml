@@ -7,6 +7,7 @@ on:
       - .github/workflows/candidate-protocol-production-wiring-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-request-lifecycle-observer.yml
       - rust/crates/asr-contracts/**
       - Cargo.toml
       - Cargo.lock
@@ -15,6 +16,7 @@ on:
       - .github/workflows/candidate-protocol-production-wiring-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-request-lifecycle-observer.yml
       - rust/crates/asr-contracts/**
       - Cargo.toml
       - Cargo.lock
@@ -53,15 +55,18 @@ jobs:
           actionlint -color -shellcheck= \
             .github/workflows/candidate-protocol-production-wiring-contracts.yml \
             .github/workflows/candidate-package-evaluate-v2.yml \
-            .github/workflows/candidate-request-gateway.yml
+            .github/workflows/candidate-request-gateway.yml \
+            .github/workflows/candidate-request-lifecycle-observer.yml
 
           python - <<'PY'
           from pathlib import Path
 
           builder = "cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build --"
+          authority = "cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol --"
 
           v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
           gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
+          observer = Path('.github/workflows/candidate-request-lifecycle-observer.yml').read_text(encoding='utf-8')
 
           completion = v2[v2.index('\n  completion:'):]
           rejection = gateway[gateway.index('\n  reject:'):]
@@ -81,6 +86,14 @@ jobs:
           assert 'python scripts/ci/build-candidate-request-rejection.py' not in gateway
           assert "jq -er '.request_id'" in rejection
           assert "jq -er '.receipt_repository'" in rejection
+
+          assert '- uses: dtolnay/rust-toolchain@stable' in observer
+          assert authority in observer
+          assert 'receipt-validate "$receipt"' in observer
+          assert 'receipt-sha "$receipt"' in observer
+          assert "jq -er '.request_id'" in observer
+          assert 'python scripts/ci/build-candidate-completion-receipt.py' not in observer
+          assert 'python scripts/ci/build-candidate-completion-ack.py' not in observer
           PY
 
       - name: Build and validate dry-run completion receipt with production Rust builder
