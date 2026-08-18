@@ -8,6 +8,8 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - docs/candidate-protocol-runtime-boundary.md
+      - docs/candidate-request-gateway.md
       - rust/crates/asr-contracts/**
       - Cargo.toml
       - Cargo.lock
@@ -17,6 +19,8 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - docs/candidate-protocol-runtime-boundary.md
+      - docs/candidate-request-gateway.md
       - rust/crates/asr-contracts/**
       - Cargo.toml
       - Cargo.lock
@@ -67,6 +71,8 @@ jobs:
           v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
           gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
           observer = Path('.github/workflows/candidate-request-lifecycle-observer.yml').read_text(encoding='utf-8')
+          runtime_doc = Path('docs/candidate-protocol-runtime-boundary.md').read_text(encoding='utf-8')
+          gateway_doc = Path('docs/candidate-request-gateway.md').read_text(encoding='utf-8')
 
           completion = v2[v2.index('\n  completion:'):]
           rejection = gateway[gateway.index('\n  reject:'):]
@@ -94,6 +100,32 @@ jobs:
           assert "jq -er '.request_id'" in observer
           assert 'python scripts/ci/build-candidate-completion-receipt.py' not in observer
           assert 'python scripts/ci/build-candidate-completion-ack.py' not in observer
+
+          # Documentation is part of the production contract: the orchestrator
+          # authority must not silently be described as Python-only again.
+          for workflow_name in (
+              'candidate-request-gateway.yml',
+              'candidate-package-evaluate-v2.yml',
+              'candidate-request-lifecycle-observer.yml',
+              'candidate-completion-ack.yml',
+              'candidate-completion-reconcile.yml',
+              'candidate-lifecycle-persist.yml',
+          ):
+              assert workflow_name in runtime_doc, workflow_name
+          assert 'asr-candidate-protocol-build.rs' in runtime_doc
+          assert 'rejection-validate' in runtime_doc
+          assert 'receipt-validate' in runtime_doc
+          assert 'ack-validate' in runtime_doc
+          assert 'ack-binding' in runtime_doc
+          assert 'portable Python' in runtime_doc
+
+          assert 'The orchestrator production builder and validator are Rust authorities:' in gateway_doc
+          assert 'asr-candidate-protocol-build.rs' in gateway_doc
+          assert 'receipt-validate' in gateway_doc
+          assert 'receipt-sha' in gateway_doc
+          assert 'portable compatibility/parity implementation' in gateway_doc
+          stale = 'and the builder/validator is:\n\n```text\nscripts/ci/build-candidate-completion-receipt.py'
+          assert stale not in gateway_doc
           PY
 
       - name: Build and validate dry-run completion receipt with production Rust builder
