@@ -6,7 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const SMOKE_SUITE: &str = "smoke";
+const SMOKE_TIMEOUT: &str = "30m";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,8 +36,10 @@ struct HfJobPlan {
     dataset_dir: String,
     output_dir: String,
     result_uri: String,
+    timeout: String,
     run_id: u64,
     run_attempt: u64,
+    labels: Vec<String>,
     mounts: Vec<HfJobMount>,
     hf_args: Vec<String>,
 }
@@ -70,13 +74,14 @@ fn run() -> Result<(), String> {
     match command.as_str() {
         "plan" => plan_command(flags),
         "validate" => validate_command(flags),
+        "preflight" => preflight_command(flags),
         "run" => run_command(flags),
         _ => Err(usage()),
     }
 }
 
 fn usage() -> String {
-    "usage: asr-hf-job plan --built-image REF [--image-override REF] --candidate-id candidate-NNNNNN --suite SUITE --environment linux-cpu|linux-cuda --provider PROVIDER --hf-bucket namespace/name --dataset-source bucket|repository|custom [--dataset-id namespace/name] --flavor FLAVOR --run-id N --run-attempt N --output-json PATH [--github-output PATH] | validate --plan PATH | run --plan PATH".to_owned()
+    "usage: asr-hf-job plan --built-image REF [--image-override REF] --candidate-id candidate-NNNNNN --suite smoke --environment linux-cpu|linux-cuda --provider PROVIDER --hf-bucket namespace/name --dataset-source bucket|repository|custom [--dataset-id namespace/name] --flavor FLAVOR --run-id N --run-attempt N --output-json PATH [--github-output PATH] | validate --plan PATH | preflight --plan PATH | run --plan PATH".to_owned()
 }
 
 fn parse_flags(args: Vec<String>) -> Result<BTreeMap<String, String>, String> {
@@ -152,13 +157,14 @@ fn plan_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
 
     if !github_output.is_empty() {
         let text = format!(
-            "job_name={}\nimage={}\nimage_digest={}\nresult_uri={}\noutput_dir={}\ndataset_dir={}\nplan_sha256={}\n",
+            "job_name={}\nimage={}\nimage_digest={}\nresult_uri={}\noutput_dir={}\ndataset_dir={}\ntimeout={}\nplan_sha256={}\n",
             plan.job_name,
             plan.image,
             plan.image_digest,
             plan.result_uri,
             plan.output_dir,
             plan.dataset_dir,
+            plan.timeout,
             digest
         );
         fs::write(&github_output, text).map_err(|error| format!("{github_output}: {error}"))?;
@@ -180,21 +186,27 @@ fn validate_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+fn preflight_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
+    let plan_path = PathBuf::from(required(&mut flags, "--plan")?);
+    no_flags(flags)?;
+    let plan = read_plan(&plan_path)?;
+    validate_plan(&plan)?;
+    require_hf_token()?;
+    preflight_hardware(&plan)?;
+    println!("{}", plan.flavor);
+    Ok(())
+}
+
 fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let plan_path = PathBuf::from(required(&mut flags, "--plan")?);
     no_flags(flags)?;
     let plan = read_plan(&plan_path)?;
     validate_plan(&plan)?;
-    if env::var("HF_TOKEN")
-        .ok()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
-        return Err("HF_TOKEN is required before invoking Hugging Face Jobs".to_owned());
-    }
+    require_hf_token()?;
+    preflight_hardware(&plan)?;
 
     eprintln!(
-        "[asr-hf-job] invoking hf with validated plan sha256={} argv={}",
+        "[asr-hf-job] invoking hf with validated smoke plan sha256={} argv={}",
         plan_sha256(&plan)?,
         serde_json::to_string(&plan.hf_args).map_err(|error| error.to_string())?
     );
@@ -208,9 +220,57 @@ fn run_command(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+fn require_hf_token() -> Result<(), String> {
+    if env::var("HF_TOKEN")
+        .ok()
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
+    {
+        return Err("HF_TOKEN is required before invoking Hugging Face Jobs".to_owned());
+    }
+    Ok(())
+}
+
+fn preflight_hardware(plan: &HfJobPlan) -> Result<(), String> {
+    let output = Command::new("hf")
+        .args(["jobs", "hardware"])
+        .output()
+        .map_err(|error| format!("failed to execute hf jobs hardware: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "hf jobs hardware failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("hf jobs hardware returned non-UTF-8 output: {error}"))?;
+    if !hardware_output_has_flavor(&stdout, &plan.flavor) {
+        return Err(format!(
+            "requested HF Jobs flavor {:?} is not present in hf jobs hardware output",
+            plan.flavor
+        ));
+    }
+    eprintln!(
+        "[asr-hf-job] hardware preflight accepted flavor={}",
+        plan.flavor
+    );
+    Ok(())
+}
+
+fn hardware_output_has_flavor(output: &str, flavor: &str) -> bool {
+    output
+        .lines()
+        .flat_map(|line| line.split_whitespace())
+        .map(|token| token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !".-_".contains(ch)))
+        .any(|token| token == flavor)
+}
+
 fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
     validate_candidate_id(&input.candidate_id)?;
-    validate_choice("suite", &input.suite, &["probe", "smoke", "parity"])?;
+    if input.suite != SMOKE_SUITE {
+        return Err("HF Jobs execution is smoke-only; suite must be smoke".to_owned());
+    }
     validate_choice(
         "dataset_source",
         &input.dataset_source,
@@ -246,7 +306,7 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
     };
     let image_digest = image_digest(&image)?;
 
-    let suffix = format!("{}-{}-{}", input.suite, input.run_id, input.run_attempt);
+    let suffix = format!("{}-{}-{}", SMOKE_SUITE, input.run_id, input.run_attempt);
     let output_dir = format!(
         "/jpapt-output/runs/hf-jobs/{}/{}",
         input.candidate_id, suffix
@@ -257,9 +317,15 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
     );
     let job_name = format!(
         "jpapt-{}-{}-{}-{}",
-        input.candidate_id, input.suite, input.run_id, input.run_attempt
+        input.candidate_id, SMOKE_SUITE, input.run_id, input.run_attempt
     );
     validate_job_name(&job_name)?;
+
+    let labels = vec![
+        "jpapt-purpose=smoke-validation".to_owned(),
+        format!("jpapt-candidate={}", input.candidate_id),
+        format!("jpapt-run={}-{}", input.run_id, input.run_attempt),
+    ];
 
     let mut mounts = vec![HfJobMount {
         source: format!("hf://buckets/{}", input.hf_bucket),
@@ -284,7 +350,7 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
         image,
         image_digest,
         candidate_id: input.candidate_id,
-        suite: input.suite,
+        suite: SMOKE_SUITE.to_owned(),
         environment: input.environment,
         provider: input.provider,
         hf_bucket: input.hf_bucket,
@@ -293,8 +359,10 @@ fn build_plan(input: PlanInput) -> Result<HfJobPlan, String> {
         dataset_dir,
         output_dir,
         result_uri,
+        timeout: SMOKE_TIMEOUT.to_owned(),
         run_id: input.run_id,
         run_attempt: input.run_attempt,
+        labels,
         mounts,
         hf_args: Vec::new(),
     };
@@ -310,7 +378,13 @@ fn expected_hf_args(plan: &HfJobPlan) -> Vec<String> {
         plan.flavor.clone(),
         "--name".to_owned(),
         plan.job_name.clone(),
+        "--timeout".to_owned(),
+        plan.timeout.clone(),
     ];
+    for label in &plan.labels {
+        args.push("--label".to_owned());
+        args.push(label.clone());
+    }
     for mount in &plan.mounts {
         args.push("-v".to_owned());
         args.push(format!("{}:{}:{}", mount.source, mount.target, mount.mode));
@@ -337,7 +411,9 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
         ));
     }
     validate_candidate_id(&plan.candidate_id)?;
-    validate_choice("suite", &plan.suite, &["probe", "smoke", "parity"])?;
+    if plan.suite != SMOKE_SUITE {
+        return Err("HF Jobs execution is smoke-only; persisted suite must be smoke".to_owned());
+    }
     validate_choice(
         "dataset_source",
         &plan.dataset_source,
@@ -349,6 +425,11 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
         return Err("image_digest does not match the selected immutable image".to_owned());
     }
     validate_job_name(&plan.job_name)?;
+    if plan.timeout != SMOKE_TIMEOUT {
+        return Err(format!(
+            "HF Jobs smoke timeout must be canonical {SMOKE_TIMEOUT}"
+        ));
+    }
     if plan.run_id == 0 || plan.run_attempt == 0 {
         return Err("run_id and run_attempt must be positive".to_owned());
     }
@@ -372,17 +453,26 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
 
     let expected_output_dir = format!(
         "/jpapt-output/runs/hf-jobs/{}/{}-{}-{}",
-        plan.candidate_id, plan.suite, plan.run_id, plan.run_attempt
+        plan.candidate_id, SMOKE_SUITE, plan.run_id, plan.run_attempt
     );
     if plan.output_dir != expected_output_dir {
-        return Err("output_dir does not match canonical HF Jobs layout".to_owned());
+        return Err("output_dir does not match canonical HF Jobs smoke layout".to_owned());
     }
     let expected_result_uri = format!(
         "hf://buckets/{}/runs/hf-jobs/{}/{}-{}-{}/result.json",
-        plan.hf_bucket, plan.candidate_id, plan.suite, plan.run_id, plan.run_attempt
+        plan.hf_bucket, plan.candidate_id, SMOKE_SUITE, plan.run_id, plan.run_attempt
     );
     if plan.result_uri != expected_result_uri {
-        return Err("result_uri does not match canonical HF Jobs layout".to_owned());
+        return Err("result_uri does not match canonical HF Jobs smoke layout".to_owned());
+    }
+
+    let expected_labels = vec![
+        "jpapt-purpose=smoke-validation".to_owned(),
+        format!("jpapt-candidate={}", plan.candidate_id),
+        format!("jpapt-run={}-{}", plan.run_id, plan.run_attempt),
+    ];
+    if plan.labels != expected_labels {
+        return Err("labels do not match canonical HF Jobs smoke labels".to_owned());
     }
 
     let expected_mounts = if plan.dataset_source == "bucket" {
@@ -409,7 +499,7 @@ fn validate_plan(plan: &HfJobPlan) -> Result<(), String> {
         return Err("mount set does not match canonical HF Jobs routing".to_owned());
     }
     if plan.hf_args != expected_hf_args(plan) {
-        return Err("hf_args does not match canonical HF Jobs command".to_owned());
+        return Err("hf_args does not match canonical HF Jobs smoke command".to_owned());
     }
     Ok(())
 }
@@ -529,13 +619,12 @@ mod tests {
         format!("ghcr.io/owner/package@sha256:{}", "a".repeat(64))
     }
 
-    #[test]
-    fn builds_bucket_cpu_plan() {
-        let plan = build_plan(PlanInput {
+    fn smoke_input() -> PlanInput {
+        PlanInput {
             built_image: digest_image(),
             image_override: String::new(),
             candidate_id: "candidate-000123".to_owned(),
-            suite: "probe".to_owned(),
+            suite: SMOKE_SUITE.to_owned(),
             environment: "linux-cpu".to_owned(),
             provider: "CPUExecutionProvider".to_owned(),
             hf_bucket: "owner/project-bucket".to_owned(),
@@ -544,30 +633,38 @@ mod tests {
             flavor: "cpu-basic".to_owned(),
             run_id: 9001,
             run_attempt: 2,
-        })
-        .unwrap();
+        }
+    }
+
+    #[test]
+    fn builds_bucket_cpu_smoke_plan() {
+        let plan = build_plan(smoke_input()).unwrap();
         validate_plan(&plan).unwrap();
+        assert_eq!(plan.schema_version, 2);
+        assert_eq!(plan.suite, SMOKE_SUITE);
+        assert_eq!(plan.timeout, SMOKE_TIMEOUT);
         assert_eq!(plan.mounts.len(), 1);
         assert_eq!(plan.dataset_dir, "/jpapt-output/datasets");
         assert_eq!(plan.image_digest, format!("sha256:{}", "a".repeat(64)));
         assert_eq!(
             plan.result_uri,
-            "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/probe-9001-2/result.json"
+            "hf://buckets/owner/project-bucket/runs/hf-jobs/candidate-000123/smoke-9001-2/result.json"
         );
-        assert_eq!(plan.hf_args[0..2], ["jobs", "run"]);
-        assert_eq!(
-            plan.hf_args.last().unwrap(),
-            &format!("{}/result.json", plan.output_dir)
+        assert!(plan.hf_args.windows(2).any(|pair| pair == ["--timeout", "30m"]));
+        assert!(
+            plan.hf_args
+                .windows(2)
+                .any(|pair| pair == ["--label", "jpapt-purpose=smoke-validation"])
         );
     }
 
     #[test]
-    fn builds_custom_cuda_plan_with_dataset_mount() {
+    fn builds_custom_cuda_smoke_plan_with_dataset_mount() {
         let plan = build_plan(PlanInput {
             built_image: digest_image(),
             image_override: format!("registry.example.com/model@sha256:{}", "b".repeat(64)),
             candidate_id: "candidate-000999".to_owned(),
-            suite: "smoke".to_owned(),
+            suite: SMOKE_SUITE.to_owned(),
             environment: "linux-cuda".to_owned(),
             provider: "CUDAExecutionProvider".to_owned(),
             hf_bucket: "owner/project-bucket".to_owned(),
@@ -590,62 +687,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_probe_and_parity_plans() {
+        for suite in ["probe", "parity"] {
+            let mut input = smoke_input();
+            input.suite = suite.to_owned();
+            let error = build_plan(input).unwrap_err();
+            assert!(error.contains("smoke-only"));
+        }
+    }
+
+    #[test]
     fn rejects_mutable_image_tag() {
-        let error = build_plan(PlanInput {
-            built_image: "ghcr.io/owner/package:latest".to_owned(),
-            image_override: String::new(),
-            candidate_id: "candidate-000001".to_owned(),
-            suite: "probe".to_owned(),
-            environment: "linux-cpu".to_owned(),
-            provider: "CPUExecutionProvider".to_owned(),
-            hf_bucket: "owner/project-bucket".to_owned(),
-            dataset_source: "bucket".to_owned(),
-            dataset_id: String::new(),
-            flavor: "cpu-basic".to_owned(),
-            run_id: 1,
-            run_attempt: 1,
-        })
-        .unwrap_err();
+        let mut input = smoke_input();
+        input.built_image = "ghcr.io/owner/package:latest".to_owned();
+        let error = build_plan(input).unwrap_err();
         assert!(error.contains("digest-pinned"));
     }
 
     #[test]
     fn rejects_environment_provider_mismatch() {
-        let error = build_plan(PlanInput {
-            built_image: digest_image(),
-            image_override: String::new(),
-            candidate_id: "candidate-000001".to_owned(),
-            suite: "probe".to_owned(),
-            environment: "linux-cuda".to_owned(),
-            provider: "CPUExecutionProvider".to_owned(),
-            hf_bucket: "owner/project-bucket".to_owned(),
-            dataset_source: "bucket".to_owned(),
-            dataset_id: String::new(),
-            flavor: "cpu-basic".to_owned(),
-            run_id: 1,
-            run_attempt: 1,
-        })
-        .unwrap_err();
+        let mut input = smoke_input();
+        input.environment = "linux-cuda".to_owned();
+        let error = build_plan(input).unwrap_err();
         assert!(error.contains("CUDAExecutionProvider"));
     }
 
     #[test]
     fn rejects_tampered_argv() {
-        let mut plan = build_plan(PlanInput {
-            built_image: digest_image(),
-            image_override: String::new(),
-            candidate_id: "candidate-000001".to_owned(),
-            suite: "probe".to_owned(),
-            environment: "linux-cpu".to_owned(),
-            provider: "CPUExecutionProvider".to_owned(),
-            hf_bucket: "owner/project-bucket".to_owned(),
-            dataset_source: "bucket".to_owned(),
-            dataset_id: String::new(),
-            flavor: "cpu-basic".to_owned(),
-            run_id: 1,
-            run_attempt: 1,
-        })
-        .unwrap();
+        let mut plan = build_plan(smoke_input()).unwrap();
         plan.hf_args.push("--unexpected".to_owned());
         let error = validate_plan(&plan).unwrap_err();
         assert!(error.contains("hf_args"));
@@ -653,23 +722,29 @@ mod tests {
 
     #[test]
     fn rejects_tampered_image_digest() {
-        let mut plan = build_plan(PlanInput {
-            built_image: digest_image(),
-            image_override: String::new(),
-            candidate_id: "candidate-000001".to_owned(),
-            suite: "probe".to_owned(),
-            environment: "linux-cpu".to_owned(),
-            provider: "CPUExecutionProvider".to_owned(),
-            hf_bucket: "owner/project-bucket".to_owned(),
-            dataset_source: "bucket".to_owned(),
-            dataset_id: String::new(),
-            flavor: "cpu-basic".to_owned(),
-            run_id: 1,
-            run_attempt: 1,
-        })
-        .unwrap();
+        let mut plan = build_plan(smoke_input()).unwrap();
         plan.image_digest = format!("sha256:{}", "f".repeat(64));
         let error = validate_plan(&plan).unwrap_err();
         assert!(error.contains("image_digest"));
+    }
+
+    #[test]
+    fn rejects_tampered_timeout_and_suite() {
+        let mut plan = build_plan(smoke_input()).unwrap();
+        plan.timeout = "2h".to_owned();
+        assert!(validate_plan(&plan).unwrap_err().contains("timeout"));
+
+        let mut plan = build_plan(smoke_input()).unwrap();
+        plan.suite = "parity".to_owned();
+        assert!(validate_plan(&plan).unwrap_err().contains("smoke-only"));
+    }
+
+    #[test]
+    fn matches_flavor_as_exact_hardware_token() {
+        let output = "FLAVOR       CPU   GPU\ncpu-basic    2     -\na10g-small   4     A10G\n";
+        assert!(hardware_output_has_flavor(output, "cpu-basic"));
+        assert!(hardware_output_has_flavor(output, "a10g-small"));
+        assert!(!hardware_output_has_flavor(output, "a10g"));
+        assert!(!hardware_output_has_flavor(output, "h200"));
     }
 }
