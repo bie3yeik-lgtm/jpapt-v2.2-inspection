@@ -37,6 +37,12 @@ if ! jq -e '
   exit 2
 fi
 
+ref="$(jq -r '.ref' "$body_file")"
+if [[ "$ref" =~ ^[0-9A-Fa-f]{40}$ || "$ref" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+  echo "ERROR: workflow dispatch ref must be a branch or tag name, not a raw commit SHA: $ref" >&2
+  exit 2
+fi
+
 attempt=1
 while true; do
   if gh api \
@@ -45,12 +51,12 @@ while true; do
     -H 'X-GitHub-Api-Version: 2022-11-28' \
     "/repos/$repository/actions/workflows/$workflow/dispatches" \
     --input "$body_file"; then
-    echo "workflow_dispatch accepted: repository=$repository workflow=$workflow attempt=$attempt"
+    echo "workflow_dispatch accepted: repository=$repository workflow=$workflow ref=$ref attempt=$attempt"
     exit 0
   fi
 
   if (( attempt >= max_attempts )); then
-    echo "ERROR: workflow_dispatch failed after $attempt attempts: repository=$repository workflow=$workflow" >&2
+    echo "ERROR: workflow_dispatch failed after $attempt attempts: repository=$repository workflow=$workflow ref=$ref" >&2
     exit 1
   fi
 
