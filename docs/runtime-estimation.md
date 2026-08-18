@@ -14,7 +14,7 @@ Machine-readable output contract:
 
 ```text
 contracts/candidate-runtime-estimate.schema.json
-CandidateRuntimeEstimateV4
+CandidateRuntimeEstimateV5
 ```
 
 A plan uses one of two methods:
@@ -48,61 +48,104 @@ Historical samples are selected in this order:
 
 The selected cohort is reported in the estimate object. A smaller exact cohort does not override a sufficiently populated broader cohort.
 
-## Metadata-only target candidate measurement
+## Metadata-only workload measurement
 
-The estimator can obtain the concrete target candidate workload without downloading candidate payloads.
+Runtime planning can measure both the candidate and selected dataset source without downloading their payloads.
 
-Boundary helper:
+Boundary helpers:
 
 ```text
 scripts/ci/measure-candidate-bucket-size.py
+scripts/ci/measure-dataset-source-size.py
+scripts/ci/measure-runtime-workload.py
 ```
 
-The helper:
+Machine-readable boundaries:
+
+```text
+contracts/candidate-workload-probe.schema.json
+contracts/dataset-workload-probe.schema.json
+contracts/runtime-workload-evidence.schema.json
+```
+
+### Candidate
+
+The candidate helper:
 
 1. lists only HF Bucket metadata under `candidates/`;
-2. replays the normalized request and source config through the Rust `asr-candidate-request` contract to obtain candidate intent;
+2. replays the normalized request and source config through Rust `asr-candidate-request` to obtain candidate intent;
 3. reuses Rust `asr-hf resolve-candidate-location` to select the canonical or historical candidate location;
 4. sums file sizes supplied by Bucket metadata for the selected candidate.
 
 Python therefore owns only the Hugging Face API boundary. Candidate/default/latest/location semantics remain Rust-owned.
 
-In Candidate Request Gateway and Candidate Package Evaluate V2, the estimate step already runs in the same job that created:
+### Dataset
+
+The dataset helper mirrors what `run-candidate-package-evaluation.sh` materializes:
+
+```text
+bucket source      -> <HF bucket>/datasets recursively
+repository source  -> complete HF dataset repository tree
+custom source      -> complete HF dataset repository tree
+```
+
+For Bucket sources it uses Bucket file metadata. For repository/custom sources it uses dataset repository file metadata. The helper sums metadata sizes only; it does not download dataset payloads.
+
+This makes `target_dataset_bytes` directly comparable with positive historical `dataset_bytes` produced by the evaluation runner for the same dataset identity.
+
+### Composed evidence
+
+`measure-runtime-workload.py` combines candidate and dataset evidence into `RuntimeWorkloadEvidenceV1`. `fully_available=true` means both measurements were available; partial metadata failure remains visible without pretending that the missing side is zero bytes.
+
+## Automatic planning integration
+
+In Candidate Request Gateway and Candidate Package Evaluate V2, the estimate step runs inside GitHub Actions with:
 
 ```text
 /tmp/request.json
 /tmp/source.json
-```
-
-and exposes the resolved:
-
-```text
 HF_BUCKET
+DATASET_SOURCE
+DATASET_ID
 ```
 
-When `--target-candidate-bytes` is not supplied explicitly, the estimator detects these files and automatically invokes the metadata-only workload probe. No workflow-specific duplicate candidate-selection logic is required.
+The estimator therefore can invoke candidate and dataset metadata probes automatically. Outside GitHub Actions, automatic metadata probing is disabled unless `ENABLE_WORKLOAD_PROBE=true` is explicitly set. Explicit `--target-candidate-bytes` / `--target-dataset-bytes` values never require network access.
 
-If the HF metadata boundary is unavailable, workload measurement degrades to `workload_probe_method=unavailable` and normal historical/fallback runtime estimation continues. Structural request/candidate contract errors remain fail-closed in the workload helper itself.
+If the HF metadata boundary is unavailable, the affected workload measurement becomes `unavailable` and normal historical/fallback estimation continues. Structural request/candidate contract errors remain fail-closed at their owning boundary.
 
-## Estimate V4 workload fields
+## Estimate V5 workload fields
 
-The estimate records:
+Candidate evidence:
 
 ```text
 workload_probe_method
+workload_warning
 target_candidate_id
 target_candidate_bytes
 target_candidate_files
 target_candidate_legacy_layout
-workload_warning
-observed_dataset_bytes_p50
-observed_package_bytes_p50
 observed_candidate_bytes_p50
 candidate_size_ratio_p50
-size_scaling_applied
 ```
 
-`workload_probe_method` is one of:
+Dataset evidence:
+
+```text
+dataset_workload_probe_method
+dataset_workload_warning
+target_dataset_bytes
+target_dataset_files
+observed_dataset_bytes_p50
+dataset_size_ratio_p50
+```
+
+Additional historical package evidence remains:
+
+```text
+observed_package_bytes_p50
+```
+
+Both workload probe method fields are one of:
 
 ```text
 none
@@ -111,13 +154,14 @@ metadata-only
 unavailable
 ```
 
-`candidate_size_ratio_p50` is:
+Ratios are explanatory evidence:
 
 ```text
-target_candidate_bytes / observed_candidate_bytes_p50
+candidate_size_ratio_p50 = target_candidate_bytes / observed_candidate_bytes_p50
+dataset_size_ratio_p50   = target_dataset_bytes   / observed_dataset_bytes_p50
 ```
 
-and is only present when comparable historical candidate-byte evidence exists.
+and are present only when the corresponding target and historical measurements are positive and comparable.
 
 ## Size evidence is not runtime scaling
 
@@ -127,29 +171,30 @@ Current contract:
 size_scaling_applied = false
 ```
 
-The candidate-size ratio does **not** change `estimate_minutes`.
+Neither candidate nor dataset size ratio changes `estimate_minutes`.
 
-This is deliberate. Existing provenance records different workload measures depending on execution path:
+This is deliberate. Candidate provenance uses different workload measures depending on execution path:
 
 - native macOS CoreML / Windows DirectML evaluation records materialized `candidate_bytes`;
 - Linux OCI evaluation records pulled image `package_bytes` while `candidate_bytes` is zero;
 - HF Jobs historical provenance currently does not provide comparable positive candidate/package size measurements.
 
-A candidate directory byte total must not be treated as interchangeable with OCI image size. Therefore the estimator only computes the candidate ratio when historical `candidate_bytes` are positive and comparable.
+A candidate directory byte total must not be treated as interchangeable with OCI image size. The estimator therefore computes the candidate ratio only from positive historical `candidate_bytes`.
 
-Likewise, dataset source can be Bucket, repository, or custom. A single target dataset-size resolver is not yet authoritative for all three routing modes.
+Dataset bytes are more comparable because all local evaluation paths materialize the selected dataset source and record its total file bytes. Even so, a dataset-size ratio alone does not establish a linear relationship with runtime: decoding duration, audio duration, sample count, preprocessing, provider behavior, and caching can dominate byte size.
 
 ## Conditions for future size-aware prediction
 
-Do not introduce a multiplicative or linear size correction merely because a target/historical ratio is available.
+Do not introduce a multiplicative or linear correction merely because workload ratios are available.
 
 A future scaling model should first establish:
 
 1. comparable target and historical workload definitions for the selected executor/environment;
 2. enough samples in the relevant provenance cohort;
-3. an explicit fitted model or conservative bounded heuristic validated against held-out runs;
-4. error metrics demonstrating improvement over the current p90/fallback baseline;
-5. a source-controlled contract change that sets `size_scaling_applied=true` only when that model was actually used.
+3. audio-duration/sample-count evidence where appropriate, not only storage bytes;
+4. an explicit fitted model or conservative bounded heuristic validated against held-out runs;
+5. error metrics demonstrating improvement over the current p90/fallback baseline;
+6. a source-controlled contract change that permits `size_scaling_applied=true` only when that model was actually used.
 
 Until those conditions are met, workload sizes are explanatory evidence only.
 
@@ -163,7 +208,7 @@ latest
 blank
 ```
 
-Downstream Bucket resolution represents latest as an omitted concrete candidate ID. The Rust request contract therefore normalizes an explicit `latest` to the same blank/latest representation while preserving caller intent: an explicit `latest` must not be replaced by a configured concrete candidate default.
+Downstream Bucket resolution represents latest as an omitted concrete candidate ID. The Rust request contract normalizes an explicit `latest` to the same blank/latest representation while preserving caller intent: an explicit `latest` must not be replaced by a configured concrete candidate default.
 
 The workload probe replays that same Rust contract before resolving the actual Bucket candidate, so planning and evaluation use identical latest/default semantics.
 
@@ -173,17 +218,18 @@ Focused gates:
 
 ```text
 Candidate Workload Probe Contracts
+Dataset Workload Probe Contracts
 Candidate Runtime Estimate Contracts
 ```
 
 They verify:
 
-- canonical and historical candidate path size aggregation;
-- Rust resolver output validation;
-- metadata-only HF boundary behavior with a fake client;
+- canonical/historical candidate path size aggregation;
+- Rust resolver output validation and explicit `latest` semantics;
+- Bucket and dataset-repository metadata-only dataset measurement;
+- composed candidate + dataset workload evidence;
 - normalized request -> Rust request resolver -> Rust candidate location resolver wiring;
-- explicit `latest` overriding a configured concrete default;
-- estimator V4 schema validation;
-- explicit and automatic target candidate size evidence;
-- fallback runtime remaining unchanged when size evidence is present;
+- estimator V5 schema validation;
+- explicit and automatic candidate/dataset size evidence;
+- fallback runtime remaining unchanged when workload evidence is present;
 - `size_scaling_applied=false` as a schema invariant.
