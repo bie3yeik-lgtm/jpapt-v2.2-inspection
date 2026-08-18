@@ -19,6 +19,7 @@
 11. [workflows.md](./workflows.md) — config publish → candidate publish → evaluation → promotion の運用手順
 12. [json-reference.md](./json-reference.md) — 主要JSON/JSONL/Parquet contractの標準形
 13. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
+14. [request-execution-identity.md](./request-execution-identity.md) — `request_id` / `request_execution_id` / receipt hash の役割、retry分離、status/timeline query
 
 ## 現在の実装スタック
 
@@ -89,6 +90,7 @@ HF target TOMLへupstream/frameworkを重複記入しません。target IDはフ
 - config versionは4文書 (`reference.json`, `evaluation-schema.json`, `datasets-lock.json`, generated `runtime.json`)。
 - fetched configには `.ci/hf/config/resolved.json` が必要。
 - `run-context.json` schema v2のexecution identityに `null` を許さない。
+- candidate protocolでは `request_id` をlogical correlation、`request_execution_id` を1回のGateway/V2 executionとして分離し、同じ `request_id` のretryをexecution単位で永続化・照会する。
 - GHCR tagは実験identityではない。評価前にRepoDigestへ固定し、`metadata.ghcr.digest`へ記録する。
 - `HF_TARGETS_JSON` はGHCR CIでsource-controlled target routingと一致することを検査し、独立したruntime authorityにはしない。
 - `workflow_dispatch.inputs` をGitHub UI/manual inputの正本とし、repository dispatch用に別input catalogを作らない。
