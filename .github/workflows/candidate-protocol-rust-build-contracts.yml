@@ -1,0 +1,141 @@
+name: Candidate Protocol Rust Build Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-protocol-rust-build-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-protocol-rust-build-contracts.yml
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - scripts/ci/build-candidate-completion-receipt.py
+      - scripts/ci/build-candidate-completion-ack.py
+      - scripts/ci/build-candidate-request-rejection.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-rust-build-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Compare portable Python and Rust protocol builders
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Compile builder contracts
+        run: |
+          actionlint -color .github/workflows/candidate-protocol-rust-build-contracts.yml
+          cargo test --locked -p asr-contracts --bin asr-candidate-protocol
+          cargo test --locked -p asr-contracts --bin asr-candidate-protocol-build
+      - name: Compare completion receipt builders
+        shell: bash
+        env:
+          REQUEST_ID: rust-build-parity-001
+          REQUEST_EXECUTION_ID: eval-5001-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          HF_BUCKET: owner/source-bucket
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "5001"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/5001
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-18T11:00:00Z
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --receipt /tmp/python-receipt.json \
+            --dispatch-body /tmp/python-completion-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
+            --receipt /tmp/rust-receipt.json \
+            --dispatch-body /tmp/rust-completion-dispatch.json >/dev/null
+          diff -u <(jq -S . /tmp/python-receipt.json) <(jq -S . /tmp/rust-receipt.json)
+          diff -u <(jq -S . /tmp/python-completion-dispatch.json) <(jq -S . /tmp/rust-completion-dispatch.json)
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            receipt-validate /tmp/rust-receipt.json >/dev/null
+      - name: Compare acknowledgement builders
+        shell: bash
+        env:
+          RECEIVER_REPOSITORY: owner/receiver
+          RECEIVER_RUN_ID: "6001"
+          RECEIVER_RUN_ATTEMPT: "1"
+          RECEIVER_RUN_URL: https://github.com/owner/receiver/actions/runs/6001
+          ACCEPTED_AT: 2026-08-18T11:01:00Z
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-completion-ack.py \
+            --receipt /tmp/python-receipt.json \
+            --ack /tmp/python-ack.json \
+            --dispatch-body /tmp/python-ack-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            ack \
+            --receipt /tmp/python-receipt.json \
+            --ack /tmp/rust-ack.json \
+            --dispatch-body /tmp/rust-ack-dispatch.json >/dev/null
+          diff -u <(jq -S . /tmp/python-ack.json) <(jq -S . /tmp/rust-ack.json)
+          diff -u <(jq -S . /tmp/python-ack-dispatch.json) <(jq -S . /tmp/rust-ack-dispatch.json)
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-validate /tmp/rust-ack.json >/dev/null
+          python_sha="$(python scripts/ci/build-candidate-completion-ack.py --receipt-sha /tmp/python-receipt.json)"
+          rust_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha /tmp/rust-receipt.json)"
+          test "$python_sha" = "$rust_sha"
+      - name: Compare rejection builders
+        shell: bash
+        env:
+          REQUEST_ID: rust-rejection-parity-001
+          REQUEST_EXECUTION_ID: gw-7001-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          GATEWAY_RUN_ID: "7001"
+          GATEWAY_RUN_ATTEMPT: "1"
+          GATEWAY_RUN_URL: https://github.com/owner/orchestrator/actions/runs/7001
+          REJECTED_AT: 2026-08-18T11:02:00Z
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-candidate-request-rejection.py \
+            --rejection /tmp/python-rejection.json \
+            --dispatch-body /tmp/python-rejection-dispatch.json >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            rejection \
+            --rejection /tmp/rust-rejection.json \
+            --dispatch-body /tmp/rust-rejection-dispatch.json >/dev/null
+          diff -u <(jq -S . /tmp/python-rejection.json) <(jq -S . /tmp/rust-rejection.json)
+          diff -u <(jq -S . /tmp/python-rejection-dispatch.json) <(jq -S . /tmp/rust-rejection-dispatch.json)
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            rejection-validate /tmp/rust-rejection.json >/dev/null
