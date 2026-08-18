@@ -1,0 +1,100 @@
+name: Candidate Runtime Estimate Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-runtime-estimate-contracts.yml
+      - contracts/candidate-runtime-estimate.schema.json
+      - scripts/ci/estimate-candidate-runtime.py
+      - scripts/ci/measure-candidate-bucket-size.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-runtime-estimate-contracts.yml
+      - contracts/candidate-runtime-estimate.schema.json
+      - scripts/ci/estimate-candidate-runtime.py
+      - scripts/ci/measure-candidate-bucket-size.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-runtime-estimate-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate runtime estimate schema and invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install validation tools
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          python -m pip install --disable-pip-version-check "jsonschema>=4.23,<5"
+      - name: Lint runtime estimate contract
+        run: actionlint -color .github/workflows/candidate-runtime-estimate-contracts.yml
+      - name: Compile helpers and parse schema
+        run: |
+          python -m py_compile \
+            scripts/ci/estimate-candidate-runtime.py \
+            scripts/ci/measure-candidate-bucket-size.py
+          python -m json.tool contracts/candidate-runtime-estimate.schema.json >/dev/null
+      - name: Validate generated fallback estimate against Draft 2020-12 schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            python scripts/ci/estimate-candidate-runtime.py \
+              --repository owner/orchestrator \
+              --suite smoke \
+              --executor github \
+              --environment linux-cpu \
+              --target-candidate-bytes 225 > /tmp/runtime-estimate.json
+          python - <<'PY'
+          import copy
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          from jsonschema.exceptions import ValidationError
+
+          schema = json.loads(Path('contracts/candidate-runtime-estimate.schema.json').read_text())
+          value = json.loads(Path('/tmp/runtime-estimate.json').read_text())
+          Draft202012Validator.check_schema(schema)
+          validator = Draft202012Validator(schema)
+          validator.validate(value)
+          assert value['schema_version'] == 4
+          assert value['target_candidate_bytes'] == 225
+          assert value['workload_probe_method'] == 'explicit'
+          assert value['estimate_minutes'] == 8
+          assert value['size_scaling_applied'] is False
+
+          invalid = copy.deepcopy(value)
+          invalid['size_scaling_applied'] = True
+          try:
+              validator.validate(invalid)
+          except ValidationError:
+              pass
+          else:
+              raise AssertionError('runtime estimate unexpectedly allowed size scaling')
+          PY
+      - name: Require candidate-size comparison to remain evidence-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '"size_scaling_applied": False' scripts/ci/estimate-candidate-runtime.py
+          grep -F 'candidate_size_ratio_p50' scripts/ci/estimate-candidate-runtime.py
+          if grep -E 'estimate_minutes.*candidate_size_ratio|candidate_size_ratio.*estimate_minutes' \
+            scripts/ci/estimate-candidate-runtime.py; then
+            echo 'candidate size ratio unexpectedly participates directly in estimate calculation' >&2
+            exit 1
+          fi
