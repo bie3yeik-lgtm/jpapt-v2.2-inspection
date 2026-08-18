@@ -77,6 +77,7 @@ Rust evaluatorのdecoder capabilityは現時点で **CTCのみ**です。Python 
 |---|---|---|---|---|
 | `parakeet-tdt_ctc-0.6b-ja` | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `parakeet-tdt-ctc-v1` | `gawohok7/jpapt-v2.2-dev-bucket` | `gawohok7/jpapt-v2.2-dev` |
 | `kotoba-whisper-v1.0` | `kotoba-tech/kotoba-whisper-v1.0` | `whisper-autoregressive-v1` | `gawohok7/tf-v1-onnx-dev-bucket` | `gawohok7/tf-v1-onnx-dev` |
+| `kotoba-whisper-v2.2` | `kotoba-tech/kotoba-whisper-v2.2` | `whisper-autoregressive-v1` | `gawohok7/tf-v2.2-onnx-dev-bucket` | `gawohok7/tf-v2.2-onnx-dev` |
 
 HF target TOMLへupstream/frameworkを重複記入しません。target IDはファイル名、model identity/upstream/frameworkはmodel config、runtime profile/decoderはASR catalogから導出します。
 

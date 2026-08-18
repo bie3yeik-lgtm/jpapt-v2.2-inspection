@@ -80,7 +80,7 @@ config/asr-catalog.json
 
 The variable is not allowed to create a target or silently override source-controlled routing. The resolver first enumerates `config/hf-targets/*.toml`. For each repository-defined target that also exists in `HF_TARGETS_JSON`, it checks that `HF_BUCKET` and `HF_MODEL_REPO` exactly match `asr-hf resolve-target`. It then matches Dockerfile `source.repo_id` and `source.framework` to the resolved target.
 
-An entry present only in `HF_TARGETS_JSON` is ignored with a warning until a corresponding source-controlled target exists. This currently prevents `kotoba-whisper-v2.2` in the variable snapshot from becoming an undeclared runtime target.
+An entry present only in `HF_TARGETS_JSON` is ignored with a warning until a corresponding source-controlled target exists. `kotoba-whisper-v2.2` is now source-controlled, so it participates in routing only through `config/hf-targets/kotoba-whisper-v2.2.toml`; when the variable snapshot also contains that target, its Bucket and Model Repo must exactly match the source-controlled route. Unknown variable-only targets remain warnings and cannot become runtime targets.
 
 Therefore:
 
