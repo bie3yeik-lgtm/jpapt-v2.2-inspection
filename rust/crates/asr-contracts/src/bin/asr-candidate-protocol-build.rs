@@ -169,6 +169,40 @@ fn derive_conclusion(results: &[(&str, String)], dry_run: bool) -> (String, Vec<
     }
 }
 
+fn canonical_hf_jobs_result_uri(
+    bucket: &str,
+    candidate_id: &str,
+    suite: &str,
+    run_id: u64,
+    run_attempt: u64,
+) -> String {
+    format!(
+        "hf://buckets/{bucket}/runs/hf-jobs/{candidate_id}/{suite}-{run_id}-{run_attempt}/result.json"
+    )
+}
+
+fn validate_image_binding(image_ref: &str, image_digest: &str) -> Result<(), String> {
+    if image_ref.is_empty() || image_digest.is_empty() {
+        return Err("selected HF Jobs image ref and digest must both be present".to_owned());
+    }
+    let Some((name, digest)) = image_ref.rsplit_once("@sha256:") else {
+        return Err("selected HF Jobs image must be digest-pinned".to_owned());
+    };
+    let Some(expected_digest) = image_digest.strip_prefix("sha256:") else {
+        return Err("selected HF Jobs image digest must use sha256:<64 hex>".to_owned());
+    };
+    if name.is_empty()
+        || digest.len() != 64
+        || expected_digest.len() != 64
+        || !digest.chars().all(|ch| ch.is_ascii_hexdigit())
+        || !expected_digest.chars().all(|ch| ch.is_ascii_hexdigit())
+        || !digest.eq_ignore_ascii_case(expected_digest)
+    {
+        return Err("selected HF Jobs image ref/digest binding is invalid".to_owned());
+    }
+    Ok(())
+}
+
 fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let receipt_path = PathBuf::from(required_flag(&mut flags, "--receipt")?);
     let dispatch_path = PathBuf::from(required_flag(&mut flags, "--dispatch-body")?);
@@ -189,6 +223,20 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
     let executor = environment("EXECUTOR");
     let suite = environment("SUITE");
     let runtime_environment = environment("ENVIRONMENT");
+    let run_id = environment_u64("RUN_ID", None)?;
+    let run_attempt = environment_u64("RUN_ATTEMPT", Some(1))?;
+
+    let mut image_ref = environment("IMAGE_REF");
+    let mut image_digest = environment("IMAGE_DIGEST");
+    if executor == "hf_jobs" {
+        let selected_ref = environment("HF_JOBS_IMAGE_REF");
+        let selected_digest = environment("HF_JOBS_IMAGE_DIGEST");
+        if !selected_ref.is_empty() || !selected_digest.is_empty() {
+            validate_image_binding(&selected_ref, &selected_digest)?;
+            image_ref = selected_ref;
+            image_digest = selected_digest;
+        }
+    }
 
     let mut result_artifact = Value::Null;
     let mut result_uri = Value::Null;
@@ -197,12 +245,20 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
             result_artifact = Value::String(format!(
                 "candidate-package-{resolved_candidate_id}-hf-jobs-{suite}"
             ));
-            result_uri = Value::String(format!(
-                "hf://buckets/{}/runs/hf-jobs/{resolved_candidate_id}/{suite}-{}-{}/result.json",
-                environment("HF_BUCKET"),
-                environment_u64("RUN_ID", None)?,
-                environment_u64("RUN_ATTEMPT", Some(1))?
-            ));
+            let expected = canonical_hf_jobs_result_uri(
+                &environment("HF_BUCKET"),
+                &resolved_candidate_id,
+                &suite,
+                run_id,
+                run_attempt,
+            );
+            let supplied = environment("HF_JOBS_RESULT_URI");
+            if !supplied.is_empty() && supplied != expected {
+                return Err(format!(
+                    "HF_JOBS_RESULT_URI does not match canonical job output: expected={expected} actual={supplied}"
+                ));
+            }
+            result_uri = Value::String(if supplied.is_empty() { expected } else { supplied });
         } else {
             result_artifact = Value::String(format!(
                 "candidate-package-{resolved_candidate_id}-{runtime_environment}-{suite}"
@@ -248,11 +304,8 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         "workflow_file".to_owned(),
         json!("candidate-package-evaluate-v2.yml"),
     );
-    receipt.insert("run_id".to_owned(), json!(environment_u64("RUN_ID", None)?));
-    receipt.insert(
-        "run_attempt".to_owned(),
-        json!(environment_u64("RUN_ATTEMPT", Some(1))?),
-    );
+    receipt.insert("run_id".to_owned(), json!(run_id));
+    receipt.insert("run_attempt".to_owned(), json!(run_attempt));
     receipt.insert("run_url".to_owned(), json!(environment("RUN_URL")));
     receipt.insert("commit_sha".to_owned(), json!(environment("COMMIT_SHA")));
     receipt.insert(
@@ -263,11 +316,8 @@ fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
         "resolved_candidate_id".to_owned(),
         nullable(resolved_candidate_id),
     );
-    receipt.insert("image_ref".to_owned(), nullable(environment("IMAGE_REF")));
-    receipt.insert(
-        "image_digest".to_owned(),
-        nullable(environment("IMAGE_DIGEST")),
-    );
+    receipt.insert("image_ref".to_owned(), nullable(image_ref));
+    receipt.insert("image_digest".to_owned(), nullable(image_digest));
     receipt.insert("result_artifact".to_owned(), result_artifact);
     receipt.insert("result_uri".to_owned(), result_uri);
     receipt.insert("failed_jobs".to_owned(), json!(failed_jobs));
@@ -512,5 +562,29 @@ mod tests {
                 vec!["evaluation:missing-terminal-result".to_owned()]
             )
         );
+    }
+
+    #[test]
+    fn hf_jobs_result_uri_uses_canonical_layout() {
+        assert_eq!(
+            canonical_hf_jobs_result_uri("owner/bucket", "candidate-000123", "probe", 9001, 2),
+            "hf://buckets/owner/bucket/runs/hf-jobs/candidate-000123/probe-9001-2/result.json"
+        );
+    }
+
+    #[test]
+    fn validates_selected_hf_jobs_image_binding() {
+        let digest = "a".repeat(64);
+        let image_ref = format!("ghcr.io/owner/package@sha256:{digest}");
+        let image_digest = format!("sha256:{digest}");
+        validate_image_binding(&image_ref, &image_digest).unwrap();
+    }
+
+    #[test]
+    fn rejects_mismatched_selected_hf_jobs_image_binding() {
+        let image_ref = format!("ghcr.io/owner/package@sha256:{}", "a".repeat(64));
+        let image_digest = format!("sha256:{}", "b".repeat(64));
+        let error = validate_image_binding(&image_ref, &image_digest).unwrap_err();
+        assert!(error.contains("binding"));
     }
 }
