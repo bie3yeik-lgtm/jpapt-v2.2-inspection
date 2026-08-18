@@ -91,6 +91,7 @@ jobs:
           fi
           grep -F 'confirm_write:' "$smoke"
           grep -F 'confirm_write=true is required' "$smoke"
+          grep -F 'hf buckets create "$bucket" --exist-ok --private --token "$HF_TOKEN"' "$smoke"
           grep -F 'persist-candidate-lifecycle.sh' "$smoke"
           grep -F 'execution-event.json' "$smoke"
           grep -F 'execution-state.json' "$smoke"
