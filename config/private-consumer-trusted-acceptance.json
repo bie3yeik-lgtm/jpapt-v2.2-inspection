@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "private_repository": "largoyo/Premiere-AutoProcess-Plugin",
+  "private_revision": "e422ed7ad13dcca4562e876bef8860d408304e73",
+  "public_repository": "bie3yeik-lgtm/jpapt-v2.2-inspection",
+  "public_review_target_revision": "6ce57e6f874d387eb25e5dbba969b094962e1d92",
+  "expected_private_accepted_revision": "9179e1147d0460a29dfe4251f73977156356784c",
+  "authority_stack_pull_requests": [144, 141, 142, 143]
+}
