@@ -8,12 +8,18 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - scripts/ci/repository-dispatch-with-retry.sh
+      - rust/crates/asr-contracts/**
+      - Cargo.toml
+      - Cargo.lock
   pull_request:
     paths:
       - .github/workflows/candidate-dispatch-retry-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - scripts/ci/repository-dispatch-with-retry.sh
+      - rust/crates/asr-contracts/**
+      - Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 permissions:
@@ -30,6 +36,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Validate retry helper syntax and integration
         shell: bash
         run: |
@@ -38,6 +45,8 @@ jobs:
           grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'candidate-completion-dispatch.json' .github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'repository-dispatch-with-retry.sh' .github/workflows/candidate-request-gateway.yml
+          grep -F 'receipt-validate "$payload_file"' scripts/ci/repository-dispatch-with-retry.sh
+          grep -F 'rejection-validate "$payload_file"' scripts/ci/repository-dispatch-with-retry.sh
       - name: Prepare fake GitHub CLI and sleep
         shell: bash
         run: |
@@ -51,8 +60,10 @@ jobs:
           [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"
           count=$((count + 1))
           printf '%s\n' "$count" > "$count_file"
-          [[ "$*" == *'/repos/owner/receiver/dispatches'* ]] || exit 42
-          [[ "$*" == *'--input /tmp/dispatch.json'* ]] || exit 43
+          expected_repo="${FAKE_GH_EXPECT_REPOSITORY:-owner/receiver}"
+          expected_input="${FAKE_GH_EXPECT_INPUT:-/tmp/dispatch.json}"
+          [[ "$*" == *"/repos/$expected_repo/dispatches"* ]] || exit 42
+          [[ "$*" == *"--input $expected_input"* ]] || exit 43
           succeed_at="${FAKE_GH_SUCCEED_AT:-1}"
           (( count >= succeed_at ))
           SH
@@ -159,3 +170,88 @@ jobs:
               exit 1
             fi
           done
+      - name: Validate completion receipt before network dispatch
+        shell: bash
+        env:
+          REQUEST_ID: dispatch-authority-001
+          REQUEST_EXECUTION_ID: eval-9301-1
+          SOURCE_REPOSITORY: owner/source
+          RECEIPT_REPOSITORY: owner/receiver
+          HF_BUCKET: owner/source-bucket
+          DRY_RUN: "true"
+          SUITE: probe
+          EXECUTOR: github
+          ENVIRONMENT: linux-cpu
+          PROVIDER: CPUExecutionProvider
+          ORCHESTRATOR_REPOSITORY: owner/orchestrator
+          RUN_ID: "9301"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/owner/orchestrator/actions/runs/9301
+          COMMIT_SHA: "0000000000000000000000000000000000000000"
+          REQUESTED_CANDIDATE_ID: latest
+          BUILD_RESULT: skipped
+          CPU_RESULT: skipped
+          CUDA_RESULT: skipped
+          COREML_RESULT: skipped
+          DIRECTML_RESULT: skipped
+          HF_JOBS_RESULT: skipped
+          COMPLETED_AT: 2026-08-19T03:30:00Z
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-completion
+          FAKE_GH_SUCCEED_AT: "1"
+          FAKE_GH_EXPECT_REPOSITORY: owner/receiver
+          FAKE_GH_EXPECT_INPUT: /tmp/completion-dispatch.json
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          count_file="${FAKE_GH_COUNT_FILE:?}"
+          count=0
+          [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          [[ "$*" == *"/repos/${FAKE_GH_EXPECT_REPOSITORY}/dispatches"* ]] || exit 42
+          [[ "$*" == *"--input ${FAKE_GH_EXPECT_INPUT}"* ]] || exit 43
+          SH
+          chmod +x /tmp/fake-bin/gh
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build -- \
+            receipt \
+            --receipt /tmp/completion-receipt.json \
+            --dispatch-body /tmp/completion-dispatch.json >/dev/null
+          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            owner/receiver /tmp/completion-dispatch.json 1
+          test "$(cat /tmp/gh-count-completion)" = 1
+      - name: Reject completion target mismatch before network dispatch
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-completion-mismatch
+        run: |
+          set -euo pipefail
+          rm -f /tmp/gh-count-completion-mismatch
+          set +e
+          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            owner/other /tmp/completion-dispatch.json 1
+          status=$?
+          set -e
+          test "$status" = 2
+          test ! -e /tmp/gh-count-completion-mismatch
+      - name: Reject invalid completion payload before network dispatch
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-invalid-completion
+        run: |
+          set -euo pipefail
+          cat > /tmp/invalid-completion-dispatch.json <<'JSON'
+          {"event_type":"jpapt.candidate-completed","client_payload":{"receipt_repository":"owner/receiver"}}
+          JSON
+          rm -f /tmp/gh-count-invalid-completion
+          set +e
+          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+            owner/receiver /tmp/invalid-completion-dispatch.json 1
+          status=$?
+          set -e
+          test "$status" != 0
+          test ! -e /tmp/gh-count-invalid-completion
