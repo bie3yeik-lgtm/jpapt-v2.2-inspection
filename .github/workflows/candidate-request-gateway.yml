@@ -144,21 +144,7 @@ jobs:
           SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           SOURCE_REPOSITORY: ${{ steps.inputs.outputs.source_repository }}
           GH_FALLBACK_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          token="${SOURCE_REPO_TOKEN:-$GH_FALLBACK_TOKEN}"
-          encoded="$(GH_TOKEN="$token" gh api "/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml" --jq .content 2>/dev/null || true)"
-          if [[ -n "$encoded" ]]; then
-            printf '%s' "$encoded" | tr -d '\n' | base64 -d > /tmp/source.yml
-            python - <<'PY' > /tmp/source.json
-          import json
-          import yaml
-          with open('/tmp/source.yml', encoding='utf-8') as handle:
-              print(json.dumps(yaml.safe_load(handle) or {}))
-          PY
-          else
-            echo '{}' > /tmp/source.json
-          fi
+        run: bash scripts/ci/fetch-source-routing-config.sh "$SOURCE_REPOSITORY" /tmp/source.json
       - name: Infer HF namespace
         id: namespace
         shell: bash

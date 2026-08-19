@@ -8,12 +8,14 @@ on:
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/fetch-source-routing-config.sh
   pull_request:
     paths:
       - .github/workflows/candidate-source-repository-transport-contracts.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/normalize-candidate-request.py
+      - scripts/ci/fetch-source-routing-config.sh
   workflow_dispatch:
 
 permissions:
@@ -31,16 +33,20 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile scripts/ci/normalize-candidate-request.py
+          bash -n scripts/ci/fetch-source-routing-config.sh
           python - <<'PY'
           from pathlib import Path
 
           gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
           v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
+          helper = Path('scripts/ci/fetch-source-routing-config.sh').read_text(encoding='utf-8')
+          invocation = 'bash scripts/ci/fetch-source-routing-config.sh "$SOURCE_REPOSITORY" /tmp/source.json'
 
-          assert gateway.index('- name: Normalize event inputs') < gateway.index('- name: Fetch source repository routing config')
-          assert v2.index('- name: Normalize workflow inputs') < v2.index('- name: Fetch source repository routing config')
-          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' in gateway
-          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' in v2
+          assert gateway.index('- name: Normalize event inputs') < gateway.index(invocation)
+          assert v2.index('- name: Normalize workflow inputs') < v2.index(invocation)
+          assert '/repos/$repository/contents/.jpapt/hf-bucket.yml' in helper
+          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' not in gateway
+          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' not in v2
           PY
 
       - name: Accept valid dot-prefixed repository identities
@@ -73,7 +79,7 @@ jobs:
           rm -f /tmp/unexpected-routing-gh
 
           for repository in ./repo ../repo owner/. owner/.. owner/repo/extra owner//repo 'owner/répo'; do
-            rm -f /tmp/invalid-request.json /tmp/invalid-output.txt
+            rm -f /tmp/invalid-request.json /tmp/invalid-output.txt /tmp/invalid-source.json
             set +e
             GITHUB_RUN_ID=9402 \
             GITHUB_RUN_ATTEMPT=1 \
@@ -85,7 +91,8 @@ jobs:
                 --output /tmp/invalid-request.json \
                 --github-output /tmp/invalid-output.txt &&
               SOURCE_REPOSITORY="$(jq -r .source_repository /tmp/invalid-request.json)" &&
-              PATH="/tmp/fake-bin:$PATH" gh api "/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml"
+              PATH="/tmp/fake-bin:$PATH" bash scripts/ci/fetch-source-routing-config.sh \
+                "$SOURCE_REPOSITORY" /tmp/invalid-source.json
             '
             status=$?
             set -e
