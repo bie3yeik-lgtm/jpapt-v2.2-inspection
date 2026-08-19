@@ -19,6 +19,19 @@ def parse_bool(value: object, name: str) -> bool:
     raise SystemExit(f"{name} must be boolean")
 
 
+def validate_repository_transport(value: str, name: str) -> None:
+    parts = value.split("/")
+    if len(parts) != 2 or any(not part for part in parts):
+        raise SystemExit(f"{name} must use owner/name")
+    if any(part in {".", ".."} for part in parts):
+        raise SystemExit(f"{name} must not contain dot path segments")
+    if any(
+        not all(ch.isascii() and (ch.isalnum() or ch in "._-") for ch in part)
+        for part in parts
+    ):
+        raise SystemExit(f"{name} contains unsupported characters")
+
+
 def generated_request_id() -> str:
     run_id = env("GITHUB_RUN_ID")
     attempt = env("GITHUB_RUN_ATTEMPT", "1")
@@ -85,6 +98,7 @@ def main() -> int:
     request_execution_id = request.get("request_execution_id")
     if not isinstance(source_repository, str):
         raise SystemExit("source_repository must be string")
+    validate_repository_transport(source_repository, "source_repository")
     if not isinstance(request_id, str):
         raise SystemExit("request_id must be string")
     if not isinstance(request_execution_id, str):
