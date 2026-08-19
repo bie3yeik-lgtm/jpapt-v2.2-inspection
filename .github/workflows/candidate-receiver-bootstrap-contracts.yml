@@ -191,3 +191,29 @@ jobs:
             echo 'readiness must not download candidate payloads' >&2
             exit 1
           fi
+
+  diagnose_fixture_receiver:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/diagnose-fixture-receiver-20260820' }}
+    name: Diagnose private fixture receiver run
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: List matching receiver runs and jobs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+          FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+          EXPECTED_AFTER: '2026-08-19T15:01:55Z'
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo '::error::TARGET_REPO_TOKEN missing'; exit 1; }
+          runs="$(gh api "/repos/$FIXTURE_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=20")"
+          echo '=== receiver runs ==='
+          jq -r --arg after "$EXPECTED_AFTER" '.workflow_runs[] | select(.created_at >= $after) | [.id,.status,(.conclusion // ""),.created_at,.head_sha] | @tsv' <<<"$runs"
+          run_id="$(jq -r --arg after "$EXPECTED_AFTER" '.workflow_runs[] | select(.created_at >= $after) | .id' <<<"$runs" | head -n1)"
+          [[ -n "$run_id" && "$run_id" != null ]] || { echo '::error::receiver run not found'; exit 1; }
+          echo "selected_run_id=$run_id"
+          echo '=== receiver jobs ==='
+          gh api "/repos/$FIXTURE_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
+            --jq '.jobs[] | [.id,.name,.status,(.conclusion // "")] | @tsv'
