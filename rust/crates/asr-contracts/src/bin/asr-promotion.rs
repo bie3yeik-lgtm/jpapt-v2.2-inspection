@@ -51,6 +51,10 @@ fn inspect_command(mut args: impl Iterator<Item = String>) -> Result<(), String>
     println!("evaluation_id={}", summary.evaluation_id);
     println!("provider_id={}", summary.provider_id);
     println!("revision_bundle_sha256={}", summary.revision_bundle_sha256);
+    println!(
+        "provenance_manifest_sha256={}",
+        summary.provenance_manifest_sha256
+    );
     Ok(())
 }
 
@@ -117,6 +121,7 @@ struct PromotionSummary {
     evaluation_id: String,
     provider_id: String,
     revision_bundle_sha256: String,
+    provenance_manifest_sha256: String,
 }
 
 fn inspect_run(
@@ -212,6 +217,25 @@ fn inspect_run(
     if !revision_bundle_sha256.is_empty() {
         validate_sha256("revision bundle SHA-256", &revision_bundle_sha256)?;
     }
+    let provenance = run.pointer("/metadata/provenance").ok_or_else(|| {
+        "PROVENANCE_MANIFEST_MISSING: run-context provenance is required".to_owned()
+    })?;
+    if provenance.pointer("/status").and_then(Value::as_str) != Some("complete")
+        || provenance
+            .pointer("/automation_consumption")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err(
+            "PROVENANCE_AUTOMATION_DISABLED: accepted run provenance is not enabled".to_owned(),
+        );
+    }
+    let provenance_manifest_sha256 = required_identity(
+        &run,
+        "/metadata/provenance/manifest_sha256",
+        "run-context metadata.provenance.manifest_sha256",
+    )?;
+    validate_sha256("provenance manifest SHA-256", &provenance_manifest_sha256)?;
 
     Ok(PromotionSummary {
         run_directory,
@@ -222,6 +246,7 @@ fn inspect_run(
         evaluation_id,
         provider_id,
         revision_bundle_sha256,
+        provenance_manifest_sha256: provenance_manifest_sha256.to_owned(),
     })
 }
 

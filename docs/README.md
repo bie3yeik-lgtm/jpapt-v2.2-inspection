@@ -21,6 +21,9 @@
 13. [rust-first-migration.md](./rust-first-migration.md) — Rust-first移行の完了状態と、意図的に残すPython boundary
 14. [request-execution-identity.md](./request-execution-identity.md) — `request_id` / `request_execution_id` / receipt hash の役割、retry分離、status/timeline query
 15. [runtime-estimation.md](./runtime-estimation.md) — provenance cohort、metadata-only candidate workload evidence、runtime estimate v4、size scalingの適用条件
+16. [parakeet-provenance-and-routing-responsibility.md](./parakeet-provenance-and-routing-responsibility.md) — Parakeet asset provenance、candidate transfer、親リポジトリとのrouting責務分離
+17. [recursive-delivery-entry-20260820.md](./recursive-delivery-entry-20260820.md) — #134 provenance実装のUnit入口・受入条件・blocker
+18. [parakeet-provenance-remaining-work-and-parent-contract-20260820.md](./parakeet-provenance-remaining-work-and-parent-contract-20260820.md) — 残作業、受領payload、親リポジトリとの契約、完了判定
 
 ## 現在の実装スタック
 

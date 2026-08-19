@@ -107,6 +107,25 @@ mod tests {
     }
 
     #[test]
+    fn persists_provenance_fingerprint_in_parquet_metadata() {
+        let path = test_path();
+        let fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let run_context = serde_json::json!({
+            "run_id":"run-provenance",
+            "metadata":{"provenance":{"manifest_sha256":fingerprint}}
+        });
+        let benchmark = serde_json::json!({"run_id":"run-provenance"});
+        let rows = rows_from_evaluation_json(&run_context, &[], &benchmark).unwrap();
+        write_capsule(&path, "run-provenance", &rows).unwrap();
+        let summary = read_capsule_summary(&path).unwrap();
+        assert_eq!(
+            summary.provenance_manifest_sha256.as_deref(),
+            Some(fingerprint)
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn rejects_cross_run_rows() {
         let path = test_path();
         let row = CapsuleRow::new("other-run", RecordKind::Manifest, 0).unwrap();

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::provenance::{ProvenanceStatus, default_target_id, validate_provenance_value};
 use crate::{ContractError, Result};
 
 const CONFIG_VERSION_PREFIX: &str = "config-";
@@ -65,6 +66,15 @@ pub struct DatasetsRevisionSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProvenanceRevisionSnapshot {
+    pub document_sha256: String,
+    pub manifest_sha256: String,
+    pub status: ProvenanceStatus,
+    pub automation_consumption: bool,
+    pub target_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevisionSnapshot {
     pub config_version: String,
     pub bundle_sha256: String,
@@ -72,6 +82,7 @@ pub struct RevisionSnapshot {
     pub reference: ReferenceRevisionSnapshot,
     pub evaluation_schema: EvaluationSchemaRevisionSnapshot,
     pub datasets: DatasetsRevisionSnapshot,
+    pub provenance: ProvenanceRevisionSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,11 +156,13 @@ pub fn validate_revision_bundle(
     let evaluation_doc = load_revision_document(&root.join("evaluation-schema.json"))?;
     let datasets_doc = load_revision_document(&root.join("datasets-lock.json"))?;
     let runtime_doc = load_revision_document(&root.join("runtime.json"))?;
+    let provenance_doc = load_revision_document(&root.join("provenance.json"))?;
     let config_version = load_config_version(root)?;
 
     let reference = parse_reference(&reference_doc)?;
     let evaluation_schema = parse_evaluation_schema(&evaluation_doc)?;
     let datasets = parse_datasets(&datasets_doc)?;
+    let provenance = parse_provenance(&provenance_doc)?;
     let (runtime, resolution) = parse_runtime(
         &runtime_doc,
         &catalog,
@@ -198,6 +211,7 @@ pub fn validate_revision_bundle(
         &evaluation_doc.sha256,
         &datasets_doc.sha256,
         &runtime_doc.sha256,
+        &provenance_doc.sha256,
     ] {
         bundle_digest.update(hash.as_bytes());
     }
@@ -209,6 +223,7 @@ pub fn validate_revision_bundle(
         reference,
         evaluation_schema,
         datasets,
+        provenance,
     };
     validate_snapshot(&snapshot)?;
     Ok((snapshot, resolution))
@@ -394,6 +409,17 @@ fn parse_datasets(document: &RevisionDocument) -> Result<DatasetsRevisionSnapsho
     Ok(DatasetsRevisionSnapshot {
         document_sha256: document.sha256.clone(),
         entries,
+    })
+}
+
+fn parse_provenance(document: &RevisionDocument) -> Result<ProvenanceRevisionSnapshot> {
+    let validated = validate_provenance_value(&document.raw, default_target_id())?;
+    Ok(ProvenanceRevisionSnapshot {
+        document_sha256: document.sha256.clone(),
+        manifest_sha256: validated.fingerprint,
+        status: validated.manifest.status,
+        automation_consumption: validated.manifest.automation_consumption,
+        target_id: validated.manifest.target_id,
     })
 }
 

@@ -73,3 +73,35 @@ fn validate_rejects_unexpected_run_id() {
 
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn validate_rejects_unexpected_provenance_fingerprint() {
+    let path = fixture_path();
+    let fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let metadata = serde_json::to_string(&serde_json::json!({
+        "run_context":{"run_id":"cli-prov","metadata":{"provenance":{"manifest_sha256":fingerprint}}},
+        "benchmark":{"run_id":"cli-prov"}
+    })).unwrap();
+    let rows = [CapsuleRow::new("cli-prov", RecordKind::Manifest, 0)
+        .unwrap()
+        .with_string("name", "run")
+        .with_string("category", "evaluation")
+        .with_string("metadata_json", metadata)];
+    write_capsule(&path, "cli-prov", &rows).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_asr-capsule"))
+        .args([
+            "validate",
+            path.to_str().unwrap(),
+            "--expected-provenance-manifest-sha256",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("provenance manifest SHA-256")
+    );
+    fs::remove_file(path).unwrap();
+}

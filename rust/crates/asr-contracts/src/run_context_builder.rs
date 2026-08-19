@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::project_config::{apply_runtime_overrides, resolve_project_config};
+use crate::provenance::require_execution_ready_state;
 use crate::revisions::{RevisionExpectations, validate_revision_bundle};
 use crate::{ContractError, Result, validate_run_context};
 
@@ -67,6 +68,11 @@ pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
     expectations.runtime_profile = Some(profile.to_owned());
     expectations.decoder = Some(decoder.to_owned());
     let (revisions, resolution) = validate_revision_bundle(&options.revisions_root, &expectations)?;
+
+    require_execution_ready_state(
+        &revisions.provenance.status,
+        revisions.provenance.automation_consumption,
+    )?;
 
     if resolution.variant != variant
         || resolution.profile != profile
@@ -127,6 +133,15 @@ pub fn build_run_context(options: &RunContextBuildOptions) -> Result<Value> {
     metadata.insert("candidate".into(), candidate.clone());
     metadata.insert("runtime_variant".into(), Value::String(variant.to_owned()));
     metadata.insert("runtime_profile".into(), Value::String(profile.to_owned()));
+    metadata.insert(
+        "provenance".into(),
+        json!({
+            "manifest_sha256": revisions.provenance.manifest_sha256,
+            "status": "complete",
+            "automation_consumption": true,
+            "target_id": revisions.provenance.target_id,
+        }),
+    );
     metadata.insert(
         "runtime_overrides".into(),
         json!({

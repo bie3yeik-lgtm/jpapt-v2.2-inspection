@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "automation_consumption": true,
+  "target_id": "parakeet-tdt_ctc-0.6b-ja",
+  "upstream": {
+    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "development_repo": {
+    "repo_id": "gawohok7/jpapt-v2.2-dev",
+    "revision": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "assets": [],
+  "blockers": []
+}

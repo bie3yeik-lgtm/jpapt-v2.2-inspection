@@ -11,6 +11,7 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -106,6 +107,23 @@ fn binary_value<'a>(row: &'a CapsuleRow, name: &str) -> Result<Option<&'a [u8]>>
             "field {name} has the wrong capsule value type"
         ))),
     }
+}
+
+fn provenance_manifest_sha256(rows: &[CapsuleRow]) -> Result<Option<String>> {
+    let Some(manifest) = rows
+        .iter()
+        .find(|row| row.record_kind == crate::model::RecordKind::Manifest)
+    else {
+        return Ok(None);
+    };
+    let Some(CapsuleValue::String(metadata)) = manifest.field("metadata_json") else {
+        return Ok(None);
+    };
+    let value: Value = serde_json::from_str(metadata)?;
+    Ok(value
+        .pointer("/run_context/metadata/provenance/manifest_sha256")
+        .and_then(Value::as_str)
+        .map(str::to_owned))
 }
 
 pub fn rows_to_record_batch(rows: &[CapsuleRow]) -> Result<RecordBatch> {
@@ -206,6 +224,12 @@ pub fn write_capsule(
             key: "jpapt.capsule.schema".into(),
             value: Some(EXPERIMENT_CAPSULE_SCHEMA_VERSION.into()),
         });
+        if let Some(fingerprint) = provenance_manifest_sha256(rows)? {
+            writer.append_key_value_metadata(KeyValue {
+                key: "jpapt.provenance.manifest_sha256".into(),
+                value: Some(fingerprint),
+            });
+        }
         writer.append_key_value_metadata(KeyValue {
             key: "jpapt.run_id".into(),
             value: Some(run_id.into()),

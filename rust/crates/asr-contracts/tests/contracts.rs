@@ -67,7 +67,8 @@ fn run_context() -> Value {
                 "reference_id":"reference-v1","reference_revision":"ref","canonical_framework":"nemo"
             },
             "evaluation_schema":{"document_sha256":SHA,"schema_id":"eval-v1","schema_revision":"eval"},
-            "datasets":{"document_sha256":SHA,"entries":[]}
+            "datasets":{"document_sha256":SHA,"entries":[]},
+            "provenance":{"document_sha256":SHA,"manifest_sha256":SHA,"status":"complete","automation_consumption":true,"target_id":"parakeet-tdt_ctc-0.6b-ja"}
         },
         "config":{
             "identity":"model:linux:cpu:smoke",
@@ -80,7 +81,7 @@ fn run_context() -> Value {
                 "resolved":{"model_id":"model","provider_id":"cpu","environment_id":"linux","evaluation_id":"smoke"}
             }
         },
-        "metadata":{"candidate":candidate(),"runtime_variant":"ctc","runtime_profile":"ctc-v1"}
+        "metadata":{"candidate":candidate(),"runtime_variant":"ctc","runtime_profile":"ctc-v1","provenance":{"manifest_sha256":SHA,"status":"complete","automation_consumption":true,"target_id":"parakeet-tdt_ctc-0.6b-ja"}}
     })
 }
 
