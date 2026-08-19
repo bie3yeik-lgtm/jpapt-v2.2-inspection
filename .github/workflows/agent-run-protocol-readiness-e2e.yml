@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_REF: docs/current-premiere-integration-spec-20260819
+      SOURCE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
       RECEIPT_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
       HF_BUCKET: gawohok7/tf-v2.2-onnx-dev-bucket
     steps:
@@ -27,7 +28,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
             --arg ref "$TARGET_REF" \
             --arg receipt "$RECEIPT_REPOSITORY" \
@@ -63,9 +63,10 @@ jobs:
           set -euo pipefail
           jq -n \
             --arg ref "$TARGET_REF" \
+            --arg source "$SOURCE_REPOSITORY" \
             --arg receipt "$RECEIPT_REPOSITORY" \
             --arg bucket "$HF_BUCKET" \
-            '{ref:$ref,inputs:{receipt_repository:$receipt,hf_bucket:$bucket,source_repository:"",timeout_seconds:"600"}}' \
+            '{ref:$ref,inputs:{receipt_repository:$receipt,hf_bucket:$bucket,source_repository:$source,timeout_seconds:"600"}}' \
             > /tmp/e2e-dispatch.json
           gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-protocol-e2e.yml/dispatches" --input /tmp/e2e-dispatch.json
           run_id=""
@@ -94,4 +95,4 @@ jobs:
           E2E_RUN: ${{ steps.e2e.outputs.run_id }}
         shell: bash
         run: |
-          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Dedicated external fixture acceptance succeeded.\n\n- receiver: \`$RECEIPT_REPOSITORY\`\n- HF Bucket: \`$HF_BUCKET\`\n- readiness run: \`$READINESS_RUN\`\n- zero-compute E2E run: \`$E2E_RUN\`\n- orchestrator ref: \`$TARGET_REF\`\n- compute: \`dry_run=true\`; no model inference/GPU/HF Jobs workload launched by this E2E driver."
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Dedicated external fixture acceptance succeeded.\n\n- source: \`$SOURCE_REPOSITORY\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- HF Bucket: \`$HF_BUCKET\`\n- readiness run: \`$READINESS_RUN\`\n- zero-compute E2E run: \`$E2E_RUN\`\n- orchestrator ref: \`$TARGET_REF\`\n- compute: \`dry_run=true\`; no model inference/GPU/HF Jobs workload launched by this E2E driver."
