@@ -1,0 +1,196 @@
+name: Legacy Retirement Trusted Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/legacy-retirement-trusted-acceptance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIVATE_MAIN: 85dbf09cf5ca3c2ff8be76a0b6c1b19c4c1f9cf7
+  RETIREMENT_HEAD: cf73c37832066357b94f6860a6948d97d3494478
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIVATE_ROOT: /tmp/jpapt-legacy-retirement-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  acceptance:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/legacy-retirement-trusted-acceptance-20260820' }}
+    name: Validate private legacy pipeline retirement
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify public authority remains exact accepted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]] || {
+            echo "::error::public authority main drifted: live=$live accepted=$ACCEPTED_PUBLIC"
+            exit 1
+          }
+
+      - name: Fetch exact private main and retirement head
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/legacy-retirement-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() { rm -f "$askpass"; unset SOURCE_REPO_TOKEN; }
+          trap cleanup EXIT
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_MAIN" "$RETIREMENT_HEAD"
+          for sha in "$PRIVATE_MAIN" "$RETIREMENT_HEAD"; do git -C "$PRIVATE_ROOT" cat-file -e "${sha}^{commit}"; done
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
+
+      - name: Verify exact three-file retirement surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_base="$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$RETIREMENT_HEAD")"
+          [[ "$merge_base" == "cca1239a58ec4fb22bbfd367c4f22c4039176747" ]] || {
+            echo "::error::unexpected retirement merge base: $merge_base"
+            exit 1
+          }
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$merge_base" "$RETIREMENT_HEAD" | sort)
+          expected=(
+            .github/workflows/hf-model-pipeline-security-contracts.yml
+            .github/workflows/hf-model-pipeline.yml
+            scripts/tests/test_hf_legacy_pipeline_retired.py
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf '::error::unexpected retirement files:\n%s\n' "${changed[*]}"
+            exit 1
+          }
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$merge_base..$RETIREMENT_HEAD")" == 3 ]]
+
+      - name: Build current-main integration merge without private write
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid \
+            merge --no-commit --no-ff "$RETIREMENT_HEAD"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_MAIN" ]]
+
+      - name: Verify accepted authority remains intact
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" '.accepted_revision == $accepted' \
+            "$authority/config/jpapt-upstream-authority.json" >/dev/null
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" \
+            '.status == "accepted" and .authority.reviewed_main_revision == $accepted' \
+            "$authority/config/jpapt-authority-gate.v1.json" >/dev/null
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run integrated package and retirement security contracts
+        id: python_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            scripts/tests/test_hf_model_pipeline.py
+            scripts/tests/test_hf_model_pipeline_ids.py
+            scripts/tests/test_hf_repo_write_preflight.py
+            scripts/tests/test_hf_candidate_content_digest.py
+            scripts/tests/test_hf_package_base_image.py
+            scripts/tests/test_hf_bootstrap_package_workflow.py
+            scripts/tests/test_hf_package_evidence.py
+            scripts/tests/test_hf_legacy_pipeline_retired.py
+            scripts/tests/test_jpapt_bind_package_request.py
+            scripts/tests/test_jpapt_verify_package_artifact.py
+            scripts/tests/test_jpapt_package_artifact_verify_workflow.py
+          )
+          set +e
+          output="$(cd "$PRIVATE_ROOT" && python3 -m unittest -v "${files[@]}" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          (( rc == 0 )) || exit "$rc"
+          count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
+          (( count > 0 )) || { echo '::error::no security contracts executed'; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Lint integrated workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          workflows="$PRIVATE_ROOT/.github/workflows"
+          actionlint -color -ignore 'SC2016' -ignore 'SC2129' \
+            "$workflows/hf-model-pipeline.yml" \
+            "$workflows/hf-model-pipeline-security-contracts.yml" \
+            "$workflows/hf-model-bootstrap-package.yml" \
+            "$workflows/jpapt-package-artifact-verify.yml"
+
+      - name: Assert retired workflow has no execution credential surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PRIVATE_ROOT/.github/workflows/hf-model-pipeline.yml" <<'PY'
+          import pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          forbidden = [
+              'actions/checkout@', 'secrets.', 'github.token', 'HF_TOKEN', 'GH_REPO_TOKEN', 'GITHUB_TOKEN',
+              'hf jobs run', 'docker/build-push-action', 'docker/login-action', 'hf buckets sync',
+              'hf buckets create', 'hf-model-pipeline.py evaluate', 'hf-model-pipeline.py sync'
+          ]
+          found = [item for item in forbidden if item in text]
+          if found:
+              raise SystemExit(f'retired workflow retained forbidden surface: {found}')
+          if 'exit 1' not in text or 'accepted JPAPT authority workflow' not in text:
+              raise SystemExit('retired workflow is not fail-closed with JPAPT route')
+          PY
+
+      - name: Build acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p legacy-retirement-acceptance
+          jq -n \
+            --arg private_repository "$PRIVATE_REPOSITORY" \
+            --arg private_main "$PRIVATE_MAIN" \
+            --arg retirement_head "$RETIREMENT_HEAD" \
+            --arg accepted_public "$ACCEPTED_PUBLIC" \
+            --argjson python_test_count '${{ steps.python_tests.outputs.count }}' \
+            '{schema_version:1,private_repository:$private_repository,private_main:$private_main,retirement_head:$retirement_head,accepted_public:$accepted_public,retirement_commit_count:3,retirement_changed_file_count:3,integration_merge:"clean",authority_state_preserved:true,legacy_executor:"retired",credential_surface:"absent",python_security_contracts:"passed",python_test_count:$python_test_count,workflow_actionlint:"passed",trusted_runner:"github-hosted",hf_jobs_launched:false,model_compute_launched:false,package_built:false,private_repository_written:false}' \
+            > legacy-retirement-acceptance/evidence.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: legacy-retirement-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: legacy-retirement-acceptance/
+          if-no-files-found: error
+          retention-days: 30
