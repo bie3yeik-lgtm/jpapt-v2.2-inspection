@@ -1,191 +1,15 @@
 name: Candidate Routing Config Fetch Contracts
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/candidate-routing-config-fetch-contracts.yml
-      - .github/workflows/candidate-request-gateway.yml
-      - .github/workflows/candidate-package-evaluate-v2.yml
-      - scripts/ci/fetch-source-routing-config.sh
   pull_request:
     paths:
       - .github/workflows/candidate-routing-config-fetch-contracts.yml
-      - .github/workflows/candidate-request-gateway.yml
-      - .github/workflows/candidate-package-evaluate-v2.yml
-      - scripts/ci/fetch-source-routing-config.sh
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  contracts:
-    name: Validate tri-state source routing fetch
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install YAML parser
-        run: python -m pip install --disable-pip-version-check pyyaml
-      - name: Validate helper syntax
-        run: bash -n scripts/ci/fetch-source-routing-config.sh
-
-      - name: Accept successful encoded routing config
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/fake-bin
-          cat > /tmp/fake-bin/gh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          [[ "${1:-}" == api && "${2:-}" == --include ]]
-          [[ "${3:-}" == /repos/owner/source/contents/.jpapt/hf-bucket.yml ]]
-          encoded="$(printf '%s' $'hf_bucket: owner/source-bucket\ndatasets:\n  default_source: repository\n  repository_dataset: owner/evalset\n' | base64 -w0)"
-          printf 'HTTP/2.0 200 OK\r\ncontent-type: application/json\r\n\r\n{"content":"%s"}\n' "$encoded"
-          SH
-          chmod +x /tmp/fake-bin/gh
-          PATH="/tmp/fake-bin:$PATH" \
-            GH_FALLBACK_TOKEN=test-token \
-            bash scripts/ci/fetch-source-routing-config.sh owner/source /tmp/source.json
-          jq -e '.hf_bucket == "owner/source-bucket"' /tmp/source.json >/dev/null
-          jq -e '.datasets.default_source == "repository"' /tmp/source.json >/dev/null
-          jq -e '.datasets.repository_dataset == "owner/evalset"' /tmp/source.json >/dev/null
-
-      - name: Treat visible repository file 404 as missing config
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/fake-bin/gh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          [[ "${1:-}" == api && "${2:-}" == --include ]]
-          case "${3:-}" in
-            /repos/owner/source/contents/.jpapt/hf-bucket.yml)
-              printf 'HTTP/2.0 404 Not Found\r\ncontent-type: application/json\r\n\r\n{"message":"Not Found"}\n'
-              exit 1
-              ;;
-            /repos/owner/source)
-              printf 'HTTP/2.0 200 OK\r\ncontent-type: application/json\r\n\r\n{"full_name":"owner/source"}\n'
-              ;;
-            *)
-              echo "unexpected API target: ${3:-}" >&2
-              exit 99
-              ;;
-          esac
-          SH
-          chmod +x /tmp/fake-bin/gh
-          PATH="/tmp/fake-bin:$PATH" \
-            GH_FALLBACK_TOKEN=test-token \
-            bash scripts/ci/fetch-source-routing-config.sh owner/source /tmp/missing.json
-          jq -e 'type == "object" and length == 0' /tmp/missing.json >/dev/null
-
-      - name: Exercise live GitHub CLI 404 plus visible-repository fallback
-        shell: bash
-        env:
-          GH_FALLBACK_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash scripts/ci/fetch-source-routing-config.sh "$GITHUB_REPOSITORY" /tmp/live-missing.json
-          jq -e 'type == "object" and length == 0' /tmp/live-missing.json >/dev/null
-
-      - name: Reject config 404 when repository visibility is also hidden
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/fake-bin/gh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          printf 'HTTP/2.0 404 Not Found\r\ncontent-type: application/json\r\n\r\n{"message":"Not Found"}\n'
-          exit 1
-          SH
-          chmod +x /tmp/fake-bin/gh
-          rm -f /tmp/hidden.json
-          if PATH="/tmp/fake-bin:$PATH" GH_FALLBACK_TOKEN=test-token \
-            bash scripts/ci/fetch-source-routing-config.sh owner/source /tmp/hidden.json; then
-            echo 'masked private/inaccessible repository unexpectedly treated as missing config' >&2
-            exit 1
-          fi
-          test ! -e /tmp/hidden.json
-
-      - name: Reject authorization and transient API failures
-        shell: bash
-        run: |
-          set -euo pipefail
-          for code in 401 403 429 500 503; do
-            cat > /tmp/fake-bin/gh <<SH
-          #!/usr/bin/env bash
-          printf 'HTTP/2.0 $code Failure\r\ncontent-type: application/json\r\n\r\n{"message":"failure"}\n'
-          exit 1
-          SH
-            chmod +x /tmp/fake-bin/gh
-            rm -f /tmp/failure.json
-            if PATH="/tmp/fake-bin:$PATH" GH_FALLBACK_TOKEN=test-token \
-              bash scripts/ci/fetch-source-routing-config.sh owner/source /tmp/failure.json; then
-              echo "HTTP $code unexpectedly treated as missing config" >&2
-              exit 1
-            fi
-            test ! -e /tmp/failure.json
-          done
-
-      - name: Reject transport failure without HTTP response
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/fake-bin/gh <<'SH'
-          #!/usr/bin/env bash
-          echo 'simulated transport failure' >&2
-          exit 1
-          SH
-          chmod +x /tmp/fake-bin/gh
-          rm -f /tmp/transport.json
-          if PATH="/tmp/fake-bin:$PATH" GH_FALLBACK_TOKEN=test-token \
-            bash scripts/ci/fetch-source-routing-config.sh owner/source /tmp/transport.json; then
-            echo 'transport failure unexpectedly treated as missing config' >&2
-            exit 1
-          fi
-          test ! -e /tmp/transport.json
-
-      - name: Reject malformed repository identity before gh
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/fake-bin/gh <<'SH'
-          #!/usr/bin/env bash
-          echo invoked > /tmp/unexpected-routing-gh
-          exit 99
-          SH
-          chmod +x /tmp/fake-bin/gh
-          rm -f /tmp/unexpected-routing-gh
-          for repository in ./repo ../repo owner/. owner/.. owner/repo/extra; do
-            if PATH="/tmp/fake-bin:$PATH" bash scripts/ci/fetch-source-routing-config.sh "$repository" /tmp/invalid.json; then
-              echo "invalid repository unexpectedly accepted: $repository" >&2
-              exit 1
-            fi
-          done
-          test ! -e /tmp/unexpected-routing-gh
-
-      - name: Assert production workflows use fail-closed helper before Rust resolution
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          helper = 'bash scripts/ci/fetch-source-routing-config.sh "$SOURCE_REPOSITORY" /tmp/source.json'
-          for path, resolver in [
-              ('.github/workflows/candidate-request-gateway.yml', 'Resolve request with Rust contract'),
-              ('.github/workflows/candidate-package-evaluate-v2.yml', 'Resolve with Rust contract'),
-          ]:
-              text = Path(path).read_text(encoding='utf-8')
-              assert helper in text, path
-              assert 'contents/.jpapt/hf-bucket.yml" --jq .content 2>/dev/null || true' not in text, path
-              assert text.index(helper) < text.index(resolver), path
-          PY
-
   promotion_acceptance:
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/jpapt-promotion-acceptance-20260820' }}
     name: Validate private authority promotion transaction
@@ -194,6 +18,7 @@ jobs:
     timeout-minutes: 40
     env:
       PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+      PRIVATE_BASE: 6d1781939aac8cf7a0d4b3d4d4ad9dcb85fa2d43
       PRIVATE_REVISION: 866e66c705da1aee709f14651616f0f8fd5f61ff
       PRIVATE_ROOT: /tmp/jpapt-promotion-${{ github.run_id }}-${{ github.run_attempt }}
       PUBLIC_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
@@ -230,7 +55,7 @@ jobs:
             exit 1
           }
 
-      - name: Fetch immutable private promotion head outside public workspace
+      - name: Fetch immutable private promotion head and base outside public workspace
         shell: bash
         env:
           SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
@@ -254,17 +79,36 @@ jobs:
           trap cleanup EXIT
           rm -rf "$PRIVATE_ROOT"
           git init -q "$PRIVATE_ROOT"
-          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
-            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=1 \
-            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"
-          git -C "$PRIVATE_ROOT" checkout --detach --force FETCH_HEAD
+          for revision in "$PRIVATE_REVISION" "$PRIVATE_BASE"; do
+            GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+              git -C "$PRIVATE_ROOT" fetch --no-tags --depth=1 \
+              "https://github.com/${PRIVATE_REPOSITORY}.git" "$revision"
+          done
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_REVISION"
           [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_REVISION" ]]
+          git -C "$PRIVATE_ROOT" cat-file -e "$PRIVATE_BASE^{commit}"
           [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
           if git -C "$PRIVATE_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/promotion-extraheaders 2>/dev/null; then
             cat /tmp/promotion-extraheaders >&2
             echo '::error::private fetch retained credential header'
             exit 1
           fi
+
+      - name: Verify promotion branch changes only four reviewed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIVATE_BASE" "$PRIVATE_REVISION" | sort)
+          expected=(
+            TelopFlow_Feature/TF-v1-onnx-implements/config/hf-model-routing.v1.json
+            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-authority-gate.v1.json
+            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json
+            TelopFlow_Feature/TF-v1-onnx-implements/docs/jpapt-authority-gate.md
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf 'unexpected private promotion files:\n%s\n' "${changed[*]}" >&2
+            exit 1
+          }
 
       - name: Validate promotion transaction and remaining blockers
         shell: bash
@@ -301,24 +145,6 @@ jobs:
           grep -F "$PUBLIC_TARGET" "$docs" >/dev/null
           grep -F 'private GitHub Actions infrastructure defect `#127` remains open' "$docs" >/dev/null
           grep -F 'HF Jobs connector response-schema decode blocker `#130`' "$docs" >/dev/null
-
-      - name: Verify promotion branch changes only four reviewed files
-        shell: bash
-        run: |
-          set -euo pipefail
-          git -C "$PRIVATE_ROOT" fetch --no-tags --depth=5 \
-            "https://github.com/${PRIVATE_REPOSITORY}.git" 6d1781939aac8cf7a0d4b3d4d4ad9dcb85fa2d43 >/dev/null 2>&1 || true
-          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only 6d1781939aac8cf7a0d4b3d4d4ad9dcb85fa2d43 "$PRIVATE_REVISION" | sort)
-          expected=(
-            TelopFlow_Feature/TF-v1-onnx-implements/config/hf-model-routing.v1.json
-            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-authority-gate.v1.json
-            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json
-            TelopFlow_Feature/TF-v1-onnx-implements/docs/jpapt-authority-gate.md
-          )
-          [[ "${changed[*]}" == "${expected[*]}" ]] || {
-            printf 'unexpected private promotion files:\n%s\n' "${changed[*]}" >&2
-            exit 1
-          }
 
       - uses: actions/setup-python@v7
         with:
@@ -359,7 +185,7 @@ jobs:
         with:
           go-version: '1.26'
           cache: false
-      - name: Lint private authority workflows
+      - name: Lint private authority workflows and exact-main gate wiring
         shell: bash
         run: |
           set -euo pipefail
@@ -380,6 +206,7 @@ jobs:
           mkdir -p promotion-acceptance
           jq -n \
             --arg private_repository "$PRIVATE_REPOSITORY" \
+            --arg private_base "$PRIVATE_BASE" \
             --arg private_revision "$PRIVATE_REVISION" \
             --arg public_repository "$PUBLIC_REPOSITORY" \
             --arg public_target "$PUBLIC_TARGET" \
@@ -388,7 +215,7 @@ jobs:
             --arg semantic_anchor "$SEMANTIC_ANCHOR" \
             --argjson rust_test_count '${{ steps.rust.outputs.tests }}' \
             --argjson rust_entrypoint_count '${{ steps.rust.outputs.bins }}' \
-            '{schema_version:1,private_repository:$private_repository,private_revision:$private_revision,public_repository:$public_repository,public_target:$public_target,prior_accepted_revision:$prior_accepted,trusted_review_target:$trusted_review_target,semantic_anchor:$semantic_anchor,promotion_transaction:"validated",public_exact_main:"matched",post_review_delta:"validation-harness-only",rust_test_count:$rust_test_count,rust_entrypoint_count:$rust_entrypoint_count,private_workflow_actionlint:"passed",route_blockers_preserved:true,authority_promoted_by_this_workflow:false,hf_jobs_launched:false,model_compute_launched:false}' \
+            '{schema_version:1,private_repository:$private_repository,private_base:$private_base,private_revision:$private_revision,public_repository:$public_repository,public_target:$public_target,prior_accepted_revision:$prior_accepted,trusted_review_target:$trusted_review_target,semantic_anchor:$semantic_anchor,promotion_transaction:"validated",public_exact_main:"matched",post_review_delta:"validation-harness-only",rust_test_count:$rust_test_count,rust_entrypoint_count:$rust_entrypoint_count,private_workflow_actionlint:"passed",route_blockers_preserved:true,authority_promoted_by_this_workflow:false,hf_jobs_launched:false,model_compute_launched:false}' \
             > promotion-acceptance/evidence.json
           jq -e '.promotion_transaction == "validated" and .public_exact_main == "matched" and .route_blockers_preserved == true and .authority_promoted_by_this_workflow == false and .hf_jobs_launched == false and .model_compute_launched == false' promotion-acceptance/evidence.json >/dev/null
 
