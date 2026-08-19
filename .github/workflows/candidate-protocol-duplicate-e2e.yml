@@ -101,6 +101,10 @@ jobs:
           RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
           TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
           RECEIPT_SHA256: ${{ steps.receipt.outputs.receipt_sha256 }}
+          REQUEST_ID: ${{ steps.receipt.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.receipt.outputs.request_execution_id }}
+          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
+          EVALUATION_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
         run: |
           set -euo pipefail
           [[ -n "${TARGET_TOKEN:-}" ]] || { echo '::error::TARGET_REPO_TOKEN is required'; exit 1; }
@@ -206,11 +210,11 @@ jobs:
             --argjson ack_run_id "$ack_run" \
             --argjson lifecycle_artifact_id "$newest_lifecycle_id" \
             --argjson ack_artifact_id "$ack_artifact_id" \
-            --arg request_id "${{ steps.receipt.outputs.request_id }}" \
-            --arg request_execution_id "${{ steps.receipt.outputs.request_execution_id }}" \
+            --arg request_id "$REQUEST_ID" \
+            --arg request_execution_id "$REQUEST_EXECUTION_ID" \
             --arg receipt_sha256 "$RECEIPT_SHA256" \
-            --argjson evaluation_run_id "${{ inputs.evaluation_run_id }}" \
-            --argjson evaluation_run_attempt "${{ inputs.evaluation_run_attempt }}" \
+            --argjson evaluation_run_id "$EVALUATION_RUN_ID" \
+            --argjson evaluation_run_attempt "$EVALUATION_RUN_ATTEMPT" \
             '{receiver_run_id:$receiver_run_id,ack_run_id:$ack_run_id,lifecycle_artifact_id:$lifecycle_artifact_id,ack_artifact_id:$ack_artifact_id,request_id:$request_id,request_execution_id:$request_execution_id,receipt_sha256:$receipt_sha256,evaluation_run_id:$evaluation_run_id,evaluation_run_attempt:$evaluation_run_attempt,state:"acknowledged",idempotent:true}' \
             > .ci/duplicate-e2e/evidence.json
           {
@@ -218,11 +222,6 @@ jobs:
             echo "ack_run_id=$ack_run"
             echo "lifecycle_artifact_id=$newest_lifecycle_id"
           } >> "$GITHUB_OUTPUT"
-        env:
-          REQUEST_ID: ${{ steps.receipt.outputs.request_id }}
-          REQUEST_EXECUTION_ID: ${{ steps.receipt.outputs.request_execution_id }}
-          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
-          EVALUATION_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
 
       - name: Preserve duplicate E2E evidence
         uses: actions/upload-artifact@v7
