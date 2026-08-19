@@ -17,74 +17,83 @@ jobs:
       SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
       FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
     steps:
-      - name: Require source repository token
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || {
-            echo '::error::SOURCE_REPO_TOKEN is required'
-            exit 1
-          }
-      - name: Create private dedicated fixture when absent
+      - name: Provision private dedicated fixture
         id: fixture
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ env.SOURCE_REPO_TOKEN }}
         run: |
           set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo 'reason=source-repo-token-missing' >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           if gh api "/repos/$FIXTURE_REPOSITORY" >/tmp/fixture.json 2>/tmp/fixture.err; then
             echo 'created=false' >> "$GITHUB_OUTPUT"
           else
             owner="${FIXTURE_REPOSITORY%%/*}"
             name="${FIXTURE_REPOSITORY#*/}"
             [[ "$owner" == bie3yeik-lgtm ]] || {
-              echo '::error::fixture owner must be bie3yeik-lgtm'
+              echo 'reason=fixture-owner-mismatch' >> "$GITHUB_OUTPUT"
               exit 1
             }
-            gh api --method POST /user/repos \
+            if ! gh api --method POST /user/repos \
               -f name="$name" \
               -f description='Dedicated JPAPT candidate protocol cross-repository E2E fixture' \
               -F private=true \
               -F auto_init=true \
-              >/tmp/fixture.json
+              >/tmp/fixture.json 2>/tmp/create.err; then
+              code="$(grep -oE 'HTTP [0-9]{3}' /tmp/create.err | tail -1 | awk '{print $2}' || true)"
+              echo "reason=create-repository-http-${code:-unknown}" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
             echo 'created=true' >> "$GITHUB_OUTPUT"
           fi
           actual="$(jq -r .full_name /tmp/fixture.json)"
           private="$(jq -r .private /tmp/fixture.json)"
           default_branch="$(jq -r .default_branch /tmp/fixture.json)"
           [[ "$actual" == "$FIXTURE_REPOSITORY" ]] || {
-            echo "::error::unexpected repository identity: $actual"
+            echo 'reason=unexpected-repository-identity' >> "$GITHUB_OUTPUT"
             exit 1
           }
           [[ "$private" == true ]] || {
-            echo '::error::fixture repository must be private'
+            echo 'reason=fixture-not-private' >> "$GITHUB_OUTPUT"
             exit 1
           }
           [[ -n "$default_branch" && "$default_branch" != null ]] || {
-            echo '::error::fixture default branch unavailable'
+            echo 'reason=default-branch-unavailable' >> "$GITHUB_OUTPUT"
             exit 1
           }
           echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+          echo 'reason=success' >> "$GITHUB_OUTPUT"
       - name: Record provisioning result on issue 70
-        if: success()
+        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.fixture.outcome }}
           CREATED: ${{ steps.fixture.outputs.created }}
           DEFAULT_BRANCH: ${{ steps.fixture.outputs.default_branch }}
+          REASON: ${{ steps.fixture.outputs.reason }}
         run: |
           set -euo pipefail
           body=$(cat <<EOF
-          Dedicated fixture provisioning succeeded from trusted branch push.
+          Dedicated fixture provisioning attempt from trusted branch push.
 
           - repository: \`$FIXTURE_REPOSITORY\`
-          - private: \`true\`
-          - created in this run: \`$CREATED\`
-          - default branch: \`$DEFAULT_BRANCH\`
           - workflow run: \`$GITHUB_RUN_ID\`
           - source head: \`$GITHUB_SHA\`
+          - outcome: \`$OUTCOME\`
+          - reason: \`${REASON:-unspecified}\`
+          - created in this run: \`${CREATED:-unknown}\`
+          - default branch: \`${DEFAULT_BRANCH:-unknown}\`
 
-          No receiver bootstrap, repository dispatch, HF Bucket mutation, model compute, or HF Jobs workload was performed in this provisioning step.
+          No receiver bootstrap, repository dispatch, HF Bucket mutation, model compute, or HF Jobs workload was performed by this provisioning step.
           EOF
           )
           gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "$body"
+      - name: Fail if provisioning did not succeed
+        if: steps.fixture.outcome != 'success'
+        shell: bash
+        run: exit 1
