@@ -1,0 +1,225 @@
+name: Package Execution Policy Trusted Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/package-execution-policy-trusted-acceptance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIVATE_MAIN: 5c3cceb60e89da9efa23ace54677779f019f38c1
+  POLICY_HEAD: cca1239a58ec4fb22bbfd367c4f22c4039176747
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIVATE_ROOT: /tmp/jpapt-package-policy-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  acceptance:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/package-execution-policy-trusted-acceptance-20260820' }}
+    name: Validate private package execution policy
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify public authority remains exact accepted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]] || {
+            echo "::error::public authority main drifted: live=$live accepted=$ACCEPTED_PUBLIC"
+            exit 1
+          }
+
+      - name: Fetch private main and policy head with ephemeral credential
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/package-policy-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() {
+            rm -f "$askpass"
+            unset SOURCE_REPO_TOKEN
+          }
+          trap cleanup EXIT
+
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" \
+            "$PRIVATE_MAIN" "$POLICY_HEAD"
+          for sha in "$PRIVATE_MAIN" "$POLICY_HEAD"; do
+            git -C "$PRIVATE_ROOT" cat-file -e "${sha}^{commit}"
+          done
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
+          if git -C "$PRIVATE_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/policy-extraheaders 2>/dev/null; then
+            cat /tmp/policy-extraheaders >&2
+            echo '::error::private fetch retained credential header'
+            exit 1
+          fi
+
+      - name: Verify reviewed policy surface and branch identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_base="$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$POLICY_HEAD")"
+          [[ "$merge_base" == "$PRIVATE_MAIN" ]] || {
+            echo "::error::policy head is not based on exact private main: $merge_base"
+            exit 1
+          }
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIVATE_MAIN..$POLICY_HEAD")" == 10 ]]
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIVATE_MAIN" "$POLICY_HEAD" | sort)
+          expected=(
+            .github/workflows/hf-model-bootstrap-package.yml
+            .github/workflows/hf-model-pipeline-security-contracts.yml
+            config/hf-package-base-images.v1.json
+            scripts/hf-package-base-image.py
+            scripts/hf-package-evidence.py
+            scripts/tests/test_hf_bootstrap_package_workflow.py
+            scripts/tests/test_hf_package_base_image.py
+            scripts/tests/test_hf_package_evidence.py
+            scripts/tests/test_jpapt_bind_package_request.py
+            scripts/tests/test_jpapt_verify_package_artifact.py
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf '::error::unexpected policy files:\n%s\n' "${changed[*]}"
+            exit 1
+          }
+
+      - name: Build local integration merge without writing private repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid \
+            merge --no-commit --no-ff "$POLICY_HEAD"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_MAIN" ]]
+
+      - name: Verify accepted authority and reviewed base-image evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" '.accepted_revision == $accepted' \
+            "$authority/config/jpapt-upstream-authority.json" >/dev/null
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" \
+            '.status == "accepted" and .authority.reviewed_main_revision == $accepted' \
+            "$authority/config/jpapt-authority-gate.v1.json" >/dev/null
+          policy="$PRIVATE_ROOT/config/hf-package-base-images.v1.json"
+          jq -e '
+            .schema_version == 1 and
+            .default_base_image == "docker.io/library/python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a" and
+            (.allowed_base_images == [.default_base_image]) and
+            .review_evidence.resolver_run_id == 32293797214 and
+            .review_evidence.resolver_artifact_id == 9380462482 and
+            .review_evidence.resolver_artifact_sha256 == "c9a300464205f1adbbc4bab319316c9279022bf44faf57b686e2b7b0aef7d05d"
+          ' "$policy" >/dev/null
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run package execution security contracts
+        id: python_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests="$PRIVATE_ROOT/scripts/tests"
+          files=(
+            test_hf_model_pipeline.py
+            test_hf_model_pipeline_ids.py
+            test_hf_repo_write_preflight.py
+            test_hf_candidate_content_digest.py
+            test_hf_package_base_image.py
+            test_hf_bootstrap_package_workflow.py
+            test_hf_package_evidence.py
+            test_jpapt_bind_package_request.py
+            test_jpapt_verify_package_artifact.py
+            test_jpapt_package_artifact_verify_workflow.py
+          )
+          args=()
+          for file in "${files[@]}"; do args+=("$tests/$file"); done
+          output="$(python3 -m unittest -v "${args[@]}" 2>&1)"
+          printf '%s\n' "$output"
+          count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
+          (( count > 0 )) || { echo '::error::no security contracts executed'; exit 1; }
+          python3 -m py_compile \
+            "$PRIVATE_ROOT/scripts/hf-model-pipeline.py" \
+            "$PRIVATE_ROOT/scripts/hf-model-pipeline-ids.py" \
+            "$PRIVATE_ROOT/scripts/hf-package-base-image.py" \
+            "$PRIVATE_ROOT/scripts/hf-package-evidence.py" \
+            "$PRIVATE_ROOT/scripts/jpapt-bind-package-request.py" \
+            "$PRIVATE_ROOT/scripts/jpapt-verify-package-artifact.py"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Lint package and provenance workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          workflows="$PRIVATE_ROOT/.github/workflows"
+          actionlint -color -ignore 'SC2016' -ignore 'SC2129' \
+            "$workflows/hf-model-bootstrap-package.yml" \
+            "$workflows/hf-model-pipeline-security-contracts.yml" \
+            "$workflows/jpapt-package-artifact-verify.yml"
+
+      - name: Verify acceptance harness is validation-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('.github/workflows/package-execution-policy-trusted-acceptance.yml').read_text()
+          start = text.index('      - name: Verify acceptance harness is validation-only')
+          text = text[:start]
+          forbidden = [r'\bhf\s+jobs\s+(?:run|uv)\b', r'docker\s+(?:run|build)\b', r'repository_dispatch', r'packages:\s*write', r'contents:\s*write']
+          for pattern in forbidden:
+              if re.search(pattern, text, flags=re.I):
+                  raise SystemExit(f'forbidden validation-harness primitive: {pattern}')
+          PY
+
+      - name: Build acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-execution-policy-acceptance
+          jq -n \
+            --arg private_repository "$PRIVATE_REPOSITORY" \
+            --arg private_main "$PRIVATE_MAIN" \
+            --arg policy_head "$POLICY_HEAD" \
+            --arg accepted_public "$ACCEPTED_PUBLIC" \
+            --arg base_image 'docker.io/library/python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a' \
+            --argjson python_test_count '${{ steps.python_tests.outputs.count }}' \
+            '{schema_version:1,private_repository:$private_repository,private_main:$private_main,policy_head:$policy_head,accepted_public:$accepted_public,changed_file_count:10,commit_count:10,integration_merge:"clean",authority_state_preserved:true,reviewed_base_image:$base_image,base_image_allowlist:"passed",anonymous_pull_contract:"passed",package_evidence_schema:2,python_security_contracts:"passed",python_test_count:$python_test_count,workflow_actionlint:"passed",trusted_runner:"github-hosted",hf_jobs_launched:false,model_compute_launched:false,package_built:false,private_repository_written:false}' \
+            > package-execution-policy-acceptance/evidence.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-execution-policy-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: package-execution-policy-acceptance/
+          if-no-files-found: error
+          retention-days: 30
