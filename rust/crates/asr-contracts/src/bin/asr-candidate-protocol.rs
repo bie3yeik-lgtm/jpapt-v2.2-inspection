@@ -1,3 +1,6 @@
+#[path = "shared/image_identity.rs"]
+mod image_identity;
+
 use chrono::DateTime;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -485,6 +488,13 @@ fn validate_receipt(value: &Map<String, Value>) -> Result<(), String> {
                 return Err(format!("successful evaluation receipt requires {field}"));
             }
         }
+        if required_string(value, "executor")? == "hf_jobs" {
+            image_identity::validate_digest_pinned_image_binding(
+                optional_string(value, "image_ref")?.expect("successful receipt checked above"),
+                optional_string(value, "image_digest")?.expect("successful receipt checked above"),
+                "successful HF Jobs receipt image",
+            )?;
+        }
     }
     let failed = required(value, "failed_jobs")?
         .as_array()
@@ -765,6 +775,89 @@ mod tests {
     #[test]
     fn validates_dry_run_receipt() {
         validate_receipt(&receipt()).unwrap();
+    }
+
+    #[test]
+    fn validates_successful_hf_jobs_receipt_image_binding() {
+        let digest = "a".repeat(64);
+        let mut value = receipt();
+        value.insert("dry_run".to_owned(), json!(false));
+        value.insert("suite".to_owned(), json!("smoke"));
+        value.insert("executor".to_owned(), json!("hf_jobs"));
+        value.insert(
+            "resolved_candidate_id".to_owned(),
+            json!("candidate-000123"),
+        );
+        value.insert(
+            "image_ref".to_owned(),
+            json!(format!("registry.example:5000/ns/repo:tag@sha256:{digest}")),
+        );
+        value.insert("image_digest".to_owned(), json!(format!("sha256:{digest}")));
+        value.insert(
+            "result_artifact".to_owned(),
+            json!("candidate-package-candidate-000123-hf-jobs-smoke"),
+        );
+        value.insert(
+            "result_uri".to_owned(),
+            json!(
+                "hf://buckets/owner/bucket/runs/hf-jobs/candidate-000123/smoke-200-1/result.json"
+            ),
+        );
+        validate_receipt(&value).unwrap();
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_mismatched_successful_hf_jobs_receipt_image() {
+        let digest = "a".repeat(64);
+        for image_ref in [
+            format!("ghcr.io//owner/repo@sha256:{digest}"),
+            format!("ghcr.io/./repo@sha256:{digest}"),
+            format!("ghcr.io/../repo@sha256:{digest}"),
+            format!("/ghcr.io/owner/repo@sha256:{digest}"),
+            format!("ghcr.io/owner/repo/@sha256:{digest}"),
+            format!("ghcr.io/owner/repo@sha256:{}", "b".repeat(64)),
+        ] {
+            let mut value = receipt();
+            value.insert("dry_run".to_owned(), json!(false));
+            value.insert("suite".to_owned(), json!("smoke"));
+            value.insert("executor".to_owned(), json!("hf_jobs"));
+            value.insert(
+                "resolved_candidate_id".to_owned(),
+                json!("candidate-000123"),
+            );
+            value.insert("image_ref".to_owned(), json!(image_ref));
+            value.insert("image_digest".to_owned(), json!(format!("sha256:{digest}")));
+            value.insert(
+                "result_artifact".to_owned(),
+                json!("candidate-package-candidate-000123-hf-jobs-smoke"),
+            );
+            assert!(validate_receipt(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn github_receipt_keeps_tag_plus_separate_digest_compatibility() {
+        let mut value = receipt();
+        value.insert("dry_run".to_owned(), json!(false));
+        value.insert("suite".to_owned(), json!("smoke"));
+        value.insert("executor".to_owned(), json!("github"));
+        value.insert(
+            "resolved_candidate_id".to_owned(),
+            json!("candidate-000123"),
+        );
+        value.insert(
+            "image_ref".to_owned(),
+            json!("ghcr.io/owner/repo:candidate-000123-linux-cpu"),
+        );
+        value.insert(
+            "image_digest".to_owned(),
+            json!(format!("sha256:{}", "a".repeat(64))),
+        );
+        value.insert(
+            "result_artifact".to_owned(),
+            json!("candidate-package-candidate-000123-linux-cpu-smoke"),
+        );
+        validate_receipt(&value).unwrap();
     }
 
     #[test]

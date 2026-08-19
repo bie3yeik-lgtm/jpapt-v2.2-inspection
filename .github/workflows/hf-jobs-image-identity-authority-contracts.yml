@@ -1,0 +1,70 @@
+name: HF Jobs Image Identity Authority Contracts
+
+on:
+  pull_request:
+    paths:
+      - rust/crates/asr-contracts/src/bin/asr-candidate-request.rs
+      - rust/crates/asr-contracts/src/bin/asr-hf-job.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol-build.rs
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - rust/crates/asr-contracts/src/bin/shared/image_identity.rs
+      - scripts/ci/hf-jobs-image-preflight.sh
+      - .github/workflows/hf-jobs-image-identity-authority-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate canonical HF Jobs image identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Exercise Rust request, plan, builder, receipt and shared identity contracts
+        run: >-
+          cargo test --locked -p asr-contracts
+          --bin asr-candidate-request
+          --bin asr-hf-job
+          --bin asr-candidate-protocol-build
+          --bin asr-candidate-protocol
+      - name: Verify standalone preflight grammar before Docker invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          marker="$tmp/docker-called"
+          cat > "$tmp/docker" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${DOCKER_MARKER:?}"
+          printf '%s\n' "$*" >> "$DOCKER_MARKER"
+          [[ "${1:-}" == manifest && "${2:-}" == inspect ]]
+          EOF
+          chmod +x "$tmp/docker"
+          digest="$(printf 'a%.0s' {1..64})"
+          valid="registry.example:5000/ns/repo:tag@sha256:$digest"
+          PATH="$tmp:$PATH" DOCKER_MARKER="$marker" HF_JOB_PLAN="$tmp/missing-plan.json" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$valid"
+          grep -Fq "manifest inspect $valid" "$marker"
+
+          for name in \
+            'ghcr.io//owner/repo' \
+            'ghcr.io/./repo' \
+            'ghcr.io/../repo' \
+            '/ghcr.io/owner/repo' \
+            'ghcr.io/owner/repo/'
+          do
+            : > "$marker"
+            if PATH="$tmp:$PATH" DOCKER_MARKER="$marker" HF_JOB_PLAN="$tmp/missing-plan.json" \
+              bash scripts/ci/hf-jobs-image-preflight.sh "$name@sha256:$digest"; then
+              echo "ERROR: malformed image unexpectedly passed: $name" >&2
+              exit 1
+            fi
+            [[ ! -s "$marker" ]] || {
+              echo "ERROR: Docker was invoked before malformed image rejection: $name" >&2
+              exit 1
+            }
+          done

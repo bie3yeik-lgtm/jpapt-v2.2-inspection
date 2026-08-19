@@ -1,3 +1,6 @@
+#[path = "shared/image_identity.rs"]
+mod image_identity;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::env;
@@ -225,31 +228,7 @@ fn validate_safe_token(value: &str, field: &str, max_len: usize) -> Result<(), S
 }
 
 fn validate_digest_pinned_image(value: &str, field: &str) -> Result<(), String> {
-    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
-        return Err(format!(
-            "{field} is empty, too long, or contains whitespace"
-        ));
-    }
-    if !value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || "./:@_-".contains(ch))
-    {
-        return Err(format!("{field} contains unsupported characters"));
-    }
-    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
-        return Err(format!(
-            "{field} must be immutable and digest-pinned with @sha256:<64 hex>"
-        ));
-    };
-    if name.is_empty()
-        || digest.len() != 64
-        || !digest
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-    {
-        return Err(format!("{field} has an invalid lowercase sha256 digest"));
-    }
-    Ok(())
+    image_identity::validate_digest_pinned_image(value, field)
 }
 
 fn resolve(
@@ -630,6 +609,30 @@ mod tests {
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("lowercase sha256"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_hf_jobs_image_paths_before_build() {
+        for image_name in [
+            "ghcr.io//owner/package",
+            "ghcr.io/./package",
+            "ghcr.io/../package",
+            "/ghcr.io/owner/package",
+            "ghcr.io/owner/package/",
+        ] {
+            let image = format!("{image_name}@sha256:{}", "a".repeat(64));
+            let inputs = object(
+                &format!(
+                    r#"{{"request_id":"req-hf-image-path","request_execution_id":"gw-105-3","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","hf_jobs_image":"{image}"}}"#
+                ),
+                "inputs",
+            )
+            .unwrap();
+            assert!(
+                resolve(&inputs, &Map::new(), "hf-user", "registry-owner").is_err(),
+                "{image}"
+            );
+        }
     }
 
     #[test]

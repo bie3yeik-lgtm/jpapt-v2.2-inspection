@@ -1,3 +1,6 @@
+#[path = "shared/image_identity.rs"]
+mod image_identity;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -734,31 +737,7 @@ fn validate_job_name(value: &str) -> Result<(), String> {
 }
 
 fn image_digest(value: &str) -> Result<String, String> {
-    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
-        return Err(
-            "HF Jobs image reference is empty, too long, or contains whitespace".to_owned(),
-        );
-    }
-    if !value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || "./:@_-".contains(ch))
-    {
-        return Err("HF Jobs image reference contains unsupported characters".to_owned());
-    }
-    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
-        return Err(
-            "HF Jobs image must be immutable and digest-pinned with @sha256:<64 hex>".to_owned(),
-        );
-    };
-    if name.is_empty()
-        || digest.len() != 64
-        || !digest
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-    {
-        return Err("HF Jobs image has an invalid lowercase sha256 digest".to_owned());
-    }
-    Ok(format!("sha256:{digest}"))
+    image_identity::digest_pinned_image_digest(value, "HF Jobs image")
 }
 
 fn write_plan(path: &Path, plan: &HfJobPlan) -> Result<(), String> {
