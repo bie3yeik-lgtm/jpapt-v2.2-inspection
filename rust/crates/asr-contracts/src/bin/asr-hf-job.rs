@@ -691,6 +691,9 @@ fn validate_repository_id(value: &str, field: &str) -> Result<(), String> {
     if owner.is_empty() || name.is_empty() || parts.next().is_some() {
         return Err(format!("{field} must use namespace/name"));
     }
+    if [owner, name].iter().any(|part| matches!(*part, "." | "..")) {
+        return Err(format!("{field} must not contain dot path segments"));
+    }
     if !value
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || "._-/".contains(ch))
@@ -825,6 +828,18 @@ mod tests {
             "cases": [{"case": null, "passed": true, "note": "structural smoke"}],
             "passed": true
         })
+    }
+
+    #[test]
+    fn repository_identity_rejects_dot_segments_but_allows_dot_prefixed_names() {
+        for value in ["./repo", "../repo", "owner/.", "owner/.."] {
+            assert!(
+                validate_repository_id(value, "repository").is_err(),
+                "{value}"
+            );
+        }
+        validate_repository_id("owner/.github", "repository").unwrap();
+        validate_repository_id(".owner/repo", "repository").unwrap();
     }
 
     #[test]
