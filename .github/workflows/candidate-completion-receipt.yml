@@ -22,13 +22,18 @@ jobs:
       - name: Materialize receipt payload
         shell: bash
         env:
-          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          PROTOCOL_PAYLOAD: ${{ toJSON(github.event.client_payload.protocol_payload) }}
+          LEGACY_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           RECEIPT_JSON: ${{ inputs.receipt_json }}
         run: |
           set -euo pipefail
           mkdir -p .ci
           if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            printf '%s\n' "$PAYLOAD" > .ci/candidate-completion-receipt.json
+            if [[ "$PROTOCOL_PAYLOAD" != "null" && -n "$PROTOCOL_PAYLOAD" ]]; then
+              printf '%s\n' "$PROTOCOL_PAYLOAD" > .ci/candidate-completion-receipt.json
+            else
+              printf '%s\n' "$LEGACY_PAYLOAD" > .ci/candidate-completion-receipt.json
+            fi
           else
             printf '%s\n' "$RECEIPT_JSON" > .ci/candidate-completion-receipt.json
           fi
@@ -67,11 +72,11 @@ jobs:
         if: ${{ github.event_name == 'repository_dispatch' }}
         shell: bash
         env:
-          ORCHESTRATOR_REPOSITORY: ${{ github.event.client_payload.orchestrator_repository }}
           ACK_TOKEN: ${{ secrets.JPAPT_ACK_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ORCHESTRATOR_REPOSITORY="$(jq -er '.orchestrator_repository' .ci/candidate-completion-receipt.json)"
           token="$ACK_TOKEN"
           if [[ -z "$token" && "$ORCHESTRATOR_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
             token="$GITHUB_TOKEN"

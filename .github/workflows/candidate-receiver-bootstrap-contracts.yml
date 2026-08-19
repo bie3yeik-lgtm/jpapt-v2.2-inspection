@@ -170,7 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           readiness=.github/workflows/candidate-protocol-readiness.yml
-          grep -F 'SOURCE_REPO_TOKEN is not configured' "$readiness"
+          grep -F 'TARGET_REPO_TOKEN is not configured' "$readiness"
           grep -F 'HF_TOKEN is not configured' "$readiness"
           grep -F 'JPAPT_ORCHESTRATOR_REPOSITORIES' "$readiness"
           grep -F 'JPAPT_ACK_TOKEN' "$readiness"

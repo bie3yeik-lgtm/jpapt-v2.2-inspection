@@ -27,7 +27,7 @@ permissions:
   actions: write
 
 env:
-  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+  TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
 
 concurrency:
   group: candidate-protocol-e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -35,6 +35,7 @@ concurrency:
 
 jobs:
   e2e:
+    environment: Private-Secrets
     name: Verify external completion and acknowledgement loop
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -89,12 +90,12 @@ jobs:
       - name: Preflight external receiver
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || {
-            echo "::error::SOURCE_REPO_TOKEN is required for cross-repository E2E delivery and preflight"
+            echo "::error::TARGET_REPO_TOKEN is required for cross-repository E2E delivery and preflight"
             exit 1
           }
 
@@ -107,7 +108,7 @@ jobs:
 
           manifest_encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$default_branch" --jq .content 2>/dev/null || true)"
           if [[ -n "$manifest_encoded" ]]; then
-            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver-manifest.json
+            printf '%s' "$manifest_encoded" | python scripts/ci/decode-github-content.py --output /tmp/receiver-manifest.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver-manifest.json
             python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver-manifest.json || {
               echo "::error::receiver installation manifest is stale or incomplete; run Candidate Receiver Bootstrap before E2E"
@@ -138,7 +139,7 @@ jobs:
                 echo "::error::managed receiver dependency missing: $path"
                 exit 1
               }
-              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              actual="$(printf '%s' "$encoded" | python scripts/ci/decode-github-content.py | sha256sum | awk '{print $1}')"
               [[ "$actual" == "$expected" ]] || {
                 echo "::error::managed receiver dependency drifted from manifest: $path"
                 exit 1

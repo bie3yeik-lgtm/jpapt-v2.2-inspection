@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
+  group: candidate-completion-ack-${{ github.event.client_payload.protocol_payload.receipt_sha256 || github.event.client_payload.receipt_sha256 || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -28,13 +28,18 @@ jobs:
       - name: Materialize acknowledgement payload
         shell: bash
         env:
-          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          PROTOCOL_PAYLOAD: ${{ toJSON(github.event.client_payload.protocol_payload) }}
+          LEGACY_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           ACK_JSON: ${{ inputs.ack_json }}
         run: |
           set -euo pipefail
           mkdir -p .ci
           if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            printf '%s\n' "$PAYLOAD" > .ci/candidate-completion-ack.json
+            if [[ "$PROTOCOL_PAYLOAD" != "null" && -n "$PROTOCOL_PAYLOAD" ]]; then
+              printf '%s\n' "$PROTOCOL_PAYLOAD" > .ci/candidate-completion-ack.json
+            else
+              printf '%s\n' "$LEGACY_PAYLOAD" > .ci/candidate-completion-ack.json
+            fi
           else
             printf '%s\n' "$ACK_JSON" > .ci/candidate-completion-ack.json
           fi
@@ -87,7 +92,7 @@ jobs:
       - name: Preserve acknowledgement
         uses: actions/upload-artifact@v7
         with:
-          name: candidate-completion-ack-${{ github.event.client_payload.receipt_sha256 || github.run_id }}
+          name: candidate-completion-ack-${{ github.event.client_payload.protocol_payload.receipt_sha256 || github.event.client_payload.receipt_sha256 || github.run_id }}
           path: .ci/candidate-completion-ack.json
           retention-days: 30
       - name: Preserve acknowledged lifecycle snapshot

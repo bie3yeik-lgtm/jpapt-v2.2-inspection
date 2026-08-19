@@ -90,6 +90,7 @@ env:
 
 jobs:
   resolve:
+    environment: Private-Secrets
     name: Resolve request
     runs-on: ubuntu-latest
     outputs:
@@ -647,6 +648,7 @@ jobs:
           retention-days: 14
 
   completion:
+    environment: Private-Secrets
     name: Emit candidate completion receipt
     needs:
       - resolve
@@ -708,7 +710,7 @@ jobs:
         shell: bash
         env:
           RECEIPT_REPOSITORY: ${{ needs.resolve.outputs.receipt_repository }}
-          RECEIPT_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          RECEIPT_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -717,7 +719,7 @@ jobs:
             token="$GITHUB_TOKEN"
           fi
           [[ -n "$token" ]] || {
-            echo "::error::SOURCE_REPO_TOKEN is required to deliver completion receipt to $RECEIPT_REPOSITORY"
+            echo "::error::TARGET_REPO_TOKEN is required to deliver completion receipt to $RECEIPT_REPOSITORY"
             exit 1
           }
           GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
