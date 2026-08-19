@@ -186,17 +186,28 @@ jobs:
         run: |
           set -euo pipefail
           crate="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
-          mapfile -t sources < <(find "$crate/src/bin" -maxdepth 1 -type f -name 'jpapt*.rs' -print | sort)
-          (( ${#sources[@]} > 0 )) || {
-            echo '::error::no JPAPT Rust entrypoints found'
+          manifest="$(realpath "$crate/Cargo.toml")"
+          cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path "$crate/Cargo.toml" > /tmp/private-cargo-metadata.json
+          mapfile -t bins < <(
+            jq -r --arg manifest "$manifest" '
+              .packages[]
+              | select(.manifest_path == $manifest)
+              | .targets[]
+              | select((.kind | index("bin")) != null)
+              | select(.src_path | test("/jpapt[^/]*\\.rs$"))
+              | .name
+            ' /tmp/private-cargo-metadata.json | sort -u
+          )
+          (( ${#bins[@]} > 0 )) || {
+            echo '::error::no JPAPT Cargo binary targets found'
             exit 1
           }
-          for source in "${sources[@]}"; do
-            bin="$(basename "$source" .rs)"
+          for bin in "${bins[@]}"; do
             echo "checking $bin"
             cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"
           done
-          echo "count=${#sources[@]}" >> "$GITHUB_OUTPUT"
+          echo "count=${#bins[@]}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@v6
