@@ -9,6 +9,19 @@ plan="${HF_JOB_PLAN:-.ci/hf-jobs/hf-job-plan.json}"
   exit 2
 }
 
+image_name="${image%@sha256:*}"
+if [[ "$image_name" == /* || "$image_name" == */ || "$image_name" == *//* ]]; then
+  echo "ERROR: HF Jobs image name contains an ambiguous slash structure: $image_name" >&2
+  exit 2
+fi
+IFS='/' read -r -a image_parts <<<"$image_name"
+for part in "${image_parts[@]}"; do
+  if [[ -z "$part" || "$part" == "." || "$part" == ".." ]]; then
+    echo "ERROR: HF Jobs image name contains an unsafe path segment: $image_name" >&2
+    exit 2
+  fi
+done
+
 # Production candidate evaluation writes this plan before reaching image
 # preflight. When present, enforce environment/provider/hardware-class binding
 # with Rust before any paid remote Job can be created.
@@ -28,7 +41,7 @@ command -v docker >/dev/null 2>&1 || {
 
 # Deliberately isolate Docker credentials. HF Jobs cannot rely on the GitHub
 # runner's GHCR login, so the selected image must resolve anonymously from a
-# fresh client configuration before any paid remote Job is created.
+# fresh client configuration before any paid remote Job can be created.
 docker_config="$(mktemp -d)"
 trap 'rm -rf "$docker_config"' EXIT
 
