@@ -158,8 +158,12 @@ jobs:
           )
           args=()
           for file in "${files[@]}"; do args+=("$tests/$file"); done
+          set +e
           output="$(python3 -m unittest -v "${args[@]}" 2>&1)"
+          rc=$?
+          set -e
           printf '%s\n' "$output"
+          (( rc == 0 )) || exit "$rc"
           count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
           (( count > 0 )) || { echo '::error::no security contracts executed'; exit 1; }
           python3 -m py_compile \
