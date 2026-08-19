@@ -44,6 +44,12 @@ jobs:
             echo "::error::repository must use owner/name"
             exit 1
           }
+          owner="${TARGET_REPOSITORY%%/*}"
+          name="${TARGET_REPOSITORY#*/}"
+          [[ "$owner" != "." && "$owner" != ".." && "$name" != "." && "$name" != ".." ]] || {
+            echo "::error::repository must not contain dot-only path segments"
+            exit 1
+          }
           [[ "$TARGET_REPOSITORY" != "$GITHUB_REPOSITORY" ]] || {
             echo "::error::bootstrap target must be an external repository"
             exit 1
@@ -66,8 +72,16 @@ jobs:
             exit 1
           }
 
-          manifest_encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$validated_head_sha" --jq .content 2>/dev/null || true)"
-          if [[ -n "$manifest_encoded" ]]; then
+          content_state() {
+            python scripts/ci/github-content-sha.py \
+              --repository "$TARGET_REPOSITORY" \
+              --path "$1" \
+              --ref "$validated_head_sha"
+          }
+
+          manifest_state="$(content_state .jpapt/candidate-receiver.json)"
+          if [[ "$manifest_state" != "missing" ]]; then
+            manifest_encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$validated_head_sha" --jq .content)"
             printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/existing-receiver.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/existing-receiver.json
             python - "$TARGET_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
@@ -90,11 +104,12 @@ jobs:
               print(f"{item['sha256']}\t{item['path']}")
           PY
             while IFS=$'\t' read -r expected path; do
-              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$validated_head_sha" --jq .content 2>/dev/null || true)"
-              if [[ -z "$encoded" ]]; then
+              state="$(content_state "$path")"
+              if [[ "$state" == "missing" ]]; then
                 echo "::notice::managed path is missing and will be repaired: $path"
                 continue
               fi
+              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$validated_head_sha" --jq .content)"
               actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
               [[ "$actual" == "$expected" ]] || {
                 echo "::error::managed path drifted from the owned installation manifest: $path"
@@ -111,8 +126,9 @@ jobs:
             for mapping in "${managed_mappings[@]}"; do
               target="${mapping%%=*}"
               source="${mapping#*=}"
-              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$validated_head_sha" --jq .content 2>/dev/null || true)"
-              [[ -n "$encoded" ]] || continue
+              state="$(content_state "$target")"
+              [[ "$state" != "missing" ]] || continue
+              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$validated_head_sha" --jq .content)"
               remote_hash="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
               local_hash="$(sha256sum "$source" | awk '{print $1}')"
               if [[ "$remote_hash" == "$local_hash" ]]; then
@@ -164,6 +180,13 @@ jobs:
           base_tree="$(gh api "/repos/$TARGET_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)"
           entries='[]'
 
+          content_state() {
+            python scripts/ci/github-content-sha.py \
+              --repository "$TARGET_REPOSITORY" \
+              --path "$1" \
+              --ref "$head_sha"
+          }
+
           add_blob() {
             local target="$1"
             local source="$2"
@@ -182,7 +205,8 @@ jobs:
           if [[ -f /tmp/existing-receiver.json ]]; then
             while IFS= read -r obsolete; do
               [[ -n "$obsolete" ]] || continue
-              if gh api "/repos/$TARGET_REPOSITORY/contents/$obsolete?ref=$head_sha" >/dev/null 2>&1; then
+              state="$(content_state "$obsolete")"
+              if [[ "$state" != "missing" ]]; then
                 echo "::notice::removing obsolete previously managed path: $obsolete"
                 entries="$(jq --arg path "$obsolete" \
                   '. + [{path:$path,mode:"100644",type:"blob",sha:null}]' <<<"$entries")"
@@ -211,9 +235,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           TARGET_REPOSITORY: ${{ inputs.repository }}
-          TARGET_BRANCH: ${{ steps.target.outputs.default_branch }}
+          TARGET_COMMIT: ${{ steps.install.outputs.target_commit }}
         run: |
           set -euo pipefail
+          [[ "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::installed target commit is invalid"
+            exit 1
+          }
+          content_state() {
+            python scripts/ci/github-content-sha.py \
+              --repository "$TARGET_REPOSITORY" \
+              --path "$1" \
+              --ref "$TARGET_COMMIT"
+          }
+
           python - /tmp/candidate-receiver.json <<'PY' > /tmp/managed.tsv
           import json
           import sys
@@ -223,7 +258,12 @@ jobs:
               print(f"{item['sha256']}\t{item['path']}")
           PY
           while IFS=$'\t' read -r expected path; do
-            encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$TARGET_BRANCH" --jq .content)"
+            state="$(content_state "$path")"
+            [[ "$state" != "missing" ]] || {
+              echo "::error::installed receiver path is missing: $path"
+              exit 1
+            }
+            encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$TARGET_COMMIT" --jq .content)"
             actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
             [[ "$actual" == "$expected" ]] || {
               echo "::error::installed receiver hash mismatch: $path"
@@ -234,7 +274,8 @@ jobs:
           if [[ -f /tmp/existing-receiver.json ]]; then
             while IFS= read -r obsolete; do
               [[ -n "$obsolete" ]] || continue
-              if gh api "/repos/$TARGET_REPOSITORY/contents/$obsolete?ref=$TARGET_BRANCH" >/dev/null 2>&1; then
+              state="$(content_state "$obsolete")"
+              if [[ "$state" != "missing" ]]; then
                 echo "::error::obsolete managed path still exists after bootstrap: $obsolete"
                 exit 1
               fi

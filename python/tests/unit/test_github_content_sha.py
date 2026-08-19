@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 HELPER = ROOT / "scripts" / "ci" / "github-content-sha.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "external-bucket-bootstrap.yml"
+RECEIVER_WORKFLOW = ROOT / ".github" / "workflows" / "candidate-receiver-bootstrap.yml"
 SPEC = importlib.util.spec_from_file_location("github_content_sha", HELPER)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -32,11 +33,10 @@ class FakeResponse:
         return self._raw
 
 
-def opener_for(status: int, payload: object):
+def opener_for(status: int, payload: object, *, expected_suffix: str | None = None):
     def opener(request, timeout=0):
-        assert request.full_url.endswith(
-            "/repos/owner/repo/contents/.jpapt/hf-bucket.yml"
-        )
+        suffix = expected_suffix or "/repos/owner/repo/contents/.jpapt/hf-bucket.yml"
+        assert request.full_url.endswith(suffix)
         assert timeout == 20
         assert request.headers["Authorization"] == "Bearer token"
         return FakeResponse(status, payload)
@@ -55,6 +55,45 @@ def test_success_returns_canonical_existing_sha():
         )
         == sha
     )
+
+
+def test_immutable_ref_is_encoded_into_contents_lookup():
+    sha = "b" * 40
+    ref = "c" * 40
+    assert (
+        MODULE.fetch_content_sha(
+            "owner/repo",
+            ".jpapt/hf-bucket.yml",
+            "token",
+            ref=ref,
+            opener=opener_for(
+                200,
+                {"sha": sha},
+                expected_suffix=f"/repos/owner/repo/contents/.jpapt/hf-bucket.yml?ref={ref}",
+            ),
+        )
+        == sha
+    )
+
+
+@pytest.mark.parametrize("ref", ["main", "A" * 40, "a" * 39, "../main"])
+def test_rejects_non_immutable_ref_before_network(ref: str):
+    called = False
+
+    def opener(request, timeout=0):
+        nonlocal called
+        called = True
+        return FakeResponse(200, {"sha": "a" * 40})
+
+    with pytest.raises(ValueError, match="immutable lowercase 40-hex"):
+        MODULE.fetch_content_sha(
+            "owner/repo",
+            ".jpapt/hf-bucket.yml",
+            "token",
+            ref=ref,
+            opener=opener,
+        )
+    assert not called
 
 
 def test_only_http_404_is_treated_as_missing():
@@ -169,3 +208,15 @@ def test_bootstrap_workflow_uses_fail_closed_reader_before_put():
     assert "2>/dev/null || true" not in block
     assert block.index(reader) < block.index(put)
     assert 'if [[ "$existing" == "missing" ]]' in block
+
+
+def test_receiver_bootstrap_uses_pinned_fail_closed_content_reads():
+    text = RECEIVER_WORKFLOW.read_text(encoding="utf-8")
+    assert "2>/dev/null || true" not in text
+    assert text.count("python scripts/ci/github-content-sha.py") >= 3
+    assert '--ref "$validated_head_sha"' in text
+    assert '--ref "$head_sha"' in text
+    assert '--ref "$TARGET_COMMIT"' in text
+    assert "TARGET_COMMIT: ${{ steps.install.outputs.target_commit }}" in text
+    assert '?ref=$TARGET_COMMIT" --jq .content' in text
+    assert 'repository must not contain dot-only path segments' in text
