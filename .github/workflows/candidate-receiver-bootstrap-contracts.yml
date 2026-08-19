@@ -103,22 +103,13 @@ jobs:
             echo 'stale installation unexpectedly matched canonical bundle' >&2
             exit 1
           fi
-
           zero_sha="$(printf '0%.0s' {1..64})"
-          jq --arg sha "$zero_sha" '.managed_files += [{"path":"scripts/ci/obsolete-managed.py","sha256":$sha}]' \
-            /tmp/receiver.json > /tmp/obsolete.json
+          jq --arg sha "$zero_sha" '.managed_files += [{"path":"scripts/ci/obsolete-managed.py","sha256":$sha}]' /tmp/receiver.json > /tmp/obsolete.json
           test "$(python scripts/ci/candidate_receiver_bundle.py --obsolete-installation /tmp/obsolete.json)" = scripts/ci/obsolete-managed.py
-
           jq '.installed_at="2026-08-17T10:00:00"' /tmp/receiver.json > /tmp/naive.json
-          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/naive.json; then
-            echo 'naive installed_at unexpectedly passed validation' >&2
-            exit 1
-          fi
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/naive.json; then exit 1; fi
           jq '.unexpected="x"' /tmp/receiver.json > /tmp/extra.json
-          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/extra.json; then
-            echo 'unknown installation field unexpectedly passed validation' >&2
-            exit 1
-          fi
+          if python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/extra.json; then exit 1; fi
       - name: Verify canonical bundle dependency closure
         shell: bash
         run: |
@@ -187,62 +178,26 @@ jobs:
           grep -F "re.findall(r'candidate-[0-9]{6}', text)" "$readiness"
           grep -F 'E2E HF Bucket contains no candidate-NNNNNN under candidates/' "$readiness"
           grep -F 'E2E HF Bucket candidate collection: reachable and non-empty' "$readiness"
-          if grep -F 'hf buckets sync' "$readiness"; then
-            echo 'readiness must not download candidate payloads' >&2
-            exit 1
-          fi
+          if grep -F 'hf buckets sync' "$readiness"; then exit 1; fi
 
   diagnose_fixture_receiver:
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/diagnose-fixture-receiver-20260820' }}
-    name: Diagnose and repair fixture ACK credential
+    name: Try TARGET token for fixture ACK credential
     environment: Private-Secrets
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Probe candidate ACK credentials
-        id: probe
-        shell: bash
-        env:
-          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
-          TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
-          ORCHESTRATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
-        run: |
-          set -euo pipefail
-          selected=''
-          selected_name=''
-          for name in SOURCE_REPO_TOKEN TARGET_REPO_TOKEN; do
-            token="${!name:-}"
-            if [[ -z "$token" ]]; then
-              echo "$name: missing"
-              continue
-            fi
-            login="$(GH_TOKEN="$token" gh api /user --jq .login 2>/dev/null || true)"
-            if [[ -z "$login" ]]; then
-              echo "$name: invalid"
-              continue
-            fi
-            push="$(GH_TOKEN="$token" gh api "/repos/$ORCHESTRATOR_REPOSITORY" --jq '.permissions.push // false' 2>/dev/null || true)"
-            echo "$name: valid login=$login orchestrator_push=${push:-unknown}"
-            if [[ "$push" == true && -z "$selected" ]]; then
-              selected="$token"
-              selected_name="$name"
-            fi
-          done
-          [[ -n "$selected" ]] || { echo '::error::no Environment token has orchestrator push/dispatch capability'; exit 1; }
-          echo "selected_name=$selected_name" >> "$GITHUB_OUTPUT"
-          echo "selected_token<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$selected" >> "$GITHUB_OUTPUT"
-          echo EOF >> "$GITHUB_OUTPUT"
-
-      - name: Replace fixture JPAPT_ACK_TOKEN
+      - name: Replace fixture JPAPT_ACK_TOKEN from TARGET_REPO_TOKEN
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
-          SELECTED_ACK_TOKEN: ${{ steps.probe.outputs.selected_token }}
-          SELECTED_NAME: ${{ steps.probe.outputs.selected_name }}
+          ACK_TOKEN_VALUE: ${{ secrets.TARGET_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          [[ -n "$SELECTED_ACK_TOKEN" ]] || { echo '::error::selected ACK token missing'; exit 1; }
-          printf '%s' "$SELECTED_ACK_TOKEN" | gh secret set JPAPT_ACK_TOKEN --repo "$FIXTURE_REPOSITORY"
-          echo "fixture JPAPT_ACK_TOKEN replaced from $SELECTED_NAME"
+          [[ -n "$ACK_TOKEN_VALUE" ]] || { echo '::error::TARGET_REPO_TOKEN missing'; exit 1; }
+          login="$(gh api /user --jq .login)"
+          push="$(gh api "/repos/$GITHUB_REPOSITORY" --jq '.permissions.push // false')"
+          echo "TARGET_REPO_TOKEN: valid login=$login orchestrator_push=$push"
+          printf '%s' "$ACK_TOKEN_VALUE" | gh secret set JPAPT_ACK_TOKEN --repo "$FIXTURE_REPOSITORY"
+          echo 'fixture JPAPT_ACK_TOKEN replaced from TARGET_REPO_TOKEN'
