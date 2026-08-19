@@ -1,0 +1,137 @@
+name: Private Consumer Trusted Acceptance Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - config/private-consumer-trusted-acceptance.json
+      - .github/workflows/private-consumer-trusted-acceptance.yml
+      - .github/workflows/private-consumer-trusted-acceptance-contracts.yml
+  pull_request:
+    paths:
+      - config/private-consumer-trusted-acceptance.json
+      - .github/workflows/private-consumer-trusted-acceptance.yml
+      - .github/workflows/private-consumer-trusted-acceptance-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-consumer-trusted-acceptance-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate trusted private consumer harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint trusted acceptance workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/private-consumer-trusted-acceptance.yml
+          .github/workflows/private-consumer-trusted-acceptance-contracts.yml
+
+      - name: Validate immutable reviewed targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=config/private-consumer-trusted-acceptance.json
+          jq -e '
+            .schema_version == 1 and
+            .private_repository == "largoyo/Premiere-AutoProcess-Plugin" and
+            .private_revision == "e422ed7ad13dcca4562e876bef8860d408304e73" and
+            .public_repository == "bie3yeik-lgtm/jpapt-v2.2-inspection" and
+            .public_review_target_revision == "6ce57e6f874d387eb25e5dbba969b094962e1d92" and
+            .expected_private_accepted_revision == "9179e1147d0460a29dfe4251f73977156356784c" and
+            .authority_stack_pull_requests == [144,141,142,143]
+          ' "$config" >/dev/null
+          python3 - "$config" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          sha = re.compile(r'^[0-9a-f]{40}$')
+          for key in ('private_revision', 'public_review_target_revision', 'expected_private_accepted_revision'):
+              assert sha.fullmatch(data[key]), (key, data[key])
+          assert data['public_review_target_revision'] != data['expected_private_accepted_revision']
+          PY
+
+      - name: Verify manual-only least-privilege secret boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/private-consumer-trusted-acceptance.yml
+          grep -F 'workflow_dispatch:' "$workflow"
+          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' "$workflow"; then
+            echo 'trusted private acceptance unexpectedly has an automatic trigger' >&2
+            exit 1
+          fi
+          grep -F 'permissions:' "$workflow"
+          grep -F '  contents: read' "$workflow"
+          grep -F 'environment: Private-Secrets' "$workflow"
+          grep -F 'token: ${{ secrets.SOURCE_REPO_TOKEN }}' "$workflow"
+          [[ "$(grep -Fc 'secrets.SOURCE_REPO_TOKEN' "$workflow")" == 1 ]]
+          grep -F 'persist-credentials: false' "$workflow"
+          if grep -Eq 'secrets\.(TARGET_REPO_TOKEN|JPAPT_ACK_TOKEN|HF_TOKEN)' "$workflow"; then
+            echo 'trusted private acceptance must not consume target, ACK, or HF credentials' >&2
+            exit 1
+          fi
+          if grep -Eq '^  (actions|packages|issues|pull-requests|id-token): write' "$workflow"; then
+            echo 'trusted private acceptance unexpectedly requests write permissions' >&2
+            exit 1
+          fi
+
+      - name: Verify immutable checkout and no auto-promotion semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/private-consumer-trusted-acceptance.yml
+          grep -F 'ref: ${{ steps.target.outputs.private_revision }}' "$workflow"
+          grep -F 'ref: ${{ steps.target.outputs.public_revision }}' "$workflow"
+          grep -F 'git -C public-authority merge-base --is-ancestor' "$workflow"
+          grep -F 'private accepted revision changed without review' "$workflow"
+          grep -F 'authority_promoted:false' "$workflow"
+          grep -F 'accepted revision remains:' "$workflow"
+          if grep -F 'accepted_revision=' "$workflow"; then
+            echo 'trusted acceptance must never write accepted_revision state' >&2
+            exit 1
+          fi
+
+      - name: Verify trusted fixture execution surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/private-consumer-trusted-acceptance.yml
+          grep -F 'test_jpapt_upstream_contract_diff.py' "$workflow"
+          grep -F 'cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_' "$workflow"
+          grep -F "-name 'jpapt*.rs'" "$workflow"
+          grep -F 'cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"' "$workflow"
+          grep -F 'jpapt-private-dispatch.yml' "$workflow"
+          grep -F 'jpapt-private-receipt.yml' "$workflow"
+          grep -F 'jpapt-upstream-contract-diff.yml' "$workflow"
+          grep -F 'jpapt_upstream_contract_diff.py' "$workflow"
+
+      - name: Verify bounded evidence and zero-compute scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/private-consumer-trusted-acceptance.yml
+          grep -F 'retention-days: 30' "$workflow"
+          grep -F 'hf_jobs_launched:false' "$workflow"
+          grep -F 'model_compute_launched:false' "$workflow"
+          if grep -Ei 'hf jobs (run|uv)|hf_jobs\s*:\s*(run|uv)|docker (run|build)|repository_dispatch|packages: write|contents: write' "$workflow"; then
+            echo 'trusted acceptance unexpectedly includes compute, dispatch, package, or content mutation' >&2
+            exit 1
+          fi
