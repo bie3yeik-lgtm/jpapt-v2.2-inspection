@@ -188,80 +188,53 @@ jobs:
               assert text.index(helper) < text.index(resolver), path
           PY
 
-  main_protocol_acceptance:
+  main_protocol_negative_acceptance:
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/main-protocol-acceptance-20260820' }}
-    name: Drive deployed main protocol acceptance
-    environment: Private-Secrets
+    name: Drive deployed main protocol negative acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       MAIN_REF: main
-      SOURCE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
       RECEIPT_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
-      HF_BUCKET: gawohok7/tf-v2.2-onnx-dev-bucket
     steps:
-      - name: Run canonical bootstrap, readiness, and E2E
-        id: acceptance
+      - name: Dispatch deployed negative E2E and wait
+        id: negative
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          dispatch_and_wait() {
-            local workflow="$1"
-            local body="$2"
-            local timeout="$3"
-            local before run_id status conclusion deadline
-            before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
-            gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input "$body"
-            run_id=''
-            for _ in $(seq 1 40); do
-              run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=5" --jq ".workflow_runs[] | select(.id > $before) | .id" | head -n1)"
-              [[ -z "$run_id" ]] || break
-              sleep 2
-            done
-            [[ -n "$run_id" ]] || { echo "::error::new run not found for $workflow" >&2; return 1; }
-            echo "[acceptance] workflow=$workflow run_id=$run_id" >&2
-            deadline=$((SECONDS + timeout))
-            while (( SECONDS < deadline )); do
-              read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
-              if [[ "$status" == completed ]]; then
-                [[ "$conclusion" == success ]] || { echo "::error::$workflow failed: run=$run_id conclusion=$conclusion" >&2; return 1; }
-                printf '%s' "$run_id"
-                return 0
-              fi
-              sleep 5
-            done
-            echo "::error::$workflow timed out: run=$run_id" >&2
-            return 1
-          }
-
+          workflow=candidate-protocol-negative-e2e.yml
+          before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
           jq -n --arg ref "$MAIN_REF" --arg repo "$RECEIPT_REPOSITORY" \
-            '{ref:$ref,inputs:{repository:$repo,adopt_existing:"false"}}' > /tmp/bootstrap.json
-          bootstrap_run="$(dispatch_and_wait candidate-receiver-bootstrap.yml /tmp/bootstrap.json 900)"
+            '{ref:$ref,inputs:{receipt_repository:$repo,timeout_seconds:"180"}}' > /tmp/negative.json
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input /tmp/negative.json
+          run_id=''
+          for _ in $(seq 1 40); do
+            run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=5" \
+              --jq ".workflow_runs[] | select(.id > $before) | .id" | head -n1)"
+            [[ -z "$run_id" ]] || break
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || { echo '::error::negative E2E run not found'; exit 1; }
+          echo "negative_run=$run_id" >> "$GITHUB_OUTPUT"
+          deadline=$((SECONDS + 900))
+          while (( SECONDS < deadline )); do
+            read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]] || { echo "::error::negative E2E failed: run=$run_id conclusion=$conclusion"; exit 1; }
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::negative E2E timed out: run=$run_id"
+          exit 1
 
-          jq -n --arg ref "$MAIN_REF" --arg repo "$RECEIPT_REPOSITORY" --arg bucket "$HF_BUCKET" \
-            '{ref:$ref,inputs:{receipt_repository:$repo,hf_bucket:$bucket,require_managed_installation:"true"}}' > /tmp/readiness.json
-          readiness_run="$(dispatch_and_wait candidate-protocol-readiness.yml /tmp/readiness.json 900)"
-
-          jq -n --arg ref "$MAIN_REF" --arg source "$SOURCE_REPOSITORY" --arg repo "$RECEIPT_REPOSITORY" --arg bucket "$HF_BUCKET" \
-            '{ref:$ref,inputs:{receipt_repository:$repo,hf_bucket:$bucket,source_repository:$source,timeout_seconds:"600"}}' > /tmp/e2e.json
-          e2e_run="$(dispatch_and_wait candidate-protocol-e2e.yml /tmp/e2e.json 1200)"
-
-          {
-            echo "bootstrap_run=$bootstrap_run"
-            echo "readiness_run=$readiness_run"
-            echo "e2e_run=$e2e_run"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Record deployed-main positive-path evidence
+      - name: Record deployed-main negative evidence
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          BOOTSTRAP_RUN: ${{ steps.acceptance.outputs.bootstrap_run }}
-          READINESS_RUN: ${{ steps.acceptance.outputs.readiness_run }}
-          E2E_RUN: ${{ steps.acceptance.outputs.e2e_run }}
+          NEGATIVE_RUN: ${{ steps.negative.outputs.negative_run }}
         run: |
           set -euo pipefail
-          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Deployed-main positive-path acceptance completed successfully.\n\n- main bootstrap run: \`$BOOTSTRAP_RUN\`\n- main readiness run: \`$READINESS_RUN\`\n- main zero-compute cross-repository E2E run: \`$E2E_RUN\`\n- source: \`$SOURCE_REPOSITORY\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- HF Bucket: \`$HF_BUCKET\`\n- compute boundary: V2 \`dry_run=true\`; no model inference, GPU, Docker evaluation, or HF Jobs workload.\n\nIssue #70 remains open until its required duplicate/idempotence and negative-routing assertions are also recorded."
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Deployed-main external negative acceptance completed successfully.\n\n- negative E2E run: \`$NEGATIVE_RUN\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- malformed receipt: rejected before ACK build/dispatch\n- wrong orchestrator: rejected before ACK build/dispatch\n- wrong receipt repository: rejected before ACK build/dispatch\n- evidence retention: 30 days\n- compute boundary: no model inference, GPU, Docker evaluation, or HF Jobs workload.\n\nIssue #70 remains open only for real duplicate-completion idempotence evidence if this run is green."
