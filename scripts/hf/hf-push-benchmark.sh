@@ -18,10 +18,16 @@ require_env() {
 }
 
 normalize_bucket_id() {
-    local value="$1"
+    local value="$1" namespace bucket
     value="${value#hf://buckets/}"
     value="${value%/}"
-    [[ "$value" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format; got: $value"
+    [[ "$value" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || \
+        fail "HF_BUCKET must use canonical namespace/bucket-name format; got: $value"
+    namespace="${value%%/*}"
+    bucket="${value#*/}"
+    if [[ "$namespace" == "." || "$namespace" == ".." || "$bucket" == "." || "$bucket" == ".." ]]; then
+        fail "HF_BUCKET must not contain dot path segments; got: $value"
+    fi
     printf '%s\n' "$value"
 }
 

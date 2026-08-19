@@ -1,0 +1,146 @@
+name: HF Bucket Identity Parity Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/hf/hf-fetch-candidate.sh
+      - scripts/hf/hf-fetch-reference.sh
+      - scripts/hf/hf-push-run.sh
+      - scripts/hf/hf-push-benchmark.sh
+      - .github/workflows/hf-bucket-identity-parity-contracts.yml
+  pull_request:
+    paths:
+      - scripts/hf/hf-fetch-candidate.sh
+      - scripts/hf/hf-fetch-reference.sh
+      - scripts/hf/hf-push-run.sh
+      - scripts/hf/hf-push-benchmark.sh
+      - .github/workflows/hf-bucket-identity-parity-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate canonical HF Bucket identity across helpers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate helper syntax and grammar parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in \
+            scripts/hf/hf-fetch-candidate.sh \
+            scripts/hf/hf-fetch-reference.sh \
+            scripts/hf/hf-push-run.sh \
+            scripts/hf/hf-push-benchmark.sh; do
+            bash -n "$script"
+            grep -F '[[ "$value" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]' "$script" >/dev/null
+            grep -F '[[ "$namespace" == "." || "$namespace" == ".." || "$bucket" == "." || "$bucket" == ".." ]]' "$script" >/dev/null
+            grep -F 'value="${value#hf://buckets/}"' "$script" >/dev/null
+            grep -F 'value="${value%/}"' "$script" >/dev/null
+          done
+      - name: Prepare fake HF and Rust clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin /tmp/run-fixture
+          cat > /tmp/fake-bin/hf <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "$*" >> /tmp/hf-invocations
+          if [[ "${1:-}" == buckets && "${2:-}" == sync ]]; then
+            destination="${@: -1}"
+            if [[ "$destination" != hf://* ]]; then
+              mkdir -p "$destination"
+              printf 'reference\n' > "$destination/fixture.txt"
+            fi
+          fi
+          exit 0
+          SH
+          cat > /tmp/fake-bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args="$*"
+          if [[ "$args" == *'--bin asr-benchmark'* ]]; then
+            metrics="${@: -1}"
+            printf 'metrics_path=%s\n' "$metrics"
+            printf 'run_id=run-001\n'
+            printf 'candidate_id=candidate-000001\n'
+          elif [[ "$args" == *'--bin asr-contracts'* ]]; then
+            printf 'run_id=run-001\n'
+            printf 'sample_count=1\n'
+          elif [[ "$args" == *'--bin asr-capsule'* ]]; then
+            printf 'sample_count=1\n'
+          else
+            echo "unexpected cargo invocation: $args" >&2
+            exit 99
+          fi
+          SH
+          chmod +x /tmp/fake-bin/hf /tmp/fake-bin/cargo
+          printf '{}\n' > /tmp/metrics.json
+          printf '{}\n' > /tmp/run-fixture/run-context.json
+          printf '{}\n' > /tmp/run-fixture/metrics.json
+          printf '{}\n' > /tmp/run-fixture/samples.jsonl
+          printf 'parquet\n' > /tmp/run-fixture/run.parquet
+      - name: Reject malformed Bucket identities before reference HF access
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bucket in 'ns//bucket' './bucket' 'ns/..' 'ns/bucket/extra' 'ns/bad bucket'; do
+            rm -f /tmp/hf-invocations
+            rm -rf .ci/reference
+            if HF_TOKEN=synthetic HF_BUCKET="$bucket" PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/hf/hf-fetch-reference.sh; then
+              echo "invalid reference Bucket unexpectedly accepted: $bucket" >&2
+              exit 1
+            fi
+            test ! -e /tmp/hf-invocations
+          done
+      - name: Reject malformed Bucket identities before run upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bucket in 'ns//bucket' './bucket' 'ns/..' 'ns/bucket/extra' 'ns/bad bucket'; do
+            rm -f /tmp/hf-invocations
+            if HF_TOKEN=synthetic HF_BUCKET="$bucket" PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/hf/hf-push-run.sh /tmp/run-fixture; then
+              echo "invalid run Bucket unexpectedly accepted: $bucket" >&2
+              exit 1
+            fi
+            test ! -e /tmp/hf-invocations
+          done
+      - name: Reject malformed Bucket identities before benchmark upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bucket in 'ns//bucket' './bucket' 'ns/..' 'ns/bucket/extra' 'ns/bad bucket'; do
+            rm -f /tmp/hf-invocations
+            if HF_TOKEN=synthetic HF_BUCKET="$bucket" PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/hf/hf-push-benchmark.sh /tmp/metrics.json smoke; then
+              echo "invalid benchmark Bucket unexpectedly accepted: $bucket" >&2
+              exit 1
+            fi
+            test ! -e /tmp/hf-invocations
+          done
+      - name: Preserve compatible prefixed and dot-prefixed Bucket identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          rm -rf .ci/reference
+          HF_TOKEN=synthetic HF_BUCKET='hf://buckets/.namespace/.bucket/' PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/hf/hf-fetch-reference.sh
+          HF_TOKEN=synthetic HF_BUCKET='hf://buckets/.namespace/.bucket/' PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/hf/hf-push-run.sh /tmp/run-fixture
+          HF_TOKEN=synthetic HF_BUCKET='hf://buckets/.namespace/.bucket/' PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/hf/hf-push-benchmark.sh /tmp/metrics.json smoke
+          test "$(wc -l < /tmp/hf-invocations)" = 3
+          grep -F 'hf://buckets/.namespace/.bucket/reference' /tmp/hf-invocations >/dev/null
+          grep -F 'hf://buckets/.namespace/.bucket/runs/run-001' /tmp/hf-invocations >/dev/null
+          grep -F 'hf://buckets/.namespace/.bucket/benchmarks/candidate-000001/smoke/run-001.json' /tmp/hf-invocations >/dev/null
