@@ -4,6 +4,24 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+const ALLOWED_INPUT_FIELDS: &[&str] = &[
+    "request_id",
+    "request_execution_id",
+    "source_repository",
+    "receipt_repository",
+    "hf_bucket",
+    "candidate_id",
+    "package_name",
+    "dataset_source",
+    "dataset_id",
+    "suite",
+    "executor",
+    "environment",
+    "hf_flavor",
+    "hf_jobs_image",
+    "dry_run",
+];
+
 #[derive(Debug, Serialize)]
 struct ResolvedRequest {
     request_id: String,
@@ -121,6 +139,20 @@ fn boolean(map: &Map<String, Value>, key: &str, default: bool) -> Result<bool, S
     }
 }
 
+fn reject_unknown_inputs(inputs: &Map<String, Value>) -> Result<(), String> {
+    let mut unknown = inputs
+        .keys()
+        .filter(|key| !ALLOWED_INPUT_FIELDS.contains(&key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    unknown.sort();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("unsupported CandidateRequest fields: {unknown:?}"))
+    }
+}
+
 fn nested_string(config: &Map<String, Value>, section: &str, key: &str) -> String {
     config
         .get(section)
@@ -226,6 +258,8 @@ fn resolve(
     default_namespace: &str,
     registry_owner: &str,
 ) -> Result<ResolvedRequest, String> {
+    reject_unknown_inputs(inputs)?;
+
     let request_id = string(inputs, "request_id")?;
     validate_correlation_id(&request_id, "request_id")?;
     let request_execution_id = string(inputs, "request_execution_id")?;
@@ -405,6 +439,29 @@ mod tests {
         assert_eq!(resolved.dataset_source, "bucket");
         assert_eq!(resolved.image, "ghcr.io/registry-owner/repo");
         assert_eq!(resolved.receipt_repository, "owner/repo");
+    }
+
+    #[test]
+    fn rejects_unknown_candidate_request_fields_before_resolution() {
+        for extra in [
+            r#""unknown_scalar":1"#,
+            r#""unknown_object":{"nested":true}"#,
+            r#""unknown_null":null"#,
+            r#""execute":true"#,
+        ] {
+            let inputs = object(
+                &format!(
+                    r#"{{"request_id":"req-unknown","request_execution_id":"gw-unknown-1","source_repository":"owner/repo",{extra}}}"#
+                ),
+                "inputs",
+            )
+            .unwrap();
+            let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+            assert!(
+                error.contains("unsupported CandidateRequest fields"),
+                "{error}"
+            );
+        }
     }
 
     #[test]
