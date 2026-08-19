@@ -1,3 +1,6 @@
+#[path = "shared/image_identity.rs"]
+mod image_identity;
+
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -182,30 +185,11 @@ fn canonical_hf_jobs_result_uri(
 }
 
 fn validate_image_binding(image_ref: &str, image_digest: &str) -> Result<(), String> {
-    if image_ref.is_empty() || image_digest.is_empty() {
-        return Err("selected HF Jobs image ref and digest must both be present".to_owned());
-    }
-    let Some((name, digest)) = image_ref.rsplit_once("@sha256:") else {
-        return Err("selected HF Jobs image must be digest-pinned".to_owned());
-    };
-    let Some(expected_digest) = image_digest.strip_prefix("sha256:") else {
-        return Err("selected HF Jobs image digest must use sha256:<64 hex>".to_owned());
-    };
-    let lowercase_hex = |value: &str| {
-        value
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-    };
-    if name.is_empty()
-        || digest.len() != 64
-        || expected_digest.len() != 64
-        || !lowercase_hex(digest)
-        || !lowercase_hex(expected_digest)
-        || digest != expected_digest
-    {
-        return Err("selected HF Jobs image ref/digest binding is invalid".to_owned());
-    }
-    Ok(())
+    image_identity::validate_digest_pinned_image_binding(
+        image_ref,
+        image_digest,
+        "selected HF Jobs image",
+    )
 }
 
 fn build_receipt(mut flags: BTreeMap<String, String>) -> Result<(), String> {
@@ -603,6 +587,24 @@ mod tests {
         let lowercase_ref = format!("ghcr.io/owner/package@sha256:{lowercase}");
         let uppercase_digest = format!("sha256:{uppercase}");
         assert!(validate_image_binding(&lowercase_ref, &uppercase_digest).is_err());
+    }
+
+    #[test]
+    fn rejects_ambiguous_selected_hf_jobs_image_paths() {
+        let digest = "a".repeat(64);
+        for name in [
+            "ghcr.io//owner/package",
+            "ghcr.io/./package",
+            "ghcr.io/../package",
+            "/ghcr.io/owner/package",
+            "ghcr.io/owner/package/",
+        ] {
+            let image_ref = format!("{name}@sha256:{digest}");
+            assert!(
+                validate_image_binding(&image_ref, &format!("sha256:{digest}")).is_err(),
+                "{image_ref}"
+            );
+        }
     }
 
     #[test]

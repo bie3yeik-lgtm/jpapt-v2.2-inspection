@@ -4,7 +4,7 @@ set -euo pipefail
 image="${1:?digest-pinned image reference is required}"
 plan="${HF_JOB_PLAN:-.ci/hf-jobs/hf-job-plan.json}"
 
-[[ "$image" =~ ^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] || {
+[[ "$image" =~ ^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]] || {
   echo "ERROR: HF Jobs image must be digest-pinned with lowercase @sha256:<64 hex>: $image" >&2
   exit 2
 }
