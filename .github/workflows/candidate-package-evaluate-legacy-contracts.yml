@@ -8,12 +8,14 @@ on:
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+      - scripts/ci/validate-repository-identity.sh
   pull_request:
     paths:
       - .github/actionlint.yaml
       - .github/workflows/candidate-package-evaluate.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+      - scripts/ci/validate-repository-identity.sh
   workflow_dispatch:
 
 permissions:
@@ -42,6 +44,29 @@ jobs:
           .github/workflows/candidate-package-evaluate.yml
           .github/workflows/candidate-package-evaluate-v2.yml
           .github/workflows/candidate-package-evaluate-legacy-contracts.yml
+      - name: Validate repository identity helper syntax
+        run: bash -n scripts/ci/validate-repository-identity.sh
+      - name: Enforce canonical repository identity before dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper=scripts/ci/validate-repository-identity.sh
+          for bad in ./repo ../repo owner/. owner/.. owner/repo/extra 'owner/bad repo'; do
+            if bash "$helper" "$bad" repository >/dev/null 2>&1; then
+              echo "malformed repository identity unexpectedly passed: $bad" >&2
+              exit 1
+            fi
+          done
+          test "$(bash "$helper" .owner/repo repository)" = .owner/repo
+          test "$(bash "$helper" owner/.github repository)" = owner/.github
+
+          legacy=.github/workflows/candidate-package-evaluate.yml
+          source_line="$(grep -nF 'validate-repository-identity.sh "$source_repository" source_repository' "$legacy" | cut -d: -f1)"
+          receipt_line="$(grep -nF 'validate-repository-identity.sh "$receipt_repository" receipt_repository' "$legacy" | cut -d: -f1)"
+          dispatch_line="$(grep -nF 'workflow-dispatch-with-retry.sh' "$legacy" | cut -d: -f1)"
+          [[ -n "$source_line" && -n "$receipt_line" && -n "$dispatch_line" ]]
+          (( source_line < dispatch_line ))
+          (( receipt_line < dispatch_line ))
       - name: Require legacy entrypoint to forward to V2
         shell: bash
         run: |
