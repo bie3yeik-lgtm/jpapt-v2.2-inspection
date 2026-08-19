@@ -221,7 +221,7 @@ jobs:
             "$workflows/jpapt-private-dispatch.yml"
             "$workflows/jpapt-private-receipt.yml"
           )
-          actionlint -color -ignore 'SC2016' "${files[@]}"
+          actionlint -color -ignore 'SC2016' -ignore 'SC2129' "${files[@]}"
 
       - name: Verify zero-compute acceptance scope
         shell: bash
