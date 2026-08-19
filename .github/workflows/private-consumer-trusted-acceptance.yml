@@ -16,6 +16,8 @@ jobs:
     environment: Private-Secrets
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      PRIVATE_CONSUMER_ROOT: ${{ github.workspace }}/../jpapt-private-consumer
     steps:
       - name: Checkout public controller
         uses: actions/checkout@v7
@@ -63,7 +65,7 @@ jobs:
             echo "expected_accepted=$expected_accepted"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Fetch immutable private consumer without submodule traversal
+      - name: Fetch immutable private consumer outside public workspace
         shell: bash
         env:
           SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
@@ -75,6 +77,12 @@ jobs:
             echo '::error::SOURCE_REPO_TOKEN is required for the canonical private consumer'
             exit 1
           }
+          case "$PRIVATE_CONSUMER_ROOT" in
+            "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*)
+              echo '::error::private consumer root must remain outside the public Cargo workspace'
+              exit 1
+              ;;
+          esac
 
           askpass="$RUNNER_TEMP/jpapt-private-askpass.sh"
           cat > "$askpass" <<'SH'
@@ -92,24 +100,24 @@ jobs:
           }
           trap cleanup EXIT
 
-          rm -rf private-consumer
-          git init -q private-consumer
+          rm -rf "$PRIVATE_CONSUMER_ROOT"
+          git init -q "$PRIVATE_CONSUMER_ROOT"
           GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
-            git -C private-consumer fetch --no-tags --depth=1 \
+            git -C "$PRIVATE_CONSUMER_ROOT" fetch --no-tags --depth=1 \
             "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"
-          git -C private-consumer checkout --detach --force FETCH_HEAD
+          git -C "$PRIVATE_CONSUMER_ROOT" checkout --detach --force FETCH_HEAD
 
-          actual="$(git -C private-consumer rev-parse HEAD)"
+          actual="$(git -C "$PRIVATE_CONSUMER_ROOT" rev-parse HEAD)"
           [[ "$actual" == "$PRIVATE_REVISION" ]] || {
             echo "::error::private checkout drifted: $actual"
             exit 1
           }
-          if [[ -n "$(git -C private-consumer remote 2>/dev/null)" ]]; then
-            git -C private-consumer remote -v >&2
+          if [[ -n "$(git -C "$PRIVATE_CONSUMER_ROOT" remote 2>/dev/null)" ]]; then
+            git -C "$PRIVATE_CONSUMER_ROOT" remote -v >&2
             echo '::error::manual private fetch unexpectedly persisted a remote'
             exit 1
           fi
-          if git -C private-consumer config --local --get-regexp 'http\..*\.extraheader' >/tmp/private-extraheaders 2>/dev/null; then
+          if git -C "$PRIVATE_CONSUMER_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/private-extraheaders 2>/dev/null; then
             cat /tmp/private-extraheaders >&2
             echo '::error::manual private fetch retained an HTTP credential header'
             exit 1
@@ -120,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          state=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json
+          state="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json"
           repository="$(jq -er '.repository' "$state")"
           accepted="$(jq -er '.accepted_revision' "$state")"
           [[ "$repository" == '${{ steps.target.outputs.public_repository }}' ]] || {
@@ -143,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest \
-            private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests/test_jpapt_upstream_contract_diff.py
+            "$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests/test_jpapt_upstream_contract_diff.py"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -153,7 +161,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          crate="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
           cargo test --locked --manifest-path "$crate/Cargo.toml" --lib -- --list > /tmp/private-tests.txt
           count="$(grep -Ec '^jpapt_[^:]*::|^jpapt_[^ ]*: test$' /tmp/private-tests.txt || true)"
           if (( count == 0 )); then
@@ -167,7 +175,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          crate="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
           cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_ -- --nocapture
 
       - name: Check every JPAPT Rust entrypoint
@@ -175,7 +183,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          crate="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
           mapfile -t sources < <(find "$crate/src/bin" -maxdepth 1 -type f -name 'jpapt*.rs' -print | sort)
           (( ${#sources[@]} > 0 )) || {
             echo '::error::no JPAPT Rust entrypoints found'
@@ -201,7 +209,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          root=private-consumer/.github/workflows
+          root="$PRIVATE_CONSUMER_ROOT/.github/workflows"
           files=(
             "$root/jpapt-upstream-contract-diff.yml"
             "$root/jpapt-upstream-contract-diff-contracts.yml"
@@ -244,7 +252,7 @@ jobs:
           set -euo pipefail
           mkdir -p private-consumer-acceptance
           python3 \
-            private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/tools/jpapt_upstream_contract_diff.py \
+            "$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/jpapt_upstream_contract_diff.py" \
             --repo public-authority \
             --repository '${{ steps.target.outputs.public_repository }}' \
             --base '${{ steps.target.outputs.expected_accepted }}' \
