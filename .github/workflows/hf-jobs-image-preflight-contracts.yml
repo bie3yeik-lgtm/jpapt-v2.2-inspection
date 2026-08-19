@@ -140,7 +140,7 @@ jobs:
           fi
           test ! -e /tmp/unexpected-flavor-docker
 
-      - name: Reject mutable, uppercase, and malformed image before Docker
+      - name: Reject mutable, uppercase, ambiguous, and malformed image before Docker
         shell: bash
         run: |
           set -euo pipefail
@@ -151,10 +151,16 @@ jobs:
           SH
           chmod +x /tmp/fake-bin/docker
           rm -f /tmp/unexpected-docker
+          digest="$(printf 'a%.0s' {1..64})"
           for image in \
             ghcr.io/owner/package:latest \
             ghcr.io/owner/package@sha256:deadbeef \
             "ghcr.io/owner/package@sha256:$(printf 'A%.0s' {1..64})" \
+            "ghcr.io//owner/package@sha256:$digest" \
+            "ghcr.io/owner/./package@sha256:$digest" \
+            "ghcr.io/owner/../package@sha256:$digest" \
+            "/ghcr.io/owner/package@sha256:$digest" \
+            "ghcr.io/owner/package/@sha256:$digest" \
             'ghcr.io/owner/package@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa extra'; do
             if HF_JOB_PLAN=/tmp/missing-plan.json PATH="/tmp/fake-bin:$PATH" \
               bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
