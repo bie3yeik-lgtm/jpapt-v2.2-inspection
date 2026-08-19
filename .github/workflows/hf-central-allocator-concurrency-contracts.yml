@@ -1,0 +1,49 @@
+name: HF Central Allocator Concurrency Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/hf-central-allocator.yml
+      - .github/workflows/hf-central-allocator-concurrency-contracts.yml
+  pull_request:
+    paths:
+      - .github/workflows/hf-central-allocator.yml
+      - .github/workflows/hf-central-allocator-concurrency-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate non-bypassable central allocator lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify concurrency is input-independent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path('.github/workflows/hf-central-allocator.yml').read_text(encoding='utf-8')
+          start = text.index('\nconcurrency:\n')
+          end = text.index('\njobs:\n', start)
+          block = text[start:end]
+
+          expected = '\nconcurrency:\n  group: hf-central-sequence\n  cancel-in-progress: false\n'
+          assert block == expected, block
+          assert '${{' not in block
+          assert 'inputs.hf_bucket' not in block
+
+          # The raw dispatch input is still passed into the job where the
+          # canonical allocator validates it; only the lock key is input-free.
+          assert 'HF_BUCKET: ${{ inputs.hf_bucket }}' in text
+          assert 'HF_ALLOCATOR_INTERNAL: "1"' in text
+          assert 'bash scripts/hf/hf-allocate-id.sh' in text
+          PY
