@@ -27,7 +27,7 @@ permissions:
   actions: write
 
 env:
-  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+  TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
 
 concurrency:
   group: candidate-protocol-e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -35,6 +35,7 @@ concurrency:
 
 jobs:
   e2e:
+    environment: Private-Secrets
     name: Verify external completion and acknowledgement loop
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -89,12 +90,12 @@ jobs:
       - name: Preflight external receiver
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || {
-            echo "::error::SOURCE_REPO_TOKEN is required for cross-repository E2E delivery and preflight"
+            echo "::error::TARGET_REPO_TOKEN is required for cross-repository E2E delivery and preflight"
             exit 1
           }
 
