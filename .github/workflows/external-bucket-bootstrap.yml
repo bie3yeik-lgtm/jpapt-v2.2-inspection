@@ -58,39 +58,38 @@ jobs:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           I_REPOSITORY: ${{ inputs.repository }}
           I_NAMESPACE: ${{ inputs.hf_namespace }}
+          I_PRIVATE: ${{ inputs.private_bucket }}
+          I_WRITE: ${{ inputs.write_repo_config }}
           GH_FALLBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            repo="$(jq -r '.repository // empty' <<<"$PAYLOAD")"
-            namespace="$(jq -r '.hf_namespace // empty' <<<"$PAYLOAD")"
-          else
-            repo="$I_REPOSITORY"
-            namespace="$I_NAMESPACE"
-          fi
-
-          [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo "::error::repository must be owner/name"
-            exit 1
-          }
           [[ -n "${HF_TOKEN:-}" ]] || {
             echo "::error::HF_TOKEN is required"
             exit 1
           }
 
+          normalized="$(python scripts/ci/normalize-bucket-bootstrap-request.py resolve \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --payload-json "${PAYLOAD:-{}}" \
+            --repository-input "${I_REPOSITORY:-}" \
+            --namespace-input "${I_NAMESPACE:-}" \
+            --private-input "${I_PRIVATE:-}" \
+            --write-input "${I_WRITE:-}" \
+            --default-namespace "${HF_DEFAULT_NAMESPACE:-}")"
+
+          repo="$(jq -er '.repository' <<<"$normalized")"
+          namespace="$(jq -er '.namespace' <<<"$normalized")"
+          private_bucket="$(jq -er '.private_bucket' <<<"$normalized")"
+          write_repo_config="$(jq -er '.write_repo_config' <<<"$normalized")"
+
+          if [[ -z "$namespace" ]]; then
+            namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json | jq -er '.name // .user // empty')"
+            namespace="$(python scripts/ci/normalize-bucket-bootstrap-request.py namespace "$namespace")"
+          fi
+
           token="${SOURCE_REPO_TOKEN:-$GH_FALLBACK_TOKEN}"
           meta="$(GH_TOKEN="$token" gh api "/repos/$repo")"
           name="${repo##*/}"
-
-          [[ -n "$namespace" ]] || namespace="${HF_DEFAULT_NAMESPACE:-}"
-          if [[ -z "$namespace" ]]; then
-            namespace="$(HF_TOKEN="$HF_TOKEN" hf auth whoami --format json | jq -r '.name // .user // empty')"
-          fi
-          [[ -n "$namespace" ]] || {
-            echo "::error::unable to infer HF namespace"
-            exit 1
-          }
-
           bucket="$namespace/${name}-bucket"
           default_branch="$(jq -r '.default_branch // "main"' <<<"$meta")"
           visibility="$(jq -r '.visibility // "private"' <<<"$meta")"
@@ -100,6 +99,8 @@ jobs:
             echo "repository=$repo"
             echo "name=$name"
             echo "bucket=$bucket"
+            echo "private_bucket=$private_bucket"
+            echo "write_repo_config=$write_repo_config"
             echo "default_branch=$default_branch"
             echo "visibility=$visibility"
             echo "language=$language"
@@ -108,19 +109,16 @@ jobs:
       - name: Create or reuse Bucket
         shell: bash
         env:
-          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           BUCKET: ${{ steps.resolve.outputs.bucket }}
-          I_PRIVATE: ${{ inputs.private_bucket }}
+          PRIVATE_BUCKET: ${{ steps.resolve.outputs.private_bucket }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            private="$(jq -r '.private_bucket // true' <<<"$PAYLOAD")"
-          else
-            private="${I_PRIVATE:-true}"
-          fi
-
+          [[ "$PRIVATE_BUCKET" == "true" || "$PRIVATE_BUCKET" == "false" ]] || {
+            echo "::error::normalized private_bucket must be true or false"
+            exit 1
+          }
           args=(buckets create "$BUCKET" --exist-ok --token "$HF_TOKEN")
-          [[ "$private" == "true" ]] && args+=(--private)
+          [[ "$PRIVATE_BUCKET" == "true" ]] && args+=(--private)
           hf "${args[@]}"
 
       - name: Generate Bucket and repository metadata
@@ -170,17 +168,15 @@ jobs:
       - name: Write config to source repository
         shell: bash
         env:
-          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           SOURCE_REPOSITORY: ${{ steps.resolve.outputs.repository }}
-          I_WRITE: ${{ inputs.write_repo_config }}
+          WRITE_REPO_CONFIG: ${{ steps.resolve.outputs.write_repo_config }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            write="$(jq -r '.write_repo_config // true' <<<"$PAYLOAD")"
-          else
-            write="${I_WRITE:-true}"
-          fi
-          [[ "$write" == "true" ]] || exit 0
+          [[ "$WRITE_REPO_CONFIG" == "true" || "$WRITE_REPO_CONFIG" == "false" ]] || {
+            echo "::error::normalized write_repo_config must be true or false"
+            exit 1
+          }
+          [[ "$WRITE_REPO_CONFIG" == "true" ]] || exit 0
 
           [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || {
             echo "::error::SOURCE_REPO_TOKEN with Contents write is required for arbitrary source repositories"
