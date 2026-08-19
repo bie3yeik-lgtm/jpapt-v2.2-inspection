@@ -20,7 +20,7 @@
     "dataset_source": {"enum": ["bucket", "repository", "custom"]},
     "dataset_id": {
       "anyOf": [
-        {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        {"$ref": "#/$defs/repository"},
         {"type": "null"}
       ]
     },
@@ -66,9 +66,16 @@
       "if": {"properties": {"dataset_source": {"enum": ["repository", "custom"]}}, "required": ["dataset_source"]},
       "then": {
         "properties": {
-          "dataset_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}
+          "dataset_id": {"$ref": "#/$defs/repository"}
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "not": {"pattern": "^(?:\\.{1,2}/[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+/\\.{1,2})$"}
+    }
+  }
 }

@@ -10,6 +10,7 @@ on:
       - contracts/candidate-request-rejection.schema.json
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-receiver-installation.schema.json
+      - contracts/dataset-workload-probe.schema.json
       - scripts/ci/build-candidate-completion-receipt.py
       - scripts/ci/build-candidate-completion-ack.py
       - scripts/ci/build-candidate-request-rejection.py
@@ -23,6 +24,7 @@ on:
       - contracts/candidate-request-rejection.schema.json
       - contracts/candidate-request-lifecycle.schema.json
       - contracts/candidate-receiver-installation.schema.json
+      - contracts/dataset-workload-probe.schema.json
   workflow_dispatch:
 
 permissions:
@@ -186,6 +188,41 @@ jobs:
               payload = json.loads(Path(payload_path).read_text(encoding='utf-8'))
               Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
               print(f'validated {payload_path} against {schema_path}')
+          PY
+
+      - name: Enforce repository identity parity with Rust authority
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator, ValidationError
+
+          schema_paths = [
+              'contracts/candidate-completion-receipt.schema.json',
+              'contracts/candidate-completion-ack.schema.json',
+              'contracts/candidate-request-rejection.schema.json',
+              'contracts/candidate-request-lifecycle.schema.json',
+              'contracts/candidate-receiver-installation.schema.json',
+              'contracts/dataset-workload-probe.schema.json',
+          ]
+          rejected = ['./repo', '../repo', 'owner/.', 'owner/..']
+          accepted = ['.owner/repo', 'owner/.github']
+
+          for schema_path in schema_paths:
+              schema = json.loads(Path(schema_path).read_text(encoding='utf-8'))
+              Draft202012Validator.check_schema(schema)
+              repository_schema = schema['$defs']['repository']
+              validator = Draft202012Validator(repository_schema)
+              for value in rejected:
+                  try:
+                      validator.validate(value)
+                  except ValidationError:
+                      pass
+                  else:
+                      raise SystemExit(f'{schema_path} unexpectedly accepted dot-segment repository {value!r}')
+              for value in accepted:
+                  validator.validate(value)
+              print(f'repository identity parity validated for {schema_path}')
           PY
 
       - name: Reject schema-invalid lifecycle payload
