@@ -1,0 +1,80 @@
+name: GHCR Package Visibility Probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ghcr-package-visibility-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/ghcr-package-visibility-probe-20260820' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Probe exact package namespace anonymously
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository='largoyo/premiere-autoprocess-plugin'
+          scope="repository:${repository}:pull"
+          token_response="$(curl --fail-with-body --silent --show-error --location \
+            --get 'https://ghcr.io/token' \
+            --data-urlencode "scope=$scope")"
+          token="$(jq -er '.token // .access_token' <<<"$token_response")"
+          [[ -n "$token" ]]
+
+          response="$RUNNER_TEMP/ghcr-tags.json"
+          code="$(curl --silent --show-error --location \
+            --output "$response" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $token" \
+            --header 'Accept: application/json' \
+            "https://ghcr.io/v2/${repository}/tags/list")"
+
+          public_ready=false
+          tag_count=0
+          if [[ "$code" == 200 ]] && jq -e --arg repo "$repository" '.name == $repo and (.tags == null or (.tags | type == "array"))' "$response" >/dev/null; then
+            public_ready=true
+            tag_count="$(jq '(.tags // []) | length' "$response")"
+          fi
+          echo "public_ready=$public_ready" >> "$GITHUB_OUTPUT"
+          echo "http_code=$code" >> "$GITHUB_OUTPUT"
+          echo "tag_count=$tag_count" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Anonymous GHCR package probe'
+            echo
+            echo "- package: \`ghcr.io/${repository}\`"
+            echo "- registry tags HTTP status: \`$code\`"
+            echo "- anonymously pull-visible namespace: \`$public_ready\`"
+            echo "- visible tag count: \`$tag_count\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Build probe evidence
+        shell: bash
+        env:
+          PUBLIC_READY: ${{ steps.probe.outputs.public_ready }}
+          HTTP_CODE: ${{ steps.probe.outputs.http_code }}
+          TAG_COUNT: ${{ steps.probe.outputs.tag_count }}
+        run: |
+          set -euo pipefail
+          mkdir -p ghcr-package-visibility-probe
+          jq -n \
+            --arg package 'ghcr.io/largoyo/premiere-autoprocess-plugin' \
+            --argjson public_ready "$PUBLIC_READY" \
+            --argjson http_code "$HTTP_CODE" \
+            --argjson visible_tag_count "$TAG_COUNT" \
+            '{schema_version:1,package:$package,anonymous_pull_namespace:$public_ready,http_status:$http_code,visible_tag_count:$visible_tag_count,credentials_used:false,package_mutated:false,docker_pull:false,docker_build:false,hf_jobs:false,model_compute:false}' \
+            > ghcr-package-visibility-probe/evidence.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-package-visibility-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ghcr-package-visibility-probe/
+          if-no-files-found: error
+          retention-days: 30
