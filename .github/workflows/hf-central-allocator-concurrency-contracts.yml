@@ -17,14 +17,14 @@ permissions:
 
 jobs:
   contracts:
-    name: Validate non-bypassable central allocator lock
+    name: Validate central allocator lock and token scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Verify concurrency is input-independent
+      - name: Verify concurrency and permissions are fail-closed
         shell: bash
         run: |
           set -euo pipefail
@@ -32,18 +32,26 @@ jobs:
           from pathlib import Path
 
           text = Path('.github/workflows/hf-central-allocator.yml').read_text(encoding='utf-8')
-          start = text.index('\nconcurrency:\n')
-          end = text.index('\njobs:\n', start)
-          block = text[start:end]
 
+          permissions_start = text.index('\npermissions:\n')
+          permissions_end = text.index('\n# Workflow-level concurrency', permissions_start)
+          permissions = text[permissions_start:permissions_end]
+          assert permissions == '\npermissions:\n  contents: read\n', permissions
+          assert 'actions: write' not in text
+          assert 'packages: write' not in text
+
+          concurrency_start = text.index('\nconcurrency:\n')
+          concurrency_end = text.index('\njobs:\n', concurrency_start)
+          concurrency = text[concurrency_start:concurrency_end]
           expected = '\nconcurrency:\n  group: hf-central-sequence\n  cancel-in-progress: false\n'
-          assert block == expected, block
-          assert '${{' not in block
-          assert 'inputs.hf_bucket' not in block
+          assert concurrency == expected, concurrency
+          assert '${{' not in concurrency
+          assert 'inputs.hf_bucket' not in concurrency
 
           # The raw dispatch input is still passed into the job where the
           # canonical allocator validates it; only the lock key is input-free.
           assert 'HF_BUCKET: ${{ inputs.hf_bucket }}' in text
           assert 'HF_ALLOCATOR_INTERNAL: "1"' in text
           assert 'bash scripts/hf/hf-allocate-id.sh' in text
+          assert 'actions/upload-artifact@v7' in text
           PY

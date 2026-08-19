@@ -25,7 +25,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 # Workflow-level concurrency is evaluated from raw dispatch inputs before the
 # allocator can canonicalize HF_BUCKET. Use one global lock so equivalent
