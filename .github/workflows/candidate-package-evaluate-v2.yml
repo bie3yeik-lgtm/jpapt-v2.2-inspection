@@ -84,7 +84,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
@@ -282,6 +281,9 @@ jobs:
     needs: resolve
     if: ${{ needs.resolve.outputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       candidate_id: ${{ steps.candidate.outputs.candidate_id }}
       image_ref: ${{ steps.package.outputs.image_ref }}
@@ -395,6 +397,9 @@ jobs:
     if: ${{ needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'linux-cpu' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -430,6 +435,9 @@ jobs:
     if: ${{ needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'linux-cuda' }}
     runs-on: [self-hosted, linux, x64, gpu]
     timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
