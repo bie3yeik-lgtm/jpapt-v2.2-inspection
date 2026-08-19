@@ -112,6 +112,24 @@ jobs:
           set -e
           test "$status" = 2
           test ! -e /tmp/gh-count-invalid
+      - name: Reject dot-segment repository targets before dispatch
+        shell: bash
+        env:
+          GH_TOKEN: test-token
+          FAKE_GH_COUNT_FILE: /tmp/gh-count-dot-segment
+          FAKE_GH_SUCCEED_AT: "1"
+          FAKE_SLEEP_LOG: /tmp/sleep-dot-segment
+        run: |
+          set -euo pipefail
+          for repository in ./repo ../repo owner/. owner/..; do
+            set +e
+            PATH="/tmp/fake-bin:$PATH" bash scripts/ci/repository-dispatch-with-retry.sh \
+              "$repository" /tmp/dispatch.json 3
+            status=$?
+            set -e
+            test "$status" = 2
+          done
+          test ! -e /tmp/gh-count-dot-segment
       - name: Reject malformed dispatch body before dispatch
         shell: bash
         env:

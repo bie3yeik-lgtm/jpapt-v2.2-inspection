@@ -89,9 +89,17 @@ jobs:
           assert 'rejection \\' in rejection
           assert '--rejection .ci/rejection/candidate-request-rejection.json' in rejection
           assert '--dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json' in rejection
+          assert 'rejection-validate .ci/rejection/candidate-request-rejection.json' in rejection
           assert 'python scripts/ci/build-candidate-request-rejection.py' not in gateway
           assert "jq -er '.request_id'" in rejection
           assert "jq -er '.receipt_repository'" in rejection
+          rejection_builder = rejection.index(builder)
+          rejection_validate = rejection.index('rejection-validate .ci/rejection/candidate-request-rejection.json')
+          rejection_request = rejection.index("jq -er '.request_id'")
+          rejection_target = rejection.index("jq -er '.receipt_repository'")
+          rejection_dispatch = rejection.index('- name: Dispatch rejection event')
+          assert rejection_builder < rejection_validate < rejection_request
+          assert rejection_validate < rejection_target < rejection_dispatch
 
           assert '- uses: dtolnay/rust-toolchain@stable' in observer
           assert authority in observer

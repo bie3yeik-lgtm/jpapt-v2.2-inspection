@@ -377,6 +377,8 @@ jobs:
             rejection \
             --rejection .ci/rejection/candidate-request-rejection.json \
             --dispatch-body .ci/rejection/candidate-request-rejection-dispatch.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            rejection-validate .ci/rejection/candidate-request-rejection.json >/dev/null
           request_id="$(jq -er '.request_id' .ci/rejection/candidate-request-rejection.json)"
           receipt_repository="$(jq -er '.receipt_repository' .ci/rejection/candidate-request-rejection.json)"
           request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
