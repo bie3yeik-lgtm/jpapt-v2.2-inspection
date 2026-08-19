@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           body=$(cat <<EOF
-          TARGET_REPO_TOKEN dedicated fixture provisioning attempt.
+          TARGET_REPO_TOKEN dedicated fixture provisioning attempt after PAT permission update.
 
           - environment: \`Private-Secrets\`
           - repository: \`$FIXTURE_REPOSITORY\`
