@@ -36,6 +36,8 @@ command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable."
 
 HF_BUCKET_ID="$(normalize_bucket_id "$HF_BUCKET")"
 REQUESTED_CANDIDATE_ID="${1:-${CANDIDATE_ID:-}}"
+MODE="${2:-}"
+[[ -z "$MODE" || "$MODE" == "--resolve-only" ]] || fail "unsupported mode: $MODE"
 [[ -z "$REQUESTED_CANDIDATE_ID" ]] || validate_candidate_id "$REQUESTED_CANDIDATE_ID"
 
 listing="$(mktemp)"
@@ -66,6 +68,11 @@ append_env CANDIDATE_ID "$CANDIDATE_ID"
 append_output candidate_id "$CANDIDATE_ID"
 append_output candidate_relative_path "$CANDIDATE_RELATIVE_PATH"
 append_output legacy_candidate_layout "$LEGACY_LAYOUT"
+
+if [[ "$MODE" == "--resolve-only" ]]; then
+    log "Resolved candidate without materializing files: $CANDIDATE_ID"
+    exit 0
+fi
 
 REMOTE="hf://buckets/${HF_BUCKET_ID}/candidates/${CANDIDATE_RELATIVE_PATH}"
 LOCAL="$ROOT/.ci/candidate"

@@ -1,0 +1,26 @@
+name: HF fetch candidate resolve-only contracts
+
+on:
+  pull_request:
+    paths:
+      - "scripts/hf/hf-fetch-candidate.sh"
+      - "scripts/ci/check-hf-fetch-candidate-resolve-only.py"
+      - ".github/workflows/hf-fetch-candidate-resolve-only-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check resolve-only candidate boundary
+        run: python scripts/ci/check-hf-fetch-candidate-resolve-only.py
