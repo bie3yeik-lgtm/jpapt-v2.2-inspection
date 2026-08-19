@@ -143,23 +143,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tests="$PRIVATE_ROOT/scripts/tests"
           files=(
-            test_hf_model_pipeline.py
-            test_hf_model_pipeline_ids.py
-            test_hf_repo_write_preflight.py
-            test_hf_candidate_content_digest.py
-            test_hf_package_base_image.py
-            test_hf_bootstrap_package_workflow.py
-            test_hf_package_evidence.py
-            test_jpapt_bind_package_request.py
-            test_jpapt_verify_package_artifact.py
-            test_jpapt_package_artifact_verify_workflow.py
+            scripts/tests/test_hf_model_pipeline.py
+            scripts/tests/test_hf_model_pipeline_ids.py
+            scripts/tests/test_hf_repo_write_preflight.py
+            scripts/tests/test_hf_candidate_content_digest.py
+            scripts/tests/test_hf_package_base_image.py
+            scripts/tests/test_hf_bootstrap_package_workflow.py
+            scripts/tests/test_hf_package_evidence.py
+            scripts/tests/test_jpapt_bind_package_request.py
+            scripts/tests/test_jpapt_verify_package_artifact.py
+            scripts/tests/test_jpapt_package_artifact_verify_workflow.py
           )
-          args=()
-          for file in "${files[@]}"; do args+=("$tests/$file"); done
           set +e
-          output="$(python3 -m unittest -v "${args[@]}" 2>&1)"
+          output="$(cd "$PRIVATE_ROOT" && python3 -m unittest -v "${files[@]}" 2>&1)"
           rc=$?
           set -e
           printf '%s\n' "$output"
