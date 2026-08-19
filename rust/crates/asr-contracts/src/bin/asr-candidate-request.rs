@@ -154,6 +154,9 @@ fn validate_repository(name: &str, field: &str) -> Result<(), String> {
     if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
         return Err(format!("{field} must use owner/name"));
     }
+    if [owner, repo].iter().any(|part| matches!(*part, "." | "..")) {
+        return Err(format!("{field} must not contain dot path segments"));
+    }
     if !name
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || "._-/".contains(ch))
@@ -402,6 +405,15 @@ mod tests {
         assert_eq!(resolved.dataset_source, "bucket");
         assert_eq!(resolved.image, "ghcr.io/registry-owner/repo");
         assert_eq!(resolved.receipt_repository, "owner/repo");
+    }
+
+    #[test]
+    fn repository_identity_rejects_dot_segments_but_allows_dot_prefixed_names() {
+        for value in ["./repo", "../repo", "owner/.", "owner/.."] {
+            assert!(validate_repository(value, "repository").is_err(), "{value}");
+        }
+        validate_repository("owner/.github", "repository").unwrap();
+        validate_repository(".owner/repo", "repository").unwrap();
     }
 
     #[test]
