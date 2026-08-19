@@ -1,0 +1,112 @@
+name: Candidate Source Repository Transport Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-source-repository-transport-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - scripts/ci/normalize-candidate-request.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-source-repository-transport-contracts.yml
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - scripts/ci/normalize-candidate-request.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate source repository before API transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compile normalizer and assert workflow ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/ci/normalize-candidate-request.py
+          python - <<'PY'
+          from pathlib import Path
+
+          gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
+          v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
+
+          assert gateway.index('- name: Normalize event inputs') < gateway.index('- name: Fetch source repository routing config')
+          assert v2.index('- name: Normalize workflow inputs') < v2.index('- name: Fetch source repository routing config')
+          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' in gateway
+          assert '/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml' in v2
+          PY
+
+      - name: Accept valid dot-prefixed repository identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repository in .owner/repo owner/.github owner/repo-1 owner/repo_name; do
+            GITHUB_RUN_ID=9401 \
+            GITHUB_RUN_ATTEMPT=1 \
+            REQUEST_EXECUTION_PREFIX=gw \
+            PAYLOAD="{\"source_repository\":\"$repository\"}" \
+            python scripts/ci/normalize-candidate-request.py \
+              --event-name repository_dispatch \
+              --output /tmp/valid-request.json \
+              --github-output /tmp/valid-output.txt >/dev/null
+            test "$(jq -r '.source_repository' /tmp/valid-request.json)" = "$repository"
+          done
+
+      - name: Reject malformed source identity before fake GitHub API lookup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          echo invoked >> /tmp/unexpected-routing-gh
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/gh
+          rm -f /tmp/unexpected-routing-gh
+
+          for repository in ./repo ../repo owner/. owner/.. owner/repo/extra owner//repo 'owner/répo'; do
+            rm -f /tmp/invalid-request.json /tmp/invalid-output.txt
+            set +e
+            GITHUB_RUN_ID=9402 \
+            GITHUB_RUN_ATTEMPT=1 \
+            REQUEST_EXECUTION_PREFIX=gw \
+            PAYLOAD="{\"source_repository\":\"$repository\"}" \
+            bash -c '
+              python scripts/ci/normalize-candidate-request.py \
+                --event-name repository_dispatch \
+                --output /tmp/invalid-request.json \
+                --github-output /tmp/invalid-output.txt &&
+              SOURCE_REPOSITORY="$(jq -r .source_repository /tmp/invalid-request.json)" &&
+              PATH="/tmp/fake-bin:$PATH" gh api "/repos/$SOURCE_REPOSITORY/contents/.jpapt/hf-bucket.yml"
+            '
+            status=$?
+            set -e
+            test "$status" != 0
+          done
+          test ! -e /tmp/unexpected-routing-gh
+
+      - name: Reject malformed workflow-dispatch source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repository in ./repo owner/.. owner/repo/extra 'owner/répo'; do
+            if GITHUB_RUN_ID=9403 \
+              GITHUB_RUN_ATTEMPT=1 \
+              REQUEST_EXECUTION_PREFIX=eval \
+              I_SOURCE_REPOSITORY="$repository" \
+              python scripts/ci/normalize-candidate-request.py \
+                --event-name workflow_dispatch \
+                --output /tmp/direct-invalid.json \
+                --github-output /tmp/direct-invalid-output.txt; then
+              echo "invalid source repository unexpectedly accepted: $repository" >&2
+              exit 1
+            fi
+          done
