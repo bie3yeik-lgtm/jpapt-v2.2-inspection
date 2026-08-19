@@ -1,0 +1,38 @@
+name: HF Jobs External Image Build Skip Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-external-image-skip-build-contracts.yml
+      - scripts/ci/check-hf-jobs-external-image-skip-build.py
+      - scripts/hf/hf-fetch-candidate.sh
+  pull_request:
+    paths:
+      - .github/workflows/candidate-package-evaluate-v2.yml
+      - .github/workflows/hf-jobs-external-image-skip-build-contracts.yml
+      - scripts/ci/check-hf-jobs-external-image-skip-build.py
+      - scripts/hf/hf-fetch-candidate.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-jobs-external-image-skip-build-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check external HF Jobs image build-skip contract
+        run: python scripts/ci/check-hf-jobs-external-image-skip-build.py

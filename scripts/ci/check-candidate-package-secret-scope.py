@@ -38,7 +38,7 @@ def main() -> None:
 
     candidate_fetch = block(
         text,
-        "      - name: Resolve and fetch candidate\n",
+        "      - name: Resolve candidate identity and materialize only when building\n",
         "      - uses: docker/setup-buildx-action@v3\n",
     )
     assert "HF_TOKEN: ${{ secrets.HF_TOKEN }}" in candidate_fetch

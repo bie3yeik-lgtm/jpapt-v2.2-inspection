@@ -292,15 +292,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: Build digest-pinned candidate package
+    name: Resolve candidate and package image
     needs: resolve
     if: ${{ needs.resolve.outputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       candidate_id: ${{ steps.candidate.outputs.candidate_id }}
-      image_ref: ${{ steps.build.outputs.image_ref }}
-      image_tag: ${{ steps.build.outputs.image_tag }}
-      image_digest: ${{ steps.build.outputs.image_digest }}
+      image_ref: ${{ steps.package.outputs.image_ref }}
+      image_tag: ${{ steps.package.outputs.image_tag }}
+      image_digest: ${{ steps.package.outputs.image_digest }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -309,21 +309,33 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install HF CLI
         run: python -m pip install --upgrade "huggingface_hub>=1.0,<2"
-      - name: Resolve and fetch candidate
+      - name: Resolve candidate identity and materialize only when building
         id: candidate
+        shell: bash
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ needs.resolve.outputs.candidate_id }}
-        run: bash scripts/hf/hf-fetch-candidate.sh "${CANDIDATE_ID:-}"
+          EXECUTOR: ${{ needs.resolve.outputs.executor }}
+          HF_JOBS_IMAGE: ${{ needs.resolve.outputs.hf_jobs_image }}
+        run: |
+          set -euo pipefail
+          if [[ "$EXECUTOR" == hf_jobs && -n "$HF_JOBS_IMAGE" ]]; then
+            bash scripts/hf/hf-fetch-candidate.sh "${CANDIDATE_ID:-}" --resolve-only
+          else
+            bash scripts/hf/hf-fetch-candidate.sh "${CANDIDATE_ID:-}"
+          fi
       - uses: docker/setup-buildx-action@v3
+        if: ${{ needs.resolve.outputs.executor != 'hf_jobs' || needs.resolve.outputs.hf_jobs_image == '' }}
       - uses: docker/login-action@v3
+        if: ${{ needs.resolve.outputs.executor != 'hf_jobs' || needs.resolve.outputs.hf_jobs_image == '' }}
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Build and push immutable package
         id: build
+        if: ${{ needs.resolve.outputs.executor != 'hf_jobs' || needs.resolve.outputs.hf_jobs_image == '' }}
         shell: bash
         env:
           IMAGE: ${{ needs.resolve.outputs.image }}
@@ -356,6 +368,39 @@ jobs:
             echo "image_tag=$tag"
             echo "image_digest=$digest"
             echo "image_ref=$IMAGE@$digest"
+          } >> "$GITHUB_OUTPUT"
+      - name: Select package image authority
+        id: package
+        shell: bash
+        env:
+          EXECUTOR: ${{ needs.resolve.outputs.executor }}
+          HF_JOBS_IMAGE: ${{ needs.resolve.outputs.hf_jobs_image }}
+          BUILT_IMAGE_REF: ${{ steps.build.outputs.image_ref }}
+          BUILT_IMAGE_TAG: ${{ steps.build.outputs.image_tag }}
+          BUILT_IMAGE_DIGEST: ${{ steps.build.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          if [[ "$EXECUTOR" == hf_jobs && -n "$HF_JOBS_IMAGE" ]]; then
+            [[ "$HF_JOBS_IMAGE" =~ ^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::hf_jobs_image override must be an immutable lowercase sha256 digest reference"
+              exit 1
+            }
+            image_ref="$HF_JOBS_IMAGE"
+            image_tag=""
+            image_digest="${HF_JOBS_IMAGE##*@}"
+          else
+            [[ -n "$BUILT_IMAGE_REF" && -n "$BUILT_IMAGE_DIGEST" ]] || {
+              echo "::error::package build did not produce immutable image outputs"
+              exit 1
+            }
+            image_ref="$BUILT_IMAGE_REF"
+            image_tag="$BUILT_IMAGE_TAG"
+            image_digest="$BUILT_IMAGE_DIGEST"
+          fi
+          {
+            echo "image_ref=$image_ref"
+            echo "image_tag=$image_tag"
+            echo "image_digest=$image_digest"
           } >> "$GITHUB_OUTPUT"
 
   github-linux-cpu:

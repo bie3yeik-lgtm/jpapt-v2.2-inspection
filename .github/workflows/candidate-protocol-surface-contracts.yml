@@ -112,8 +112,8 @@ jobs:
           v2=.github/workflows/candidate-package-evaluate-v2.yml
           grep -F 'workflow-dispatch-with-retry.sh' "$legacy"
           grep -F 'candidate-package-evaluate-v2.yml' "$legacy"
-          grep -F 'Build digest-pinned candidate package' "$v2"
-          if grep -F 'Build digest-pinned candidate package' "$legacy"; then
+          grep -F 'Resolve candidate and package image' "$v2"
+          if grep -F 'Resolve candidate and package image' "$legacy"; then
             echo 'legacy entrypoint unexpectedly contains evaluator implementation' >&2
             exit 1
           fi
