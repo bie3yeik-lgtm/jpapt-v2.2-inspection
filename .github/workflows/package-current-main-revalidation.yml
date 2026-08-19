@@ -1,0 +1,150 @@
+name: Package Current Main Revalidation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/package-current-main-revalidation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIOR_TRUSTED_MAIN: 9570b8cf57485b93f45f957a46f909b76650742d
+  CURRENT_PRIVATE_MAIN: 6b849f8d75ef7e26f0d974e6585e664aca55fa2f
+  PACKAGE_HEAD: c7f85669cd8cb198caa22580255c891a87579bb2
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIOR_FULL_RUN: '32292548588'
+  PRIOR_FULL_ARTIFACT: '9380074856'
+  PRIOR_FULL_DIGEST: sha256:723748c8e4b56d0dd6c36f0ed5f2662aee568a555000b8aea43898a9638742e2
+  PRIVATE_ROOT: /tmp/jpapt-package-current-main-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  revalidate:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/package-current-main-revalidation-20260820' }}
+    name: Revalidate package stack against current private main
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify public authority remains exact accepted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]] || {
+            echo "::error::public main drifted: live=$live accepted=$ACCEPTED_PUBLIC"
+            exit 1
+          }
+
+      - name: Fetch reviewed private revisions with ephemeral credential
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/package-current-main-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() {
+            rm -f "$askpass"
+            unset SOURCE_REPO_TOKEN
+          }
+          trap cleanup EXIT
+
+          current_remote="$(GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git ls-remote "https://github.com/${PRIVATE_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$current_remote" == "$CURRENT_PRIVATE_MAIN" ]] || {
+            echo "::error::private main drifted: live=$current_remote reviewed=$CURRENT_PRIVATE_MAIN"
+            exit 1
+          }
+
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" \
+            "$PRIOR_TRUSTED_MAIN" "$CURRENT_PRIVATE_MAIN" "$PACKAGE_HEAD"
+          for sha in "$PRIOR_TRUSTED_MAIN" "$CURRENT_PRIVATE_MAIN" "$PACKAGE_HEAD"; do
+            git -C "$PRIVATE_ROOT" cat-file -e "${sha}^{commit}"
+          done
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
+          if git -C "$PRIVATE_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/current-main-extraheaders 2>/dev/null; then
+            echo '::error::private fetch retained credential header'
+            exit 1
+          fi
+
+      - name: Prove post-full-validation drift is docs-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" merge-base --is-ancestor "$PRIOR_TRUSTED_MAIN" "$CURRENT_PRIVATE_MAIN"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIOR_TRUSTED_MAIN..$CURRENT_PRIVATE_MAIN")" == 3 ]]
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIOR_TRUSTED_MAIN" "$CURRENT_PRIVATE_MAIN" | sort)
+          expected=(
+            inspection/advices/Case-AudioAttention-Using-CloudService-ModelEmmbeddings.md
+            inspection/advices/Case-AudioAttention-availability-GitHub.md
+            inspection/advices/Case-VideoTraining-Docker-NeMo-Custom-CloudService.md
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf '::error::unexpected post-validation private-main files:\n%s\n' "${changed[*]}"
+            exit 1
+          }
+
+      - name: Revalidate clean package integration on exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$CURRENT_PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid \
+            merge --no-commit --no-ff "$PACKAGE_HEAD"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$CURRENT_PRIVATE_MAIN" ]]
+          test -f "$PRIVATE_ROOT/.github/workflows/hf-model-bootstrap-package.yml"
+          test -f "$PRIVATE_ROOT/scripts/jpapt-verify-package-artifact.py"
+
+      - name: Verify accepted authority survives current-main integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" '.accepted_revision == $accepted' \
+            "$root/config/jpapt-upstream-authority.json" >/dev/null
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" \
+            '.status == "accepted" and .authority.reviewed_main_revision == $accepted and .policy.dispatch_requires_exact_main_revision == true and .policy.dispatch_requires_accepted_revision_match == true' \
+            "$root/config/jpapt-authority-gate.v1.json" >/dev/null
+
+      - name: Build delta revalidation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-current-main-revalidation
+          jq -n \
+            --arg prior_trusted_main "$PRIOR_TRUSTED_MAIN" \
+            --arg current_private_main "$CURRENT_PRIVATE_MAIN" \
+            --arg package_head "$PACKAGE_HEAD" \
+            --arg accepted_public "$ACCEPTED_PUBLIC" \
+            --argjson prior_full_run "$PRIOR_FULL_RUN" \
+            --argjson prior_full_artifact "$PRIOR_FULL_ARTIFACT" \
+            --arg prior_full_digest "$PRIOR_FULL_DIGEST" \
+            '{schema_version:1,prior_trusted_main:$prior_trusted_main,current_private_main:$current_private_main,package_head:$package_head,accepted_public:$accepted_public,post_validation_commit_count:3,post_validation_files:"docs-only",integration_merge:"clean",authority_state_preserved:true,prior_full_run:$prior_full_run,prior_full_artifact:$prior_full_artifact,prior_full_digest:$prior_full_digest,prior_python_contract_count:77,prior_rust_test_count:27,prior_rust_entrypoint_count:8,trusted_runner:"github-hosted",hf_jobs_launched:false,model_compute_launched:false,package_built:false,private_repository_written:false}' \
+            > package-current-main-revalidation/evidence.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-current-main-revalidation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: package-current-main-revalidation/
+          if-no-files-found: error
+          retention-days: 30
