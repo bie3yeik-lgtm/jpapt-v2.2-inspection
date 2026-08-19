@@ -18,6 +18,8 @@ on:
 
 permissions:
   contents: read
+  actions: write
+  issues: write
 
 jobs:
   contracts:
@@ -89,9 +91,6 @@ jobs:
           GH_FALLBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # This public authority repository intentionally has no
-          # .jpapt/hf-bucket.yml on main. Exercise real `gh api --include`
-          # behavior read-only: contents 404 followed by repository 200.
           bash scripts/ci/fetch-source-routing-config.sh "$GITHUB_REPOSITORY" /tmp/live-missing.json
           jq -e 'type == "object" and length == 0' /tmp/live-missing.json >/dev/null
 
@@ -188,3 +187,81 @@ jobs:
               assert 'contents/.jpapt/hf-bucket.yml" --jq .content 2>/dev/null || true' not in text, path
               assert text.index(helper) < text.index(resolver), path
           PY
+
+  main_protocol_acceptance:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/main-protocol-acceptance-20260820' }}
+    name: Drive deployed main protocol acceptance
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MAIN_REF: main
+      SOURCE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+      RECEIPT_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+      HF_BUCKET: gawohok7/tf-v2.2-onnx-dev-bucket
+    steps:
+      - name: Run canonical bootstrap, readiness, and E2E
+        id: acceptance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          dispatch_and_wait() {
+            local workflow="$1"
+            local body="$2"
+            local timeout="$3"
+            local before run_id status conclusion deadline
+            before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
+            gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input "$body"
+            run_id=''
+            for _ in $(seq 1 40); do
+              run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=5" --jq ".workflow_runs[] | select(.id > $before) | .id" | head -n1)"
+              [[ -z "$run_id" ]] || break
+              sleep 2
+            done
+            [[ -n "$run_id" ]] || { echo "::error::new run not found for $workflow"; return 1; }
+            echo "[acceptance] workflow=$workflow run_id=$run_id"
+            deadline=$((SECONDS + timeout))
+            while (( SECONDS < deadline )); do
+              read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+              if [[ "$status" == completed ]]; then
+                [[ "$conclusion" == success ]] || { echo "::error::$workflow failed: run=$run_id conclusion=$conclusion"; return 1; }
+                printf '%s' "$run_id"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "::error::$workflow timed out: run=$run_id"
+            return 1
+          }
+
+          jq -n --arg ref "$MAIN_REF" --arg repo "$RECEIPT_REPOSITORY" \
+            '{ref:$ref,inputs:{repository:$repo,adopt_existing:"false"}}' > /tmp/bootstrap.json
+          bootstrap_run="$(dispatch_and_wait candidate-receiver-bootstrap.yml /tmp/bootstrap.json 900)"
+
+          jq -n --arg ref "$MAIN_REF" --arg repo "$RECEIPT_REPOSITORY" --arg bucket "$HF_BUCKET" \
+            '{ref:$ref,inputs:{receipt_repository:$repo,hf_bucket:$bucket,require_managed_installation:"true"}}' > /tmp/readiness.json
+          readiness_run="$(dispatch_and_wait candidate-protocol-readiness.yml /tmp/readiness.json 900)"
+
+          jq -n --arg ref "$MAIN_REF" --arg source "$SOURCE_REPOSITORY" --arg repo "$RECEIPT_REPOSITORY" --arg bucket "$HF_BUCKET" \
+            '{ref:$ref,inputs:{receipt_repository:$repo,hf_bucket:$bucket,source_repository:$source,timeout_seconds:"600"}}' > /tmp/e2e.json
+          e2e_run="$(dispatch_and_wait candidate-protocol-e2e.yml /tmp/e2e.json 1200)"
+
+          {
+            echo "bootstrap_run=$bootstrap_run"
+            echo "readiness_run=$readiness_run"
+            echo "e2e_run=$e2e_run"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record deployed-main positive-path evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RUN: ${{ steps.acceptance.outputs.bootstrap_run }}
+          READINESS_RUN: ${{ steps.acceptance.outputs.readiness_run }}
+          E2E_RUN: ${{ steps.acceptance.outputs.e2e_run }}
+        run: |
+          set -euo pipefail
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Deployed-main positive-path acceptance completed successfully.\n\n- main bootstrap run: \`$BOOTSTRAP_RUN\`\n- main readiness run: \`$READINESS_RUN\`\n- main zero-compute cross-repository E2E run: \`$E2E_RUN\`\n- source: \`$SOURCE_REPOSITORY\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- HF Bucket: \`$HF_BUCKET\`\n- compute boundary: V2 \`dry_run=true\`; no model inference, GPU, Docker evaluation, or HF Jobs workload.\n\nIssue #70 remains open until its required duplicate/idempotence and negative-routing assertions are also recorded."
