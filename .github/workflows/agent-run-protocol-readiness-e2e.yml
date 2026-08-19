@@ -1,0 +1,97 @@
+name: Agent Run Protocol Readiness E2E
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  drive:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'docs/current-premiere-integration-spec-20260819' }}
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_REF: docs/current-premiere-integration-spec-20260819
+      RECEIPT_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+      HF_BUCKET: gawohok7/tf-v2.2-onnx-dev-bucket
+    steps:
+      - name: Dispatch readiness
+        id: readiness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg ref "$TARGET_REF" \
+            --arg receipt "$RECEIPT_REPOSITORY" \
+            --arg bucket "$HF_BUCKET" \
+            '{ref:$ref,inputs:{receipt_repository:$receipt,hf_bucket:$bucket,require_managed_installation:"true"}}' \
+            > /tmp/readiness-dispatch.json
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-protocol-readiness.yml/dispatches" --input /tmp/readiness-dispatch.json
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-protocol-readiness.yml/runs?branch=$TARGET_REF&event=workflow_dispatch&per_page=10" --jq '.workflow_runs[0].id // empty')"
+            [[ -n "$run_id" ]] && break
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || { echo '::error::readiness run not found'; exit 1; }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          for _ in $(seq 1 120); do
+            read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]] || { echo "::error::readiness failed: run=$run_id conclusion=$conclusion"; exit 1; }
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::readiness timed out: run=$run_id"
+          exit 1
+
+      - name: Dispatch zero-compute E2E
+        id: e2e
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg ref "$TARGET_REF" \
+            --arg receipt "$RECEIPT_REPOSITORY" \
+            --arg bucket "$HF_BUCKET" \
+            '{ref:$ref,inputs:{receipt_repository:$receipt,hf_bucket:$bucket,source_repository:"",timeout_seconds:"600"}}' \
+            > /tmp/e2e-dispatch.json
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-protocol-e2e.yml/dispatches" --input /tmp/e2e-dispatch.json
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-protocol-e2e.yml/runs?branch=$TARGET_REF&event=workflow_dispatch&per_page=10" --jq '.workflow_runs[0].id // empty')"
+            [[ -n "$run_id" ]] && break
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || { echo '::error::E2E run not found'; exit 1; }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          for _ in $(seq 1 180); do
+            read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]] || { echo "::error::E2E failed: run=$run_id conclusion=$conclusion"; exit 1; }
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::E2E timed out: run=$run_id"
+          exit 1
+
+      - name: Record successful external acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          READINESS_RUN: ${{ steps.readiness.outputs.run_id }}
+          E2E_RUN: ${{ steps.e2e.outputs.run_id }}
+        shell: bash
+        run: |
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Dedicated external fixture acceptance succeeded.\n\n- receiver: \`$RECEIPT_REPOSITORY\`\n- HF Bucket: \`$HF_BUCKET\`\n- readiness run: \`$READINESS_RUN\`\n- zero-compute E2E run: \`$E2E_RUN\`\n- orchestrator ref: \`$TARGET_REF\`\n- compute: \`dry_run=true\`; no model inference/GPU/HF Jobs workload launched by this E2E driver."
