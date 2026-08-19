@@ -206,8 +206,13 @@ fn validate_digest_pinned_image(value: &str, field: &str) -> Result<(), String> 
             "{field} must be immutable and digest-pinned with @sha256:<64 hex>"
         ));
     };
-    if name.is_empty() || digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err(format!("{field} has an invalid sha256 digest"));
+    if name.is_empty()
+        || digest.len() != 64
+        || !digest
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        return Err(format!("{field} has an invalid lowercase sha256 digest"));
     }
     Ok(())
 }
@@ -495,6 +500,20 @@ mod tests {
         .unwrap();
         let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
         assert!(error.contains("digest-pinned"));
+    }
+
+    #[test]
+    fn rejects_uppercase_hf_jobs_image_digest_before_build() {
+        let image = format!("ghcr.io/owner/package@sha256:{}", "A".repeat(64));
+        let inputs = object(
+            &format!(
+                r#"{{"request_id":"req-hf-image-upper","request_execution_id":"gw-105-2","source_repository":"owner/repo","executor":"hf_jobs","suite":"smoke","environment":"linux-cpu","hf_jobs_image":"{image}"}}"#
+            ),
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("lowercase sha256"));
     }
 
     #[test]

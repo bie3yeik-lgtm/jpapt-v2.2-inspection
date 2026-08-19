@@ -747,10 +747,15 @@ fn image_digest(value: &str) -> Result<String, String> {
             "HF Jobs image must be immutable and digest-pinned with @sha256:<64 hex>".to_owned(),
         );
     };
-    if name.is_empty() || digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err("HF Jobs image has an invalid sha256 digest".to_owned());
+    if name.is_empty()
+        || digest.len() != 64
+        || !digest
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        return Err("HF Jobs image has an invalid lowercase sha256 digest".to_owned());
     }
-    Ok(format!("sha256:{}", digest.to_ascii_lowercase()))
+    Ok(format!("sha256:{digest}"))
 }
 
 fn write_plan(path: &Path, plan: &HfJobPlan) -> Result<(), String> {
@@ -892,6 +897,22 @@ mod tests {
         input.built_image = "ghcr.io/owner/package:latest".to_owned();
         let error = build_plan(input).unwrap_err();
         assert!(error.contains("digest-pinned"));
+    }
+
+    #[test]
+    fn rejects_uppercase_built_image_digest() {
+        let mut input = smoke_input();
+        input.built_image = format!("ghcr.io/owner/package@sha256:{}", "A".repeat(64));
+        let error = build_plan(input).unwrap_err();
+        assert!(error.contains("lowercase sha256"));
+    }
+
+    #[test]
+    fn rejects_uppercase_override_image_digest() {
+        let mut input = smoke_input();
+        input.image_override = format!("ghcr.io/owner/package@sha256:{}", "A".repeat(64));
+        let error = build_plan(input).unwrap_err();
+        assert!(error.contains("lowercase sha256"));
     }
 
     #[test]
