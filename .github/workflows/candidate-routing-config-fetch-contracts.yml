@@ -89,9 +89,6 @@ jobs:
           GH_FALLBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # This public authority repository intentionally has no
-          # .jpapt/hf-bucket.yml on main. Exercise real `gh api --include`
-          # behavior read-only: contents 404 followed by repository 200.
           bash scripts/ci/fetch-source-routing-config.sh "$GITHUB_REPOSITORY" /tmp/live-missing.json
           jq -e 'type == "object" and length == 0' /tmp/live-missing.json >/dev/null
 
@@ -188,3 +185,216 @@ jobs:
               assert 'contents/.jpapt/hf-bucket.yml" --jq .content 2>/dev/null || true' not in text, path
               assert text.index(helper) < text.index(resolver), path
           PY
+
+  promotion_acceptance:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/jpapt-promotion-acceptance-20260820' }}
+    name: Validate private authority promotion transaction
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+      PRIVATE_REVISION: 866e66c705da1aee709f14651616f0f8fd5f61ff
+      PRIVATE_ROOT: /tmp/jpapt-promotion-${{ github.run_id }}-${{ github.run_attempt }}
+      PUBLIC_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
+      PUBLIC_TARGET: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+      PRIOR_ACCEPTED: 9179e1147d0460a29dfe4251f73977156356784c
+      TRUSTED_REVIEW_TARGET: 6ce57e6f874d387eb25e5dbba969b094962e1d92
+      SEMANTIC_ANCHOR: abecb93b86eb57da0879d38891a48d1848a1398b
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify public exact-main promotion target and validation-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${PUBLIC_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$PUBLIC_TARGET" ]] || {
+            echo "::error::public main drifted before promotion review: live=$live target=$PUBLIC_TARGET"
+            exit 1
+          }
+          git fetch --no-tags origin "$TRUSTED_REVIEW_TARGET" "$PUBLIC_TARGET"
+          git merge-base --is-ancestor "$TRUSTED_REVIEW_TARGET" "$PUBLIC_TARGET"
+          mapfile -t changed < <(git diff --name-only "$TRUSTED_REVIEW_TARGET" "$PUBLIC_TARGET" | sort)
+          expected=(
+            .ci/fixture-provision-trigger-20260819.txt
+            .github/workflows/private-consumer-trusted-acceptance-contracts.yml
+            .github/workflows/private-consumer-trusted-acceptance.yml
+            config/private-consumer-trusted-acceptance.json
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf 'unexpected post-trusted-review files:\n%s\n' "${changed[*]}" >&2
+            exit 1
+          }
+
+      - name: Fetch immutable private promotion head outside public workspace
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/jpapt-promotion-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() {
+            rm -f "$askpass"
+            unset SOURCE_REPO_TOKEN
+          }
+          trap cleanup EXIT
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=1 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"
+          git -C "$PRIVATE_ROOT" checkout --detach --force FETCH_HEAD
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_REVISION" ]]
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
+          if git -C "$PRIVATE_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/promotion-extraheaders 2>/dev/null; then
+            cat /tmp/promotion-extraheaders >&2
+            echo '::error::private fetch retained credential header'
+            exit 1
+          fi
+
+      - name: Validate promotion transaction and remaining blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          authority="$root/config/jpapt-upstream-authority.json"
+          gate="$root/config/jpapt-authority-gate.v1.json"
+          inventory="$root/config/hf-model-routing.v1.json"
+          docs="$root/docs/jpapt-authority-gate.md"
+          jq -e --arg target "$PUBLIC_TARGET" '
+            .repository == "bie3yeik-lgtm/jpapt-v2.2-inspection" and
+            .default_branch == "main" and
+            .accepted_revision == $target
+          ' "$authority" >/dev/null
+          jq -e --arg target "$PUBLIC_TARGET" --arg semantic "$SEMANTIC_ANCHOR" '
+            .status == "accepted" and
+            .authority.reviewed_main_revision == $target and
+            .authority.semantic_revision == $semantic and
+            .policy.dispatch_requires_status == "accepted" and
+            .policy.dispatch_requires_accepted_revision_match == true and
+            .policy.dispatch_requires_exact_main_revision == true
+          ' "$gate" >/dev/null
+          jq -e --arg target "$PUBLIC_TARGET" '
+            .automation_consumption == false and
+            .authority_observed.current_main == $target and
+            .authority_observed.acceptance == "accepted" and
+            (.routes[] | select(.route_id == "tf-v2.2-onnx-dev") | .routing_status) == "authority-accepted" and
+            ([.routes[].blockers[]] | index("jpapt-authority-revision-not-accepted")) == null and
+            ([.routes[].blockers[]] | index("private-repository-hosted-actions-blocked-127")) != null and
+            ([.routes[] | select(.route_id == "jpapt-v2.2-dev") | .blockers[]] | index("candidate-transfer-and-routing-not-yet-verified")) != null and
+            ([.routes[] | select(.route_id == "jpapt-v2.2-dev") | .blockers[]] | index("hf-jobs-connector-schema-blocked-130")) != null
+          ' "$inventory" >/dev/null
+          grep -F "$PUBLIC_TARGET" "$docs" >/dev/null
+          grep -F 'private GitHub Actions infrastructure defect `#127` remains open' "$docs" >/dev/null
+          grep -F 'HF Jobs connector response-schema decode blocker `#130`' "$docs" >/dev/null
+
+      - name: Verify promotion branch changes only four reviewed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" fetch --no-tags --depth=5 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" 6d1781939aac8cf7a0d4b3d4d4ad9dcb85fa2d43 >/dev/null 2>&1 || true
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only 6d1781939aac8cf7a0d4b3d4d4ad9dcb85fa2d43 "$PRIVATE_REVISION" | sort)
+          expected=(
+            TelopFlow_Feature/TF-v1-onnx-implements/config/hf-model-routing.v1.json
+            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-authority-gate.v1.json
+            TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json
+            TelopFlow_Feature/TF-v1-onnx-implements/docs/jpapt-authority-gate.md
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf 'unexpected private promotion files:\n%s\n' "${changed[*]}" >&2
+            exit 1
+          }
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run private authority detector fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests"
+          python3 -m unittest discover -s "$tests" -p 'test_jpapt_upstream_contract_diff.py'
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run JPAPT Rust tests and check every JPAPT target
+        id: rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          cargo test --locked --manifest-path "$crate/Cargo.toml" --lib -- --list > /tmp/promotion-tests.txt
+          tests="$(grep -Ec '^jpapt_[^:]*::|^jpapt_[^ ]*: test$' /tmp/promotion-tests.txt || true)"
+          (( tests > 0 )) || { echo '::error::no JPAPT tests discovered'; exit 1; }
+          cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_ -- --nocapture
+          manifest="$(realpath "$crate/Cargo.toml")"
+          cargo metadata --locked --no-deps --format-version 1 --manifest-path "$crate/Cargo.toml" > /tmp/promotion-metadata.json
+          mapfile -t bins < <(jq -r --arg manifest "$manifest" '
+            .packages[] | select(.manifest_path == $manifest) | .targets[] |
+            select((.kind | index("bin")) != null) |
+            select(.src_path | test("/jpapt[^/]*\\.rs$")) | .name
+          ' /tmp/promotion-metadata.json | sort -u)
+          (( ${#bins[@]} > 0 )) || { echo '::error::no JPAPT binary targets'; exit 1; }
+          for bin in "${bins[@]}"; do
+            cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"
+          done
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+          echo "bins=${#bins[@]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Lint private authority workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          workflows="$PRIVATE_ROOT/.github/workflows"
+          actionlint -color -ignore 'SC2016' \
+            "$workflows/jpapt-upstream-contract-diff.yml" \
+            "$workflows/jpapt-upstream-contract-diff-contracts.yml" \
+            "$workflows/jpapt-private-dispatch.yml" \
+            "$workflows/jpapt-private-receipt.yml"
+          grep -F '[[ "$accepted_revision" == "$reviewed_main" ]]' "$workflows/jpapt-private-dispatch.yml" >/dev/null
+          grep -F '[[ "$current_main" == "$reviewed_main" ]]' "$workflows/jpapt-private-dispatch.yml" >/dev/null
+
+      - name: Build promotion acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-acceptance
+          jq -n \
+            --arg private_repository "$PRIVATE_REPOSITORY" \
+            --arg private_revision "$PRIVATE_REVISION" \
+            --arg public_repository "$PUBLIC_REPOSITORY" \
+            --arg public_target "$PUBLIC_TARGET" \
+            --arg prior_accepted "$PRIOR_ACCEPTED" \
+            --arg trusted_review_target "$TRUSTED_REVIEW_TARGET" \
+            --arg semantic_anchor "$SEMANTIC_ANCHOR" \
+            --argjson rust_test_count '${{ steps.rust.outputs.tests }}' \
+            --argjson rust_entrypoint_count '${{ steps.rust.outputs.bins }}' \
+            '{schema_version:1,private_repository:$private_repository,private_revision:$private_revision,public_repository:$public_repository,public_target:$public_target,prior_accepted_revision:$prior_accepted,trusted_review_target:$trusted_review_target,semantic_anchor:$semantic_anchor,promotion_transaction:"validated",public_exact_main:"matched",post_review_delta:"validation-harness-only",rust_test_count:$rust_test_count,rust_entrypoint_count:$rust_entrypoint_count,private_workflow_actionlint:"passed",route_blockers_preserved:true,authority_promoted_by_this_workflow:false,hf_jobs_launched:false,model_compute_launched:false}' \
+            > promotion-acceptance/evidence.json
+          jq -e '.promotion_transaction == "validated" and .public_exact_main == "matched" and .route_blockers_preserved == true and .authority_promoted_by_this_workflow == false and .hf_jobs_launched == false and .model_compute_launched == false' promotion-acceptance/evidence.json >/dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jpapt-authority-promotion-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: promotion-acceptance/
+          if-no-files-found: error
+          retention-days: 30
