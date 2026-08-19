@@ -74,6 +74,12 @@ fi
   echo "ERROR: HF_LIFECYCLE_BUCKET must use namespace/name." >&2
   exit 2
 }
+bucket_owner="${HF_LIFECYCLE_BUCKET%%/*}"
+bucket_name="${HF_LIFECYCLE_BUCKET#*/}"
+if [[ "$bucket_owner" == "." || "$bucket_owner" == ".." || "$bucket_name" == "." || "$bucket_name" == ".." ]]; then
+  echo "ERROR: HF_LIFECYCLE_BUCKET must not contain dot-only path segments." >&2
+  exit 2
+fi
 
 readarray -t metadata < <(
   python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot "$snapshot"
@@ -94,21 +100,40 @@ materialize_state() {
   local target_base="$1"
   local require_execution_match="$2"
   local remote="$target_base/states/$state.json"
+  local object_path="${remote#hf://buckets/$HF_LIFECYCLE_BUCKET/}"
   local tmp
-  tmp="$(mktemp)"
+  local exists
   local write_state=true
-  if hf buckets cp --token "$HF_TOKEN" "$remote" "$tmp" >/dev/null 2>&1; then
-    python scripts/ci/build-candidate-request-lifecycle.py --validate "$tmp" >/dev/null
-    compare_args=(
-      --existing "$tmp"
-      --incoming "$snapshot"
-    )
-    if [[ "$require_execution_match" == true ]]; then
-      compare_args+=(--require-execution-match)
-    fi
-    write_state="$(python scripts/ci/compare-candidate-lifecycle-state.py "${compare_args[@]}")"
-  fi
-  rm -f "$tmp"
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  # A failed download is not evidence that an object is absent. Query exact
+  # object existence first; lookup errors are fatal and therefore cannot skip
+  # the monotonic comparator and regress a materialized state.
+  exists="$(python scripts/ci/hf-bucket-object-exists.py \
+    --bucket "$HF_LIFECYCLE_BUCKET" \
+    --path "$object_path")"
+  case "$exists" in
+    true)
+      hf buckets cp --token "$HF_TOKEN" "$remote" "$tmp" >/dev/null
+      python scripts/ci/build-candidate-request-lifecycle.py --validate "$tmp" >/dev/null
+      compare_args=(
+        --existing "$tmp"
+        --incoming "$snapshot"
+      )
+      if [[ "$require_execution_match" == true ]]; then
+        compare_args+=(--require-execution-match)
+      fi
+      write_state="$(python scripts/ci/compare-candidate-lifecycle-state.py "${compare_args[@]}")"
+      ;;
+    false)
+      ;;
+    *)
+      echo "ERROR: unexpected Bucket object lookup result for $remote: $exists" >&2
+      exit 2
+      ;;
+  esac
+
   if [[ "$write_state" == true ]]; then
     hf buckets cp --token "$HF_TOKEN" "$snapshot" "$remote"
   else

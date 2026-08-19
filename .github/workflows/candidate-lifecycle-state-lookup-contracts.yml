@@ -1,0 +1,164 @@
+name: Candidate Lifecycle State Lookup Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-lifecycle-state-lookup-contracts.yml
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - scripts/ci/hf-bucket-object-exists.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-lifecycle-event-key.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-lifecycle-state-lookup-contracts.yml
+      - .github/workflows/candidate-lifecycle-persist.yml
+      - scripts/ci/hf-bucket-object-exists.py
+      - scripts/ci/persist-candidate-lifecycle.sh
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - scripts/ci/build-candidate-lifecycle-event-key.py
+      - scripts/ci/compare-candidate-lifecycle-state.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Fail closed on lifecycle state lookup errors
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate helper syntax and production dependency ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/persist-candidate-lifecycle.sh
+          python -m py_compile scripts/ci/hf-bucket-object-exists.py
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/candidate-lifecycle-persist.yml').read_text(encoding='utf-8')
+          assert workflow.index('- name: Install HF client') < workflow.index('- name: Persist lifecycle states')
+          helper = Path('scripts/ci/persist-candidate-lifecycle.sh').read_text(encoding='utf-8')
+          assert 'hf-bucket-object-exists.py' in helper
+          assert 'if hf buckets cp --token "$HF_TOKEN" "$remote" "$tmp"' not in helper
+          PY
+
+      - name: Prepare synthetic lifecycle and fake HF clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_ID=state-lookup-contract-001 \
+          SOURCE_REPOSITORY=owner/source \
+          RECEIPT_REPOSITORY=owner/receiver \
+          ORCHESTRATOR_REPOSITORY=owner/orchestrator \
+          GATEWAY_RUN_ID=101 \
+          UPDATED_AT=2026-08-19T04:00:00Z \
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state dispatched --output /tmp/lifecycle.json >/dev/null
+
+          mkdir -p /tmp/fake-python/huggingface_hub /tmp/fake-bin
+          cat > /tmp/fake-python/huggingface_hub/__init__.py <<'PY'
+          import os
+
+          class Item:
+              def __init__(self, path, item_type="file"):
+                  self.path = path
+                  self.type = item_type
+
+          def list_bucket_tree(*, bucket_id, prefix, recursive, token):
+              assert token == "synthetic-token"
+              mode = os.environ.get("FAKE_BUCKET_LOOKUP", "missing")
+              if mode == "error":
+                  raise RuntimeError("simulated Bucket lookup failure")
+              if mode == "present":
+                  return [Item(prefix)]
+              if mode == "folder":
+                  return [Item(prefix, "directory")]
+              if mode == "missing":
+                  return []
+              raise RuntimeError(f"unknown fake mode: {mode}")
+          PY
+
+          cat > /tmp/fake-bin/hf <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "$*" >> /tmp/fake-hf-calls
+          [[ "${1:-}" == buckets && "${2:-}" == cp ]]
+          exit 0
+          SH
+          chmod +x /tmp/fake-bin/hf
+
+      - name: Missing exact object permits materialized state write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/fake-hf-calls
+          PYTHONPATH=/tmp/fake-python \
+          PATH="/tmp/fake-bin:$PATH" \
+          FAKE_BUCKET_LOOKUP=missing \
+          HF_TOKEN=synthetic-token \
+          HF_LIFECYCLE_BUCKET=.owner/lifecycle \
+            bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json
+          grep -F '/events/' /tmp/fake-hf-calls >/dev/null
+          grep -F '/states/dispatched.json' /tmp/fake-hf-calls >/dev/null
+
+      - name: Lookup error preserves immutable event but blocks state write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/fake-hf-calls
+          if PYTHONPATH=/tmp/fake-python \
+            PATH="/tmp/fake-bin:$PATH" \
+            FAKE_BUCKET_LOOKUP=error \
+            HF_TOKEN=synthetic-token \
+            HF_LIFECYCLE_BUCKET=owner/lifecycle \
+              bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json; then
+            echo 'Bucket lookup failure unexpectedly allowed lifecycle persistence to succeed' >&2
+            exit 1
+          fi
+          grep -F '/events/' /tmp/fake-hf-calls >/dev/null
+          if grep -F '/states/dispatched.json' /tmp/fake-hf-calls; then
+            echo 'materialized state was written after Bucket lookup failure' >&2
+            exit 1
+          fi
+
+      - name: Non-file exact object fails closed before state write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/fake-hf-calls
+          if PYTHONPATH=/tmp/fake-python \
+            PATH="/tmp/fake-bin:$PATH" \
+            FAKE_BUCKET_LOOKUP=folder \
+            HF_TOKEN=synthetic-token \
+            HF_LIFECYCLE_BUCKET=owner/lifecycle \
+              bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json; then
+            echo 'folder at materialized state path unexpectedly accepted' >&2
+            exit 1
+          fi
+          if grep -F '/states/dispatched.json' /tmp/fake-hf-calls; then
+            echo 'materialized state was written after non-file lookup result' >&2
+            exit 1
+          fi
+
+      - name: Reject dot-only lifecycle Bucket before HF access
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bucket in ./lifecycle ../lifecycle owner/. owner/..; do
+            rm -f /tmp/fake-hf-calls
+            if PYTHONPATH=/tmp/fake-python \
+              PATH="/tmp/fake-bin:$PATH" \
+              FAKE_BUCKET_LOOKUP=missing \
+              HF_TOKEN=synthetic-token \
+              HF_LIFECYCLE_BUCKET="$bucket" \
+                bash scripts/ci/persist-candidate-lifecycle.sh /tmp/lifecycle.json; then
+              echo "invalid lifecycle Bucket unexpectedly accepted: $bucket" >&2
+              exit 1
+            fi
+            test ! -e /tmp/fake-hf-calls
+          done
