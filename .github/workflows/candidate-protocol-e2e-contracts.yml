@@ -6,6 +6,7 @@ on:
     paths:
       - .github/actionlint.yaml
       - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-negative-e2e.yml
       - .github/workflows/candidate-protocol-e2e-contracts.yml
       - docs/candidate-protocol-e2e.md
       - config/candidate-receiver-bundle.json
@@ -24,6 +25,7 @@ on:
     paths:
       - .github/actionlint.yaml
       - .github/workflows/candidate-protocol-e2e.yml
+      - .github/workflows/candidate-protocol-negative-e2e.yml
       - .github/workflows/candidate-protocol-e2e-contracts.yml
       - docs/candidate-protocol-e2e.md
       - config/candidate-receiver-bundle.json
@@ -64,6 +66,7 @@ jobs:
         run: >-
           actionlint -color -ignore 'SC2016'
           .github/workflows/candidate-protocol-e2e.yml
+          .github/workflows/candidate-protocol-negative-e2e.yml
           .github/workflows/candidate-protocol-e2e-contracts.yml
       - name: Validate canonical receiver bundle
         run: |
@@ -74,12 +77,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'workflow_dispatch:' .github/workflows/candidate-protocol-e2e.yml
-          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' .github/workflows/candidate-protocol-e2e.yml; then
-            echo 'E2E workflow unexpectedly has an automatic trigger' >&2
-            exit 1
-          fi
-          grep -F '[[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' .github/workflows/candidate-protocol-e2e.yml
+          for workflow in \
+            .github/workflows/candidate-protocol-e2e.yml \
+            .github/workflows/candidate-protocol-negative-e2e.yml; do
+            grep -F 'workflow_dispatch:' "$workflow"
+            if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' "$workflow"; then
+              echo "E2E workflow unexpectedly has an automatic trigger: $workflow" >&2
+              exit 1
+            fi
+            grep -F '[[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' "$workflow"
+          done
       - name: Verify dry-run cost boundary
         shell: bash
         run: |
@@ -87,10 +94,14 @@ jobs:
           grep -F 'dry_run: true' .github/workflows/candidate-protocol-e2e.yml
           grep -F "assert receipt['dry_run'] is True" .github/workflows/candidate-protocol-e2e.yml
           grep -F "assert receipt['conclusion'] == 'success'" .github/workflows/candidate-protocol-e2e.yml
-          if grep -F 'hf jobs run' .github/workflows/candidate-protocol-e2e.yml; then
-            echo 'E2E workflow must not launch Hugging Face Jobs directly' >&2
-            exit 1
-          fi
+          for workflow in \
+            .github/workflows/candidate-protocol-e2e.yml \
+            .github/workflows/candidate-protocol-negative-e2e.yml; do
+            if grep -F 'hf jobs run' "$workflow"; then
+              echo "E2E workflow must not launch Hugging Face Jobs directly: $workflow" >&2
+              exit 1
+            fi
+          done
       - name: Verify bounded V2 dispatch
         shell: bash
         run: |
@@ -154,3 +165,25 @@ jobs:
             scripts/ci/repository-dispatch-with-retry.sh; do
             grep -Fx "$path" < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           done
+      - name: Verify external negative E2E fail-closed contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          negative=.github/workflows/candidate-protocol-negative-e2e.yml
+          grep -F 'environment: Private-Secrets' "$negative"
+          grep -F 'TARGET_REPO_TOKEN is required for external negative E2E' "$negative"
+          grep -F 'jpapt.candidate-completed' "$negative"
+          grep -F 'run_case malformed' "$negative"
+          grep -F 'run_case wrong-orchestrator' "$negative"
+          grep -F 'run_case wrong-receipt-repository' "$negative"
+          grep -F 'Validate CandidateCompletionReceiptV1' "$negative"
+          grep -F 'Validate receiver and orchestrator binding' "$negative"
+          grep -F 'Build CandidateCompletionAckV1' "$negative"
+          grep -F 'Dispatch acknowledgement to orchestrator' "$negative"
+          grep -F '[[ "$build_result" == skipped ]]' "$negative"
+          grep -F '[[ "$dispatch_result" == skipped ]]' "$negative"
+          grep -F 'retention-days: 30' "$negative"
+          if grep -F 'secrets.SOURCE_REPO_TOKEN' "$negative"; then
+            echo 'external negative E2E must not use source token' >&2
+            exit 1
+          fi
