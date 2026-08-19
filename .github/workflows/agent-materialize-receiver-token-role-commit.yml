@@ -1,0 +1,57 @@
+name: Materialize Receiver Token Role Commit
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  materialize:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'docs/current-premiere-integration-spec-20260819' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: docs/current-premiere-integration-spec-20260819
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Generate migrated files and unattached commit object
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/apply-receiver-token-role.py
+          git diff --check
+          base_sha="$(git rev-parse HEAD)"
+          base_tree="$(gh api "/repos/$GITHUB_REPOSITORY/git/commits/$base_sha" --jq .tree.sha)"
+          entries='[]'
+          for path in \
+            .github/workflows/candidate-package-evaluate-v2.yml \
+            .github/workflows/candidate-protocol-readiness.yml \
+            .github/workflows/candidate-protocol-e2e.yml \
+            .github/workflows/candidate-receiver-bootstrap.yml \
+            .github/workflows/candidate-completion-reconcile.yml; do
+            content="$(base64 -w0 "$path")"
+            body="$(jq -n --arg content "$content" '{content:$content,encoding:"base64"}')"
+            blob_sha="$(gh api --method POST "/repos/$GITHUB_REPOSITORY/git/blobs" --input - <<<"$body" --jq .sha)"
+            entries="$(jq --arg path "$path" --arg sha "$blob_sha" '. + [{path:$path,mode:"100644",type:"blob",sha:$sha}]' <<<"$entries")"
+          done
+          tree_body="$(jq -n --arg base_tree "$base_tree" --argjson tree "$entries" '{base_tree:$base_tree,tree:$tree}')"
+          tree_sha="$(gh api --method POST "/repos/$GITHUB_REPOSITORY/git/trees" --input - <<<"$tree_body" --jq .sha)"
+          commit_body="$(jq -n --arg message 'fix(ci): split source and receiver repository tokens' --arg tree "$tree_sha" --arg parent "$base_sha" '{message:$message,tree:$tree,parents:[$parent]}')"
+          commit_sha="$(gh api --method POST "/repos/$GITHUB_REPOSITORY/git/commits" --input - <<<"$commit_body" --jq .sha)"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+      - name: Record unattached commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+          BASE_SHA: ${{ steps.commit.outputs.base_sha }}
+        run: |
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Receiver-token role migration materialized as unattached commit \`$COMMIT_SHA\` with parent \`$BASE_SHA\` by run \`$GITHUB_RUN_ID\`. Ref update is intentionally delegated to the connected GitHub app."
