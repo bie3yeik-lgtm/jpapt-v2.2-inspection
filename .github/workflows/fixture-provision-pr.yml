@@ -1,0 +1,57 @@
+name: Fixture Provision PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  provision:
+    if: github.head_ref == 'docs/current-premiere-integration-spec-20260819'
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+      SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+      FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+    steps:
+      - name: Create or confirm dedicated fixture
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="${TARGET_REPO_TOKEN:-}"
+          [[ -n "$token" ]] || token="${SOURCE_REPO_TOKEN:-}"
+          [[ -n "$token" ]] || {
+            echo '::error::no Private-Secrets provisioning token is available'
+            exit 1
+          }
+          export GH_TOKEN="$token"
+          if gh api "/repos/$FIXTURE_REPOSITORY" >/tmp/repo.json 2>/tmp/get.err; then
+            echo 'created=false' >> "$GITHUB_OUTPUT"
+          else
+            gh api --method POST /user/repos \
+              -f name="${FIXTURE_REPOSITORY#*/}" \
+              -f description='Dedicated JPAPT candidate protocol cross-repository E2E fixture' \
+              -F private=true \
+              -F auto_init=true \
+              >/tmp/repo.json
+            echo 'created=true' >> "$GITHUB_OUTPUT"
+          fi
+          test "$(jq -r .full_name /tmp/repo.json)" = "$FIXTURE_REPOSITORY"
+          test "$(jq -r .private /tmp/repo.json)" = true
+          default_branch="$(jq -r .default_branch /tmp/repo.json)"
+          test -n "$default_branch"
+          test "$default_branch" != null
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+      - name: Record success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATED: ${{ steps.fixture.outputs.created }}
+          DEFAULT_BRANCH: ${{ steps.fixture.outputs.default_branch }}
+        run: |
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Dedicated fixture provisioning succeeded after PAT permission update via trusted same-repository PR. Repository: \`$FIXTURE_REPOSITORY\`; run: \`$GITHUB_RUN_ID\`; created: \`$CREATED\`; private: \`true\`; default branch: \`$DEFAULT_BRANCH\`."
