@@ -11,7 +11,7 @@ permissions:
 env:
   PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
   PRIVATE_MAIN: 0d37bb10ab53a2f009997e70c47dc558fa6346c0
-  POLICY_HEAD: e3f18d89c0e2abe53ba65d88d16c2170b90b3b49
+  POLICY_HEAD: a6b98cb7513324d21bb9226bfd79209771ec7efa
   ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
   PRIVATE_ROOT: /tmp/jpapt-ghcr-readiness-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$POLICY_HEAD")" == "$PRIVATE_MAIN" ]]
-          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIVATE_MAIN..$POLICY_HEAD")" == 5 ]]
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIVATE_MAIN..$POLICY_HEAD")" == 6 ]]
           mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIVATE_MAIN" "$POLICY_HEAD" | sort)
           expected=(
             .github/workflows/hf-model-bootstrap-package.yml
@@ -160,7 +160,7 @@ jobs:
             --arg policy_head "$POLICY_HEAD" \
             --arg accepted_public "$ACCEPTED_PUBLIC" \
             --argjson test_count '${{ steps.tests.outputs.count }}' \
-            '{schema_version:1,private_main:$private_main,policy_head:$policy_head,accepted_public:$accepted_public,changed_files:5,commits:5,integration_merge:"clean",python_security_contracts:"passed",python_test_count:$test_count,actionlint:"passed",early_public_readiness_gate:"passed",credential_free_gate:true,package_built:false,hf_jobs_launched:false,model_compute_launched:false,private_repository_written:false}' \
+            '{schema_version:1,private_main:$private_main,policy_head:$policy_head,accepted_public:$accepted_public,changed_files:5,commits:6,integration_merge:"clean",python_security_contracts:"passed",python_test_count:$test_count,actionlint:"passed",early_public_readiness_gate:"passed",credential_free_gate:true,package_built:false,hf_jobs_launched:false,model_compute_launched:false,private_repository_written:false}' \
             > ghcr-readiness-acceptance/evidence.json
 
       - uses: actions/upload-artifact@v7
