@@ -1,0 +1,248 @@
+name: Candidate Protocol Duplicate E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      receipt_repository:
+        description: Isolated external receiver repository in owner/name form
+        required: true
+        type: string
+      evaluation_run_id:
+        description: Successful evaluation run containing the canonical completion receipt
+        required: true
+        type: string
+      evaluation_run_attempt:
+        description: Evaluation run attempt associated with the receipt
+        required: false
+        default: "1"
+        type: string
+      timeout_seconds:
+        description: Maximum wait for receiver and ACK runs
+        required: false
+        default: "300"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+
+concurrency:
+  group: candidate-protocol-duplicate-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  duplicate_e2e:
+    name: Verify duplicate completion idempotence
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Recover canonical completion receipt
+        id: receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
+          EVALUATION_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+        run: |
+          set -euo pipefail
+          repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          [[ "$RECEIPT_REPOSITORY" =~ $repo_re ]] || { echo '::error::receipt_repository must use owner/name'; exit 1; }
+          [[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]] || { echo '::error::duplicate E2E requires an external receiver'; exit 1; }
+          [[ "$EVALUATION_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo '::error::evaluation_run_id must be a positive integer'; exit 1; }
+          [[ "$EVALUATION_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo '::error::evaluation_run_attempt must be a positive integer'; exit 1; }
+          [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo '::error::timeout_seconds must be a positive integer'; exit 1; }
+          (( TIMEOUT_SECONDS >= 60 && TIMEOUT_SECONDS <= 600 )) || { echo '::error::timeout_seconds must be between 60 and 600'; exit 1; }
+
+          artifact_name="candidate-completion-$EVALUATION_RUN_ID-$EVALUATION_RUN_ATTEMPT"
+          artifact_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$EVALUATION_RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$artifact_name\") | .id" | head -n1)"
+          [[ -n "$artifact_id" ]] || { echo '::error::canonical completion receipt artifact not found'; exit 1; }
+          mkdir -p .ci/duplicate-e2e/receipt
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/receipt.zip
+          unzip -q /tmp/receipt.zip -d .ci/duplicate-e2e/receipt
+          receipt=.ci/duplicate-e2e/receipt/candidate-completion-receipt.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-validate "$receipt" >/dev/null
+
+          request_id="$(jq -er '.request_id' "$receipt")"
+          request_execution_id="$(jq -er '.request_execution_id' "$receipt")"
+          receipt_repository="$(jq -er '.receipt_repository' "$receipt")"
+          receipt_run_id="$(jq -er '.run_id' "$receipt")"
+          receipt_run_attempt="$(jq -er '.run_attempt' "$receipt")"
+          receipt_sha="$(cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- receipt-sha "$receipt")"
+          [[ "$receipt_repository" == "$RECEIPT_REPOSITORY" ]] || { echo '::error::receipt repository input does not match canonical receipt'; exit 1; }
+          [[ "$receipt_run_id" == "$EVALUATION_RUN_ID" ]] || { echo '::error::receipt evaluation run id mismatch'; exit 1; }
+          [[ "$receipt_run_attempt" == "$EVALUATION_RUN_ATTEMPT" ]] || { echo '::error::receipt evaluation run attempt mismatch'; exit 1; }
+          [[ "$request_execution_id" == "eval-$EVALUATION_RUN_ID-$EVALUATION_RUN_ATTEMPT" ]] || { echo '::error::receipt request_execution_id mismatch'; exit 1; }
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$request_id")"
+
+          jq -c '{event_type:"jpapt.candidate-completed",client_payload:.}' "$receipt" > .ci/duplicate-e2e/dispatch.json
+          {
+            echo "request_id=$request_id"
+            echo "request_execution_id=$request_execution_id"
+            echo "request_key=$request_key"
+            echo "receipt_sha256=$receipt_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Redeliver exact completion and wait for second ACK
+        id: duplicate
+        shell: bash
+        env:
+          TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+          ORCHESTRATOR_TOKEN: ${{ github.token }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          RECEIPT_SHA256: ${{ steps.receipt.outputs.receipt_sha256 }}
+          REQUEST_ID: ${{ steps.receipt.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.receipt.outputs.request_execution_id }}
+          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
+          EVALUATION_RUN_ATTEMPT: ${{ inputs.evaluation_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ -n "${TARGET_TOKEN:-}" ]] || { echo '::error::TARGET_REPO_TOKEN is required'; exit 1; }
+
+          before_receiver="$(GH_TOKEN="$TARGET_TOKEN" gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
+          before_ack="$(GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-completion-ack.yml/runs?event=repository_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
+          before_lifecycle_count="$(GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=candidate-lifecycle-${{ steps.receipt.outputs.request_key }}-acknowledged" --jq '.total_count')"
+
+          GH_TOKEN="$TARGET_TOKEN" bash scripts/ci/repository-dispatch-with-retry.sh \
+            "$RECEIPT_REPOSITORY" .ci/duplicate-e2e/dispatch.json 3
+
+          receiver_run=''
+          for _ in $(seq 1 40); do
+            receiver_run="$(GH_TOKEN="$TARGET_TOKEN" gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=10" \
+              --jq ".workflow_runs[] | select(.id > $before_receiver) | .id" | head -n1)"
+            [[ -z "$receiver_run" ]] || break
+            sleep 2
+          done
+          [[ -n "$receiver_run" ]] || { echo '::error::duplicate receiver run not found'; exit 1; }
+
+          wait_success() {
+            local token="$1" repo="$2" run_id="$3" label="$4"
+            local deadline=$((SECONDS + TIMEOUT_SECONDS)) status conclusion
+            while (( SECONDS < deadline )); do
+              read -r status conclusion < <(GH_TOKEN="$token" gh api "/repos/$repo/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+              if [[ "$status" == completed ]]; then
+                [[ "$conclusion" == success ]] || { echo "::error::$label failed: run=$run_id conclusion=$conclusion"; return 1; }
+                return 0
+              fi
+              sleep 3
+            done
+            echo "::error::$label timed out: run=$run_id"
+            return 1
+          }
+          wait_success "$TARGET_TOKEN" "$RECEIPT_REPOSITORY" "$receiver_run" receiver
+
+          ack_run=''
+          for _ in $(seq 1 60); do
+            ack_run="$(GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/candidate-completion-ack.yml/runs?event=repository_dispatch&per_page=10" \
+              --jq ".workflow_runs[] | select(.id > $before_ack) | .id" | head -n1)"
+            [[ -z "$ack_run" ]] || break
+            sleep 2
+          done
+          [[ -n "$ack_run" ]] || { echo '::error::duplicate ACK run not found'; exit 1; }
+          wait_success "$ORCHESTRATOR_TOKEN" "$GITHUB_REPOSITORY" "$ack_run" acknowledgement
+
+          lifecycle_name="candidate-lifecycle-${{ steps.receipt.outputs.request_key }}-acknowledged"
+          deadline=$((SECONDS + TIMEOUT_SECONDS))
+          newest_lifecycle_id=''
+          while (( SECONDS < deadline )); do
+            lifecycle_json="$(GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=$lifecycle_name")"
+            lifecycle_count="$(jq -r '.total_count' <<<"$lifecycle_json")"
+            newest_lifecycle_id="$(jq -r '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty' <<<"$lifecycle_json")"
+            if (( lifecycle_count > before_lifecycle_count )) && [[ -n "$newest_lifecycle_id" ]]; then
+              break
+            fi
+            sleep 3
+          done
+          [[ -n "$newest_lifecycle_id" ]] || { echo '::error::duplicate acknowledged lifecycle artifact not observed'; exit 1; }
+
+          mkdir -p .ci/duplicate-e2e/lifecycle .ci/duplicate-e2e/ack
+          GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$newest_lifecycle_id/zip" > /tmp/duplicate-lifecycle.zip
+          unzip -q /tmp/duplicate-lifecycle.zip -d .ci/duplicate-e2e/lifecycle
+          lifecycle=.ci/duplicate-e2e/lifecycle/candidate-request-lifecycle.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate "$lifecycle"
+
+          ack_artifact_name="candidate-completion-ack-$RECEIPT_SHA256"
+          ack_artifact_id="$(GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$ack_run/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$ack_artifact_name\") | .id" | head -n1)"
+          [[ -n "$ack_artifact_id" ]] || { echo '::error::duplicate ACK artifact missing'; exit 1; }
+          GH_TOKEN="$ORCHESTRATOR_TOKEN" gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ack_artifact_id/zip" > /tmp/duplicate-ack.zip
+          unzip -q /tmp/duplicate-ack.zip -d .ci/duplicate-e2e/ack
+          ack=.ci/duplicate-e2e/ack/candidate-completion-ack.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- ack-validate "$ack" >/dev/null
+          cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+            ack-binding --receipt .ci/duplicate-e2e/receipt/candidate-completion-receipt.json --ack "$ack" --orchestrator "$GITHUB_REPOSITORY"
+
+          python - "$lifecycle" "$ack" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          lifecycle = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          ack = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          expected = {
+              'request_id': os.environ['REQUEST_ID'],
+              'request_execution_id': os.environ['REQUEST_EXECUTION_ID'],
+              'receipt_sha256': os.environ['RECEIPT_SHA256'],
+              'evaluation_run_id': int(os.environ['EVALUATION_RUN_ID']),
+              'evaluation_run_attempt': int(os.environ['EVALUATION_RUN_ATTEMPT']),
+          }
+          assert lifecycle['state'] == 'acknowledged'
+          for key, value in expected.items():
+              assert lifecycle[key] == value, (key, lifecycle[key], value)
+          for key in ('request_id', 'request_execution_id', 'receipt_sha256'):
+              assert ack[key] == expected[key], (key, ack[key], expected[key])
+          assert ack['evaluation_run_id'] == expected['evaluation_run_id']
+          assert ack['evaluation_run_attempt'] == expected['evaluation_run_attempt']
+          PY
+
+          jq -n \
+            --argjson receiver_run_id "$receiver_run" \
+            --argjson ack_run_id "$ack_run" \
+            --argjson lifecycle_artifact_id "$newest_lifecycle_id" \
+            --argjson ack_artifact_id "$ack_artifact_id" \
+            --arg request_id "$REQUEST_ID" \
+            --arg request_execution_id "$REQUEST_EXECUTION_ID" \
+            --arg receipt_sha256 "$RECEIPT_SHA256" \
+            --argjson evaluation_run_id "$EVALUATION_RUN_ID" \
+            --argjson evaluation_run_attempt "$EVALUATION_RUN_ATTEMPT" \
+            '{receiver_run_id:$receiver_run_id,ack_run_id:$ack_run_id,lifecycle_artifact_id:$lifecycle_artifact_id,ack_artifact_id:$ack_artifact_id,request_id:$request_id,request_execution_id:$request_execution_id,receipt_sha256:$receipt_sha256,evaluation_run_id:$evaluation_run_id,evaluation_run_attempt:$evaluation_run_attempt,state:"acknowledged",idempotent:true}' \
+            > .ci/duplicate-e2e/evidence.json
+          {
+            echo "receiver_run_id=$receiver_run"
+            echo "ack_run_id=$ack_run"
+            echo "lifecycle_artifact_id=$newest_lifecycle_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Preserve duplicate E2E evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-protocol-duplicate-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/duplicate-e2e/evidence.json
+          retention-days: 30
+
+      - name: Duplicate E2E summary
+        shell: bash
+        run: |
+          {
+            echo '## Candidate protocol duplicate completion E2E'
+            echo
+            printf -- '- request id: `%s`\n' '${{ steps.receipt.outputs.request_id }}'
+            printf -- '- request execution id: `%s`\n' '${{ steps.receipt.outputs.request_execution_id }}'
+            printf -- '- receipt sha256: `%s`\n' '${{ steps.receipt.outputs.receipt_sha256 }}'
+            printf -- '- duplicate receiver run: `%s`\n' '${{ steps.duplicate.outputs.receiver_run_id }}'
+            printf -- '- duplicate ACK run: `%s`\n' '${{ steps.duplicate.outputs.ack_run_id }}'
+            printf -- '- terminal lifecycle: `acknowledged`\n'
+            printf -- '- semantic result: **idempotent**\n'
+            printf -- '- evidence retention: `30 days`\n'
+            printf -- '- model/GPU/HF Jobs compute: `none`\n'
+          } >> "$GITHUB_STEP_SUMMARY"
