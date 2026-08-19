@@ -104,9 +104,10 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
-          sibling_needle='PRIVATE_CONSUMER_ROOT: $'
-          sibling_needle+='{{ github.workspace }}/../jpapt-private-consumer'
-          grep -F "$sibling_needle" "$workflow"
+          tmp_needle='PRIVATE_CONSUMER_ROOT: /tmp/jpapt-private-consumer-$'
+          tmp_needle+='{{ github.run_id }}-$'
+          tmp_needle+='{{ github.run_attempt }}'
+          grep -F "$tmp_needle" "$workflow"
           grep -F 'private consumer root must remain outside the public Cargo workspace' "$workflow"
           grep -F 'git -C "$PRIVATE_CONSUMER_ROOT" fetch --no-tags --depth=1' "$workflow"
           grep -F '"https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"' "$workflow"
