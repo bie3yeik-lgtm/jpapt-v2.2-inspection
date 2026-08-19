@@ -81,7 +81,9 @@ jobs:
           grep -F 'permissions:' "$workflow"
           grep -F '  contents: read' "$workflow"
           grep -F 'environment: Private-Secrets' "$workflow"
-          grep -F 'token: ${{ secrets.SOURCE_REPO_TOKEN }}' "$workflow"
+          secret_needle='token: $'
+          secret_needle+='{{ secrets.SOURCE_REPO_TOKEN }}'
+          grep -F "$secret_needle" "$workflow"
           [[ "$(grep -Fc 'secrets.SOURCE_REPO_TOKEN' "$workflow")" == 1 ]]
           grep -F 'persist-credentials: false' "$workflow"
           if grep -Eq 'secrets\.(TARGET_REPO_TOKEN|JPAPT_ACK_TOKEN|HF_TOKEN)' "$workflow"; then
@@ -98,14 +100,18 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
-          grep -F 'ref: ${{ steps.target.outputs.private_revision }}' "$workflow"
-          grep -F 'ref: ${{ steps.target.outputs.public_revision }}' "$workflow"
+          private_ref_needle='ref: $'
+          private_ref_needle+='{{ steps.target.outputs.private_revision }}'
+          public_ref_needle='ref: $'
+          public_ref_needle+='{{ steps.target.outputs.public_revision }}'
+          grep -F "$private_ref_needle" "$workflow"
+          grep -F "$public_ref_needle" "$workflow"
           grep -F 'git -C public-authority merge-base --is-ancestor' "$workflow"
           grep -F 'private accepted revision changed without review' "$workflow"
           grep -F 'authority_promoted:false' "$workflow"
           grep -F 'accepted revision remains:' "$workflow"
-          if grep -F 'accepted_revision=' "$workflow"; then
-            echo 'trusted acceptance must never write accepted_revision state' >&2
+          if grep -Eq 'git push|gh api --method (PUT|PATCH|POST|DELETE)|contents: write|packages: write' "$workflow"; then
+            echo 'trusted acceptance unexpectedly contains an authority mutation primitive' >&2
             exit 1
           fi
 
@@ -116,7 +122,7 @@ jobs:
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
           grep -F 'test_jpapt_upstream_contract_diff.py' "$workflow"
           grep -F 'cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_' "$workflow"
-          grep -F "-name 'jpapt*.rs'" "$workflow"
+          grep -F -- "-name 'jpapt*.rs'" "$workflow"
           grep -F 'cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"' "$workflow"
           grep -F 'jpapt-private-dispatch.yml' "$workflow"
           grep -F 'jpapt-private-receipt.yml' "$workflow"
