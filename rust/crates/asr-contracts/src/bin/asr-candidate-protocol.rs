@@ -321,15 +321,81 @@ fn validate_hex(value: &str, len: usize, prefix: &str, field: &str) -> Result<()
 }
 
 fn validate_https_url(value: &str, field: &str) -> Result<(), String> {
-    let rest = value
-        .strip_prefix("https://")
-        .ok_or_else(|| format!("{field} must use HTTPS and include a hostname"))?;
-    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if host.is_empty() || host.starts_with(':') {
-        Err(format!("{field} must use HTTPS and include a hostname"))
-    } else {
-        Ok(())
+    let invalid = || format!("{field} must be a valid ASCII HTTPS URI with a hostname");
+    if !value.is_ascii()
+        || value
+            .chars()
+            .any(|ch| ch.is_ascii_control() || ch.is_ascii_whitespace())
+    {
+        return Err(invalid());
     }
+    let rest = value.strip_prefix("https://").ok_or_else(&invalid)?;
+    let authority_end = rest
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, '/' | '?' | '#'))
+        .map(|(index, _)| index)
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return Err(invalid());
+    }
+
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (host, Some(port)),
+        Some(_) => return Err(invalid()),
+        None => (authority, None),
+    };
+    if host.is_empty() {
+        return Err(invalid());
+    }
+    for label in host.split('.') {
+        if label.is_empty()
+            || !label
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+            || !label
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric())
+            || !label
+                .chars()
+                .last()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        {
+            return Err(invalid());
+        }
+    }
+    if let Some(port) = port {
+        let parsed = port
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(&invalid)?;
+        let _ = parsed;
+    }
+
+    let suffix = &rest[authority_end..];
+    let bytes = suffix.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return Err(invalid());
+            }
+            index += 3;
+            continue;
+        }
+        let ch = byte as char;
+        if !(ch.is_ascii_alphanumeric() || "-._~:/?#[]@!$&'()*+,;=".contains(ch)) {
+            return Err(invalid());
+        }
+        index += 1;
+    }
+    Ok(())
 }
 
 fn validate_rfc3339(value: &str, field: &str) -> Result<(), String> {
@@ -666,6 +732,34 @@ mod tests {
         }
         validate_repository("owner/.github", "repository").unwrap();
         validate_repository(".owner/repo", "repository").unwrap();
+    }
+
+    #[test]
+    fn validates_canonical_https_urls() {
+        validate_https_url(
+            "https://github.com/owner/repo/actions/runs/123?check=1#summary",
+            "run_url",
+        )
+        .unwrap();
+        validate_https_url("https://localhost:8443/actions/runs/123", "run_url").unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_https_urls() {
+        for value in [
+            "http://github.com/owner/repo",
+            "https://",
+            "https://:443/path",
+            "https://github .com/path",
+            "https://github..com/path",
+            "https://-github.com/path",
+            "https://github.com:0/path",
+            "https://user@github.com/path",
+            "https://github.com/%ZZ",
+            "https://github.com/path with space",
+        ] {
+            assert!(validate_https_url(value, "run_url").is_err(), "{value}");
+        }
     }
 
     #[test]
