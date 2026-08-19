@@ -1,0 +1,116 @@
+name: Candidate Protocol Duplicate E2E Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-duplicate-e2e.yml
+      - .github/workflows/candidate-protocol-duplicate-e2e-contracts.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - .github/actionlint.yaml
+      - .github/workflows/candidate-protocol-duplicate-e2e.yml
+      - .github/workflows/candidate-protocol-duplicate-e2e-contracts.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
+      - scripts/ci/build-candidate-request-lifecycle.py
+      - rust/crates/asr-contracts/src/bin/asr-candidate-protocol.rs
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-protocol-duplicate-e2e-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate duplicate completion E2E harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint duplicate E2E workflows
+        run: >-
+          actionlint -color -ignore 'SC2016'
+          .github/workflows/candidate-protocol-duplicate-e2e.yml
+          .github/workflows/candidate-protocol-duplicate-e2e-contracts.yml
+      - name: Verify manual-only external safety boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/candidate-protocol-duplicate-e2e.yml
+          grep -F 'workflow_dispatch:' "$workflow"
+          if grep -Eq '^  (push|pull_request|schedule|repository_dispatch|workflow_run):' "$workflow"; then
+            echo 'duplicate E2E unexpectedly has an automatic trigger' >&2
+            exit 1
+          fi
+          grep -F 'environment: Private-Secrets' "$workflow"
+          grep -F 'TARGET_REPO_TOKEN is required' "$workflow"
+          grep -F '[[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]]' "$workflow"
+          if grep -F 'secrets.SOURCE_REPO_TOKEN' "$workflow"; then
+            echo 'duplicate E2E must not use SOURCE_REPO_TOKEN' >&2
+            exit 1
+          fi
+      - name: Verify exact-receipt redelivery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/candidate-protocol-duplicate-e2e.yml
+          grep -F 'candidate-completion-$EVALUATION_RUN_ID-$EVALUATION_RUN_ATTEMPT' "$workflow"
+          grep -F 'receipt-validate "$receipt"' "$workflow"
+          grep -F 'receipt-sha "$receipt"' "$workflow"
+          grep -F 'eval-$EVALUATION_RUN_ID-$EVALUATION_RUN_ATTEMPT' "$workflow"
+          grep -F 'repository-dispatch-with-retry.sh' "$workflow"
+          grep -F '.ci/duplicate-e2e/dispatch.json 3' "$workflow"
+      - name: Verify second receiver and ACK success contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/candidate-protocol-duplicate-e2e.yml
+          grep -F 'candidate-completion-receipt.yml/runs?event=repository_dispatch' "$workflow"
+          grep -F 'candidate-completion-ack.yml/runs?event=repository_dispatch' "$workflow"
+          grep -F 'wait_success "$TARGET_TOKEN" "$RECEIPT_REPOSITORY" "$receiver_run" receiver' "$workflow"
+          grep -F 'wait_success "$ORCHESTRATOR_TOKEN" "$GITHUB_REPOSITORY" "$ack_run" acknowledgement' "$workflow"
+      - name: Verify semantic idempotence invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/candidate-protocol-duplicate-e2e.yml
+          grep -F "assert lifecycle['state'] == 'acknowledged'" "$workflow"
+          grep -F "'request_id': os.environ['REQUEST_ID']" "$workflow"
+          grep -F "'request_execution_id': os.environ['REQUEST_EXECUTION_ID']" "$workflow"
+          grep -F "'receipt_sha256': os.environ['RECEIPT_SHA256']" "$workflow"
+          grep -F "'evaluation_run_id': int(os.environ['EVALUATION_RUN_ID'])" "$workflow"
+          grep -F "'evaluation_run_attempt': int(os.environ['EVALUATION_RUN_ATTEMPT'])" "$workflow"
+          grep -F 'ack-binding --receipt .ci/duplicate-e2e/receipt/candidate-completion-receipt.json' "$workflow"
+          grep -F 'lifecycle_count > before_lifecycle_count' "$workflow"
+          grep -F 'idempotent:true' "$workflow"
+      - name: Verify bounded evidence and zero-compute scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/candidate-protocol-duplicate-e2e.yml
+          grep -F 'retention-days: 30' "$workflow"
+          if grep -F 'candidate-package-evaluate-v2.yml/dispatches' "$workflow"; then
+            echo 'duplicate E2E must not rerun candidate evaluation' >&2
+            exit 1
+          fi
+          if grep -F 'hf jobs run' "$workflow"; then
+            echo 'duplicate E2E must not launch Hugging Face Jobs' >&2
+            exit 1
+          fi
