@@ -63,28 +63,55 @@ jobs:
             echo "expected_accepted=$expected_accepted"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Checkout immutable private consumer
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ steps.target.outputs.private_repository }}
-          ref: ${{ steps.target.outputs.private_revision }}
-          token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          path: private-consumer
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify private checkout identity and credential cleanup
+      - name: Fetch immutable private consumer without submodule traversal
         shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          PRIVATE_REPOSITORY: ${{ steps.target.outputs.private_repository }}
+          PRIVATE_REVISION: ${{ steps.target.outputs.private_revision }}
         run: |
           set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || {
+            echo '::error::SOURCE_REPO_TOKEN is required for the canonical private consumer'
+            exit 1
+          }
+
+          askpass="$RUNNER_TEMP/jpapt-private-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() {
+            rm -f "$askpass"
+            unset SOURCE_REPO_TOKEN
+          }
+          trap cleanup EXIT
+
+          rm -rf private-consumer
+          git init -q private-consumer
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C private-consumer fetch --no-tags --depth=1 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"
+          git -C private-consumer checkout --detach --force FETCH_HEAD
+
           actual="$(git -C private-consumer rev-parse HEAD)"
-          [[ "$actual" == '${{ steps.target.outputs.private_revision }}' ]] || {
+          [[ "$actual" == "$PRIVATE_REVISION" ]] || {
             echo "::error::private checkout drifted: $actual"
             exit 1
           }
+          if [[ -n "$(git -C private-consumer remote 2>/dev/null)" ]]; then
+            git -C private-consumer remote -v >&2
+            echo '::error::manual private fetch unexpectedly persisted a remote'
+            exit 1
+          fi
           if git -C private-consumer config --local --get-regexp 'http\..*\.extraheader' >/tmp/private-extraheaders 2>/dev/null; then
             cat /tmp/private-extraheaders >&2
-            echo '::error::private checkout retained an HTTP credential header'
+            echo '::error::manual private fetch retained an HTTP credential header'
             exit 1
           fi
 
