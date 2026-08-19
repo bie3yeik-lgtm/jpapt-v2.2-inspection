@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      PRIVATE_CONSUMER_ROOT: ${{ runner.temp }}/jpapt-private-consumer
+      PRIVATE_CONSUMER_ROOT: ${{ github.workspace }}/../jpapt-private-consumer
     steps:
       - name: Checkout public controller
         uses: actions/checkout@v7
