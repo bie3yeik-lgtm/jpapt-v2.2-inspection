@@ -66,6 +66,19 @@ jobs:
           PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
             bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo workflow.yml /tmp/body.json 3
           test "$(cat /tmp/workflow-dispatch-count)" = 3
+      - name: Accept valid dot-prefixed repository identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/gh <<'SH'
+          #!/usr/bin/env bash
+          exit 0
+          SH
+          chmod +x /tmp/fake-bin/gh
+          for repository in .owner/repo owner/.github owner/repo-1 owner/repo_name; do
+            PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+              bash scripts/ci/workflow-dispatch-with-retry.sh "$repository" workflow.yml /tmp/body.json 1
+          done
       - name: Stop at retry limit
         shell: bash
         run: |
@@ -86,18 +99,23 @@ jobs:
           set -euo pipefail
           cat > /tmp/fake-bin/gh <<'SH'
           #!/usr/bin/env bash
-          echo 'gh must not be called' >&2
+          echo invoked >> /tmp/unexpected-workflow-gh
           exit 99
           SH
           chmod +x /tmp/fake-bin/gh
-          if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
-            bash scripts/ci/workflow-dispatch-with-retry.sh invalid workflow.yml /tmp/body.json 3; then
-            exit 1
-          fi
+          rm -f /tmp/unexpected-workflow-gh
+          for repository in invalid ./repo ../repo owner/. owner/.. owner/repo/extra owner//repo 'owner/répo'; do
+            if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
+              bash scripts/ci/workflow-dispatch-with-retry.sh "$repository" workflow.yml /tmp/body.json 3; then
+              echo "invalid repository unexpectedly accepted: $repository" >&2
+              exit 1
+            fi
+          done
           if PATH="/tmp/fake-bin:$PATH" GH_TOKEN=synthetic \
             bash scripts/ci/workflow-dispatch-with-retry.sh owner/repo path/workflow.yml /tmp/body.json 3; then
             exit 1
           fi
+          test ! -e /tmp/unexpected-workflow-gh
       - name: Reject malformed dispatch body before dispatch
         shell: bash
         run: |

@@ -12,6 +12,12 @@ max_attempts="${4:-3}"
   echo "ERROR: repository must use owner/name: $repository" >&2
   exit 2
 }
+owner="${repository%%/*}"
+name="${repository#*/}"
+if [[ "$owner" == "." || "$owner" == ".." || "$name" == "." || "$name" == ".." ]]; then
+  echo "ERROR: repository must not contain dot path segments: $repository" >&2
+  exit 2
+fi
 [[ "$workflow" =~ ^[A-Za-z0-9_.-]+$ ]] || {
   echo "ERROR: workflow must be a file name or numeric id without path separators: $workflow" >&2
   exit 2
