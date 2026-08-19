@@ -25,34 +25,41 @@ jobs:
           set -euo pipefail
           repository='largoyo/premiere-autoprocess-plugin'
           scope="repository:${repository}:pull"
-          token_response="$(curl --fail-with-body --silent --show-error --location \
-            --get 'https://ghcr.io/token' \
-            --data-urlencode "scope=$scope")"
-          token="$(jq -er '.token // .access_token' <<<"$token_response")"
-          [[ -n "$token" ]]
-
-          response="$RUNNER_TEMP/ghcr-tags.json"
-          code="$(curl --silent --show-error --location \
-            --output "$response" \
+          token_body="$RUNNER_TEMP/ghcr-token.json"
+          token_code="$(curl --silent --show-error --location \
+            --output "$token_body" \
             --write-out '%{http_code}' \
-            --header "Authorization: Bearer $token" \
-            --header 'Accept: application/json' \
-            "https://ghcr.io/v2/${repository}/tags/list")"
+            --get 'https://ghcr.io/token' \
+            --data-urlencode 'service=ghcr.io' \
+            --data-urlencode "scope=$scope")"
 
           public_ready=false
+          tags_code=0
           tag_count=0
-          if [[ "$code" == 200 ]] && jq -e --arg repo "$repository" '.name == $repo and (.tags == null or (.tags | type == "array"))' "$response" >/dev/null; then
-            public_ready=true
-            tag_count="$(jq '(.tags // []) | length' "$response")"
+          if [[ "$token_code" == 200 ]] && token="$(jq -er '.token // .access_token' "$token_body" 2>/dev/null)"; then
+            response="$RUNNER_TEMP/ghcr-tags.json"
+            tags_code="$(curl --silent --show-error --location \
+              --output "$response" \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $token" \
+              --header 'Accept: application/json' \
+              "https://ghcr.io/v2/${repository}/tags/list")"
+            if [[ "$tags_code" == 200 ]] && jq -e --arg repo "$repository" '.name == $repo and (.tags == null or (.tags | type == "array"))' "$response" >/dev/null; then
+              public_ready=true
+              tag_count="$(jq '(.tags // []) | length' "$response")"
+            fi
           fi
+
           echo "public_ready=$public_ready" >> "$GITHUB_OUTPUT"
-          echo "http_code=$code" >> "$GITHUB_OUTPUT"
+          echo "token_http_code=$token_code" >> "$GITHUB_OUTPUT"
+          echo "tags_http_code=$tags_code" >> "$GITHUB_OUTPUT"
           echo "tag_count=$tag_count" >> "$GITHUB_OUTPUT"
           {
             echo '### Anonymous GHCR package probe'
             echo
             echo "- package: \`ghcr.io/${repository}\`"
-            echo "- registry tags HTTP status: \`$code\`"
+            echo "- anonymous token HTTP status: \`$token_code\`"
+            echo "- registry tags HTTP status: \`$tags_code\`"
             echo "- anonymously pull-visible namespace: \`$public_ready\`"
             echo "- visible tag count: \`$tag_count\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -60,7 +67,8 @@ jobs:
         shell: bash
         env:
           PUBLIC_READY: ${{ steps.probe.outputs.public_ready }}
-          HTTP_CODE: ${{ steps.probe.outputs.http_code }}
+          TOKEN_HTTP_CODE: ${{ steps.probe.outputs.token_http_code }}
+          TAGS_HTTP_CODE: ${{ steps.probe.outputs.tags_http_code }}
           TAG_COUNT: ${{ steps.probe.outputs.tag_count }}
         run: |
           set -euo pipefail
@@ -68,9 +76,10 @@ jobs:
           jq -n \
             --arg package 'ghcr.io/largoyo/premiere-autoprocess-plugin' \
             --argjson public_ready "$PUBLIC_READY" \
-            --argjson http_code "$HTTP_CODE" \
+            --argjson token_http_code "$TOKEN_HTTP_CODE" \
+            --argjson tags_http_code "$TAGS_HTTP_CODE" \
             --argjson visible_tag_count "$TAG_COUNT" \
-            '{schema_version:1,package:$package,anonymous_pull_namespace:$public_ready,http_status:$http_code,visible_tag_count:$visible_tag_count,credentials_used:false,package_mutated:false,docker_pull:false,docker_build:false,hf_jobs:false,model_compute:false}' \
+            '{schema_version:1,package:$package,anonymous_pull_namespace:$public_ready,token_http_status:$token_http_code,tags_http_status:$tags_http_code,visible_tag_count:$visible_tag_count,credentials_used:false,package_mutated:false,docker_pull:false,docker_build:false,hf_jobs:false,model_compute:false}' \
             > ghcr-package-visibility-probe/evidence.json
       - uses: actions/upload-artifact@v7
         with:
