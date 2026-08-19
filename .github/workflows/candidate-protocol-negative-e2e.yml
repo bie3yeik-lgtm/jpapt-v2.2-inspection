@@ -1,0 +1,266 @@
+name: Candidate Protocol Negative E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      receipt_repository:
+        description: Isolated external receiver repository in owner/name form
+        required: true
+        type: string
+      timeout_seconds:
+        description: Maximum wait per receiver run
+        required: false
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+
+concurrency:
+  group: candidate-protocol-negative-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  negative_e2e:
+    name: Verify external receiver fail-closed routing
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate negative E2E configuration
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo_re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          [[ "$RECEIPT_REPOSITORY" =~ $repo_re ]] || {
+            echo "::error::receipt_repository must use owner/name"
+            exit 1
+          }
+          [[ "$RECEIPT_REPOSITORY" != "$GITHUB_REPOSITORY" ]] || {
+            echo "::error::negative E2E requires an external receiver"
+            exit 1
+          }
+          [[ -n "${GH_TOKEN:-}" ]] || {
+            echo "::error::TARGET_REPO_TOKEN is required for external negative E2E"
+            exit 1
+          }
+          [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::timeout_seconds must be a positive integer"
+            exit 1
+          }
+          (( TIMEOUT_SECONDS >= 60 && TIMEOUT_SECONDS <= 600 )) || {
+            echo "::error::timeout_seconds must be between 60 and 600"
+            exit 1
+          }
+          gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml" >/dev/null
+
+      - name: Build negative receipt fixtures
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/negative-e2e
+          request_id="negative-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          execution_id="eval-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          jq -n \
+            --arg request_id "$request_id" \
+            --arg execution_id "$execution_id" \
+            --arg source_repository "largoyo/Premiere-AutoProcess-Plugin" \
+            --arg receipt_repository "$RECEIPT_REPOSITORY" \
+            --arg orchestrator_repository "$GITHUB_REPOSITORY" \
+            --arg run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg commit_sha "$GITHUB_SHA" \
+            --arg completed_at "$completed_at" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schema_version: 1,
+              request_id: $request_id,
+              request_execution_id: $execution_id,
+              source_repository: $source_repository,
+              receipt_repository: $receipt_repository,
+              conclusion: "success",
+              dry_run: true,
+              suite: "probe",
+              executor: "github",
+              environment: "linux-cpu",
+              provider: "CPUExecutionProvider",
+              orchestrator_repository: $orchestrator_repository,
+              workflow_file: "candidate-package-evaluate-v2.yml",
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              run_url: $run_url,
+              commit_sha: $commit_sha,
+              requested_candidate_id: "latest",
+              resolved_candidate_id: null,
+              image_ref: null,
+              image_digest: null,
+              result_artifact: null,
+              result_uri: null,
+              failed_jobs: [],
+              completed_at: $completed_at
+            }' > .ci/negative-e2e/base-receipt.json
+          python scripts/ci/build-candidate-completion-receipt.py --validate .ci/negative-e2e/base-receipt.json >/dev/null
+
+          jq -n --arg request_id "$request_id-malformed" \
+            '{event_type:"jpapt.candidate-completed",client_payload:{protocol_payload:{schema_version:1,request_id:$request_id}}}' \
+            > .ci/negative-e2e/malformed.json
+
+          jq '.orchestrator_repository="invalid-orchestrator/negative-fixture"' \
+            .ci/negative-e2e/base-receipt.json > .ci/negative-e2e/wrong-orchestrator-receipt.json
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --validate .ci/negative-e2e/wrong-orchestrator-receipt.json >/dev/null
+          jq -n --slurpfile payload .ci/negative-e2e/wrong-orchestrator-receipt.json \
+            '{event_type:"jpapt.candidate-completed",client_payload:{protocol_payload:$payload[0]}}' \
+            > .ci/negative-e2e/wrong-orchestrator.json
+
+          jq '.receipt_repository="bie3yeik-lgtm/jpapt-v2.2-inspection"' \
+            .ci/negative-e2e/base-receipt.json > .ci/negative-e2e/wrong-receiver-receipt.json
+          python scripts/ci/build-candidate-completion-receipt.py \
+            --validate .ci/negative-e2e/wrong-receiver-receipt.json >/dev/null
+          jq -n --slurpfile payload .ci/negative-e2e/wrong-receiver-receipt.json \
+            '{event_type:"jpapt.candidate-completed",client_payload:{protocol_payload:$payload[0]}}' \
+            > .ci/negative-e2e/wrong-receiver.json
+
+      - name: Exercise fail-closed receiver cases
+        id: negative
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+        run: |
+          set -euo pipefail
+          evidence='[]'
+
+          run_case() {
+            local case_name="$1"
+            local body_file="$2"
+            local expected_failure_step="$3"
+            local before run_id deadline status conclusion jobs validate_result binding_result build_result dispatch_result
+
+            before="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=1" \
+              --jq '.workflow_runs[0].id // 0')"
+            gh api --method POST "/repos/$RECEIPT_REPOSITORY/dispatches" --input "$body_file" >/dev/null
+
+            run_id=''
+            for _ in $(seq 1 40); do
+              run_id="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=10" \
+                --jq ".workflow_runs[] | select(.id > $before) | .id" | head -n1)"
+              [[ -z "$run_id" ]] || break
+              sleep 2
+            done
+            [[ -n "$run_id" ]] || {
+              echo "::error::$case_name receiver run not found"
+              return 1
+            }
+
+            deadline=$((SECONDS + TIMEOUT_SECONDS))
+            while (( SECONDS < deadline )); do
+              read -r status conclusion < <(gh api "/repos/$RECEIPT_REPOSITORY/actions/runs/$run_id" \
+                --jq '[.status, (.conclusion // "")] | @tsv')
+              [[ "$status" != completed ]] || break
+              sleep 3
+            done
+            [[ "$status" == completed ]] || {
+              echo "::error::$case_name receiver run timed out: $run_id"
+              return 1
+            }
+            [[ "$conclusion" == failure ]] || {
+              echo "::error::$case_name receiver unexpectedly concluded $conclusion: $run_id"
+              return 1
+            }
+
+            jobs="$(gh api "/repos/$RECEIPT_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
+            validate_result="$(jq -r '.jobs[0].steps[] | select(.name == "Validate CandidateCompletionReceiptV1") | .conclusion // ""' <<<"$jobs")"
+            binding_result="$(jq -r '.jobs[0].steps[] | select(.name == "Validate receiver and orchestrator binding") | .conclusion // ""' <<<"$jobs")"
+            build_result="$(jq -r '.jobs[0].steps[] | select(.name == "Build CandidateCompletionAckV1") | .conclusion // ""' <<<"$jobs")"
+            dispatch_result="$(jq -r '.jobs[0].steps[] | select(.name == "Dispatch acknowledgement to orchestrator") | .conclusion // ""' <<<"$jobs")"
+
+            case "$expected_failure_step" in
+              receipt)
+                [[ "$validate_result" == failure ]] || {
+                  echo "::error::$case_name expected receipt validation failure, got $validate_result"
+                  return 1
+                }
+                ;;
+              binding)
+                [[ "$validate_result" == success ]] || {
+                  echo "::error::$case_name receipt validation did not succeed: $validate_result"
+                  return 1
+                }
+                [[ "$binding_result" == failure ]] || {
+                  echo "::error::$case_name expected binding failure, got $binding_result"
+                  return 1
+                }
+                ;;
+              *)
+                echo "::error::unknown expected failure step: $expected_failure_step"
+                return 1
+                ;;
+            esac
+
+            [[ "$build_result" == skipped ]] || {
+              echo "::error::$case_name ACK build was not skipped: $build_result"
+              return 1
+            }
+            [[ "$dispatch_result" == skipped ]] || {
+              echo "::error::$case_name ACK dispatch was not skipped: $dispatch_result"
+              return 1
+            }
+
+            evidence="$(jq \
+              --arg case "$case_name" \
+              --argjson receiver_run_id "$run_id" \
+              --arg receipt_validation "$validate_result" \
+              --arg binding_validation "$binding_result" \
+              --arg ack_build "$build_result" \
+              --arg ack_dispatch "$dispatch_result" \
+              '. + [{case:$case,receiver_run_id:$receiver_run_id,conclusion:"failure",receipt_validation:$receipt_validation,binding_validation:$binding_validation,ack_build:$ack_build,ack_dispatch:$ack_dispatch}]' \
+              <<<"$evidence")"
+            echo "[negative-e2e] case=$case_name receiver_run=$run_id fail_closed=true"
+          }
+
+          run_case malformed .ci/negative-e2e/malformed.json receipt
+          run_case wrong-orchestrator .ci/negative-e2e/wrong-orchestrator.json binding
+          run_case wrong-receipt-repository .ci/negative-e2e/wrong-receiver.json binding
+
+          printf '%s\n' "$evidence" > .ci/negative-e2e/evidence.json
+          jq -e 'length == 3 and all(.[]; .conclusion == "failure" and .ack_build == "skipped" and .ack_dispatch == "skipped")' \
+            .ci/negative-e2e/evidence.json >/dev/null
+          echo "evidence_count=3" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve negative E2E evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-protocol-negative-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/negative-e2e/evidence.json
+          retention-days: 30
+
+      - name: Negative E2E summary
+        shell: bash
+        env:
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+        run: |
+          {
+            echo '## Candidate protocol external negative E2E'
+            echo
+            printf -- '- receiver: `%s`\n' "$RECEIPT_REPOSITORY"
+            printf -- '- malformed receipt: `rejected before ACK`\n'
+            printf -- '- wrong orchestrator: `rejected before ACK`\n'
+            printf -- '- wrong receipt repository: `rejected before ACK`\n'
+            printf -- '- evidence retention: `30 days`\n'
+            printf -- '- model/GPU/HF Jobs compute: `none`\n'
+          } >> "$GITHUB_STEP_SUMMARY"
