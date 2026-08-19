@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/hf-identity.sh"
 
 log(){ printf '[hf-push-config-version] %s\n' "$*" >&2; }
 fail(){ printf '[hf-push-config-version] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -13,6 +15,8 @@ SOURCE="${1:-}"
 [[ $# -eq 1 ]] || fail "runtime profile selection is centralized; do not pass extra positional arguments"
 [[ -n "${HF_TOKEN:-}" ]] || fail "HF_TOKEN is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
+HF_BUCKET_ID="$(hf_normalize_bucket_id "$HF_BUCKET")" || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 command -v gh >/dev/null 2>&1 || fail "gh CLI is unavailable; central allocation requires GitHub access"
@@ -52,13 +56,10 @@ BUNDLE_SHA="$(printf '%s\n' "$PREPARE_SUMMARY" | sed -n 's/^bundle_sha256=//p')"
 [[ "$BUNDLE_SHA" =~ ^[0-9A-Fa-f]{64}$ ]] || fail \
   "Rust config publisher did not return a valid bundle SHA-256"
 
-BUCKET="${HF_BUCKET#hf://buckets/}"
-BUCKET="${BUCKET%/}"
-[[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
-VERSIONS="hf://buckets/${BUCKET}/config/versions"
+VERSIONS="hf://buckets/${HF_BUCKET_ID}/config/versions"
 
 CONFIG_VERSION="$(
-  CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= \
+  CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= HF_BUCKET="$HF_BUCKET_ID" \
   bash scripts/hf/hf-request-id.sh config
 )"
 [[ "$CONFIG_VERSION" =~ ^config-[0-9]{6}$ ]] || fail \
@@ -79,7 +80,7 @@ cargo run --quiet --locked \
   --bundle-sha256 "$BUNDLE_SHA" \
   >/dev/null
 
-hf buckets cp --token "$HF_TOKEN" "$CURRENT" "hf://buckets/${BUCKET}/config/current.json" >/dev/null
+hf buckets cp --token "$HF_TOKEN" "$CURRENT" "hf://buckets/${HF_BUCKET_ID}/config/current.json" >/dev/null
 
 log "Activated: ${CONFIG_VERSION}"
 log "Profile set: ${PROFILE_SET}"

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/hf-identity.sh"
 
 log(){ printf '[hf-request-id] %s\n' "$*" >&2; }
 fail(){ printf '[hf-request-id] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -14,6 +16,8 @@ COLLECTION="${1:-}"
   || fail "collection must be 'candidates', 'experiments', or 'config'"
 [[ $# -eq 1 ]] || fail "Usage: $0 <candidates|experiments|config>"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
+HF_BUCKET_ID="$(hf_normalize_bucket_id "$HF_BUCKET")" || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
 command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
 command -v cargo >/dev/null 2>&1 || fail "cargo is required for the Rust allocation envelope"
 
@@ -47,7 +51,7 @@ gh workflow run "$ALLOCATOR_WORKFLOW" \
   --repo "$ALLOCATOR_REPOSITORY" \
   --ref "$ALLOCATOR_REF" \
   -f "request_id=${REQUEST_ID}" \
-  -f "hf_bucket=${HF_BUCKET#hf://buckets/}" \
+  -f "hf_bucket=${HF_BUCKET_ID}" \
   -f "collection=${COLLECTION}" \
   -f "metadata_json=${METADATA_JSON}"
 

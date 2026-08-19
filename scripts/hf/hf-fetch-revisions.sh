@@ -18,6 +18,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/hf-identity.sh"
 
 log() { printf '[hf-fetch-revisions] %s\n' "$*"; }
 fail() { printf '[hf-fetch-revisions] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -33,12 +35,11 @@ contracts() {
 
 require_env HF_TOKEN
 require_env HF_BUCKET
+HF_BUCKET_ID="$(hf_normalize_bucket_id "$HF_BUCKET")" || \
+    fail "HF_BUCKET must use canonical namespace/bucket-name format"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 
-HF_BUCKET_ID="${HF_BUCKET#hf://buckets/}"
-HF_BUCKET_ID="${HF_BUCKET_ID%/}"
-[[ "$HF_BUCKET_ID" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
 HF_BUCKET_URI="hf://buckets/${HF_BUCKET_ID}"
 
 LOCAL_CONFIG_ROOT="$ROOT/.ci/hf/config"

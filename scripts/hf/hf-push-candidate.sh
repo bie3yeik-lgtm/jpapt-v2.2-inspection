@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/hf-identity.sh"
 
 log(){ printf '[hf-push-candidate] %s\n' "$*"; }
 fail(){ printf '[hf-push-candidate] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -13,6 +15,8 @@ SOURCE="${1:-}"
 [[ $# -eq 1 ]] || fail "candidate IDs are centrally allocated; do not pass a manual prefix or ID"
 [[ -n "${HF_TOKEN:-}" ]] || fail "HF_TOKEN is required"
 [[ -n "${HF_BUCKET:-}" ]] || fail "HF_BUCKET is required"
+HF_BUCKET_ID="$(hf_normalize_bucket_id "$HF_BUCKET")" || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
@@ -64,10 +68,10 @@ for variant in variants:
 PY
 
 CANDIDATE_ID="$(
-  CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= \
+  CANDIDATE_ID= EVALUATION_ID= PROVIDER_ID= HF_BUCKET="$HF_BUCKET_ID" \
   bash scripts/hf/hf-request-id.sh candidates
 )"
-REMOTE="hf://buckets/${HF_BUCKET#hf://buckets/}/candidates/${CANDIDATE_ID}"
+REMOTE="hf://buckets/${HF_BUCKET_ID}/candidates/${CANDIDATE_ID}"
 PLAN="$(mktemp -t hf-candidate-plan.XXXXXX.jsonl)"
 trap 'rm -f "$PLAN"' EXIT
 

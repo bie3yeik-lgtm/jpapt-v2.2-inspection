@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/hf-identity.sh"
 
 log(){ printf '[hf-promote-candidate] %s\n' "$*"; }
 fail(){ printf '[hf-promote-candidate] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -12,6 +14,10 @@ require_env(){ [[ -n "${!1:-}" ]] || fail "Required environment variable is not 
 require_env HF_TOKEN
 require_env HF_BUCKET
 require_env HF_MODEL_REPO
+BUCKET="$(hf_normalize_bucket_id "$HF_BUCKET")" || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
+MODEL_REPO="$(hf_normalize_model_repo_id "$HF_MODEL_REPO")" || \
+  fail "HF_MODEL_REPO must use canonical namespace/model-name format"
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 command -v python >/dev/null 2>&1 || fail "python is unavailable"
@@ -57,10 +63,6 @@ METRICS="$RUN_DIRECTORY/metrics.json"
 run_project_python(){
   if command -v uv >/dev/null 2>&1; then uv run python "$@"; else python "$@"; fi
 }
-
-BUCKET="${HF_BUCKET#hf://buckets/}"; BUCKET="${BUCKET%/}"
-MODEL_REPO="${HF_MODEL_REPO#hf://models/}"; MODEL_REPO="${MODEL_REPO#hf://}"; MODEL_REPO="${MODEL_REPO%/}"
-[[ "$BUCKET" == */* && "$MODEL_REPO" == */* ]] || fail "HF Bucket/Model Repo must use namespace/name format"
 
 STAGING="$ROOT/.ci/promotion"
 CANDIDATE_ROOT="$STAGING/candidate"
