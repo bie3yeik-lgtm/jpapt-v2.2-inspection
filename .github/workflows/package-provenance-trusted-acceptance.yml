@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/package-provenance-trusted-acceptance.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,7 +19,7 @@ env:
 
 jobs:
   acceptance:
-    if: ${{ github.head_ref == 'agent/package-provenance-trusted-acceptance-20260820' }}
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/package-provenance-trusted-acceptance-20260820' }}
     name: Validate private package/provenance integration
     environment: Private-Secrets
     runs-on: ubuntu-24.04
