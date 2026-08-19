@@ -99,14 +99,29 @@ jobs:
             exit 1
           fi
 
-      - name: Verify immutable fetch and no auto-promotion semantics
+      - name: Verify private workspace isolation and immutable fetch
         shell: bash
         run: |
           set -euo pipefail
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
-          grep -F 'git -C private-consumer fetch --no-tags --depth=1' "$workflow"
+          runner_temp_needle='PRIVATE_CONSUMER_ROOT: $'
+          runner_temp_needle+='{{ runner.temp }}/jpapt-private-consumer'
+          grep -F "$runner_temp_needle" "$workflow"
+          grep -F 'private consumer root must remain outside the public Cargo workspace' "$workflow"
+          grep -F 'git -C "$PRIVATE_CONSUMER_ROOT" fetch --no-tags --depth=1' "$workflow"
           grep -F '"https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_REVISION"' "$workflow"
           grep -F '[[ "$actual" == "$PRIVATE_REVISION" ]]' "$workflow"
+          grep -F 'crate="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"' "$workflow"
+          if grep -F 'crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements' "$workflow"; then
+            echo 'private Rust crate must not be nested under the public Cargo workspace' >&2
+            exit 1
+          fi
+
+      - name: Verify no auto-promotion semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/private-consumer-trusted-acceptance.yml
           public_ref_needle='ref: $'
           public_ref_needle+='{{ steps.target.outputs.public_revision }}'
           grep -F "$public_ref_needle" "$workflow"
