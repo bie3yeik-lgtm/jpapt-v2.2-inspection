@@ -221,19 +221,19 @@ jobs:
               [[ -z "$run_id" ]] || break
               sleep 2
             done
-            [[ -n "$run_id" ]] || { echo "::error::new run not found for $workflow"; return 1; }
-            echo "[acceptance] workflow=$workflow run_id=$run_id"
+            [[ -n "$run_id" ]] || { echo "::error::new run not found for $workflow" >&2; return 1; }
+            echo "[acceptance] workflow=$workflow run_id=$run_id" >&2
             deadline=$((SECONDS + timeout))
             while (( SECONDS < deadline )); do
               read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
               if [[ "$status" == completed ]]; then
-                [[ "$conclusion" == success ]] || { echo "::error::$workflow failed: run=$run_id conclusion=$conclusion"; return 1; }
+                [[ "$conclusion" == success ]] || { echo "::error::$workflow failed: run=$run_id conclusion=$conclusion" >&2; return 1; }
                 printf '%s' "$run_id"
                 return 0
               fi
               sleep 5
             done
-            echo "::error::$workflow timed out: run=$run_id"
+            echo "::error::$workflow timed out: run=$run_id" >&2
             return 1
           }
 
