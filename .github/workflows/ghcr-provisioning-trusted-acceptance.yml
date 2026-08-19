@@ -1,0 +1,140 @@
+name: GHCR Provisioning Trusted Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ghcr-provisioning-trusted-acceptance.yml
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIVATE_MAIN: 60fe3267236ce454bcf2b13a84ff981b464b018f
+  POLICY_HEAD: 06dab0a17673510251f6450b753f3bb8044cf7cc
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIVATE_ROOT: /tmp/jpapt-ghcr-provision-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  acceptance:
+    if: ${{ github.head_ref == 'agent/ghcr-provisioning-trusted-acceptance-20260820' }}
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify public authority remains frozen
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]]
+      - name: Fetch exact private revisions
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          askpass="$RUNNER_TEMP/provision-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          trap 'rm -f "$askpass"; unset SOURCE_REPO_TOKEN' EXIT
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_MAIN" "$POLICY_HEAD"
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]]
+      - name: Verify exact review surface and clean merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$POLICY_HEAD")" == "$PRIVATE_MAIN" ]]
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIVATE_MAIN..$POLICY_HEAD")" == 5 ]]
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIVATE_MAIN" "$POLICY_HEAD" | sort)
+          expected=(
+            .github/workflows/ghcr-package-provision.yml
+            .github/workflows/hf-model-pipeline-security-contracts.yml
+            scripts/tests/test_ghcr_package_provision_workflow.py
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]]
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid merge --no-commit --no-ff "$POLICY_HEAD"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Run integrated security contracts
+        id: tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PRIVATE_ROOT"
+          set +e
+          output="$(python3 -m unittest -v \
+            scripts/tests/test_ghcr_anonymous_pull_preflight.py \
+            scripts/tests/test_ghcr_package_provision_workflow.py \
+            scripts/tests/test_hf_model_pipeline.py \
+            scripts/tests/test_hf_model_pipeline_ids.py \
+            scripts/tests/test_hf_repo_write_preflight.py \
+            scripts/tests/test_hf_candidate_content_digest.py \
+            scripts/tests/test_hf_package_base_image.py \
+            scripts/tests/test_hf_bootstrap_package_workflow.py \
+            scripts/tests/test_hf_package_evidence.py \
+            scripts/tests/test_hf_legacy_pipeline_retired.py \
+            scripts/tests/test_jpapt_bind_package_request.py \
+            scripts/tests/test_jpapt_verify_package_artifact.py \
+            scripts/tests/test_jpapt_package_artifact_verify_workflow.py 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          (( rc == 0 )) || exit "$rc"
+          count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Lint provisioning workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          actionlint -color -ignore 'SC2016' -ignore 'SC2129' \
+            "$PRIVATE_ROOT/.github/workflows/ghcr-package-provision.yml" \
+            "$PRIVATE_ROOT/.github/workflows/hf-model-pipeline-security-contracts.yml"
+      - name: Assert candidate-free and non-visibility-mutating provisioning boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PRIVATE_ROOT/.github/workflows/ghcr-package-provision.yml" <<'PY'
+          import pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          assert text.count('packages: write') == 1
+          seed = text[text.index('  seed:'):text.index('  verify-public:')].lower()
+          for forbidden in ('hf_token','hf jobs','hf buckets','hf-model-pipeline.py sync','package-evidence.json','repository_dispatch'):
+              assert forbidden not in seed, forbidden
+          assert 'from scratch' in seed
+          assert 'network: none' in seed
+          assert 'visibility=public' not in text.lower()
+          PY
+      - name: Build evidence
+        shell: bash
+        run: |
+          mkdir -p ghcr-provisioning-acceptance
+          jq -n --arg main "$PRIVATE_MAIN" --arg head "$POLICY_HEAD" --argjson count '${{ steps.tests.outputs.count }}' \
+            '{schema_version:1,private_main:$main,policy_head:$head,changed_files:3,commits:5,integration_merge:"clean",python_security_contracts:"passed",python_test_count:$count,actionlint:"passed",candidate_free_seed:true,visibility_mutated:false,package_built:false,hf_jobs_launched:false,model_compute_launched:false,private_repository_written:false}' \
+            > ghcr-provisioning-acceptance/evidence.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-provisioning-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ghcr-provisioning-acceptance/
+          if-no-files-found: error
+          retention-days: 30
