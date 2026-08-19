@@ -7,11 +7,17 @@ on:
       - .github/workflows/hf-jobs-image-preflight-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/hf-jobs-image-preflight.sh
+      - rust/crates/asr-contracts/src/bin/asr-hf-flavor-policy.rs
+      - Cargo.toml
+      - Cargo.lock
   pull_request:
     paths:
       - .github/workflows/hf-jobs-image-preflight-contracts.yml
       - .github/workflows/candidate-package-evaluate-v2.yml
       - scripts/ci/hf-jobs-image-preflight.sh
+      - rust/crates/asr-contracts/src/bin/asr-hf-flavor-policy.rs
+      - Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 permissions:
@@ -19,16 +25,18 @@ permissions:
 
 jobs:
   contracts:
-    name: Validate anonymous image pull preflight
+    name: Validate anonymous image and hardware flavor preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Validate helper syntax and production ordering
         shell: bash
         run: |
           set -euo pipefail
           bash -n scripts/ci/hf-jobs-image-preflight.sh
+          cargo test --quiet --locked -p asr-contracts --bin asr-hf-flavor-policy
           python - <<'PY'
           from pathlib import Path
           workflow = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
@@ -36,11 +44,14 @@ jobs:
           plan = 'Preserve validated HF Jobs plan before remote execution'
           preflight = 'Verify selected HF Jobs image is anonymously pullable'
           remote = 'Run remote evaluation from validated Rust plan'
+          helper = Path('scripts/ci/hf-jobs-image-preflight.sh').read_text(encoding='utf-8')
           assert 'hf-jobs-image-preflight.sh "$IMAGE_REF"' in hf
           assert hf.index(plan) < hf.index(preflight) < hf.index(remote)
+          assert 'asr-hf-flavor-policy' in helper
+          assert 'validate --plan "$plan"' in helper
           PY
 
-      - name: Accept digest-pinned anonymously resolvable image
+      - name: Accept digest-pinned anonymously resolvable image without plan
         shell: bash
         run: |
           set -euo pipefail
@@ -56,8 +67,78 @@ jobs:
           SH
           chmod +x /tmp/fake-bin/docker
           image="ghcr.io/owner/package@sha256:$(printf 'a%.0s' {1..64})"
-          PATH="/tmp/fake-bin:$PATH" bash scripts/ci/hf-jobs-image-preflight.sh "$image"
+          HF_JOB_PLAN=/tmp/missing-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"
           test "$(cat /tmp/preflight-image)" = "$image"
+
+      - name: Accept CPU and CUDA hardware class bindings before Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' invoked >> /tmp/flavor-policy-docker
+          exit 0
+          SH
+          chmod +x /tmp/fake-bin/docker
+          image="ghcr.io/owner/package@sha256:$(printf 'c%.0s' {1..64})"
+          rm -f /tmp/flavor-policy-docker
+          cat > /tmp/cpu-plan.json <<'JSON'
+          {"environment":"linux-cpu","provider":"CPUExecutionProvider","flavor":"cpu-basic"}
+          JSON
+          HF_JOB_PLAN=/tmp/cpu-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"
+          cat > /tmp/cuda-plan.json <<'JSON'
+          {"environment":"linux-cuda","provider":"CUDAExecutionProvider","flavor":"a10g-small"}
+          JSON
+          HF_JOB_PLAN=/tmp/cuda-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"
+          test "$(wc -l < /tmp/flavor-policy-docker)" = 2
+
+      - name: Reject CPU flavor for CUDA before Docker or paid Job
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          echo invoked > /tmp/unexpected-flavor-docker
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/docker
+          image="ghcr.io/owner/package@sha256:$(printf 'd%.0s' {1..64})"
+          cat > /tmp/cuda-cpu-plan.json <<'JSON'
+          {"environment":"linux-cuda","provider":"CUDAExecutionProvider","flavor":"cpu-basic"}
+          JSON
+          rm -f /tmp/unexpected-flavor-docker
+          if HF_JOB_PLAN=/tmp/cuda-cpu-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
+            echo 'CUDA plan with CPU flavor unexpectedly accepted' >&2
+            exit 1
+          fi
+          test ! -e /tmp/unexpected-flavor-docker
+
+      - name: Reject GPU flavor for CPU before Docker or paid Job
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          echo invoked > /tmp/unexpected-flavor-docker
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/docker
+          image="ghcr.io/owner/package@sha256:$(printf 'e%.0s' {1..64})"
+          cat > /tmp/cpu-gpu-plan.json <<'JSON'
+          {"environment":"linux-cpu","provider":"CPUExecutionProvider","flavor":"a10g-small"}
+          JSON
+          rm -f /tmp/unexpected-flavor-docker
+          if HF_JOB_PLAN=/tmp/cpu-gpu-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
+            echo 'CPU plan with GPU flavor unexpectedly accepted' >&2
+            exit 1
+          fi
+          test ! -e /tmp/unexpected-flavor-docker
 
       - name: Reject mutable and malformed image before Docker
         shell: bash
@@ -74,7 +155,8 @@ jobs:
             ghcr.io/owner/package:latest \
             ghcr.io/owner/package@sha256:deadbeef \
             'ghcr.io/owner/package@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa extra'; do
-            if PATH="/tmp/fake-bin:$PATH" bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
+            if HF_JOB_PLAN=/tmp/missing-plan.json PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
               echo "invalid image unexpectedly accepted: $image" >&2
               exit 1
             fi
@@ -93,7 +175,8 @@ jobs:
           SH
           chmod +x /tmp/fake-bin/docker
           image="ghcr.io/owner/private@sha256:$(printf 'b%.0s' {1..64})"
-          if PATH="/tmp/fake-bin:$PATH" bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
+          if HF_JOB_PLAN=/tmp/missing-plan.json PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/hf-jobs-image-preflight.sh "$image"; then
             echo 'unpullable image unexpectedly accepted' >&2
             exit 1
           fi
