@@ -188,27 +188,34 @@ jobs:
               assert text.index(helper) < text.index(resolver), path
           PY
 
-  main_protocol_negative_acceptance:
+  main_protocol_duplicate_acceptance:
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/main-protocol-acceptance-20260820' }}
-    name: Drive deployed main protocol negative acceptance
+    name: Drive deployed main duplicate idempotence acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       MAIN_REF: main
       RECEIPT_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+      EVALUATION_RUN_ID: '32271181799'
+      EVALUATION_RUN_ATTEMPT: '1'
     steps:
-      - name: Dispatch deployed negative E2E and wait
-        id: negative
+      - name: Dispatch deployed duplicate E2E and wait
+        id: duplicate
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          workflow=candidate-protocol-negative-e2e.yml
+          workflow=candidate-protocol-duplicate-e2e.yml
           before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
-          jq -n --arg ref "$MAIN_REF" --arg repo "$RECEIPT_REPOSITORY" \
-            '{ref:$ref,inputs:{receipt_repository:$repo,timeout_seconds:"180"}}' > /tmp/negative.json
-          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input /tmp/negative.json
+          jq -n \
+            --arg ref "$MAIN_REF" \
+            --arg repo "$RECEIPT_REPOSITORY" \
+            --arg evaluation_run_id "$EVALUATION_RUN_ID" \
+            --arg evaluation_run_attempt "$EVALUATION_RUN_ATTEMPT" \
+            '{ref:$ref,inputs:{receipt_repository:$repo,evaluation_run_id:$evaluation_run_id,evaluation_run_attempt:$evaluation_run_attempt,timeout_seconds:"300"}}' \
+            > /tmp/duplicate.json
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input /tmp/duplicate.json
           run_id=''
           for _ in $(seq 1 40); do
             run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=$MAIN_REF&event=workflow_dispatch&per_page=5" \
@@ -216,25 +223,25 @@ jobs:
             [[ -z "$run_id" ]] || break
             sleep 2
           done
-          [[ -n "$run_id" ]] || { echo '::error::negative E2E run not found'; exit 1; }
-          echo "negative_run=$run_id" >> "$GITHUB_OUTPUT"
+          [[ -n "$run_id" ]] || { echo '::error::duplicate E2E run not found'; exit 1; }
+          echo "duplicate_run=$run_id" >> "$GITHUB_OUTPUT"
           deadline=$((SECONDS + 900))
           while (( SECONDS < deadline )); do
             read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
             if [[ "$status" == completed ]]; then
-              [[ "$conclusion" == success ]] || { echo "::error::negative E2E failed: run=$run_id conclusion=$conclusion"; exit 1; }
+              [[ "$conclusion" == success ]] || { echo "::error::duplicate E2E failed: run=$run_id conclusion=$conclusion"; exit 1; }
               exit 0
             fi
             sleep 5
           done
-          echo "::error::negative E2E timed out: run=$run_id"
+          echo "::error::duplicate E2E timed out: run=$run_id"
           exit 1
 
-      - name: Record deployed-main negative evidence
+      - name: Record deployed-main duplicate evidence
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          NEGATIVE_RUN: ${{ steps.negative.outputs.negative_run }}
+          DUPLICATE_RUN: ${{ steps.duplicate.outputs.duplicate_run }}
         run: |
           set -euo pipefail
-          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Deployed-main external negative acceptance completed successfully.\n\n- negative E2E run: \`$NEGATIVE_RUN\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- malformed receipt: rejected before ACK build/dispatch\n- wrong orchestrator: rejected before ACK build/dispatch\n- wrong receipt repository: rejected before ACK build/dispatch\n- evidence retention: 30 days\n- compute boundary: no model inference, GPU, Docker evaluation, or HF Jobs workload.\n\nIssue #70 remains open only for real duplicate-completion idempotence evidence if this run is green."
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Deployed-main duplicate-completion acceptance completed successfully.\n\n- duplicate E2E run: \`$DUPLICATE_RUN\`\n- canonical evaluation run: \`$EVALUATION_RUN_ID\` attempt \`$EVALUATION_RUN_ATTEMPT\`\n- receiver: \`$RECEIPT_REPOSITORY\`\n- exact canonical receipt was redelivered without rerunning evaluation\n- second receiver/ACK cycle succeeded\n- request/execution/receipt/evaluation identity remained unchanged\n- terminal lifecycle remained \`acknowledged\`\n- evidence retention: 30 days\n- compute boundary: no model inference, GPU, Docker evaluation, or HF Jobs workload."
