@@ -1,41 +1,40 @@
 name: Agent Provision Protocol Fixture
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - agent/provision-protocol-fixture-20260819
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   provision:
-    if: github.head_ref == 'agent/provision-protocol-fixture-20260819'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+      SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
       FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
     steps:
       - name: Require source repository token
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || {
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || {
             echo '::error::SOURCE_REPO_TOKEN is required'
             exit 1
           }
       - name: Create private dedicated fixture when absent
         id: fixture
         shell: bash
+        env:
+          GH_TOKEN: ${{ env.SOURCE_REPO_TOKEN }}
         run: |
           set -euo pipefail
           if gh api "/repos/$FIXTURE_REPOSITORY" >/tmp/fixture.json 2>/tmp/fixture.err; then
             echo 'created=false' >> "$GITHUB_OUTPUT"
           else
-            status="$(sed -n 's/.*HTTP [^ ]* \([0-9][0-9][0-9]\).*/\1/p' /tmp/fixture.err | tail -1 || true)"
-            if [[ "$status" != 404 && -s /tmp/fixture.err ]]; then
-              cat /tmp/fixture.err >&2
-            fi
             owner="${FIXTURE_REPOSITORY%%/*}"
             name="${FIXTURE_REPOSITORY#*/}"
             [[ "$owner" == bie3yeik-lgtm ]] || {
@@ -66,15 +65,26 @@ jobs:
             exit 1
           }
           echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
-      - name: Summary
+      - name: Record provisioning result on issue 70
+        if: success()
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATED: ${{ steps.fixture.outputs.created }}
+          DEFAULT_BRANCH: ${{ steps.fixture.outputs.default_branch }}
         run: |
-          {
-            echo '## Dedicated protocol fixture repository'
-            echo
-            printf -- '- repository: `%s`\n' "$FIXTURE_REPOSITORY"
-            printf -- '- private: `true`\n'
-            printf -- '- created in this run: `%s`\n' '${{ steps.fixture.outputs.created }}'
-            printf -- '- default branch: `%s`\n' '${{ steps.fixture.outputs.default_branch }}'
-            echo '- no receiver bootstrap, dispatch, HF Bucket mutation, model compute, or HF Jobs was performed in this provisioning step'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          body=$(cat <<EOF
+          Dedicated fixture provisioning succeeded from trusted branch push.
+
+          - repository: \`$FIXTURE_REPOSITORY\`
+          - private: \`true\`
+          - created in this run: \`$CREATED\`
+          - default branch: \`$DEFAULT_BRANCH\`
+          - workflow run: \`$GITHUB_RUN_ID\`
+          - source head: \`$GITHUB_SHA\`
+
+          No receiver bootstrap, repository dispatch, HF Bucket mutation, model compute, or HF Jobs workload was performed in this provisioning step.
+          EOF
+          )
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "$body"
