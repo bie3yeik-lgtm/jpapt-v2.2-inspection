@@ -38,6 +38,34 @@ if ! jq -e '
   exit 2
 fi
 
+event_type="$(jq -r '.event_type' "$body_file")"
+case "$event_type" in
+  jpapt.candidate-completed|jpapt.candidate-rejected)
+    command -v cargo >/dev/null 2>&1 || {
+      echo "ERROR: cargo is required to validate $event_type before repository dispatch" >&2
+      exit 2
+    }
+    payload_file="$(mktemp)"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -c '.client_payload' "$body_file" > "$payload_file"
+    receipt_repository="$(jq -er '.receipt_repository | select(type == "string" and length > 0)' "$payload_file")" || {
+      echo "ERROR: $event_type payload must contain receipt_repository" >&2
+      exit 2
+    }
+    [[ "$receipt_repository" == "$repository" ]] || {
+      echo "ERROR: repository dispatch target does not match payload receipt_repository: target=$repository payload=$receipt_repository" >&2
+      exit 2
+    }
+    if [[ "$event_type" == "jpapt.candidate-completed" ]]; then
+      cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+        receipt-validate "$payload_file" >/dev/null
+    else
+      cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol -- \
+        rejection-validate "$payload_file" >/dev/null
+    fi
+    ;;
+esac
+
 attempt=1
 while true; do
   if gh api \
@@ -58,5 +86,5 @@ while true; do
   delay=$((attempt * attempt + 1))
   echo "WARN: repository_dispatch attempt $attempt failed; retrying in ${delay}s" >&2
   sleep "$delay"
-  attempt=$((attempt + 1))
+  attempt="$((attempt + 1))"
 done

@@ -8,6 +8,7 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
       - docs/candidate-protocol-runtime-boundary.md
       - docs/candidate-request-gateway.md
       - rust/crates/asr-contracts/**
@@ -19,6 +20,7 @@ on:
       - .github/workflows/candidate-package-evaluate-v2.yml
       - .github/workflows/candidate-request-gateway.yml
       - .github/workflows/candidate-request-lifecycle-observer.yml
+      - scripts/ci/repository-dispatch-with-retry.sh
       - docs/candidate-protocol-runtime-boundary.md
       - docs/candidate-request-gateway.md
       - rust/crates/asr-contracts/**
@@ -71,6 +73,7 @@ jobs:
           v2 = Path('.github/workflows/candidate-package-evaluate-v2.yml').read_text(encoding='utf-8')
           gateway = Path('.github/workflows/candidate-request-gateway.yml').read_text(encoding='utf-8')
           observer = Path('.github/workflows/candidate-request-lifecycle-observer.yml').read_text(encoding='utf-8')
+          dispatch_helper = Path('scripts/ci/repository-dispatch-with-retry.sh').read_text(encoding='utf-8')
           runtime_doc = Path('docs/candidate-protocol-runtime-boundary.md').read_text(encoding='utf-8')
           gateway_doc = Path('docs/candidate-request-gateway.md').read_text(encoding='utf-8')
 
@@ -82,7 +85,16 @@ jobs:
           assert '\n          receipt\n' in completion
           assert '--receipt .ci/candidate-completion-receipt.json' in completion
           assert '--dispatch-body .ci/candidate-completion-dispatch.json' in completion
+          assert 'repository-dispatch-with-retry.sh' in completion
           assert 'python scripts/ci/build-candidate-completion-receipt.py' not in v2
+
+          assert 'jpapt.candidate-completed|jpapt.candidate-rejected' in dispatch_helper
+          assert 'receipt-validate "$payload_file"' in dispatch_helper
+          assert 'rejection-validate "$payload_file"' in dispatch_helper
+          assert 'repository dispatch target does not match payload receipt_repository' in dispatch_helper
+          completion_builder = completion.index(builder)
+          completion_dispatch = completion.index('repository-dispatch-with-retry.sh')
+          assert completion_builder < completion_dispatch
 
           assert '- uses: dtolnay/rust-toolchain@stable' in rejection
           assert builder in rejection
@@ -109,8 +121,6 @@ jobs:
           assert 'python scripts/ci/build-candidate-completion-receipt.py' not in observer
           assert 'python scripts/ci/build-candidate-completion-ack.py' not in observer
 
-          # Documentation is part of the production contract: the orchestrator
-          # authority must not silently be described as Python-only again.
           for workflow_name in (
               'candidate-request-gateway.yml',
               'candidate-package-evaluate-v2.yml',
