@@ -1,0 +1,99 @@
+name: HF Fetch Candidate Bucket Identity Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/hf/hf-fetch-candidate.sh
+      - .github/workflows/hf-fetch-candidate-bucket-identity-contracts.yml
+  pull_request:
+    paths:
+      - scripts/hf/hf-fetch-candidate.sh
+      - .github/workflows/hf-fetch-candidate-bucket-identity-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate HF candidate Bucket transport identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate helper syntax
+        run: bash -n scripts/hf/hf-fetch-candidate.sh
+      - name: Reject malformed Bucket identities before HF access
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/hf <<'SH'
+          #!/usr/bin/env bash
+          printf 'hf invoked\n' >> /tmp/hf-invocations
+          exit 99
+          SH
+          cat > /tmp/fake-bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          printf 'cargo invoked\n' >> /tmp/cargo-invocations
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/hf /tmp/fake-bin/cargo
+
+          for bucket in \
+            'ns//bucket' \
+            './bucket' \
+            '../bucket' \
+            'ns/.' \
+            'ns/..' \
+            'ns/bucket/extra' \
+            'ns/bad bucket' \
+            '/bucket' \
+            'ns/'; do
+            rm -f /tmp/hf-invocations /tmp/cargo-invocations
+            if HF_TOKEN=synthetic HF_BUCKET="$bucket" PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/hf/hf-fetch-candidate.sh '' --resolve-only; then
+              echo "invalid Bucket unexpectedly accepted: $bucket" >&2
+              exit 1
+            fi
+            test ! -e /tmp/hf-invocations
+            test ! -e /tmp/cargo-invocations
+          done
+      - name: Preserve canonical and dot-prefixed compatible Bucket identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/hf <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "$*" >> /tmp/hf-invocations
+          if [[ "${1:-}" == buckets && "${2:-}" == list ]]; then
+            printf 'candidate-000001/metadata.json\n'
+            exit 0
+          fi
+          echo 'unexpected hf operation' >&2
+          exit 99
+          SH
+          cat > /tmp/fake-bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf 'candidate_id=candidate-000001\n'
+          printf 'relative_path=candidate-000001\n'
+          printf 'legacy=false\n'
+          SH
+          chmod +x /tmp/fake-bin/hf /tmp/fake-bin/cargo
+
+          for bucket in \
+            'namespace/bucket' \
+            '.namespace/bucket' \
+            'namespace/.bucket' \
+            'hf://buckets/namespace/bucket/'; do
+            rm -f /tmp/hf-invocations
+            HF_TOKEN=synthetic HF_BUCKET="$bucket" PATH="/tmp/fake-bin:$PATH" \
+              bash scripts/hf/hf-fetch-candidate.sh '' --resolve-only
+            test "$(wc -l < /tmp/hf-invocations)" = 1
+            grep -F 'buckets list --token synthetic hf://buckets/' /tmp/hf-invocations >/dev/null
+          done
