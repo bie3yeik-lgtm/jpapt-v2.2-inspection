@@ -1,0 +1,73 @@
+name: Agent Diagnose Fixture Receiver
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'agent/diagnose-fixture-receiver-20260820' }}
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+      REQUEST_ID: e2e-32267432918-1
+      EXPECTED_AFTER: '2026-08-19T15:01:55Z'
+    steps:
+      - name: Inspect fixture receiver runs
+        id: inspect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo '::error::TARGET_REPO_TOKEN missing'; exit 1; }
+          runs="$(gh api "/repos/$FIXTURE_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=20")"
+          jq -r --arg after "$EXPECTED_AFTER" '.workflow_runs[] | select(.created_at >= $after) | [.id,.status,(.conclusion // ""),.created_at,.head_sha] | @tsv' <<<"$runs" > /tmp/runs.tsv
+          [[ -s /tmp/runs.tsv ]] || { echo '::error::no fixture receiver repository_dispatch run found after expected dispatch'; exit 1; }
+          run_id="$(awk 'NR==1{print $1}' /tmp/runs.tsv)"
+          jobs="$(gh api "/repos/$FIXTURE_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
+          jq -r '.jobs[] | [.id,.name,.status,(.conclusion // "")] | @tsv' <<<"$jobs" > /tmp/jobs.tsv
+          {
+            echo "run_id=$run_id"
+            echo 'runs<<EOF'
+            cat /tmp/runs.tsv
+            echo EOF
+            echo 'jobs<<EOF'
+            cat /tmp/jobs.tsv
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record sanitized diagnosis
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.inspect.outputs.run_id }}
+          RUNS: ${{ steps.inspect.outputs.runs }}
+          JOBS: ${{ steps.inspect.outputs.jobs }}
+        shell: bash
+        run: |
+          body=$(cat <<EOF
+Fixture receiver diagnostic for positive-path E2E request \`$REQUEST_ID\`.
+
+- source evaluation dispatch accepted at approximately 2026-08-19T15:01:59Z
+- fixture receiver run selected: \`$RUN_ID\`
+
+Receiver runs after dispatch:
+\`\`\`
+$RUNS
+\`\`\`
+
+Selected receiver jobs:
+\`\`\`
+$JOBS
+\`\`\`
+
+This diagnostic records IDs/status only. No secret value, payload body, HF mutation, model compute, GPU, Docker evaluation, or HF Jobs workload is emitted.
+EOF
+)
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "$body"
