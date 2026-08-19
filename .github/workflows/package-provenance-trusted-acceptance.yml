@@ -228,11 +228,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/package-provenance-trusted-acceptance.yml
-          if grep -Ei 'hf jobs (run|uv)|docker (run|build)|repository_dispatch|packages: write|contents: write' "$workflow"; then
-            echo '::error::trusted acceptance workflow contains forbidden compute/write primitive'
-            exit 1
-          fi
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path('.github/workflows/package-provenance-trusted-acceptance.yml')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('      - name: Verify zero-compute acceptance scope\n')
+          end = text.index('      - name: Build acceptance evidence\n')
+          reviewed = text[:start] + text[end:]
+          forbidden = re.compile(
+              r'hf jobs (?:run|uv)|docker (?:run|build)|repository_dispatch|packages: write|contents: write',
+              re.IGNORECASE,
+          )
+          match = forbidden.search(reviewed)
+          if match:
+              raise SystemExit(f'forbidden compute/write primitive outside guard: {match.group(0)}')
+          PY
 
       - name: Build acceptance evidence
         shell: bash
