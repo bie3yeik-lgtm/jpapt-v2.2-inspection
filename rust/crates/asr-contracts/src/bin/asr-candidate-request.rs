@@ -376,6 +376,13 @@ fn resolve(
         if !hf_jobs_image.is_empty() {
             validate_digest_pinned_image(&hf_jobs_image, "hf_jobs_image")?;
         }
+    } else {
+        if !hf_jobs_image.is_empty() {
+            return Err("hf_jobs_image is only valid when executor=hf_jobs".to_owned());
+        }
+        if hf_flavor != "cpu-basic" {
+            return Err("hf_flavor override is only valid when executor=hf_jobs".to_owned());
+        }
     }
 
     let (provider, ort_package) = match environment.as_str() {
@@ -525,6 +532,46 @@ mod tests {
             assert_eq!(resolved.suite, suite);
             assert_eq!(resolved.executor, "github");
         }
+    }
+
+    #[test]
+    fn rejects_hf_jobs_image_for_github_executor() {
+        let image = format!("ghcr.io/owner/package@sha256:{}", "a".repeat(64));
+        let inputs = object(
+            &format!(
+                r#"{{"request_id":"req-gh-hf-image","request_execution_id":"gw-110-1","source_repository":"owner/repo","executor":"github","hf_jobs_image":"{image}"}}"#
+            ),
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(error.contains("hf_jobs_image is only valid"), "{error}");
+    }
+
+    #[test]
+    fn rejects_non_default_hf_flavor_for_github_executor() {
+        let inputs = object(
+            r#"{"request_id":"req-gh-hf-flavor","request_execution_id":"gw-111-1","source_repository":"owner/repo","executor":"github","hf_flavor":"a10g-small"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let error = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap_err();
+        assert!(
+            error.contains("hf_flavor override is only valid"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn github_executor_accepts_compatibility_default_hf_flavor() {
+        let inputs = object(
+            r#"{"request_id":"req-gh-default-flavor","request_execution_id":"gw-112-1","source_repository":"owner/repo","executor":"github","hf_flavor":"cpu-basic"}"#,
+            "inputs",
+        )
+        .unwrap();
+        let resolved = resolve(&inputs, &Map::new(), "hf-user", "registry-owner").unwrap();
+        assert_eq!(resolved.hf_flavor, "cpu-basic");
+        assert!(resolved.hf_jobs_image.is_empty());
     }
 
     #[test]
