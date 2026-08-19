@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/lifecycle-storage-smoke-20260819
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -19,6 +22,7 @@ concurrency:
 
 jobs:
   smoke:
+    if: github.event_name == 'push' || github.head_ref == 'agent/lifecycle-storage-smoke-20260819'
     name: Write and read synthetic lifecycle evidence
     runs-on: ubuntu-latest
     timeout-minutes: 10
