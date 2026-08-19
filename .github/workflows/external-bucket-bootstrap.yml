@@ -185,7 +185,15 @@ jobs:
 
           path=.jpapt/hf-bucket.yml
           content="$(base64 -w0 .ci/bootstrap/hf-bucket.yml)"
-          sha="$(GH_TOKEN="$SOURCE_REPO_TOKEN" gh api "/repos/$SOURCE_REPOSITORY/contents/$path" --jq .sha 2>/dev/null || true)"
+          existing="$(GH_TOKEN="$SOURCE_REPO_TOKEN" \
+            python scripts/ci/github-content-sha.py \
+              --repository "$SOURCE_REPOSITORY" \
+              --path "$path")"
+          if [[ "$existing" == "missing" ]]; then
+            sha=""
+          else
+            sha="$existing"
+          fi
           body="$(jq -n \
             --arg message 'ci: initialize jpapt HF bucket routing' \
             --arg content "$content" \
