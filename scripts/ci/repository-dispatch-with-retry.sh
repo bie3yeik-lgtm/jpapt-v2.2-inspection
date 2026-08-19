@@ -66,6 +66,23 @@ case "$event_type" in
     ;;
 esac
 
+# GitHub repository_dispatch allows at most 10 top-level properties in
+# client_payload. Candidate protocol receipts/ACKs/rejections are authority
+# objects with more fields than that, so keep the authority object unchanged
+# and adapt only the transport envelope when necessary.
+dispatch_body="$body_file"
+client_payload_count="$(jq '.client_payload | length' "$body_file")"
+if (( client_payload_count > 10 )); then
+  dispatch_body="$(mktemp)"
+  if [[ -n "${payload_file:-}" ]]; then
+    trap 'rm -f "$payload_file" "$dispatch_body"' EXIT
+  else
+    trap 'rm -f "$dispatch_body"' EXIT
+  fi
+  jq -c '{event_type: .event_type, client_payload: {protocol_payload: .client_payload}}' \
+    "$body_file" > "$dispatch_body"
+fi
+
 attempt=1
 while true; do
   if gh api \
@@ -73,7 +90,7 @@ while true; do
     -H 'Accept: application/vnd.github+json' \
     -H 'X-GitHub-Api-Version: 2022-11-28' \
     "/repos/$repository/dispatches" \
-    --input "$body_file"; then
+    --input "$dispatch_body"; then
     echo "repository_dispatch accepted: repository=$repository attempt=$attempt"
     exit 0
   fi
