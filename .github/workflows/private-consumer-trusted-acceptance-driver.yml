@@ -24,7 +24,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Retry after deploying absolute-root unittest discovery on main.
+          # Retry after deploying Cargo-metadata JPAPT binary target resolution on main.
           workflow=private-consumer-trusted-acceptance.yml
           before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=main&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
           jq -n '{ref:"main"}' > /tmp/dispatch.json
@@ -66,4 +66,4 @@ jobs:
           ACCEPTANCE_RUN: ${{ steps.acceptance.outputs.run_id }}
         run: |
           set -euo pipefail
-          gh issue comment 109 --repo "$GITHUB_REPOSITORY" --body "Alternative trusted-hosted private consumer acceptance completed successfully.\n\n- deployed public main workflow run: \`$ACCEPTANCE_RUN\`\n- private immutable authority stack head: \`e422ed7ad13dcca4562e876bef8860d408304e73\` (#144 -> #141 -> #142 -> #143)\n- public review target: \`6ce57e6f874d387eb25e5dbba969b094962e1d92\`\n- accepted revision remained \`9179e1147d0460a29dfe4251f73977156356784c\` during validation\n- runner: GitHub-hosted from the public authority repository\n- private fetch credential: \`SOURCE_REPO_TOKEN\`, temporary \`GIT_ASKPASS\` only; no remote or HTTP extraheader persisted\n- private Rust checkout remained outside the public Cargo workspace in a run-scoped /tmp root\n- Python detector fixture executed through unittest discovery from the absolute private test directory\n- model/GPU/Docker/HF Jobs compute: none\n\nThe validation-only driver PR must not be merged. Review the deployed run artifacts before changing accepted authority state."
+          gh issue comment 109 --repo "$GITHUB_REPOSITORY" --body "Alternative trusted-hosted private consumer acceptance completed successfully.\n\n- deployed public main workflow run: \`$ACCEPTANCE_RUN\`\n- private immutable authority stack head: \`e422ed7ad13dcca4562e876bef8860d408304e73\` (#144 -> #141 -> #142 -> #143)\n- public review target: \`6ce57e6f874d387eb25e5dbba969b094962e1d92\`\n- accepted revision remained \`9179e1147d0460a29dfe4251f73977156356784c\` during validation\n- runner: GitHub-hosted from the public authority repository\n- private fetch credential: \`SOURCE_REPO_TOKEN\`, temporary \`GIT_ASKPASS\` only; no remote or HTTP extraheader persisted\n- private Rust checkout remained outside the public Cargo workspace in a run-scoped /tmp root\n- Python detector fixture executed through unittest discovery from the absolute private test directory\n- JPAPT Rust binary targets were resolved by Cargo metadata, including explicit hyphenated target names\n- model/GPU/Docker/HF Jobs compute: none\n\nThe validation-only driver PR must not be merged. Review the deployed run artifacts before changing accepted authority state."
