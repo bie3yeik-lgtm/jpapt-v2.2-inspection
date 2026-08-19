@@ -1,0 +1,171 @@
+name: GHCR Readiness Trusted Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ghcr-readiness-trusted-acceptance.yml
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIVATE_MAIN: 0d37bb10ab53a2f009997e70c47dc558fa6346c0
+  POLICY_HEAD: e3f18d89c0e2abe53ba65d88d16c2170b90b3b49
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIVATE_ROOT: /tmp/jpapt-ghcr-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  acceptance:
+    if: ${{ github.head_ref == 'agent/ghcr-readiness-trusted-acceptance-20260820' }}
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify public authority remains exact accepted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]] || { echo "::error::public main drifted: $live"; exit 1; }
+
+      - name: Fetch exact private main and readiness head
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/ghcr-readiness-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          trap 'rm -f "$askpass"; unset SOURCE_REPO_TOKEN' EXIT
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" "$PRIVATE_MAIN" "$POLICY_HEAD"
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]]
+          git -C "$PRIVATE_ROOT" cat-file -e "${PRIVATE_MAIN}^{commit}"
+          git -C "$PRIVATE_ROOT" cat-file -e "${POLICY_HEAD}^{commit}"
+
+      - name: Verify exact readiness review surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$POLICY_HEAD")" == "$PRIVATE_MAIN" ]]
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PRIVATE_MAIN..$POLICY_HEAD")" == 5 ]]
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PRIVATE_MAIN" "$POLICY_HEAD" | sort)
+          expected=(
+            .github/workflows/hf-model-bootstrap-package.yml
+            .github/workflows/hf-model-pipeline-security-contracts.yml
+            scripts/ghcr-anonymous-pull-preflight.py
+            scripts/tests/test_ghcr_anonymous_pull_preflight.py
+            scripts/tests/test_hf_bootstrap_package_workflow.py
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || { printf '::error::unexpected files:\n%s\n' "${changed[*]}"; exit 1; }
+
+      - name: Build local integration merge without private write
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid \
+            merge --no-commit --no-ff "$POLICY_HEAD"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_MAIN" ]]
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run integrated package security contracts
+        id: tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PRIVATE_ROOT"
+          set +e
+          output="$(python3 -m unittest -v \
+            scripts/tests/test_ghcr_anonymous_pull_preflight.py \
+            scripts/tests/test_hf_model_pipeline.py \
+            scripts/tests/test_hf_model_pipeline_ids.py \
+            scripts/tests/test_hf_repo_write_preflight.py \
+            scripts/tests/test_hf_candidate_content_digest.py \
+            scripts/tests/test_hf_package_base_image.py \
+            scripts/tests/test_hf_bootstrap_package_workflow.py \
+            scripts/tests/test_hf_package_evidence.py \
+            scripts/tests/test_hf_legacy_pipeline_retired.py \
+            scripts/tests/test_jpapt_bind_package_request.py \
+            scripts/tests/test_jpapt_verify_package_artifact.py \
+            scripts/tests/test_jpapt_package_artifact_verify_workflow.py 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          (( rc == 0 )) || exit "$rc"
+          count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
+          (( count > 0 )) || { echo '::error::no contracts executed'; exit 1; }
+          python3 -m py_compile scripts/ghcr-anonymous-pull-preflight.py
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Lint integrated package workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          actionlint -color -ignore 'SC2016' -ignore 'SC2129' \
+            "$PRIVATE_ROOT/.github/workflows/hf-model-bootstrap-package.yml" \
+            "$PRIVATE_ROOT/.github/workflows/hf-model-pipeline-security-contracts.yml"
+
+      - name: Verify early gate precedes candidate and credential surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PRIVATE_ROOT/.github/workflows/hf-model-bootstrap-package.yml" <<'PY'
+          import pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          gate = text.index('- name: Require public anonymous GHCR namespace')
+          stage = text.index('- name: Stage candidate Docker build context')
+          sync = text.index('python scripts/hf-model-pipeline.py sync', gate)
+          buildx = text.index('docker/setup-buildx-action@v3', gate)
+          login = text.index('docker/login-action@v3', gate)
+          assert gate < stage < sync < buildx < login
+          block = text[gate:stage]
+          for forbidden in ('secrets.', 'HF_TOKEN', 'github.token'):
+              assert forbidden not in block, forbidden
+          PY
+
+      - name: Build acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ghcr-readiness-acceptance
+          jq -n \
+            --arg private_main "$PRIVATE_MAIN" \
+            --arg policy_head "$POLICY_HEAD" \
+            --arg accepted_public "$ACCEPTED_PUBLIC" \
+            --argjson test_count '${{ steps.tests.outputs.count }}' \
+            '{schema_version:1,private_main:$private_main,policy_head:$policy_head,accepted_public:$accepted_public,changed_files:5,commits:5,integration_merge:"clean",python_security_contracts:"passed",python_test_count:$test_count,actionlint:"passed",early_public_readiness_gate:"passed",credential_free_gate:true,package_built:false,hf_jobs_launched:false,model_compute_launched:false,private_repository_written:false}' \
+            > ghcr-readiness-acceptance/evidence.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-readiness-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ghcr-readiness-acceptance/
+          if-no-files-found: error
+          retention-days: 30
