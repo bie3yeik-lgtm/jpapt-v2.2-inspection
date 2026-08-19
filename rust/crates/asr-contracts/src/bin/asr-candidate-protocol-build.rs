@@ -191,12 +191,17 @@ fn validate_image_binding(image_ref: &str, image_digest: &str) -> Result<(), Str
     let Some(expected_digest) = image_digest.strip_prefix("sha256:") else {
         return Err("selected HF Jobs image digest must use sha256:<64 hex>".to_owned());
     };
+    let lowercase_hex = |value: &str| {
+        value
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    };
     if name.is_empty()
         || digest.len() != 64
         || expected_digest.len() != 64
-        || !digest.chars().all(|ch| ch.is_ascii_hexdigit())
-        || !expected_digest.chars().all(|ch| ch.is_ascii_hexdigit())
-        || !digest.eq_ignore_ascii_case(expected_digest)
+        || !lowercase_hex(digest)
+        || !lowercase_hex(expected_digest)
+        || digest != expected_digest
     {
         return Err("selected HF Jobs image ref/digest binding is invalid".to_owned());
     }
@@ -585,6 +590,19 @@ mod tests {
         let image_ref = format!("ghcr.io/owner/package@sha256:{digest}");
         let image_digest = format!("sha256:{digest}");
         validate_image_binding(&image_ref, &image_digest).unwrap();
+    }
+
+    #[test]
+    fn rejects_uppercase_selected_hf_jobs_image_binding() {
+        let lowercase = "a".repeat(64);
+        let uppercase = "A".repeat(64);
+        let uppercase_ref = format!("ghcr.io/owner/package@sha256:{uppercase}");
+        let lowercase_digest = format!("sha256:{lowercase}");
+        assert!(validate_image_binding(&uppercase_ref, &lowercase_digest).is_err());
+
+        let lowercase_ref = format!("ghcr.io/owner/package@sha256:{lowercase}");
+        let uppercase_digest = format!("sha256:{uppercase}");
+        assert!(validate_image_binding(&lowercase_ref, &uppercase_digest).is_err());
     }
 
     #[test]
