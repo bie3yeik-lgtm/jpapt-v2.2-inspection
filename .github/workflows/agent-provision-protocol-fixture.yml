@@ -1,0 +1,80 @@
+name: Agent Provision Protocol Fixture
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    if: github.head_ref == 'agent/provision-protocol-fixture-20260819'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+      FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
+    steps:
+      - name: Require source repository token
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || {
+            echo '::error::SOURCE_REPO_TOKEN is required'
+            exit 1
+          }
+      - name: Create private dedicated fixture when absent
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh api "/repos/$FIXTURE_REPOSITORY" >/tmp/fixture.json 2>/tmp/fixture.err; then
+            echo 'created=false' >> "$GITHUB_OUTPUT"
+          else
+            status="$(sed -n 's/.*HTTP [^ ]* \([0-9][0-9][0-9]\).*/\1/p' /tmp/fixture.err | tail -1 || true)"
+            if [[ "$status" != 404 && -s /tmp/fixture.err ]]; then
+              cat /tmp/fixture.err >&2
+            fi
+            owner="${FIXTURE_REPOSITORY%%/*}"
+            name="${FIXTURE_REPOSITORY#*/}"
+            [[ "$owner" == bie3yeik-lgtm ]] || {
+              echo '::error::fixture owner must be bie3yeik-lgtm'
+              exit 1
+            }
+            gh api --method POST /user/repos \
+              -f name="$name" \
+              -f description='Dedicated JPAPT candidate protocol cross-repository E2E fixture' \
+              -F private=true \
+              -F auto_init=true \
+              >/tmp/fixture.json
+            echo 'created=true' >> "$GITHUB_OUTPUT"
+          fi
+          actual="$(jq -r .full_name /tmp/fixture.json)"
+          private="$(jq -r .private /tmp/fixture.json)"
+          default_branch="$(jq -r .default_branch /tmp/fixture.json)"
+          [[ "$actual" == "$FIXTURE_REPOSITORY" ]] || {
+            echo "::error::unexpected repository identity: $actual"
+            exit 1
+          }
+          [[ "$private" == true ]] || {
+            echo '::error::fixture repository must be private'
+            exit 1
+          }
+          [[ -n "$default_branch" && "$default_branch" != null ]] || {
+            echo '::error::fixture default branch unavailable'
+            exit 1
+          }
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '## Dedicated protocol fixture repository'
+            echo
+            printf -- '- repository: `%s`\n' "$FIXTURE_REPOSITORY"
+            printf -- '- private: `true`\n'
+            printf -- '- created in this run: `%s`\n' '${{ steps.fixture.outputs.created }}'
+            printf -- '- default branch: `%s`\n' '${{ steps.fixture.outputs.default_branch }}'
+            echo '- no receiver bootstrap, dispatch, HF Bucket mutation, model compute, or HF Jobs was performed in this provisioning step'
+          } >> "$GITHUB_STEP_SUMMARY"
