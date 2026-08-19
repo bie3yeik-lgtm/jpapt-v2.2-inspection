@@ -16,12 +16,10 @@ on:
 permissions:
   contents: read
 
-env:
-  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
-
 jobs:
   bootstrap:
     name: Install or update candidate protocol receiver
+    environment: Private-Secrets
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -34,7 +32,7 @@ jobs:
         id: target
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           TARGET_REPOSITORY: ${{ inputs.repository }}
           ADOPT_EXISTING: ${{ inputs.adopt_existing }}
         run: |
@@ -55,7 +53,7 @@ jobs:
             exit 1
           }
           [[ -n "${GH_TOKEN:-}" ]] || {
-            echo "::error::SOURCE_REPO_TOKEN is required for receiver bootstrap"
+            echo "::error::TARGET_REPO_TOKEN is required for receiver bootstrap"
             exit 1
           }
           python scripts/ci/candidate_receiver_bundle.py --validate
@@ -78,11 +76,15 @@ jobs:
               --path "$1" \
               --ref "$validated_head_sha"
           }
+          fetch_content() {
+            local path="$1"
+            gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$validated_head_sha" --jq .content \
+              | python scripts/ci/decode-github-content.py
+          }
 
           manifest_state="$(content_state .jpapt/candidate-receiver.json)"
           if [[ "$manifest_state" != "missing" ]]; then
-            manifest_encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/.jpapt/candidate-receiver.json?ref=$validated_head_sha" --jq .content)"
-            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/existing-receiver.json
+            fetch_content .jpapt/candidate-receiver.json > /tmp/existing-receiver.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/existing-receiver.json
             python - "$TARGET_REPOSITORY" "$GITHUB_REPOSITORY" <<'PY'
           import json
@@ -109,8 +111,7 @@ jobs:
                 echo "::notice::managed path is missing and will be repaired: $path"
                 continue
               fi
-              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$validated_head_sha" --jq .content)"
-              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              actual="$(fetch_content "$path" | sha256sum | awk '{print $1}')"
               [[ "$actual" == "$expected" ]] || {
                 echo "::error::managed path drifted from the owned installation manifest: $path"
                 echo "::error::bootstrap refuses to overwrite a modified managed path; review or restore it first"
@@ -128,8 +129,7 @@ jobs:
               source="${mapping#*=}"
               state="$(content_state "$target")"
               [[ "$state" != "missing" ]] || continue
-              encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$target?ref=$validated_head_sha" --jq .content)"
-              remote_hash="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              remote_hash="$(fetch_content "$target" | sha256sum | awk '{print $1}')"
               local_hash="$(sha256sum "$source" | awk '{print $1}')"
               if [[ "$remote_hash" == "$local_hash" ]]; then
                 echo "::notice::recoverable partial install already matches canonical source: $target"
@@ -170,7 +170,7 @@ jobs:
         id: install
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           TARGET_REPOSITORY: ${{ inputs.repository }}
           TARGET_BRANCH: ${{ steps.target.outputs.default_branch }}
           VALIDATED_HEAD_SHA: ${{ steps.target.outputs.validated_head_sha }}
@@ -233,7 +233,7 @@ jobs:
       - name: Verify installed hashes
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           TARGET_REPOSITORY: ${{ inputs.repository }}
           TARGET_COMMIT: ${{ steps.install.outputs.target_commit }}
         run: |
@@ -247,6 +247,11 @@ jobs:
               --repository "$TARGET_REPOSITORY" \
               --path "$1" \
               --ref "$TARGET_COMMIT"
+          }
+          fetch_content() {
+            local path="$1"
+            gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$TARGET_COMMIT" --jq .content \
+              | python scripts/ci/decode-github-content.py
           }
 
           python - /tmp/candidate-receiver.json <<'PY' > /tmp/managed.tsv
@@ -263,8 +268,7 @@ jobs:
               echo "::error::installed receiver path is missing: $path"
               exit 1
             }
-            encoded="$(gh api "/repos/$TARGET_REPOSITORY/contents/$path?ref=$TARGET_COMMIT" --jq .content)"
-            actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+            actual="$(fetch_content "$path" | sha256sum | awk '{print $1}')"
             [[ "$actual" == "$expected" ]] || {
               echo "::error::installed receiver hash mismatch: $path"
               exit 1
@@ -295,6 +299,7 @@ jobs:
             printf -- '- target commit: `%s`\n' '${{ steps.install.outputs.target_commit }}'
             printf -- '- manifest: `.jpapt/candidate-receiver.json`\n'
             printf -- '- bundle: `config/candidate-receiver-bundle.json`\n'
+            printf -- '- credential role: `TARGET_REPO_TOKEN` via `Private-Secrets`\n'
             printf -- '- update mode: `single commit / non-forced fast-forward ref`\n'
             printf -- '- branch race policy: `preflighted head pinned; concurrent changes reject update`\n'
             printf -- '- managed drift policy: `fail closed; missing files repaired`\n'

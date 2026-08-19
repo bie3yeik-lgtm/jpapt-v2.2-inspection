@@ -13,6 +13,7 @@ on:
       - contracts/candidate-receiver-installation.schema.json
       - scripts/ci/candidate_receiver_bundle.py
       - scripts/ci/build-candidate-receiver-installation.py
+      - scripts/ci/decode-github-content.py
       - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-request-rejection.yml
       - scripts/ci/candidate_protocol_common.py
@@ -32,6 +33,7 @@ on:
       - contracts/candidate-receiver-installation.schema.json
       - scripts/ci/candidate_receiver_bundle.py
       - scripts/ci/build-candidate-receiver-installation.py
+      - scripts/ci/decode-github-content.py
       - .github/workflows/candidate-completion-receipt.yml
       - .github/workflows/candidate-request-rejection.yml
       - scripts/ci/candidate_protocol_common.py
@@ -74,7 +76,8 @@ jobs:
           python -m py_compile \
             scripts/ci/candidate_protocol_common.py \
             scripts/ci/candidate_receiver_bundle.py \
-            scripts/ci/build-candidate-receiver-installation.py
+            scripts/ci/build-candidate-receiver-installation.py \
+            scripts/ci/decode-github-content.py
           python -m json.tool config/candidate-receiver-bundle.json >/dev/null
           python -m json.tool contracts/candidate-receiver-installation.schema.json >/dev/null
           python scripts/ci/candidate_receiver_bundle.py --validate
@@ -129,6 +132,23 @@ jobs:
           grep -Fx 'scripts/ci/candidate_protocol_common.py' < <(python scripts/ci/candidate_receiver_bundle.py --paths)
           grep -F 'candidate_receiver_bundle.py --mappings' .github/workflows/candidate-receiver-bootstrap.yml
           grep -F 'candidate_receiver_bundle.py --tsv' .github/workflows/candidate-receiver-bootstrap.yml
+      - name: Verify bootstrap credential and content-decoding boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bootstrap=.github/workflows/candidate-receiver-bootstrap.yml
+          grep -F 'environment: Private-Secrets' "$bootstrap"
+          grep -F 'TARGET_REPO_TOKEN is required for receiver bootstrap' "$bootstrap"
+          test "$(grep -Fc 'GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}' "$bootstrap")" -eq 3
+          if grep -F 'secrets.SOURCE_REPO_TOKEN' "$bootstrap"; then
+            echo 'receiver bootstrap must not use SOURCE_REPO_TOKEN' >&2
+            exit 1
+          fi
+          grep -F 'python scripts/ci/decode-github-content.py' "$bootstrap"
+          if grep -F "tr -d '\\n' | base64 -d" "$bootstrap"; then
+            echo 'receiver bootstrap must not assume GitHub Contents API always returns base64' >&2
+            exit 1
+          fi
       - name: Verify managed drift and obsolete-path policy
         shell: bash
         run: |
