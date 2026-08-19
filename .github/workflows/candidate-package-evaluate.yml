@@ -140,9 +140,9 @@ jobs:
           hf_flavor="$(value hf_flavor cpu-basic "$I_HF_FLAVOR")"
           hf_jobs_image="$(value hf_jobs_image '' "$I_HF_JOBS_IMAGE")"
           dry_run="$(value dry_run false "$I_DRY_RUN")"
-          [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::source_repository must use owner/name"; exit 1; }
+          bash scripts/ci/validate-repository-identity.sh "$source_repository" source_repository >/dev/null
           [[ -n "$receipt_repository" ]] || receipt_repository="$source_repository"
-          [[ "$receipt_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::receipt_repository must use owner/name"; exit 1; }
+          bash scripts/ci/validate-repository-identity.sh "$receipt_repository" receipt_repository >/dev/null
           [[ -n "$request_id" ]] || request_id="legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           [[ "$request_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "::error::request_id is invalid"; exit 1; }
           case "$dry_run" in true|false) ;; *) echo "::error::dry_run must be true or false"; exit 1 ;; esac
