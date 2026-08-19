@@ -89,6 +89,21 @@ fn validates_revision_bundle_against_repository_catalog() {
         .unwrap(),
     )
     .unwrap();
+    fs::write(
+        revisions.join("provenance.json"),
+        serde_json::to_vec(&json!({
+            "schema_version":1,
+            "status":"incomplete",
+            "automation_consumption":false,
+            "target_id":"parakeet-tdt_ctc-0.6b-ja",
+            "upstream":{"repo_id":"up/model","revision":"0000000000000000000000000000000000000000"},
+            "development_repo":{"repo_id":"dev/model","revision":"snapshot-pending-inventory"},
+            "assets":[],
+            "blockers":["MATERIAL_ASSET_INVENTORY_REQUIRED"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_asr-contracts"))
         .current_dir(&root)

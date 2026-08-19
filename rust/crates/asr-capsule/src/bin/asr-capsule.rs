@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use asr_capsule::{CapsuleError, CapsuleSummary, read_capsule_summary};
 
 fn usage() -> &'static str {
-    "usage:\n  asr-capsule validate <run.parquet> [--expected-run-id <run-id>] [--json]\n  asr-capsule summary <run.parquet> [--json]"
+    "usage:\n  asr-capsule validate <run.parquet> [--expected-run-id <run-id>] [--expected-provenance-manifest-sha256 <sha256>] [--json]\n  asr-capsule summary <run.parquet> [--json]"
 }
 
 fn summary_json(summary: &CapsuleSummary) -> serde_json::Value {
@@ -16,6 +16,7 @@ fn summary_json(summary: &CapsuleSummary) -> serde_json::Value {
         "artifact_count": summary.artifact_ids.len(),
         "artifact_ids": &summary.artifact_ids,
         "metrics": &summary.metrics,
+        "provenance_manifest_sha256": &summary.provenance_manifest_sha256,
     })
 }
 
@@ -35,13 +36,14 @@ fn print_summary(summary: &CapsuleSummary, json: bool) -> Result<(), CapsuleErro
 fn parse_path_and_flags(
     args: impl IntoIterator<Item = String>,
     allow_expected_run_id: bool,
-) -> Result<(PathBuf, Option<String>, bool), String> {
+) -> Result<(PathBuf, Option<String>, Option<String>, bool), String> {
     let mut args = args.into_iter();
     let path = args
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| usage().to_owned())?;
     let mut expected_run_id = None;
+    let mut expected_provenance = None;
     let mut json = false;
 
     while let Some(arg) = args.next() {
@@ -56,11 +58,22 @@ fn parse_path_and_flags(
                 }
                 expected_run_id = Some(value);
             }
+            "--expected-provenance-manifest-sha256" if allow_expected_run_id => {
+                let value = args.next().ok_or_else(|| {
+                    "--expected-provenance-manifest-sha256 requires a value".to_owned()
+                })?;
+                if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(
+                        "--expected-provenance-manifest-sha256 must be a SHA-256".to_owned()
+                    );
+                }
+                expected_provenance = Some(value);
+            }
             other => return Err(format!("unsupported argument: {other}\n{}", usage())),
         }
     }
 
-    Ok((path, expected_run_id, json))
+    Ok((path, expected_run_id, expected_provenance, json))
 }
 
 fn run() -> Result<(), String> {
@@ -69,7 +82,8 @@ fn run() -> Result<(), String> {
 
     match command.as_str() {
         "validate" => {
-            let (path, expected_run_id, json) = parse_path_and_flags(args, true)?;
+            let (path, expected_run_id, expected_provenance, json) =
+                parse_path_and_flags(args, true)?;
             let summary = read_capsule_summary(&path).map_err(|error| error.to_string())?;
             if let Some(expected) = expected_run_id
                 && summary.run_id != expected
@@ -79,11 +93,21 @@ fn run() -> Result<(), String> {
                     summary.run_id
                 ));
             }
+            if let Some(expected) = expected_provenance
+                && summary.provenance_manifest_sha256.as_deref() != Some(expected.as_str())
+            {
+                return Err(format!(
+                    "capsule provenance manifest SHA-256 does not match expected value: capsule={:?}, expected={expected:?}",
+                    summary.provenance_manifest_sha256
+                ));
+            }
             print_summary(&summary, json).map_err(|error| error.to_string())?;
         }
         "summary" => {
-            let (path, expected_run_id, json) = parse_path_and_flags(args, false)?;
+            let (path, expected_run_id, expected_provenance, json) =
+                parse_path_and_flags(args, false)?;
             debug_assert!(expected_run_id.is_none());
+            debug_assert!(expected_provenance.is_none());
             let summary = read_capsule_summary(&path).map_err(|error| error.to_string())?;
             print_summary(&summary, json).map_err(|error| error.to_string())?;
         }

@@ -1,4 +1,5 @@
 mod error;
+pub mod provenance;
 mod schema;
 
 use std::collections::BTreeSet;
@@ -129,6 +130,36 @@ fn validate_run_context_semantics(value: &Value) -> Result<()> {
     let candidate = value
         .pointer("/metadata/candidate")
         .ok_or_else(|| ContractError::validation("metadata.candidate is required"))?;
+    let provenance = value
+        .pointer("/metadata/provenance")
+        .ok_or_else(|| ContractError::validation("metadata.provenance is required"))?;
+    if provenance.pointer("/status").and_then(Value::as_str) != Some("complete")
+        || provenance
+            .pointer("/automation_consumption")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || provenance.pointer("/target_id").and_then(Value::as_str)
+            != Some("parakeet-tdt_ctc-0.6b-ja")
+    {
+        return Err(ContractError::validation(
+            "metadata.provenance must be complete, automation-enabled, and target the canonical Parakeet target",
+        ));
+    }
+    let manifest_sha256 = provenance
+        .pointer("/manifest_sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ContractError::validation("metadata.provenance.manifest_sha256 is required")
+        })?;
+    if manifest_sha256.len() != 64
+        || !manifest_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ContractError::validation(
+            "metadata.provenance.manifest_sha256 must be a lowercase SHA-256",
+        ));
+    }
     validate_generated_candidate(candidate)?;
 
     let artifact_candidate =

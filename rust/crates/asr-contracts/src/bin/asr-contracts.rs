@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use asr_contracts::provenance::{provenance_fingerprint, validate_provenance_file};
 use asr_contracts::{
     ContractError, Result, validate_benchmark, validate_run_context, validate_run_directory,
     validate_sample_result,
@@ -10,6 +11,8 @@ use serde_json::{Value, json};
 
 #[path = "../project_config.rs"]
 mod project_config;
+#[path = "../provenance.rs"]
+mod provenance;
 #[path = "../revisions.rs"]
 mod revisions;
 #[path = "../run_context_builder.rs"]
@@ -19,7 +22,7 @@ use revisions::{RevisionExpectations, validate_revision_bundle};
 use run_context_builder::{RunContextBuildOptions, build_run_context, write_run_context};
 
 fn usage() -> &'static str {
-    "usage:\n  asr-contracts validate-run <run-directory> [--json]\n  asr-contracts validate-run-context <run-context.json>\n  asr-contracts validate-benchmark <metrics.json>\n  asr-contracts validate-sample <result.json>\n  asr-contracts validate-revisions --root <revisions-dir> [--expected-development-repo-id <id>] [--expected-upstream-repo-id <id>] [--expected-tokenizer-repo-id <id>] [--expected-framework <name>] [--expected-profile-set <id>] [--runtime-variant <variant>] [--expected-runtime-profile <id>] [--expected-decoder <decoder>] [--json]\n  asr-contracts resolve-config --current <current.json> --resolved <resolved.json> [--override <config-NNNNNN>]\n  asr-contracts config-version <resolved.json>\n  asr-contracts build-run-context --repository-root <repo> --model <id> --provider <id> --evaluation <id> --environment <id> --revisions <dir> --candidate-contract <json> --output <json> [--runtime-variant <variant>] [--experiment-id <id>] [--strict-provider] [--optimization-level <configured|disable|basic|extended|all>]"
+    "usage:\n  asr-contracts validate-run <run-directory> [--json]\n  asr-contracts validate-run-context <run-context.json>\n  asr-contracts validate-benchmark <metrics.json>\n  asr-contracts validate-sample <result.json>\n  asr-contracts validate-provenance --path <provenance.json> --target <target-id>\n  asr-contracts provenance-fingerprint --path <provenance.json>\n  asr-contracts validate-revisions --root <revisions-dir> [--expected-development-repo-id <id>] [--expected-upstream-repo-id <id>] [--expected-tokenizer-repo-id <id>] [--expected-framework <name>] [--expected-profile-set <id>] [--runtime-variant <variant>] [--expected-runtime-profile <id>] [--expected-decoder <decoder>] [--json]\n  asr-contracts resolve-config --current <current.json> --resolved <resolved.json> [--override <config-NNNNNN>]\n  asr-contracts config-version <resolved.json>\n  asr-contracts build-run-context --repository-root <repo> --model <id> --provider <id> --evaluation <id> --environment <id> --revisions <dir> --candidate-contract <json> --output <json> [--runtime-variant <variant>] [--experiment-id <id>] [--strict-provider] [--optimization-level <configured|disable|basic|extended|all>]"
 }
 
 fn read_json(path: &Path) -> std::result::Result<Value, String> {
@@ -34,6 +37,41 @@ fn take_value(
     args.next()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{option} requires a non-empty value"))
+}
+
+fn provenance_command(
+    mut args: impl Iterator<Item = String>,
+    fingerprint_only: bool,
+) -> std::result::Result<(), String> {
+    let mut path = None;
+    let mut target = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--path" => path = Some(PathBuf::from(take_value(&mut args, "--path")?)),
+            "--target" => target = Some(take_value(&mut args, "--target")?),
+            other => return Err(format!("unsupported argument: {other}\n{}", usage())),
+        }
+    }
+    let path = path.ok_or_else(|| "--path is required".to_owned())?;
+    if fingerprint_only {
+        let value = read_json(&path)?;
+        println!(
+            "{}",
+            provenance_fingerprint(&value).map_err(|error| error.to_string())?
+        );
+    } else {
+        let target = target.ok_or_else(|| "--target is required".to_owned())?;
+        let result = validate_provenance_file(&path, &target).map_err(|error| error.to_string())?;
+        println!("Provenance is valid.");
+        println!("target_id={}", result.manifest.target_id);
+        println!("status={:?}", result.manifest.status);
+        println!(
+            "automation_consumption={}",
+            result.manifest.automation_consumption
+        );
+        println!("manifest_sha256={}", result.fingerprint);
+    }
+    Ok(())
 }
 
 fn is_config_version(value: &str) -> bool {
@@ -350,6 +388,8 @@ fn run() -> std::result::Result<(), String> {
             println!("valid={}", path.display());
         }
         "validate-revisions" => validate_revisions_command(args)?,
+        "validate-provenance" => provenance_command(args, false)?,
+        "provenance-fingerprint" => provenance_command(args, true)?,
         "resolve-config" => resolve_config_command(args)?,
         "config-version" => config_version_command(args)?,
         "build-run-context" => build_run_context_command(args)?,

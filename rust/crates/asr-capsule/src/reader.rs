@@ -58,6 +58,16 @@ fn validate_arrow_schema(actual: &arrow_schema::Schema) -> Result<()> {
 pub fn read_capsule_summary(path: impl AsRef<Path>) -> Result<CapsuleSummary> {
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let provenance_manifest_sha256 = builder
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.key == "jpapt.provenance.manifest_sha256")
+        })
+        .and_then(|item| item.value.clone());
     let mut reader = builder.with_batch_size(DEFAULT_ROW_GROUP_SIZE).build()?;
     let schema = reader.schema();
     validate_arrow_schema(schema.as_ref())?;
@@ -163,5 +173,6 @@ pub fn read_capsule_summary(path: impl AsRef<Path>) -> Result<CapsuleSummary> {
         diagnostic_count,
         artifact_ids,
         metrics,
+        provenance_manifest_sha256,
     })
 }

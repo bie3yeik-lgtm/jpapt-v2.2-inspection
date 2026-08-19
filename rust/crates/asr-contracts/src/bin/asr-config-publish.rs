@@ -7,6 +7,8 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[path = "../provenance.rs"]
+mod provenance;
 #[path = "../revisions.rs"]
 mod revisions;
 

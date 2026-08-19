@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/provenance.schema.json",
+  "title": "Parakeet Asset Provenance Manifest",
+  "description": "Asset-level origin, license, transformation, and candidate-transfer evidence. Completion and routing enablement are separate decisions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "automation_consumption",
+    "target_id",
+    "upstream",
+    "development_repo",
+    "assets",
+    "blockers"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "status": {"type": "string", "enum": ["incomplete", "complete"]},
+    "automation_consumption": {"type": "boolean"},
+    "automation_enablement": {"$ref": "#/$defs/automationEnablement"},
+    "target_id": {"$ref": "#/$defs/nonEmptyString"},
+    "upstream": {"$ref": "#/$defs/repositoryIdentity"},
+    "development_repo": {"$ref": "#/$defs/repositoryIdentity"},
+    "assets": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/asset"}
+    },
+    "blockers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "complete"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "assets": {"minItems": 1},
+          "blockers": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"automation_consumption": {"const": true}},
+        "required": ["automation_consumption"]
+      },
+      "then": {"required": ["automation_enablement"]}
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "immutableRevision": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|sha256:[a-f0-9]{64}|snapshot-[A-Za-z0-9][A-Za-z0-9._-]*)$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision"],
+      "properties": {
+        "repo_id": {"$ref": "#/$defs/nonEmptyString"},
+        "revision": {"$ref": "#/$defs/immutableRevision"}
+      }
+    },
+    "automationEnablement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_id", "approved_at", "approved_by", "policy_sha256"],
+      "properties": {
+        "review_id": {"$ref": "#/$defs/nonEmptyString"},
+        "approved_at": {"type": "string", "format": "date-time"},
+        "approved_by": {"$ref": "#/$defs/nonEmptyString"},
+        "policy_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "assetKind": {
+      "type": "string",
+      "enum": ["weights", "config", "tokenizer", "script", "onnx", "metadata", "documentation", "third_party"]
+    },
+    "transformationKind": {
+      "type": "string",
+      "enum": ["copied", "converted", "generated", "modified"]
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision", "path"],
+      "properties": {
+        "repo_id": {"$ref": "#/$defs/nonEmptyString"},
+        "revision": {"$ref": "#/$defs/immutableRevision"},
+        "path": {"$ref": "#/$defs/relativePath"}
+      }
+    },
+    "transformation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "tool", "version", "output_sha256"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/transformationKind"},
+        "tool": {"$ref": "#/$defs/nonEmptyString"},
+        "version": {"$ref": "#/$defs/nonEmptyString"},
+        "input_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "output_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "role"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "role": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "sha256", "origin", "license", "attribution", "transformation"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "kind": {"$ref": "#/$defs/assetKind"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "origin": {"$ref": "#/$defs/origin"},
+        "license": {"$ref": "#/$defs/nonEmptyString"},
+        "attribution": {"$ref": "#/$defs/nonEmptyString"},
+        "transformation": {"$ref": "#/$defs/transformation"},
+        "candidate": {"$ref": "#/$defs/candidate"}
+      }
+    }
+  }
+}

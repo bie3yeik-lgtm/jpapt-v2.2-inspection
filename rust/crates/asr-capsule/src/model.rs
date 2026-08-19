@@ -133,6 +133,7 @@ pub struct CapsuleSummary {
     pub diagnostic_count: usize,
     pub artifact_ids: BTreeSet<String>,
     pub metrics: BTreeMap<String, f64>,
+    pub provenance_manifest_sha256: Option<String>,
 }
 
 impl CapsuleSummary {

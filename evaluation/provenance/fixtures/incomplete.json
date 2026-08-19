@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "incomplete",
+  "automation_consumption": false,
+  "target_id": "parakeet-tdt_ctc-0.6b-ja",
+  "upstream": {
+    "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "revision": "0000000000000000000000000000000000000000"
+  },
+  "development_repo": {
+    "repo_id": "gawohok7/jpapt-v2.2-dev",
+    "revision": "snapshot-pending-inventory"
+  },
+  "assets": [],
+  "blockers": [
+    "EXACT_UPSTREAM_REVISION_REQUIRED",
+    "MATERIAL_ASSET_INVENTORY_REQUIRED",
+    "TRANSFORMATION_CHAIN_REQUIRED"
+  ]
+}
