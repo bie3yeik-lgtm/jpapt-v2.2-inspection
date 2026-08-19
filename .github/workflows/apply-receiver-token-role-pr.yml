@@ -1,0 +1,49 @@
+name: Apply Receiver Token Role PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'docs/current-premiere-integration-spec-20260819'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: docs/current-premiere-integration-spec-20260819
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Apply role migration
+        id: migrate
+        run: |
+          set -euo pipefail
+          python scripts/ci/apply-receiver-token-role.py
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/candidate-package-evaluate-v2.yml \
+                  .github/workflows/candidate-protocol-readiness.yml \
+                  .github/workflows/candidate-protocol-e2e.yml \
+                  .github/workflows/candidate-receiver-bootstrap.yml \
+                  .github/workflows/candidate-completion-reconcile.yml
+          if git diff --cached --quiet; then
+            echo 'committed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m 'fix(ci): split source and receiver repository tokens'
+          git push origin HEAD:docs/current-premiere-integration-spec-20260819
+          echo 'committed=true' >> "$GITHUB_OUTPUT"
+      - name: Report result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.migrate.outcome }}
+          COMMITTED: ${{ steps.migrate.outputs.committed }}
+        run: |
+          gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "Receiver-token role migration run \`$GITHUB_RUN_ID\`: outcome=\`${OUTCOME:-unknown}\`, committed=\`${COMMITTED:-unknown}\`. SOURCE_REPO_TOKEN remains source-routing authority; TARGET_REPO_TOKEN becomes external receiver/bootstrap/readiness/E2E/reconcile delivery capability."
