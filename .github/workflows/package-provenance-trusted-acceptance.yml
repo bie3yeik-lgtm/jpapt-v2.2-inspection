@@ -1,0 +1,257 @@
+name: Package Provenance Trusted Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/package-provenance-trusted-acceptance.yml
+
+permissions:
+  contents: read
+
+env:
+  PRIVATE_REPOSITORY: largoyo/Premiere-AutoProcess-Plugin
+  PRIVATE_MAIN: 9570b8cf57485b93f45f957a46f909b76650742d
+  PACKAGE_HEAD: c7f85669cd8cb198caa22580255c891a87579bb2
+  PACKAGE_ORIGIN_BASE: 4714ea8ece448535dfe592e139ffcc7719796d1d
+  ACCEPTED_PUBLIC: a84c22a6e59621dfb77ce0cec53f1e6a6352d061
+  PRIVATE_ROOT: /tmp/jpapt-package-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  acceptance:
+    if: ${{ github.head_ref == 'agent/package-provenance-trusted-acceptance-20260820' }}
+    name: Validate private package/provenance integration
+    environment: Private-Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify public authority remains exact accepted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
+          [[ "$live" == "$ACCEPTED_PUBLIC" ]] || {
+            echo "::error::public authority main drifted: live=$live accepted=$ACCEPTED_PUBLIC"
+            exit 1
+          }
+
+      - name: Fetch private main and package stack with ephemeral credential
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SOURCE_REPO_TOKEN:-}" ]] || { echo '::error::SOURCE_REPO_TOKEN missing'; exit 1; }
+          askpass="$RUNNER_TEMP/package-provenance-askpass.sh"
+          cat > "$askpass" <<'SH'
+          #!/usr/bin/env bash
+          case "${1:-}" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${SOURCE_REPO_TOKEN:?}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          cleanup() {
+            rm -f "$askpass"
+            unset SOURCE_REPO_TOKEN
+          }
+          trap cleanup EXIT
+
+          rm -rf "$PRIVATE_ROOT"
+          git init -q "$PRIVATE_ROOT"
+          GIT_ASKPASS="$askpass" GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 \
+            git -C "$PRIVATE_ROOT" fetch --no-tags --depth=64 \
+            "https://github.com/${PRIVATE_REPOSITORY}.git" \
+            "$PRIVATE_MAIN" "$PACKAGE_HEAD" "$PACKAGE_ORIGIN_BASE"
+
+          for sha in "$PRIVATE_MAIN" "$PACKAGE_HEAD" "$PACKAGE_ORIGIN_BASE"; do
+            git -C "$PRIVATE_ROOT" cat-file -e "${sha}^{commit}"
+          done
+          [[ -z "$(git -C "$PRIVATE_ROOT" remote)" ]] || { echo '::error::private fetch persisted remote'; exit 1; }
+          if git -C "$PRIVATE_ROOT" config --local --get-regexp 'http\..*\.extraheader' >/tmp/package-extraheaders 2>/dev/null; then
+            cat /tmp/package-extraheaders >&2
+            echo '::error::private fetch retained credential header'
+            exit 1
+          fi
+
+      - name: Verify package stack identity and reviewed file surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_base="$(git -C "$PRIVATE_ROOT" merge-base "$PRIVATE_MAIN" "$PACKAGE_HEAD")"
+          [[ "$merge_base" == "$PACKAGE_ORIGIN_BASE" ]] || {
+            echo "::error::unexpected package stack merge base: $merge_base"
+            exit 1
+          }
+          [[ "$(git -C "$PRIVATE_ROOT" rev-list --count "$PACKAGE_ORIGIN_BASE..$PACKAGE_HEAD")" == 8 ]]
+          mapfile -t changed < <(git -C "$PRIVATE_ROOT" diff --name-only "$PACKAGE_ORIGIN_BASE" "$PACKAGE_HEAD" | sort)
+          expected=(
+            .github/workflows/hf-model-bootstrap-package.yml
+            .github/workflows/hf-model-pipeline-security-contracts.yml
+            .github/workflows/jpapt-package-artifact-verify.yml
+            config/hf-package-artifact-trust.v1.json
+            docs/hf-model-pipeline.md
+            scripts/hf-candidate-content-digest.py
+            scripts/hf-model-pipeline-ids.py
+            scripts/hf-model-pipeline.py
+            scripts/hf-package-evidence.py
+            scripts/hf-repo-write-preflight.py
+            scripts/jpapt-bind-package-request.py
+            scripts/jpapt-verify-package-artifact.py
+            scripts/tests/test_hf_bootstrap_package_workflow.py
+            scripts/tests/test_hf_candidate_content_digest.py
+            scripts/tests/test_hf_model_pipeline.py
+            scripts/tests/test_hf_model_pipeline_ids.py
+            scripts/tests/test_hf_package_evidence.py
+            scripts/tests/test_hf_repo_write_preflight.py
+            scripts/tests/test_jpapt_bind_package_request.py
+            scripts/tests/test_jpapt_package_artifact_verify_workflow.py
+            scripts/tests/test_jpapt_verify_package_artifact.py
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]] || {
+            printf '::error::unexpected package stack files:\n%s\n' "${changed[*]}"
+            exit 1
+          }
+
+      - name: Build local integration merge without writing private repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$PRIVATE_ROOT" checkout --detach --force "$PRIVATE_MAIN"
+          git -C "$PRIVATE_ROOT" -c user.name=jpapt-trusted-acceptance -c user.email=noreply@example.invalid \
+            merge --no-commit --no-ff "$PACKAGE_HEAD"
+          [[ "$(git -C "$PRIVATE_ROOT" rev-parse HEAD)" == "$PRIVATE_MAIN" ]]
+          test -f "$PRIVATE_ROOT/.github/workflows/hf-model-bootstrap-package.yml"
+          test -f "$PRIVATE_ROOT/scripts/jpapt-verify-package-artifact.py"
+
+      - name: Verify authority state survives integration merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" '.accepted_revision == $accepted' \
+            "$root/config/jpapt-upstream-authority.json" >/dev/null
+          jq -e --arg accepted "$ACCEPTED_PUBLIC" \
+            '.status == "accepted" and .authority.reviewed_main_revision == $accepted and .policy.dispatch_requires_exact_main_revision == true and .policy.dispatch_requires_accepted_revision_match == true' \
+            "$root/config/jpapt-authority-gate.v1.json" >/dev/null
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run package and provenance Python security contracts
+        id: python_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests="$PRIVATE_ROOT/scripts/tests"
+          patterns=(
+            test_hf_bootstrap_package_workflow.py
+            test_hf_candidate_content_digest.py
+            test_hf_model_pipeline.py
+            test_hf_model_pipeline_ids.py
+            test_hf_package_evidence.py
+            test_hf_repo_write_preflight.py
+            test_jpapt_bind_package_request.py
+            test_jpapt_package_artifact_verify_workflow.py
+            test_jpapt_verify_package_artifact.py
+          )
+          total=0
+          for pattern in "${patterns[@]}"; do
+            output="$(python3 -m unittest discover -v -s "$tests" -p "$pattern" 2>&1)"
+            printf '%s\n' "$output"
+            count="$(grep -Ec '^test_.* \.\.\. ok$' <<<"$output" || true)"
+            (( total += count ))
+          done
+          (( total > 0 )) || { echo '::error::no package/provenance tests executed'; exit 1; }
+          python3 -m py_compile \
+            "$PRIVATE_ROOT/scripts/hf-candidate-content-digest.py" \
+            "$PRIVATE_ROOT/scripts/hf-model-pipeline-ids.py" \
+            "$PRIVATE_ROOT/scripts/hf-model-pipeline.py" \
+            "$PRIVATE_ROOT/scripts/hf-package-evidence.py" \
+            "$PRIVATE_ROOT/scripts/hf-repo-write-preflight.py" \
+            "$PRIVATE_ROOT/scripts/jpapt-bind-package-request.py" \
+            "$PRIVATE_ROOT/scripts/jpapt-verify-package-artifact.py"
+          echo "count=$total" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Re-run JPAPT Rust authority regression on integrated tree
+        id: rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate="$PRIVATE_ROOT/TelopFlow_Feature/TF-v1-onnx-implements"
+          cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_ -- --nocapture
+          manifest="$(realpath "$crate/Cargo.toml")"
+          cargo metadata --locked --no-deps --format-version 1 --manifest-path "$crate/Cargo.toml" > /tmp/package-cargo-metadata.json
+          mapfile -t bins < <(
+            jq -r --arg manifest "$manifest" '
+              .packages[] | select(.manifest_path == $manifest) | .targets[]
+              | select((.kind | index("bin")) != null)
+              | select(.src_path | test("/jpapt[^/]*\\.rs$"))
+              | .name
+            ' /tmp/package-cargo-metadata.json | sort -u
+          )
+          (( ${#bins[@]} > 0 )) || { echo '::error::no JPAPT Cargo bins found'; exit 1; }
+          for bin in "${bins[@]}"; do
+            cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"
+          done
+          echo "count=${#bins[@]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Lint package, provenance, and authority workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          workflows="$PRIVATE_ROOT/.github/workflows"
+          files=(
+            "$workflows/hf-model-bootstrap-package.yml"
+            "$workflows/hf-model-pipeline-security-contracts.yml"
+            "$workflows/jpapt-package-artifact-verify.yml"
+            "$workflows/jpapt-private-dispatch.yml"
+            "$workflows/jpapt-private-receipt.yml"
+          )
+          actionlint -color -ignore 'SC2016' "${files[@]}"
+
+      - name: Verify zero-compute acceptance scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/package-provenance-trusted-acceptance.yml
+          if grep -Ei 'hf jobs (run|uv)|docker (run|build)|repository_dispatch|packages: write|contents: write' "$workflow"; then
+            echo '::error::trusted acceptance workflow contains forbidden compute/write primitive'
+            exit 1
+          fi
+
+      - name: Build acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-provenance-acceptance
+          jq -n \
+            --arg private_repository "$PRIVATE_REPOSITORY" \
+            --arg private_main "$PRIVATE_MAIN" \
+            --arg package_head "$PACKAGE_HEAD" \
+            --arg package_origin_base "$PACKAGE_ORIGIN_BASE" \
+            --arg accepted_public "$ACCEPTED_PUBLIC" \
+            --argjson python_test_count '${{ steps.python_tests.outputs.count }}' \
+            --argjson rust_entrypoint_count '${{ steps.rust.outputs.count }}' \
+            '{schema_version:1,private_repository:$private_repository,private_main:$private_main,package_head:$package_head,package_origin_base:$package_origin_base,accepted_public:$accepted_public,package_commit_count:8,package_changed_file_count:21,integration_merge:"clean",authority_state_preserved:true,python_security_contracts:"passed",python_test_count:$python_test_count,rust_authority_regression:"passed",rust_entrypoint_count:$rust_entrypoint_count,workflow_actionlint:"passed",trusted_runner:"github-hosted",hf_jobs_launched:false,model_compute_launched:false,package_built:false,private_repository_written:false}' \
+            > package-provenance-acceptance/evidence.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-provenance-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: package-provenance-acceptance/
+          if-no-files-found: error
+          retention-days: 30
