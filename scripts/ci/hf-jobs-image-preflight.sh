@@ -2,11 +2,25 @@
 set -euo pipefail
 
 image="${1:?digest-pinned image reference is required}"
+plan="${HF_JOB_PLAN:-.ci/hf-jobs/hf-job-plan.json}"
 
 [[ "$image" =~ ^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?@sha256:[0-9A-Fa-f]{64}$ ]] || {
   echo "ERROR: HF Jobs image must be digest-pinned with @sha256:<64 hex>: $image" >&2
   exit 2
 }
+
+# Production candidate evaluation writes this plan before reaching image
+# preflight. When present, enforce environment/provider/hardware-class binding
+# with Rust before any paid remote Job can be created.
+if [[ -f "$plan" ]]; then
+  command -v cargo >/dev/null 2>&1 || {
+    echo "ERROR: cargo is required to validate HF Jobs hardware flavor policy" >&2
+    exit 2
+  }
+  cargo run --quiet --locked -p asr-contracts --bin asr-hf-flavor-policy -- \
+    validate --plan "$plan" >/dev/null
+fi
+
 command -v docker >/dev/null 2>&1 || {
   echo "ERROR: docker CLI is required for anonymous HF Jobs image preflight" >&2
   exit 2
