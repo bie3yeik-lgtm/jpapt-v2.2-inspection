@@ -194,26 +194,55 @@ jobs:
 
   diagnose_fixture_receiver:
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/diagnose-fixture-receiver-20260820' }}
-    name: Diagnose private fixture receiver run
+    name: Diagnose and repair fixture ACK credential
     environment: Private-Secrets
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: List matching receiver runs and jobs
+      - name: Probe candidate ACK credentials
+        id: probe
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+          ORCHESTRATOR_REPOSITORY: bie3yeik-lgtm/jpapt-v2.2-inspection
+        run: |
+          set -euo pipefail
+          selected=''
+          selected_name=''
+          for name in SOURCE_REPO_TOKEN TARGET_REPO_TOKEN; do
+            token="${!name:-}"
+            if [[ -z "$token" ]]; then
+              echo "$name: missing"
+              continue
+            fi
+            login="$(GH_TOKEN="$token" gh api /user --jq .login 2>/dev/null || true)"
+            if [[ -z "$login" ]]; then
+              echo "$name: invalid"
+              continue
+            fi
+            push="$(GH_TOKEN="$token" gh api "/repos/$ORCHESTRATOR_REPOSITORY" --jq '.permissions.push // false' 2>/dev/null || true)"
+            echo "$name: valid login=$login orchestrator_push=${push:-unknown}"
+            if [[ "$push" == true && -z "$selected" ]]; then
+              selected="$token"
+              selected_name="$name"
+            fi
+          done
+          [[ -n "$selected" ]] || { echo '::error::no Environment token has orchestrator push/dispatch capability'; exit 1; }
+          echo "selected_name=$selected_name" >> "$GITHUB_OUTPUT"
+          echo "selected_token<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$selected" >> "$GITHUB_OUTPUT"
+          echo EOF >> "$GITHUB_OUTPUT"
+
+      - name: Replace fixture JPAPT_ACK_TOKEN
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
-          EXPECTED_AFTER: '2026-08-19T15:01:55Z'
+          SELECTED_ACK_TOKEN: ${{ steps.probe.outputs.selected_token }}
+          SELECTED_NAME: ${{ steps.probe.outputs.selected_name }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo '::error::TARGET_REPO_TOKEN missing'; exit 1; }
-          runs="$(gh api "/repos/$FIXTURE_REPOSITORY/actions/workflows/candidate-completion-receipt.yml/runs?event=repository_dispatch&per_page=20")"
-          echo '=== receiver runs ==='
-          jq -r --arg after "$EXPECTED_AFTER" '.workflow_runs[] | select(.created_at >= $after) | [.id,.status,(.conclusion // ""),.created_at,.head_sha] | @tsv' <<<"$runs"
-          run_id="$(jq -r --arg after "$EXPECTED_AFTER" '.workflow_runs[] | select(.created_at >= $after) | .id' <<<"$runs" | head -n1)"
-          [[ -n "$run_id" && "$run_id" != null ]] || { echo '::error::receiver run not found'; exit 1; }
-          echo "selected_run_id=$run_id"
-          echo '=== receiver jobs ==='
-          gh api "/repos/$FIXTURE_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
-            --jq '.jobs[] | [.id,.name,.status,(.conclusion // "")] | @tsv'
+          [[ -n "$SELECTED_ACK_TOKEN" ]] || { echo '::error::selected ACK token missing'; exit 1; }
+          printf '%s' "$SELECTED_ACK_TOKEN" | gh secret set JPAPT_ACK_TOKEN --repo "$FIXTURE_REPOSITORY"
+          echo "fixture JPAPT_ACK_TOKEN replaced from $SELECTED_NAME"
