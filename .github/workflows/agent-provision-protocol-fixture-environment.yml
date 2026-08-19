@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+      TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
       FIXTURE_REPOSITORY: bie3yeik-lgtm/jpapt-protocol-e2e-source
     steps:
       - name: Provision private dedicated fixture
@@ -23,11 +23,11 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          GH_TOKEN: ${{ env.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ env.TARGET_REPO_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo 'reason=environment-secret-not-injected' >> "$GITHUB_OUTPUT"
+            echo 'reason=target-repo-token-not-injected' >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo 'token_injected=true' >> "$GITHUB_OUTPUT"
@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           body=$(cat <<EOF
-          Environment-aware dedicated fixture provisioning attempt.
+          TARGET_REPO_TOKEN dedicated fixture provisioning attempt.
 
           - environment: \`Private-Secrets\`
           - repository: \`$FIXTURE_REPOSITORY\`
@@ -101,7 +101,7 @@ jobs:
           - default branch: \`${DEFAULT_BRANCH:-unknown}\`
           - API detail: \`${DETAIL:-none}\`
 
-          No receiver bootstrap, protocol dispatch, HF Bucket mutation, model inference, GPU, Docker evaluation, or HF Jobs workload was performed by this provisioning step.
+          This step only attempts creation/readback of the dedicated private fixture repository. It does not bootstrap receiver files, configure repository secrets/variables, dispatch protocol events, mutate HF Buckets, run model inference, GPU, Docker evaluation, or HF Jobs.
           EOF
           )
           gh issue comment 70 --repo "$GITHUB_REPOSITORY" --body "$body"
