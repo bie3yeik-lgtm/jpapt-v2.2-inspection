@@ -48,13 +48,14 @@ jobs:
           set -euo pipefail
           legacy=.github/workflows/candidate-package-evaluate.yml
           grep -F 'jpapt.candidate-evaluate' "$legacy"
-          grep -F 'candidate-package-evaluate-v2.yml/dispatches' "$legacy"
+          grep -F 'workflow-dispatch-with-retry.sh' "$legacy"
+          grep -F 'candidate-package-evaluate-v2.yml' "$legacy"
           grep -F 'actions: write' "$legacy"
           grep -F 'legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' "$legacy"
           grep -F 'receipt_repository="$source_repository"' "$legacy"
-          grep -F 'request_id: $request_id' "$legacy"
-          grep -F 'receipt_repository: $receipt_repository' "$legacy"
-          grep -F 'dry_run: $dry_run' "$legacy"
+          grep -F 'request_id:$request_id' "$legacy"
+          grep -F 'receipt_repository:$receipt_repository' "$legacy"
+          grep -F 'dry_run:$dry_run' "$legacy"
       - name: Reject duplicated evaluator implementation in legacy entrypoint
         shell: bash
         run: |

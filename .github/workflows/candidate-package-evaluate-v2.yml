@@ -87,8 +87,6 @@ permissions:
   packages: write
 
 env:
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
   HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
 
 jobs:
@@ -152,6 +150,7 @@ jobs:
       - name: Fetch source repository routing config
         shell: bash
         env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           SOURCE_REPOSITORY: ${{ steps.inputs.outputs.source_repository }}
           GH_FALLBACK_TOKEN: ${{ github.token }}
         run: |
@@ -173,6 +172,8 @@ jobs:
       - name: Infer HF namespace
         id: namespace
         shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -euo pipefail
           namespace="${HF_DEFAULT_NAMESPACE:-}"
@@ -311,6 +312,7 @@ jobs:
       - name: Resolve and fetch candidate
         id: candidate
         env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
           CANDIDATE_ID: ${{ needs.resolve.outputs.candidate_id }}
         run: bash scripts/hf/hf-fetch-candidate.sh "${CANDIDATE_ID:-}"
