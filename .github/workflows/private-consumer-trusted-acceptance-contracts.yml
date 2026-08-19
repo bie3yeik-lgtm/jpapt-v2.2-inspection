@@ -140,7 +140,9 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
-          grep -F 'test_jpapt_upstream_contract_diff.py' "$workflow"
+          grep -F 'tests="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests"' "$workflow"
+          grep -F 'python3 -m unittest discover' "$workflow"
+          grep -F -- "-p 'test_jpapt_upstream_contract_diff.py'" "$workflow"
           grep -F 'cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_' "$workflow"
           grep -F -- "-name 'jpapt*.rs'" "$workflow"
           grep -F 'cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"' "$workflow"
