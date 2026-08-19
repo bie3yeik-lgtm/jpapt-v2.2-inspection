@@ -150,8 +150,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest \
-            "$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests/test_jpapt_upstream_contract_diff.py"
+          tests="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests"
+          python3 -m unittest discover \
+            -s "$tests" \
+            -p 'test_jpapt_upstream_contract_diff.py'
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
