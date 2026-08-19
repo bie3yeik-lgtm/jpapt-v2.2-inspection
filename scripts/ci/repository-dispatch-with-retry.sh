@@ -38,6 +38,19 @@ if ! jq -e '
   exit 2
 fi
 
+payload_file=""
+transport_backup=""
+cleanup() {
+  if [[ -n "$transport_backup" && -f "$transport_backup" ]]; then
+    cp "$transport_backup" "$body_file"
+    rm -f "$transport_backup"
+  fi
+  if [[ -n "$payload_file" && -f "$payload_file" ]]; then
+    rm -f "$payload_file"
+  fi
+}
+trap cleanup EXIT
+
 event_type="$(jq -r '.event_type' "$body_file")"
 case "$event_type" in
   jpapt.candidate-completed|jpapt.candidate-rejected)
@@ -46,7 +59,6 @@ case "$event_type" in
       exit 2
     }
     payload_file="$(mktemp)"
-    trap 'rm -f "$payload_file"' EXIT
     jq -c '.client_payload' "$body_file" > "$payload_file"
     receipt_repository="$(jq -er '.receipt_repository | select(type == "string" and length > 0)' "$payload_file")" || {
       echo "ERROR: $event_type payload must contain receipt_repository" >&2
@@ -69,18 +81,16 @@ esac
 # GitHub repository_dispatch allows at most 10 top-level properties in
 # client_payload. Candidate protocol receipts/ACKs/rejections are authority
 # objects with more fields than that, so keep the authority object unchanged
-# and adapt only the transport envelope when necessary.
-dispatch_body="$body_file"
+# and adapt only the transport representation while preserving the caller's
+# body path. The original body is restored on exit.
 client_payload_count="$(jq '.client_payload | length' "$body_file")"
 if (( client_payload_count > 10 )); then
-  dispatch_body="$(mktemp)"
-  if [[ -n "${payload_file:-}" ]]; then
-    trap 'rm -f "$payload_file" "$dispatch_body"' EXIT
-  else
-    trap 'rm -f "$dispatch_body"' EXIT
-  fi
+  transport_backup="$(mktemp)"
+  cp "$body_file" "$transport_backup"
+  transport_tmp="$(mktemp)"
   jq -c '{event_type: .event_type, client_payload: {protocol_payload: .client_payload}}' \
-    "$body_file" > "$dispatch_body"
+    "$transport_backup" > "$transport_tmp"
+  mv "$transport_tmp" "$body_file"
 fi
 
 attempt=1
@@ -90,7 +100,7 @@ while true; do
     -H 'Accept: application/vnd.github+json' \
     -H 'X-GitHub-Api-Version: 2022-11-28' \
     "/repos/$repository/dispatches" \
-    --input "$dispatch_body"; then
+    --input "$body_file"; then
     echo "repository_dispatch accepted: repository=$repository attempt=$attempt"
     exit 0
   fi
