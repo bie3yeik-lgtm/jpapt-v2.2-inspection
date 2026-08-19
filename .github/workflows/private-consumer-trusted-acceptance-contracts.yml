@@ -142,7 +142,7 @@ jobs:
           workflow=.github/workflows/private-consumer-trusted-acceptance.yml
           grep -F 'tests="$PRIVATE_CONSUMER_ROOT/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests"' "$workflow"
           grep -F 'python3 -m unittest discover' "$workflow"
-          grep -F -- '-p '\''test_jpapt_upstream_contract_diff.py'\''' "$workflow"
+          grep -F -- "-p 'test_jpapt_upstream_contract_diff.py'" "$workflow"
           if grep -F 'python3 -m unittest \' "$workflow"; then
             echo 'private detector must not pass an absolute file path as a unittest module name' >&2
             exit 1
