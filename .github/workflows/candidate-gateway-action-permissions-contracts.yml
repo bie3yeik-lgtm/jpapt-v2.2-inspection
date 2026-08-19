@@ -1,0 +1,32 @@
+name: Candidate Gateway Actions Permission Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-gateway-action-permissions-contracts.yml
+      - scripts/ci/check-candidate-gateway-action-permissions.py
+  pull_request:
+    paths:
+      - .github/workflows/candidate-request-gateway.yml
+      - .github/workflows/candidate-gateway-action-permissions-contracts.yml
+      - scripts/ci/check-candidate-gateway-action-permissions.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check Candidate Request Gateway Actions permissions
+        run: python scripts/ci/check-candidate-gateway-action-permissions.py

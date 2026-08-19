@@ -86,7 +86,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 env:
   HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
@@ -95,6 +94,9 @@ jobs:
   plan:
     name: Resolve and estimate request
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       body: ${{ steps.body.outputs.body }}
       execute: ${{ steps.inputs.outputs.execute }}
@@ -309,6 +311,9 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.execute == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v7
       - name: Dispatch Candidate Package Evaluate V2 with bounded retry
@@ -348,6 +353,8 @@ jobs:
     needs: plan
     if: ${{ always() && needs.plan.result == 'failure' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
