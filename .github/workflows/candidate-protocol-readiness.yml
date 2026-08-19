@@ -115,7 +115,7 @@ jobs:
           installed_commit=""
           if [[ -n "$manifest_encoded" ]]; then
             managed=true
-            printf '%s' "$manifest_encoded" | tr -d '\n' | base64 -d > /tmp/receiver.json
+            printf '%s' "$manifest_encoded" | python scripts/ci/decode-github-content.py --output /tmp/receiver.json
             python scripts/ci/build-candidate-receiver-installation.py --validate /tmp/receiver.json
             python scripts/ci/candidate_receiver_bundle.py --assert-installation /tmp/receiver.json || {
               echo "::error::receiver managed installation is stale or incomplete; run Candidate Receiver Bootstrap"
@@ -147,7 +147,7 @@ jobs:
             while IFS=$'\t' read -r expected path; do
               encoded="$(gh api "/repos/$RECEIPT_REPOSITORY/contents/$path?ref=$default_branch" --jq .content 2>/dev/null || true)"
               [[ -n "$encoded" ]] || { echo "::error::managed path missing: $path"; exit 1; }
-              actual="$(printf '%s' "$encoded" | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+              actual="$(printf '%s' "$encoded" | python scripts/ci/decode-github-content.py | sha256sum | awk '{print $1}')"
               [[ "$actual" == "$expected" ]] || { echo "::error::managed path hash mismatch: $path"; exit 1; }
             done < /tmp/managed.tsv
           elif [[ "$REQUIRE_MANAGED" == true ]]; then
