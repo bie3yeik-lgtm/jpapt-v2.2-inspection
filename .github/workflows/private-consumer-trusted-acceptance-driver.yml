@@ -1,0 +1,68 @@
+name: Private Consumer Trusted Acceptance Driver
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/private-consumer-trusted-acceptance-driver.yml
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  drive:
+    if: ${{ github.head_ref == 'agent/private-consumer-trusted-acceptance-20260820' }}
+    name: Drive deployed main trusted acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Dispatch deployed trusted acceptance and wait
+        id: acceptance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          workflow=private-consumer-trusted-acceptance.yml
+          before="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=main&event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].id // 0')"
+          jq -n '{ref:"main"}' > /tmp/dispatch.json
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" --input /tmp/dispatch.json
+
+          run_id=''
+          for _ in $(seq 1 60); do
+            run_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=main&event=workflow_dispatch&per_page=10" \
+              --jq ".workflow_runs[] | select(.id > $before) | .id" | head -n1)"
+            [[ -z "$run_id" ]] || break
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || {
+            echo '::error::deployed trusted acceptance run not found'
+            exit 1
+          }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "[driver] trusted acceptance run=$run_id"
+
+          deadline=$((SECONDS + 2400))
+          while (( SECONDS < deadline )); do
+            read -r status conclusion < <(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.status, (.conclusion // "")] | @tsv')
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]] || {
+                echo "::error::trusted acceptance failed: run=$run_id conclusion=$conclusion"
+                exit 1
+              }
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::trusted acceptance timed out: run=$run_id"
+          exit 1
+
+      - name: Record trusted acceptance evidence pointer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_RUN: ${{ steps.acceptance.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          gh issue comment 109 --repo "$GITHUB_REPOSITORY" --body "Alternative trusted-hosted private consumer acceptance completed successfully.\n\n- deployed public main workflow run: \`$ACCEPTANCE_RUN\`\n- private immutable authority stack head: \`e422ed7ad13dcca4562e876bef8860d408304e73\` (#144 -> #141 -> #142 -> #143)\n- public review target: \`6ce57e6f874d387eb25e5dbba969b094962e1d92\`\n- accepted revision remained \`9179e1147d0460a29dfe4251f73977156356784c\` during validation\n- runner: GitHub-hosted from the public authority repository\n- private checkout credential: \`SOURCE_REPO_TOKEN\`, checkout-only with \`persist-credentials=false\`\n- model/GPU/Docker/HF Jobs compute: none\n\nThe validation-only driver PR must not be merged. Review the deployed run artifacts before changing accepted authority state."
