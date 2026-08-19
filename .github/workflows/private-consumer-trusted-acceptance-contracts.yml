@@ -144,8 +144,14 @@ jobs:
           grep -F 'python3 -m unittest discover' "$workflow"
           grep -F -- "-p 'test_jpapt_upstream_contract_diff.py'" "$workflow"
           grep -F 'cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_' "$workflow"
-          grep -F -- "-name 'jpapt*.rs'" "$workflow"
+          grep -F 'cargo metadata --locked --no-deps --format-version 1' "$workflow"
+          grep -F 'select((.kind | index("bin")) != null)' "$workflow"
+          grep -F 'select(.src_path | test("/jpapt[^/]*\\.rs$"))' "$workflow"
           grep -F 'cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"' "$workflow"
+          if grep -F 'bin="$(basename "$source" .rs)"' "$workflow"; then
+            echo 'JPAPT Cargo target names must come from Cargo metadata, not source basenames' >&2
+            exit 1
+          fi
           grep -F 'jpapt-private-dispatch.yml' "$workflow"
           grep -F 'jpapt-private-receipt.yml' "$workflow"
           grep -F 'jpapt-upstream-contract-diff.yml' "$workflow"
