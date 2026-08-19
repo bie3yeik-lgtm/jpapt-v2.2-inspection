@@ -16,24 +16,46 @@ command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 
 BUCKET="${HF_BUCKET#hf://buckets/}"
 BUCKET="${BUCKET%/}"
+[[ "$BUCKET" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
+namespace="${BUCKET%%/*}"
+bucket_name="${BUCKET#*/}"
+if [[ "$namespace" == "." || "$namespace" == ".." || "$bucket_name" == "." || "$bucket_name" == ".." ]]; then
+  fail "HF_BUCKET must not contain dot path segments"
+fi
+
 REMOTE_README="hf://buckets/${BUCKET}/README.md"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 README="$WORK/README.md"
 
-# Preserve any human-written content outside the managed marker block.
-if ! hf buckets cp --token "$HF_TOKEN" "$REMOTE_README" "$README" >/dev/null 2>"$WORK/read.err"; then
-  printf '# %s\n\n' "$BUCKET" > "$README"
-fi
+README_EXISTS="$(python scripts/ci/hf-bucket-object-exists.py --bucket "$BUCKET" --path README.md)" || \
+  fail "failed to determine whether ${REMOTE_README} exists"
+case "$README_EXISTS" in
+  true)
+    if ! hf buckets cp --token "$HF_TOKEN" "$REMOTE_README" "$README" >/dev/null; then
+      fail "existing allocator README could not be downloaded: ${REMOTE_README}"
+    fi
+    ;;
+  false)
+    printf '# %s\n\n' "$BUCKET" > "$README"
+    ;;
+  *)
+    fail "unexpected README existence result: $README_EXISTS"
+    ;;
+esac
 
-for collection in candidates experiments; do
-  remote="hf://buckets/${BUCKET}/${collection}"
-  if ! hf buckets list --token "$HF_TOKEN" "$remote" -R -q >"$WORK/${collection}.txt" 2>/dev/null; then
-    : >"$WORK/${collection}.txt"
-  fi
-done
-if ! hf buckets list --token "$HF_TOKEN" "hf://buckets/${BUCKET}/config/versions" -R -q >"$WORK/config.txt" 2>/dev/null; then
-  : >"$WORK/config.txt"
+if ! python scripts/ci/hf-bucket-list-prefix.py \
+  --bucket "$BUCKET" --prefix candidates >"$WORK/candidates.txt"; then
+  fail "failed to list candidates; refusing to update allocator README from incomplete state"
+fi
+if ! python scripts/ci/hf-bucket-list-prefix.py \
+  --bucket "$BUCKET" --prefix experiments >"$WORK/experiments.txt"; then
+  fail "failed to list experiments; refusing to update allocator README from incomplete state"
+fi
+if ! python scripts/ci/hf-bucket-list-prefix.py \
+  --bucket "$BUCKET" --prefix config/versions >"$WORK/config.txt"; then
+  fail "failed to list config versions; refusing to update allocator README from incomplete state"
 fi
 
 UPDATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

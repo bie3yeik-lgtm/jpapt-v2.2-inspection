@@ -1,0 +1,182 @@
+name: HF Allocator Read Fail Closed Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/ci/hf-bucket-object-exists.py
+      - scripts/ci/hf-bucket-list-prefix.py
+      - scripts/hf/hf-allocate-id.sh
+      - scripts/hf/hf-update-root-readme.sh
+      - .github/workflows/hf-allocator-read-fail-closed-contracts.yml
+  pull_request:
+    paths:
+      - scripts/ci/hf-bucket-object-exists.py
+      - scripts/ci/hf-bucket-list-prefix.py
+      - scripts/hf/hf-allocate-id.sh
+      - scripts/hf/hf-update-root-readme.sh
+      - .github/workflows/hf-allocator-read-fail-closed-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate allocator fail-closed remote reads
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/hf/hf-allocate-id.sh
+          bash -n scripts/hf/hf-update-root-readme.sh
+          python -m py_compile scripts/ci/hf-bucket-list-prefix.py scripts/ci/hf-bucket-object-exists.py
+      - name: Prepare fake HF API CLI and Rust clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-python/huggingface_hub /tmp/fake-bin
+          cat > /tmp/fake-python/huggingface_hub/__init__.py <<'PY'
+          import os
+
+          class Item:
+              def __init__(self, path, type_="file"):
+                  self.path = path
+                  self.type = type_
+
+          def list_bucket_tree(*, bucket_id, prefix=None, recursive=None, token=None):
+              mode = os.environ.get("HF_FAKE_MODE", "empty")
+              if mode == "error":
+                  raise RuntimeError("synthetic API failure")
+              if mode == "prefix-error":
+                  if prefix == "README.md":
+                      return []
+                  raise RuntimeError(f"synthetic prefix failure: {prefix}")
+              if mode in {"readme-existing", "readme-download-fail"} and prefix == "README.md":
+                  return [Item("README.md")]
+              return []
+          PY
+          cat > /tmp/fake-bin/hf <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "$*" >> /tmp/hf-invocations
+          if [[ "${HF_FAKE_MODE:-}" == readme-download-fail && "$*" == *'README.md'* ]]; then
+            exit 1
+          fi
+          exit 0
+          SH
+          cat > /tmp/fake-bin/cargo <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args="$*"
+          if [[ "$args" == *'allocation-prefix'* ]]; then
+            printf 'candidate\n'
+          elif [[ "$args" == *'next-sequence-id'* ]]; then
+            printf 'candidate-000001\n'
+          elif [[ "$args" == *'write-allocation-readme'* ]]; then
+            output=""
+            prev=""
+            for arg in "$@"; do
+              if [[ "$prev" == --output ]]; then output="$arg"; break; fi
+              prev="$arg"
+            done
+            [[ -n "$output" ]]
+            printf '# allocation\n' > "$output"
+          elif [[ "$args" == *'--bin asr-allocator-readme'* ]]; then
+            :
+          else
+            echo "unexpected cargo invocation: $args" >&2
+            exit 99
+          fi
+          SH
+          chmod +x /tmp/fake-bin/hf /tmp/fake-bin/cargo
+      - name: Prefix helper distinguishes empty from API failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=/tmp/fake-python HF_TOKEN=synthetic HF_FAKE_MODE=empty \
+            python scripts/ci/hf-bucket-list-prefix.py --bucket ns/bucket --prefix candidates \
+            > /tmp/empty-prefix.txt
+          test ! -s /tmp/empty-prefix.txt
+          if PYTHONPATH=/tmp/fake-python HF_TOKEN=synthetic HF_FAKE_MODE=error \
+            python scripts/ci/hf-bucket-list-prefix.py --bucket ns/bucket --prefix candidates; then
+            echo 'API failure unexpectedly treated as an empty prefix' >&2
+            exit 1
+          fi
+      - name: Allocator list failure cannot write an allocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          if PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=error \
+            bash scripts/hf/hf-allocate-id.sh candidates; then
+            echo 'allocator unexpectedly succeeded with failed remote listing' >&2
+            exit 1
+          fi
+          test ! -e /tmp/hf-invocations
+      - name: Empty allocator prefix permits one allocation write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          id="$(PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=empty \
+            bash scripts/hf/hf-allocate-id.sh candidates)"
+          test "$id" = candidate-000001
+          test "$(wc -l < /tmp/hf-invocations)" = 1
+          grep -F 'hf://buckets/ns/bucket/candidates/candidate-000001/README.md' /tmp/hf-invocations >/dev/null
+      - name: README existence lookup failure blocks root write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          if PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=error \
+            bash scripts/hf/hf-update-root-readme.sh; then
+            echo 'root README update unexpectedly survived existence lookup failure' >&2
+            exit 1
+          fi
+          test ! -e /tmp/hf-invocations
+      - name: Existing README download failure cannot overwrite it
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          if PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=readme-download-fail \
+            bash scripts/hf/hf-update-root-readme.sh; then
+            echo 'root README update unexpectedly survived existing README download failure' >&2
+            exit 1
+          fi
+          test "$(wc -l < /tmp/hf-invocations)" = 1
+          grep -F 'hf://buckets/ns/bucket/README.md' /tmp/hf-invocations >/dev/null
+      - name: Prefix listing failure blocks synthesized root write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          if PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=prefix-error \
+            bash scripts/hf/hf-update-root-readme.sh; then
+            echo 'root README update unexpectedly survived collection listing failure' >&2
+            exit 1
+          fi
+          test ! -e /tmp/hf-invocations
+      - name: Genuinely empty remote state permits one root README write
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/hf-invocations
+          PYTHONPATH=/tmp/fake-python PATH="/tmp/fake-bin:$PATH" \
+            HF_TOKEN=synthetic HF_BUCKET=ns/bucket HF_ALLOCATOR_INTERNAL=1 HF_FAKE_MODE=empty \
+            HF_ALLOCATED_ID=candidate-000001 HF_ALLOCATED_COLLECTION=candidates \
+            bash scripts/hf/hf-update-root-readme.sh
+          test "$(wc -l < /tmp/hf-invocations)" = 1
+          grep -F 'hf://buckets/ns/bucket/README.md' /tmp/hf-invocations >/dev/null

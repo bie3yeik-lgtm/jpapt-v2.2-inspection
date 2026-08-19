@@ -24,33 +24,38 @@ fi
 command -v hf >/dev/null 2>&1 || fail "hf CLI is unavailable"
 command -v cargo >/dev/null 2>&1 || fail "cargo is unavailable"
 
+BUCKET="${HF_BUCKET#hf://buckets/}"
+BUCKET="${BUCKET%/}"
+[[ "$BUCKET" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || \
+  fail "HF_BUCKET must use canonical namespace/bucket-name format"
+namespace="${BUCKET%%/*}"
+bucket_name="${BUCKET#*/}"
+if [[ "$namespace" == "." || "$namespace" == ".." || "$bucket_name" == "." || "$bucket_name" == ".." ]]; then
+  fail "HF_BUCKET must not contain dot path segments"
+fi
+
 PREFIX="$(asr_hf allocation-prefix "$COLLECTION")" \
   || fail "failed to derive allocation prefix for collection: $COLLECTION"
 
-BUCKET="${HF_BUCKET#hf://buckets/}"
-BUCKET="${BUCKET%/}"
-[[ "$BUCKET" == */* ]] || fail "HF_BUCKET must use namespace/bucket-name format"
-
 case "$COLLECTION" in
   candidates|experiments)
+    LIST_PREFIX="$COLLECTION"
     REMOTE_ROOT="hf://buckets/${BUCKET}/${COLLECTION}"
     ;;
   config)
+    LIST_PREFIX="config/versions"
     REMOTE_ROOT="hf://buckets/${BUCKET}/config/versions"
     ;;
 esac
 
 listing="$(mktemp)"
 readme="$(mktemp)"
-trap 'rm -f "$listing" "$readme" "${listing}.err"' EXIT
+trap 'rm -f "$listing" "$readme"' EXIT
 
-if ! hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q >"$listing" 2>"${listing}.err"; then
-  if grep -qiE 'not found|does not exist|no files|empty' "${listing}.err"; then
-    : >"$listing"
-  else
-    cat "${listing}.err" >&2
-    fail "failed to list ${REMOTE_ROOT}"
-  fi
+if ! python scripts/ci/hf-bucket-list-prefix.py \
+  --bucket "$BUCKET" \
+  --prefix "$LIST_PREFIX" >"$listing"; then
+  fail "failed to list ${REMOTE_ROOT}; refusing to allocate from incomplete remote state"
 fi
 
 ID="$(asr_hf next-sequence-id --prefix "$PREFIX" --listing "$listing")"
