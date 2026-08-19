@@ -22,13 +22,18 @@ jobs:
       - name: Materialize rejection payload
         shell: bash
         env:
-          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          PROTOCOL_PAYLOAD: ${{ toJSON(github.event.client_payload.protocol_payload) }}
+          LEGACY_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           REJECTION_JSON: ${{ inputs.rejection_json }}
         run: |
           set -euo pipefail
           mkdir -p .ci
           if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
-            printf '%s\n' "$PAYLOAD" > .ci/candidate-request-rejection.json
+            if [[ "$PROTOCOL_PAYLOAD" != "null" && -n "$PROTOCOL_PAYLOAD" ]]; then
+              printf '%s\n' "$PROTOCOL_PAYLOAD" > .ci/candidate-request-rejection.json
+            else
+              printf '%s\n' "$LEGACY_PAYLOAD" > .ci/candidate-request-rejection.json
+            fi
           else
             printf '%s\n' "$REJECTION_JSON" > .ci/candidate-request-rejection.json
           fi
