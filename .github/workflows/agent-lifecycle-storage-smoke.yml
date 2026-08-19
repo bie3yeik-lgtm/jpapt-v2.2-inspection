@@ -1,0 +1,146 @@
+name: Agent Lifecycle Storage Smoke
+
+on:
+  push:
+    branches:
+      - agent/lifecycle-storage-smoke-20260819
+
+permissions:
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DEFAULT_NAMESPACE: ${{ vars.HF_DEFAULT_NAMESPACE }}
+  HF_LIFECYCLE_BUCKET_OVERRIDE: ${{ vars.HF_LIFECYCLE_BUCKET }}
+
+concurrency:
+  group: agent-lifecycle-storage-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Write and read synthetic lifecycle evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Require HF token
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${HF_TOKEN:-}" ]] || {
+            echo '::error::HF_TOKEN is required'
+            exit 1
+          }
+      - name: Install HF client
+        run: python -m pip install --disable-pip-version-check --upgrade "huggingface_hub>=1.0,<2"
+      - name: Resolve and prepare private lifecycle Bucket
+        id: bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          bucket="${HF_LIFECYCLE_BUCKET_OVERRIDE:-}"
+          if [[ -z "$bucket" ]]; then
+            namespace="${HF_DEFAULT_NAMESPACE:-}"
+            if [[ -z "$namespace" ]]; then
+              namespace="$(hf auth whoami --format json 2>/dev/null | jq -r '.name // .user // empty' || true)"
+            fi
+            [[ -n "$namespace" ]] || {
+              echo '::error::cannot infer lifecycle Bucket namespace'
+              exit 1
+            }
+            bucket="$namespace/${GITHUB_REPOSITORY#*/}-lifecycle"
+          fi
+          [[ "$bucket" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo '::error::lifecycle Bucket must use namespace/name'
+            exit 1
+          }
+          hf buckets create "$bucket" --exist-ok --private --token "$HF_TOKEN"
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+      - name: Build isolated synthetic lifecycle snapshot
+        id: fixture
+        shell: bash
+        env:
+          REQUEST_ID: storage-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_EXECUTION_ID: storage-smoke-exec-${{ github.run_id }}-${{ github.run_attempt }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          RECEIPT_REPOSITORY: ${{ github.repository }}
+          ORCHESTRATOR_REPOSITORY: ${{ github.repository }}
+          EVALUATION_RUN_ID: ${{ github.run_id }}
+          EVALUATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/storage-smoke
+          python scripts/ci/build-candidate-request-lifecycle.py \
+            --state running \
+            --output .ci/storage-smoke/candidate-request-lifecycle.json >/dev/null
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$REQUEST_ID")"
+          execution_key="$(python scripts/ci/build-candidate-request-lifecycle.py --execution-key "$REQUEST_EXECUTION_ID")"
+          event_key="$(python scripts/ci/build-candidate-lifecycle-event-key.py \
+            --snapshot .ci/storage-smoke/candidate-request-lifecycle.json | sed -n '3p')"
+          {
+            echo "request_id=$REQUEST_ID"
+            echo "request_execution_id=$REQUEST_EXECUTION_ID"
+            echo "request_key=$request_key"
+            echo "execution_key=$execution_key"
+            echo "event_key=$event_key"
+          } >> "$GITHUB_OUTPUT"
+      - name: Persist through canonical lifecycle helper
+        shell: bash
+        env:
+          HF_LIFECYCLE_BUCKET: ${{ steps.bucket.outputs.bucket }}
+        run: bash scripts/ci/persist-candidate-lifecycle.sh .ci/storage-smoke/candidate-request-lifecycle.json
+      - name: Read back aggregate and execution-scoped evidence
+        shell: bash
+        env:
+          HF_LIFECYCLE_BUCKET: ${{ steps.bucket.outputs.bucket }}
+          REQUEST_KEY: ${{ steps.fixture.outputs.request_key }}
+          EXECUTION_KEY: ${{ steps.fixture.outputs.execution_key }}
+          EVENT_KEY: ${{ steps.fixture.outputs.event_key }}
+        run: |
+          set -euo pipefail
+          base="hf://buckets/$HF_LIFECYCLE_BUCKET/requests/$REQUEST_KEY"
+          execution_base="$base/executions/$EXECUTION_KEY"
+          mkdir -p .ci/storage-smoke/readback
+          hf buckets cp --token "$HF_TOKEN" "$base/events/$EVENT_KEY.lifecycle.json" .ci/storage-smoke/readback/request-event.json
+          hf buckets cp --token "$HF_TOKEN" "$base/states/running.json" .ci/storage-smoke/readback/request-state.json
+          hf buckets cp --token "$HF_TOKEN" "$execution_base/events/$EVENT_KEY.lifecycle.json" .ci/storage-smoke/readback/execution-event.json
+          hf buckets cp --token "$HF_TOKEN" "$execution_base/states/running.json" .ci/storage-smoke/readback/execution-state.json
+          expected="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot .ci/storage-smoke/candidate-request-lifecycle.json | sed -n '4p')"
+          for file in .ci/storage-smoke/readback/*.json; do
+            python scripts/ci/build-candidate-request-lifecycle.py --validate "$file" >/dev/null
+            actual="$(python scripts/ci/build-candidate-lifecycle-event-key.py --snapshot "$file" | sed -n '4p')"
+            [[ "$actual" == "$expected" ]] || {
+              echo "::error::readback observation mismatch: $file"
+              exit 1
+            }
+          done
+      - name: Write smoke summary
+        shell: bash
+        env:
+          BUCKET: ${{ steps.bucket.outputs.bucket }}
+          REQUEST_ID: ${{ steps.fixture.outputs.request_id }}
+          REQUEST_EXECUTION_ID: ${{ steps.fixture.outputs.request_execution_id }}
+          REQUEST_KEY: ${{ steps.fixture.outputs.request_key }}
+          EXECUTION_KEY: ${{ steps.fixture.outputs.execution_key }}
+        run: |
+          {
+            echo '## Candidate lifecycle storage smoke'
+            echo
+            printf -- '- lifecycle bucket: `hf://buckets/%s`\n' "$BUCKET"
+            printf -- '- request id: `%s`\n' "$REQUEST_ID"
+            printf -- '- request execution id: `%s`\n' "$REQUEST_EXECUTION_ID"
+            printf -- '- request key: `%s`\n' "$REQUEST_KEY"
+            printf -- '- execution key: `%s`\n' "$EXECUTION_KEY"
+            echo '- verified: aggregate event/state write + execution event/state write + remote readback'
+            echo '- compute: no model inference, GPU, or HF Jobs'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve readback evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-lifecycle-storage-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/storage-smoke
+          retention-days: 14
