@@ -1,0 +1,272 @@
+name: Private Consumer Trusted Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-consumer-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: Validate immutable private consumer authority stack
+    environment: Private-Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout public controller
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve reviewed immutable targets
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=config/private-consumer-trusted-acceptance.json
+          python3 -m json.tool "$config" >/dev/null
+          private_repository="$(jq -er '.private_repository' "$config")"
+          private_revision="$(jq -er '.private_revision' "$config")"
+          public_repository="$(jq -er '.public_repository' "$config")"
+          public_revision="$(jq -er '.public_review_target_revision' "$config")"
+          expected_accepted="$(jq -er '.expected_private_accepted_revision' "$config")"
+
+          [[ "$private_repository" == 'largoyo/Premiere-AutoProcess-Plugin' ]] || {
+            echo '::error::private repository must remain the canonical consumer'
+            exit 1
+          }
+          [[ "$public_repository" == "$GITHUB_REPOSITORY" ]] || {
+            echo '::error::public repository target must be this authority repository'
+            exit 1
+          }
+          sha_re='^[0-9a-f]{40}$'
+          for value in "$private_revision" "$public_revision" "$expected_accepted"; do
+            [[ "$value" =~ $sha_re ]] || {
+              echo "::error::review target is not an immutable lowercase 40-hex SHA: $value"
+              exit 1
+            }
+          done
+          [[ "$public_revision" != "$expected_accepted" ]] || {
+            echo '::error::review target must not silently rewrite accepted revision semantics'
+            exit 1
+          }
+
+          {
+            echo "private_repository=$private_repository"
+            echo "private_revision=$private_revision"
+            echo "public_repository=$public_repository"
+            echo "public_revision=$public_revision"
+            echo "expected_accepted=$expected_accepted"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout immutable private consumer
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.target.outputs.private_repository }}
+          ref: ${{ steps.target.outputs.private_revision }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: private-consumer
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify private checkout identity and credential cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C private-consumer rev-parse HEAD)"
+          [[ "$actual" == '${{ steps.target.outputs.private_revision }}' ]] || {
+            echo "::error::private checkout drifted: $actual"
+            exit 1
+          }
+          if git -C private-consumer config --local --get-regexp 'http\..*\.extraheader' >/tmp/private-extraheaders 2>/dev/null; then
+            cat /tmp/private-extraheaders >&2
+            echo '::error::private checkout retained an HTTP credential header'
+            exit 1
+          fi
+
+      - name: Verify private accepted authority remains unchanged
+        id: private_state
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/config/jpapt-upstream-authority.json
+          repository="$(jq -er '.repository' "$state")"
+          accepted="$(jq -er '.accepted_revision' "$state")"
+          [[ "$repository" == '${{ steps.target.outputs.public_repository }}' ]] || {
+            echo "::error::private authority repository mismatch: $repository"
+            exit 1
+          }
+          [[ "$accepted" == '${{ steps.target.outputs.expected_accepted }}' ]] || {
+            echo "::error::private accepted revision changed without review: $accepted"
+            exit 1
+          }
+          echo "accepted_revision=$accepted" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run private authority detector fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest \
+            private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/tools/tests/test_jpapt_upstream_contract_diff.py
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Enumerate JPAPT Rust tests
+        id: rust_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          cargo test --locked --manifest-path "$crate/Cargo.toml" --lib -- --list > /tmp/private-tests.txt
+          count="$(grep -Ec '^jpapt_[^:]*::|^jpapt_[^ ]*: test$' /tmp/private-tests.txt || true)"
+          if (( count == 0 )); then
+            grep -E 'jpapt|authority|lifecycle' /tmp/private-tests.txt || true
+            echo '::error::no JPAPT Rust tests were discovered on the reviewed private SHA'
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Run JPAPT Rust library tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          cargo test --locked --manifest-path "$crate/Cargo.toml" --lib jpapt_ -- --nocapture
+
+      - name: Check every JPAPT Rust entrypoint
+        id: rust_bins
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=private-consumer/TelopFlow_Feature/TF-v1-onnx-implements
+          mapfile -t sources < <(find "$crate/src/bin" -maxdepth 1 -type f -name 'jpapt*.rs' -print | sort)
+          (( ${#sources[@]} > 0 )) || {
+            echo '::error::no JPAPT Rust entrypoints found'
+            exit 1
+          }
+          for source in "${sources[@]}"; do
+            bin="$(basename "$source" .rs)"
+            echo "checking $bin"
+            cargo check --locked --manifest-path "$crate/Cargo.toml" --bin "$bin"
+          done
+          echo "count=${#sources[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint private authority workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=private-consumer/.github/workflows
+          files=(
+            "$root/jpapt-upstream-contract-diff.yml"
+            "$root/jpapt-upstream-contract-diff-contracts.yml"
+            "$root/jpapt-private-dispatch.yml"
+            "$root/jpapt-private-receipt.yml"
+          )
+          for file in "${files[@]}"; do
+            [[ -f "$file" ]] || {
+              echo "::error::required private authority workflow missing: $file"
+              exit 1
+            }
+          done
+          actionlint -color -ignore 'SC2016' "${files[@]}"
+
+      - name: Checkout immutable public review target
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.target.outputs.public_repository }}
+          ref: ${{ steps.target.outputs.public_revision }}
+          path: public-authority
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify public review target identity and ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C public-authority rev-parse HEAD)"
+          [[ "$actual" == '${{ steps.target.outputs.public_revision }}' ]] || {
+            echo "::error::public review target drifted: $actual"
+            exit 1
+          }
+          git -C public-authority merge-base --is-ancestor \
+            '${{ steps.target.outputs.expected_accepted }}' \
+            '${{ steps.target.outputs.public_revision }}'
+
+      - name: Generate deterministic private-consumer authority diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p private-consumer-acceptance
+          python3 \
+            private-consumer/TelopFlow_Feature/TF-v1-onnx-implements/tools/jpapt_upstream_contract_diff.py \
+            --repo public-authority \
+            --repository '${{ steps.target.outputs.public_repository }}' \
+            --base '${{ steps.target.outputs.expected_accepted }}' \
+            --head '${{ steps.target.outputs.public_revision }}' \
+            --run-id "$GITHUB_RUN_ID" \
+            --output-dir private-consumer-acceptance/upstream-diff
+
+      - name: Build trusted acceptance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg private_repository '${{ steps.target.outputs.private_repository }}' \
+            --arg private_revision '${{ steps.target.outputs.private_revision }}' \
+            --arg public_repository '${{ steps.target.outputs.public_repository }}' \
+            --arg public_review_target_revision '${{ steps.target.outputs.public_revision }}' \
+            --arg accepted_revision '${{ steps.private_state.outputs.accepted_revision }}' \
+            --argjson rust_test_count '${{ steps.rust_tests.outputs.count }}' \
+            --argjson rust_entrypoint_count '${{ steps.rust_bins.outputs.count }}' \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{schema_version:1,private_repository:$private_repository,private_revision:$private_revision,public_repository:$public_repository,public_review_target_revision:$public_review_target_revision,accepted_revision:$accepted_revision,rust_test_count:$rust_test_count,rust_entrypoint_count:$rust_entrypoint_count,detector_fixtures:"passed",rust_jpapt_tests:"passed",rust_jpapt_entrypoints:"passed",private_workflow_actionlint:"passed",trusted_runner:"github-hosted",run_id:$run_id,run_attempt:$run_attempt,authority_promoted:false,hf_jobs_launched:false,model_compute_launched:false}' \
+            > private-consumer-acceptance/evidence.json
+          jq -e '.authority_promoted == false and .hf_jobs_launched == false and .model_compute_launched == false' \
+            private-consumer-acceptance/evidence.json >/dev/null
+
+      - name: Preserve trusted acceptance evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: private-consumer-trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: private-consumer-acceptance/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Trusted acceptance summary
+        shell: bash
+        run: |
+          {
+            echo '## Private consumer trusted acceptance'
+            echo
+            printf -- '- private repository: `%s`\n' '${{ steps.target.outputs.private_repository }}'
+            printf -- '- private immutable revision: `%s`\n' '${{ steps.target.outputs.private_revision }}'
+            printf -- '- public review target: `%s`\n' '${{ steps.target.outputs.public_revision }}'
+            printf -- '- accepted revision remains: `%s`\n' '${{ steps.private_state.outputs.accepted_revision }}'
+            printf -- '- JPAPT Rust tests discovered: `%s`\n' '${{ steps.rust_tests.outputs.count }}'
+            printf -- '- JPAPT Rust entrypoints checked: `%s`\n' '${{ steps.rust_bins.outputs.count }}'
+            echo '- Python detector fixtures: `passed`'
+            echo '- private authority workflows actionlint: `passed`'
+            echo '- authority promotion: `none`'
+            echo '- model/GPU/HF Jobs compute: `none`'
+            echo '- evidence retention: `30 days`'
+          } >> "$GITHUB_STEP_SUMMARY"
