@@ -117,6 +117,13 @@ jobs:
               raise SystemExit("RunPod must invoke the image entrypoint explicitly")
           if "exec python benchmark.py" in script:
               raise SystemExit("RunPod must not bypass the image entrypoint")
+          service_result = Path(".github/workflows/rtf-service-result.yml").read_text()
+          if 'tee "$destination/summary.md"' in service_result:
+              raise SystemExit("service summary must not be written before artifact branch checkout")
+          if 'tee .ci/rtf-service/summary.md' not in service_result:
+              raise SystemExit("service summary must use a checkout-independent temporary path")
+          if 'cp .ci/rtf-service/summary.md "${destination}/summary.md"' not in service_result:
+              raise SystemExit("persist step must copy the temporary service summary")
           resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
           if "chown -R '$resolver_uid:$resolver_gid' /resolver" not in resolver:
               raise SystemExit("Docker resolver must restore host ownership")

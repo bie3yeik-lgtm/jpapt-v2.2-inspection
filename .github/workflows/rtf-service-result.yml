@@ -221,13 +221,12 @@ jobs:
       - name: Write Actions summary
         shell: bash
         run: |
-          destination="rtf-scores/${{ inputs.inspection_profile }}/${{ inputs.service_id }}/${{ inputs.gpu }}/batch-${{ inputs.batch_size }}"
-          mkdir -p "$destination"
+          mkdir -p .ci/rtf-service
           {
             echo '## RTF service result'
             echo
             jq -r '"- run_id: `\(.run_id)`\n- service: `\(.service_id)`\n- status: `\(.status)`\n- provider: `\(.provider)`\n- environment: `\(.environment)`"' results/rtf-service/service-result.json
-          } | tee "$destination/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          } | tee .ci/rtf-service/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Persist RTF score in repository
         shell: bash
@@ -253,6 +252,7 @@ jobs:
             git checkout --no-track -b "${artifact_branch}" origin/main
           fi
           mkdir -p "$destination"
+          cp .ci/rtf-service/summary.md "${destination}/summary.md"
           cp results/rtf-service/service-result.json "${destination}/service-result.json"
           if [[ -f results/rtf-service/metrics.json ]]; then
             cp results/rtf-service/metrics.json "${destination}/metrics.json"
