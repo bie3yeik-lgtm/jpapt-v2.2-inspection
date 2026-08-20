@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
-
-import numpy as np
 
 from parakeet_onnx.runtime import OrtSessionConfig, create_session, input_metadata
 

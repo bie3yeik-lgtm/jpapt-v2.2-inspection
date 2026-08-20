@@ -8,7 +8,6 @@ import struct
 import wave
 from pathlib import Path
 
-import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
