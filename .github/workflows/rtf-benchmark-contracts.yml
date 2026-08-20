@@ -85,6 +85,7 @@ jobs:
           bash -n scripts/ci/resolve-ghcr-package-digest.sh
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
+          rg -n 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
           rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
           if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
@@ -126,7 +127,7 @@ jobs:
               raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
           if "--docker-args 'sleep infinity'" not in script:
               raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
-          if '--wait --wait-timeout 10m' not in script:
+          if '--wait --wait-timeout 10m --terminate-after 4h' not in script:
               raise SystemExit("RunPod Pod creation must wait for SSH readiness")
           if 'trap cleanup_runpod EXIT' not in script:
               raise SystemExit("RunPod must retain a deletion safety trap")

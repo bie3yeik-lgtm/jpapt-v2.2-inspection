@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# RunPod's `--docker-args` supplies arguments to the image ENTRYPOINT; it does
+# not replace ENTRYPOINT. The lifecycle wrapper uses `sleep infinity` to keep
+# the container alive until it can invoke this entrypoint over SSH. Handle
+# that control command before translating benchmark arguments.
+if [[ "${1:-}" == "sleep" && "${2:-}" == "infinity" && "$#" -eq 2 ]]; then
+  exec sleep infinity
+fi
+
 # HF Jobs commonly supplies `python benchmark.py`; RunPod commonly supplies no
 # command. Support both forms while keeping one canonical runner.
 if [[ "${1:-}" == "python" && "${2:-}" == "benchmark.py" ]]; then
