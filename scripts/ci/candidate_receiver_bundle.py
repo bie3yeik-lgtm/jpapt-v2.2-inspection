@@ -73,9 +73,7 @@ def assert_installation(bundle: list[dict[str, str]], manifest_path: Path) -> No
     if actual != expected:
         missing = sorted(expected - actual)
         unexpected = sorted(actual - expected)
-        raise SystemExit(
-            f"receiver installation bundle mismatch: missing={missing}, unexpected={unexpected}"
-        )
+        raise SystemExit(f"receiver installation bundle mismatch: missing={missing}, unexpected={unexpected}")
 
 
 def obsolete_installation_paths(bundle: list[dict[str, str]], manifest_path: Path) -> list[str]:

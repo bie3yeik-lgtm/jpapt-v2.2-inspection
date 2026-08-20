@@ -52,9 +52,7 @@ class OrtCtcRunner:
             self.contract.primary_input: primary,
         }
         if self.contract.length_input is not None:
-            feeds[self.contract.length_input] = np.ascontiguousarray(
-                features.length, dtype=np.int64
-            )
+            feeds[self.contract.length_input] = np.ascontiguousarray(features.length, dtype=np.int64)
         return self._run(feeds)
 
     def _run(self, feeds: dict[str, np.ndarray]) -> InferenceOutput:
@@ -70,9 +68,7 @@ class OrtCtcRunner:
 
         logits = np.asarray(values[0])
         if logits.ndim not in (2, 3):
-            raise RuntimeError(
-                f"CTC logits must have rank 2 or 3, got {logits.shape!r}"
-            )
+            raise RuntimeError(f"CTC logits must have rank 2 or 3, got {logits.shape!r}")
         _require_finite_nonempty(logits, "CTC logits")
 
         return InferenceOutput(

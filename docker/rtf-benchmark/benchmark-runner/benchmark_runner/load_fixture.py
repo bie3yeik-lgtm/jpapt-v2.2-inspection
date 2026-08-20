@@ -19,12 +19,14 @@ def main() -> int:
     parser.add_argument("--audio-dir", type=Path, required=True)
     parser.add_argument("--expected-manifest-sha256")
     args = parser.parse_args()
-    manifest = Path(hf_hub_download(
-        repo_id=args.repo_id,
-        repo_type="dataset",
-        filename=args.filename,
-        revision=args.revision,
-    ))
+    manifest = Path(
+        hf_hub_download(
+            repo_id=args.repo_id,
+            repo_type="dataset",
+            filename=args.filename,
+            revision=args.revision,
+        )
+    )
     manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
     if args.expected_manifest_sha256 and manifest_sha256 != args.expected_manifest_sha256:
         raise ValueError("fixture manifest SHA-256 does not match the resolver receipt")
@@ -40,12 +42,14 @@ def main() -> int:
         if name in names:
             raise ValueError(f"fixture contains duplicate audio filename: {name}")
         names.add(name)
-        local = Path(hf_hub_download(
-            repo_id=args.repo_id,
-            repo_type="dataset",
-            filename=source,
-            revision=args.revision,
-        ))
+        local = Path(
+            hf_hub_download(
+                repo_id=args.repo_id,
+                repo_type="dataset",
+                filename=source,
+                revision=args.revision,
+            )
+        )
         target = args.audio_dir / name
         target.write_bytes(local.read_bytes())
         expected_sha = record.get("audio_sha256")

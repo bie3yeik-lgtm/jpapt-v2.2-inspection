@@ -8,7 +8,6 @@ import pytest
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.hf.revisions import RevisionError, load_revision_bundle
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "1" * 64
 
@@ -97,8 +96,16 @@ def test_runtime_profile_set_resolves_ctc_and_tdt_from_catalog(tmp_path: Path) -
     catalog = load_repository_catalog(ROOT)
 
     assert bundle.runtime.profile_set_id == "parakeet-tdt-ctc-v1"
-    assert bundle.runtime.resolve_variant(None, catalog=catalog) == ("ctc", "ctc-v1", "ctc")
-    assert bundle.runtime.resolve_variant("tdt", catalog=catalog) == ("tdt", "tdt-v1", "tdt")
+    assert bundle.runtime.resolve_variant(None, catalog=catalog) == (
+        "ctc",
+        "ctc-v1",
+        "ctc",
+    )
+    assert bundle.runtime.resolve_variant("tdt", catalog=catalog) == (
+        "tdt",
+        "tdt-v1",
+        "tdt",
+    )
     snapshot = bundle.to_dict()
     assert snapshot["config_version"] == "config-000001"
     assert set(snapshot["runtime"]) == {"document_sha256", "catalog", "profile_set"}

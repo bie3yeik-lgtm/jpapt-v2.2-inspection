@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 
 class CandidateInspectionError(RuntimeError):
@@ -47,19 +48,13 @@ def _load_graph(path: Path) -> GraphInfo:
     try:
         import onnx
     except ImportError as exc:
-        raise CandidateInspectionError(
-            "candidate inspection requires the project 'onnx' extra"
-        ) from exc
+        raise CandidateInspectionError("candidate inspection requires the project 'onnx' extra") from exc
     try:
         model = onnx.load(path, load_external_data=False)
     except Exception as exc:
         raise CandidateInspectionError(f"failed to inspect ONNX graph {path}: {exc}") from exc
     initializer_names = {value.name for value in model.graph.initializer}
-    inputs = tuple(
-        _tensor_info(value)
-        for value in model.graph.input
-        if value.name not in initializer_names
-    )
+    inputs = tuple(_tensor_info(value) for value in model.graph.input if value.name not in initializer_names)
     outputs = tuple(_tensor_info(value) for value in model.graph.output)
     if not inputs or not outputs:
         raise CandidateInspectionError(f"ONNX graph has no public inputs/outputs: {path}")
@@ -349,9 +344,7 @@ def _inspect_tdt(
     }
 
 
-def _inspect_whisper(
-    graphs: Mapping[str, GraphInfo], config: Mapping[str, Any]
-) -> dict[str, Any]:
+def _inspect_whisper(graphs: Mapping[str, GraphInfo], config: Mapping[str, Any]) -> dict[str, Any]:
     encoder = _required_graph(graphs, "encoder")
     decoder = _required_graph(graphs, "decoder")
     encoder_input = _best_tensor(
@@ -382,20 +375,13 @@ def _inspect_whisper(
         if isinstance(forced, list):
             pairs: list[tuple[int, int]] = []
             for item in forced:
-                if (
-                    isinstance(item, list)
-                    and len(item) == 2
-                    and isinstance(item[0], int)
-                    and isinstance(item[1], int)
-                ):
+                if isinstance(item, list) and len(item) == 2 and isinstance(item[0], int) and isinstance(item[1], int):
                     pairs.append((item[0], item[1]))
             for _, token in sorted(pairs):
                 if token not in prompt:
                     prompt.append(token)
     if not prompt:
-        raise CandidateInspectionError(
-            "Whisper prompt token IDs are not present in generated tokenizer/model config"
-        )
+        raise CandidateInspectionError("Whisper prompt token IDs are not present in generated tokenizer/model config")
     eos = _find_int(config, ("eos_token_id",))
     if eos is None:
         raise CandidateInspectionError("Whisper eos_token_id is missing from generated config")
@@ -503,6 +489,7 @@ def _is_whisper_cache_tensor(name: str, *, past: bool) -> bool:
         return False
     return any(marker in lowered for marker in ("key", "value", "cache"))
 
+
 def _infer_blank_id(
     sources: Sequence[Mapping[str, Any]],
     vocabulary: tuple[str, ...] | None,
@@ -531,13 +518,9 @@ def _vocabulary_token_id(
     if vocabulary is None:
         return None
     wanted = {token.lower() for token in tokens}
-    matches = [
-        index for index, token in enumerate(vocabulary) if token.strip().lower() in wanted
-    ]
+    matches = [index for index, token in enumerate(vocabulary) if token.strip().lower() in wanted]
     if len(matches) > 1:
-        raise CandidateInspectionError(
-            f"vocabulary contains multiple matching special tokens: {matches}"
-        )
+        raise CandidateInspectionError(f"vocabulary contains multiple matching special tokens: {matches}")
     return matches[0] if matches else None
 
 
@@ -575,8 +558,7 @@ def _best_tensor(
         return None
     if len(best) != 1:
         raise CandidateInspectionError(
-            "tensor binding is ambiguous; "
-            f"keywords={tuple(keywords)!r}, candidates={[value.name for value in best]!r}"
+            f"tensor binding is ambiguous; keywords={tuple(keywords)!r}, candidates={[value.name for value in best]!r}"
         )
     return best[0]
 
@@ -594,9 +576,7 @@ def _find_value(value: Mapping[str, Any], keys: Sequence[str]) -> Any:
     return None
 
 
-def _find_value_sources(
-    sources: Sequence[Mapping[str, Any]], keys: Sequence[str]
-) -> Any:
+def _find_value_sources(sources: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> Any:
     for source in sources:
         value = _find_value(source, keys)
         if value is not None:
@@ -611,9 +591,7 @@ def _find_int(value: Mapping[str, Any], keys: Sequence[str]) -> int | None:
     return int(item) if isinstance(item, int) else None
 
 
-def _find_int_sources(
-    sources: Sequence[Mapping[str, Any]], keys: Sequence[str]
-) -> int | None:
+def _find_int_sources(sources: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> int | None:
     item = _find_value_sources(sources, keys)
     if isinstance(item, bool):
         return None
@@ -622,19 +600,13 @@ def _find_int_sources(
 
 def _find_int_list(value: Mapping[str, Any], keys: Sequence[str]) -> list[int] | None:
     item = _find_value(value, keys)
-    if isinstance(item, list) and all(
-        isinstance(entry, int) and not isinstance(entry, bool) for entry in item
-    ):
+    if isinstance(item, list) and all(isinstance(entry, int) and not isinstance(entry, bool) for entry in item):
         return [int(entry) for entry in item]
     return None
 
 
-def _find_int_list_sources(
-    sources: Sequence[Mapping[str, Any]], keys: Sequence[str]
-) -> list[int] | None:
+def _find_int_list_sources(sources: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> list[int] | None:
     item = _find_value_sources(sources, keys)
-    if isinstance(item, list) and all(
-        isinstance(entry, int) and not isinstance(entry, bool) for entry in item
-    ):
+    if isinstance(item, list) and all(isinstance(entry, int) and not isinstance(entry, bool) for entry in item):
         return [int(entry) for entry in item]
     return None

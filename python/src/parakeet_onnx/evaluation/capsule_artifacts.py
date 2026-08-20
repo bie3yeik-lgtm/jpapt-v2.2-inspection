@@ -8,12 +8,12 @@ Arrow writer is introduced.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Mapping
-
+from typing import Any
 
 DEFAULT_ARTIFACT_CHUNK_SIZE = 1024 * 1024
 MAX_EMBEDDED_ARTIFACT_BYTES = 8 * 1024 * 1024
@@ -55,7 +55,7 @@ class EmbeddedCapsuleArtifact:
         path: str | Path,
         metadata: Mapping[str, Any] | None = None,
         chunk_size_bytes: int = DEFAULT_ARTIFACT_CHUNK_SIZE,
-    ) -> "EmbeddedCapsuleArtifact":
+    ) -> EmbeddedCapsuleArtifact:
         source = Path(path)
         size = source.stat().st_size
         if size > MAX_EMBEDDED_ARTIFACT_BYTES:
@@ -102,9 +102,7 @@ class EmbeddedCapsuleArtifact:
                 "artifact_part_count": part_count,
                 "artifact_offset": offset,
                 "artifact_part_sha256": _sha256(part),
-                "metadata_json": _metadata_json(
-                    {"location": "embedded", **dict(self.metadata)}
-                ),
+                "metadata_json": _metadata_json({"location": "embedded", **dict(self.metadata)}),
                 "payload": part,
             }
 

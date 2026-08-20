@@ -16,7 +16,7 @@ class VocabularyTokenizer:
         self.id_to_token = dict(id_to_token)
 
     @classmethod
-    def from_json(cls, path: str | Path) -> "VocabularyTokenizer":
+    def from_json(cls, path: str | Path) -> VocabularyTokenizer:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(raw, list):
             mapping = {index: str(token) for index, token in enumerate(raw)}

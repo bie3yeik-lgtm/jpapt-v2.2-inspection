@@ -21,11 +21,7 @@ class DatasetManifestError(DatasetError):
         path: str | Path | None = None,
         line_number: int | None = None,
     ) -> None:
-        self.path = (
-            Path(path)
-            if path is not None
-            else None
-        )
+        self.path = Path(path) if path is not None else None
         self.line_number = line_number
 
         details = [message]

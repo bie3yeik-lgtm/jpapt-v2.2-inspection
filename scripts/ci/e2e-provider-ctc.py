@@ -8,7 +8,6 @@ import struct
 import wave
 from pathlib import Path
 
-import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
@@ -22,12 +21,8 @@ def sha256_file(path: Path) -> str:
 
 
 def build_model(path: Path) -> None:
-    input_value = helper.make_tensor_value_info(
-        "input_values", TensorProto.FLOAT, [1, "samples"]
-    )
-    output_value = helper.make_tensor_value_info(
-        "logits", TensorProto.FLOAT, [1, "samples", 3]
-    )
+    input_value = helper.make_tensor_value_info("input_values", TensorProto.FLOAT, [1, "samples"])
+    output_value = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, "samples", 3])
     axes = helper.make_tensor("axes", TensorProto.INT64, [1], [2])
     zero = helper.make_tensor("zero", TensorProto.FLOAT, [], [0.0])
     one = helper.make_tensor("one", TensorProto.FLOAT, [], [1.0])
@@ -36,9 +31,7 @@ def build_model(path: Path) -> None:
             helper.make_node("Unsqueeze", ["input_values", "axes"], ["x3"]),
             helper.make_node("Mul", ["x3", "zero"], ["zeros"]),
             helper.make_node("Add", ["zeros", "one"], ["token_a"]),
-            helper.make_node(
-                "Concat", ["token_a", "zeros", "zeros"], ["logits"], axis=2
-            ),
+            helper.make_node("Concat", ["token_a", "zeros", "zeros"], ["logits"], axis=2),
         ],
         "strict-provider-ctc-probe",
         [input_value],
@@ -58,10 +51,7 @@ def build_model(path: Path) -> None:
 def build_wav(path: Path) -> None:
     sample_rate = 16_000
     frames = 1_600
-    samples = [
-        int(0.1 * 32767 * math.sin(2.0 * math.pi * 440.0 * i / sample_rate))
-        for i in range(frames)
-    ]
+    samples = [int(0.1 * 32767 * math.sin(2.0 * math.pi * 440.0 * i / sample_rate)) for i in range(frames)]
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
@@ -97,9 +87,7 @@ def build_fixture(output: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (candidate / ".candidate-id").write_text(
-        "strict-provider-ctc-probe\n", encoding="utf-8"
-    )
+    (candidate / ".candidate-id").write_text("strict-provider-ctc-probe\n", encoding="utf-8")
     (tokenizer / "vocabulary.json").write_text(
         json.dumps(["a", "b", "<blank>"], indent=2) + "\n",
         encoding="utf-8",

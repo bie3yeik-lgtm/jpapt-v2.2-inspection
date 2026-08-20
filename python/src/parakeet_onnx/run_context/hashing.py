@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-
 _DEFAULT_CHUNK_SIZE = 1024 * 1024
 
 
@@ -25,9 +24,7 @@ def sha256_file(
     file_path = Path(path)
 
     if not file_path.is_file():
-        raise FileNotFoundError(
-            f"Cannot hash missing file: {file_path}"
-        )
+        raise FileNotFoundError(f"Cannot hash missing file: {file_path}")
 
     digest = hashlib.sha256()
 

@@ -11,7 +11,6 @@ from parakeet_onnx.config.models import (
     ProviderConfig,
 )
 
-
 PATH = Path("strict.toml")
 
 

@@ -18,9 +18,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from .errors import DatasetCacheError
@@ -60,9 +60,7 @@ def _atomic_write(
         text=True,
     )
 
-    temporary = Path(
-        temporary_name
-    )
+    temporary = Path(temporary_name)
 
     try:
         with os.fdopen(
@@ -73,9 +71,7 @@ def _atomic_write(
         ) as file:
             file.write(content)
             file.flush()
-            os.fsync(
-                file.fileno()
-            )
+            os.fsync(file.fileno())
 
         os.replace(
             temporary,
@@ -98,16 +94,9 @@ class DatasetCache:
         self,
         root: str | Path,
     ) -> None:
-        self.root = (
-            Path(root)
-            .expanduser()
-            .resolve()
-        )
+        self.root = Path(root).expanduser().resolve()
 
-        self.manifest_root = (
-            self.root
-            / "manifests"
-        )
+        self.manifest_root = self.root / "manifests"
 
     @staticmethod
     def make_key(
@@ -120,31 +109,17 @@ class DatasetCache:
         """
 
         if not datasets_lock_sha256:
-            raise DatasetCacheError(
-                "datasets_lock_sha256 must not be empty."
-            )
+            raise DatasetCacheError("datasets_lock_sha256 must not be empty.")
 
         digest = hashlib.sha256()
 
-        digest.update(
-            b"parakeet-onnx-resolved-manifest-v1\n"
-        )
+        digest.update(b"parakeet-onnx-resolved-manifest-v1\n")
 
-        digest.update(
-            datasets_lock_sha256.encode(
-                "ascii"
-            )
-        )
+        digest.update(datasets_lock_sha256.encode("ascii"))
 
         digest.update(b"\n")
 
-        digest.update(
-            hashlib.sha256(
-                manifest_bytes
-            ).hexdigest().encode(
-                "ascii"
-            )
-        )
+        digest.update(hashlib.sha256(manifest_bytes).hexdigest().encode("ascii"))
 
         return digest.hexdigest()
 
@@ -153,16 +128,11 @@ class DatasetCache:
         key: str,
     ) -> DatasetCacheEntry:
         if not key:
-            raise DatasetCacheError(
-                "Cache key must not be empty."
-            )
+            raise DatasetCacheError("Cache key must not be empty.")
 
         return DatasetCacheEntry(
             key=key,
-            path=(
-                self.manifest_root
-                / f"{key}.json"
-            ),
+            path=(self.manifest_root / f"{key}.json"),
         )
 
     def load(
@@ -175,32 +145,22 @@ class DatasetCache:
             return None
 
         try:
-            raw = json.loads(
-                entry.path.read_text(
-                    encoding="utf-8"
-                )
-            )
+            raw = json.loads(entry.path.read_text(encoding="utf-8"))
         except (
             OSError,
             json.JSONDecodeError,
         ) as exc:
-            raise DatasetCacheError(
-                f"Invalid dataset cache entry: "
-                f"{entry.path}: {exc}"
-            ) from exc
+            raise DatasetCacheError(f"Invalid dataset cache entry: {entry.path}: {exc}") from exc
 
         try:
-            return self._decode(
-                raw
-            )
+            return self._decode(raw)
         except (
             KeyError,
             TypeError,
             ValueError,
         ) as exc:
             raise DatasetCacheError(
-                f"Dataset cache entry does not match "
-                f"the expected schema: {entry.path}: {exc}"
+                f"Dataset cache entry does not match the expected schema: {entry.path}: {exc}"
             ) from exc
 
     def store(
@@ -211,13 +171,9 @@ class DatasetCache:
         entry = self.entry(key)
 
         payload = {
-            "cache_schema_version": (
-                self.CACHE_SCHEMA_VERSION
-            ),
+            "cache_schema_version": (self.CACHE_SCHEMA_VERSION),
             "key": key,
-            "resolved_manifest": (
-                resolved.to_dict()
-            ),
+            "resolved_manifest": (resolved.to_dict()),
         }
 
         _atomic_write(
@@ -250,100 +206,41 @@ class DatasetCache:
     def _decode(
         raw: dict[str, Any],
     ) -> ResolvedManifest:
-        version = raw[
-            "cache_schema_version"
-        ]
+        version = raw["cache_schema_version"]
 
         if version != 1:
-            raise ValueError(
-                f"Unsupported cache schema version: {version}"
-            )
+            raise ValueError(f"Unsupported cache schema version: {version}")
 
-        manifest = raw[
-            "resolved_manifest"
-        ]
+        manifest = raw["resolved_manifest"]
 
         samples = tuple(
             ResolvedDatasetSample(
                 id=item["id"],
-                manifest_entry_id=item[
-                    "manifest_entry_id"
-                ],
-                dataset_id=item[
-                    "dataset_id"
-                ],
-                dataset_repo_id=item[
-                    "dataset_repo_id"
-                ],
-                dataset_revision=item[
-                    "dataset_revision"
-                ],
+                manifest_entry_id=item["manifest_entry_id"],
+                dataset_id=item["dataset_id"],
+                dataset_repo_id=item["dataset_repo_id"],
+                dataset_revision=item["dataset_revision"],
                 subset=item["subset"],
                 split=item["split"],
-                row_index=int(
-                    item["row_index"]
-                ),
-                source_identity=item[
-                    "source_identity"
-                ],
-                selection_hash=item[
-                    "selection_hash"
-                ],
-                selection_rank=int(
-                    item["selection_rank"]
-                ),
-                duration_sec=float(
-                    item["duration_sec"]
-                ),
-                sample_rate_hz=(
-                    int(
-                        item[
-                            "sample_rate_hz"
-                        ]
-                    )
-                    if item[
-                        "sample_rate_hz"
-                    ]
-                    is not None
-                    else None
-                ),
-                transcription=item[
-                    "transcription"
-                ],
-                tags=tuple(
-                    item["tags"]
-                ),
-                audio_path=item[
-                    "audio_path"
-                ],
-                audio_sha256=item[
-                    "audio_sha256"
-                ],
+                row_index=int(item["row_index"]),
+                source_identity=item["source_identity"],
+                selection_hash=item["selection_hash"],
+                selection_rank=int(item["selection_rank"]),
+                duration_sec=float(item["duration_sec"]),
+                sample_rate_hz=(int(item["sample_rate_hz"]) if item["sample_rate_hz"] is not None else None),
+                transcription=item["transcription"],
+                tags=tuple(item["tags"]),
+                audio_path=item["audio_path"],
+                audio_sha256=item["audio_sha256"],
             )
-            for item in manifest[
-                "samples"
-            ]
+            for item in manifest["samples"]
         )
 
         result = ResolvedManifest(
-            schema_version=int(
-                manifest[
-                    "schema_version"
-                ]
-            ),
-            manifest_path=manifest[
-                "manifest_path"
-            ],
-            expected_sample_count=int(
-                manifest[
-                    "expected_sample_count"
-                ]
-            ),
-            resolved_sample_count=int(
-                manifest[
-                    "resolved_sample_count"
-                ]
-            ),
+            schema_version=int(manifest["schema_version"]),
+            manifest_path=manifest["manifest_path"],
+            expected_sample_count=int(manifest["expected_sample_count"]),
+            resolved_sample_count=int(manifest["resolved_sample_count"]),
             samples=samples,
         )
 

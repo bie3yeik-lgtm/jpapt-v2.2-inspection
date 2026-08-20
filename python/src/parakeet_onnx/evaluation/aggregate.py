@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
 import math
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass
 from statistics import mean, median
-from typing import Iterable
 
 from .metrics import CorpusErrorAccumulator
-from .rtf import calculate_rtf
 from .models import (
     ComponentTimingSummary,
     ErrorSummary,
@@ -21,6 +20,7 @@ from .models import (
     SampleSummary,
     TimingDistribution,
 )
+from .rtf import calculate_rtf
 
 
 def _percentile(values: list[float], q: float) -> float | None:
@@ -72,10 +72,7 @@ def aggregate_sample_results(
         )
 
     total_audio = sum(r.sample.audio_duration_sec for r in results)
-    total_ms = sum(
-        r.timing.total_ms or 0.0
-        for r in successful
-    )
+    total_ms = sum(r.timing.total_ms or 0.0 for r in successful)
     rtf_metrics = (
         calculate_rtf(
             audio_duration_sec=total_audio,
@@ -86,22 +83,10 @@ def aggregate_sample_results(
         else None
     )
 
-    per_sample_ms = [
-        r.timing.total_ms
-        for r in successful
-        if r.timing.total_ms is not None
-    ]
+    per_sample_ms = [r.timing.total_ms for r in successful if r.timing.total_ms is not None]
 
-    text_values = [
-        r.parity.text_match
-        for r in successful
-        if r.parity.text_match is not None
-    ]
-    token_values = [
-        r.parity.token_match
-        for r in successful
-        if r.parity.token_match is not None
-    ]
+    text_values = [r.parity.text_match for r in successful if r.parity.text_match is not None]
+    token_values = [r.parity.token_match for r in successful if r.parity.token_match is not None]
 
     error_counter: Counter[str] = Counter()
     fatal = 0
@@ -112,14 +97,8 @@ def aggregate_sample_results(
                 fatal += 1
 
     providers = [r.provider for r in results]
-    registered_values = [
-        p.registered for p in providers if p.registered is not None
-    ]
-    fallback_values = [
-        p.fallback_detected
-        for p in providers
-        if p.fallback_detected is not None
-    ]
+    registered_values = [p.registered for p in providers if p.registered is not None]
+    fallback_values = [p.fallback_detected for p in providers if p.fallback_detected is not None]
 
     return AggregateResult(
         samples=SampleSummary(
@@ -146,27 +125,13 @@ def aggregate_sample_results(
                 max_ms=max(per_sample_ms) if per_sample_ms else None,
             ),
             components=ComponentTimingSummary(
-                audio_decode_ms=_mean_optional(
-                    r.timing.audio_decode_ms for r in successful
-                ),
-                resample_ms=_mean_optional(
-                    r.timing.resample_ms for r in successful
-                ),
-                frontend_ms=_mean_optional(
-                    r.timing.frontend_ms for r in successful
-                ),
-                encoder_ms=_mean_optional(
-                    r.timing.encoder_ms for r in successful
-                ),
-                decoder_ms=_mean_optional(
-                    r.timing.decoder_ms for r in successful
-                ),
-                postprocess_ms=_mean_optional(
-                    r.timing.postprocess_ms for r in successful
-                ),
-                inference_ms=_mean_optional(
-                    r.timing.inference_ms for r in successful
-                ),
+                audio_decode_ms=_mean_optional(r.timing.audio_decode_ms for r in successful),
+                resample_ms=_mean_optional(r.timing.resample_ms for r in successful),
+                frontend_ms=_mean_optional(r.timing.frontend_ms for r in successful),
+                encoder_ms=_mean_optional(r.timing.encoder_ms for r in successful),
+                decoder_ms=_mean_optional(r.timing.decoder_ms for r in successful),
+                postprocess_ms=_mean_optional(r.timing.postprocess_ms for r in successful),
+                inference_ms=_mean_optional(r.timing.inference_ms for r in successful),
             ),
             rtfx=rtf_metrics.rtfx if rtf_metrics else None,
             rtf_scope=rtf_metrics.scope if rtf_metrics else None,
@@ -174,19 +139,11 @@ def aggregate_sample_results(
         ),
         memory=MemorySummary(
             peak_ram_mb=max(
-                (
-                    r.memory.peak_ram_mb
-                    for r in results
-                    if r.memory.peak_ram_mb is not None
-                ),
+                (r.memory.peak_ram_mb for r in results if r.memory.peak_ram_mb is not None),
                 default=None,
             ),
             peak_device_memory_mb=max(
-                (
-                    r.memory.peak_device_memory_mb
-                    for r in results
-                    if r.memory.peak_device_memory_mb is not None
-                ),
+                (r.memory.peak_device_memory_mb for r in results if r.memory.peak_device_memory_mb is not None),
                 default=None,
             ),
         ),
@@ -196,25 +153,15 @@ def aggregate_sample_results(
             text_mismatches=sum(v is False for v in text_values),
             token_matches=sum(v is True for v in token_values),
             token_mismatches=sum(v is False for v in token_values),
-            text_match_rate=(
-                sum(v is True for v in text_values) / len(text_values)
-                if text_values else None
-            ),
-            token_match_rate=(
-                sum(v is True for v in token_values) / len(token_values)
-                if token_values else None
-            ),
+            text_match_rate=(sum(v is True for v in text_values) / len(text_values) if text_values else None),
+            token_match_rate=(sum(v is True for v in token_values) / len(token_values) if token_values else None),
             numeric=NumericSummary(),
         ),
         provider=ProviderSummary(
             requested=requested_provider,
-            registered=(
-                all(registered_values) if registered_values else None
-            ),
+            registered=(all(registered_values) if registered_values else None),
             execution_proven=None,
-            fallback_detected=(
-                any(fallback_values) if fallback_values else None
-            ),
+            fallback_detected=(any(fallback_values) if fallback_values else None),
             fallback_only=None,
             assigned_nodes=None,
             fallback_nodes=None,

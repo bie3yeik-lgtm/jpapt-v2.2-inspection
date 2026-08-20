@@ -8,8 +8,8 @@ import pytest
 from parakeet_onnx.evaluation import (
     CapsuleArtifactError,
     EmbeddedCapsuleArtifact,
-    ExternalCapsuleArtifact,
     ExperimentCapsuleError,
+    ExternalCapsuleArtifact,
     read_experiment_capsule,
 )
 from parakeet_onnx.evaluation.parquet import (

@@ -9,7 +9,6 @@ import platform
 
 from .errors import UnsupportedEnvironmentError
 
-
 _ENVIRONMENT_OVERRIDE = "PARAKEET_ONNX_ENVIRONMENT"
 
 SUPPORTED_ENVIRONMENTS = frozenset(
@@ -93,7 +92,4 @@ def is_wsl() -> bool:
 
     release = platform.release().lower()
 
-    return (
-        "microsoft" in release
-        or "wsl" in release
-    )
+    return "microsoft" in release or "wsl" in release

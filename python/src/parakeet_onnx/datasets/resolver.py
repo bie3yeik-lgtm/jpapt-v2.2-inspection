@@ -27,9 +27,9 @@ does not otherwise depend on Hugging Face-specific APIs.
 
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -72,11 +72,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
         cache_dir: str | Path | None = None,
         streaming: bool = False,
     ) -> None:
-        self.cache_dir = (
-            str(Path(cache_dir).expanduser().resolve())
-            if cache_dir is not None
-            else None
-        )
+        self.cache_dir = str(Path(cache_dir).expanduser().resolve()) if cache_dir is not None else None
         self.streaming = streaming
 
     def iter_records(
@@ -86,9 +82,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
         try:
             from datasets import load_dataset
         except ImportError as exc:
-            raise DatasetResolutionError(
-                "HuggingFaceDatasetBackend requires the 'datasets' package."
-            ) from exc
+            raise DatasetResolutionError("HuggingFaceDatasetBackend requires the 'datasets' package.") from exc
 
         kwargs: dict[str, Any] = {
             "path": lock.repo_id,
@@ -118,15 +112,12 @@ class HuggingFaceDatasetBackend(DatasetBackend):
 
         if hasattr(dataset, "keys") and not hasattr(dataset, "column_names"):
             raise DatasetResolutionError(
-                f"Dataset {lock.id!r} resolved to multiple splits. "
-                "datasets-lock.json must pin a split."
+                f"Dataset {lock.id!r} resolved to multiple splits. datasets-lock.json must pin a split."
             )
 
         for index, row in enumerate(dataset):
             if not isinstance(row, dict):
-                raise DatasetResolutionError(
-                    f"Dataset row {index} is not a mapping."
-                )
+                raise DatasetResolutionError(f"Dataset row {index} is not a mapping.")
 
             yield self._convert_row(row=row, index=index)
 
@@ -170,9 +161,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
         try:
             record.validate()
         except ValueError as exc:
-            raise DatasetResolutionError(
-                f"Invalid dataset row {index}: {exc}"
-            ) from exc
+            raise DatasetResolutionError(f"Invalid dataset row {index}: {exc}") from exc
 
         return record
 
@@ -183,8 +172,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
                 return row[key]
 
         raise DatasetResolutionError(
-            "Dataset row has no supported audio column. "
-            "Expected one of: audio, speech, waveform."
+            "Dataset row has no supported audio column. Expected one of: audio, speech, waveform."
         )
 
     @staticmethod
@@ -229,10 +217,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
     @staticmethod
     def _sample_rate(audio: Any) -> int | None:
         if isinstance(audio, dict):
-            value = (
-                audio.get("sampling_rate")
-                or audio.get("sample_rate")
-            )
+            value = audio.get("sampling_rate") or audio.get("sample_rate")
             if value is not None:
                 return int(value)
 
@@ -259,8 +244,7 @@ class HuggingFaceDatasetBackend(DatasetBackend):
                     pass
 
         raise DatasetResolutionError(
-            "Unable to determine audio duration. "
-            "Dataset must expose duration or decodable audio length."
+            "Unable to determine audio duration. Dataset must expose duration or decodable audio length."
         )
 
     @staticmethod
@@ -294,9 +278,7 @@ class DatasetResolver:
         self.dataset_lock = dataset_lock
         self.backend = backend
         self.materializer = materializer
-        self.manifest_loader = ManifestLoader(
-            repository_root=repository_root
-        )
+        self.manifest_loader = ManifestLoader(repository_root=repository_root)
 
     def resolve(
         self,
@@ -307,10 +289,7 @@ class DatasetResolver:
         entries = self.manifest_loader.load(manifest_path)
         manifest_expected = self.manifest_loader.expected_sample_count(entries)
 
-        if (
-            expected_sample_count is not None
-            and manifest_expected != expected_sample_count
-        ):
+        if expected_sample_count is not None and manifest_expected != expected_sample_count:
             raise DatasetResolutionError(
                 "Manifest requested sample count does not match evaluation "
                 "configuration: "
@@ -328,8 +307,7 @@ class DatasetResolver:
                 logical = sample.logical_identity()
                 if logical in seen_logical_ids:
                     raise DatasetResolutionError(
-                        "The same logical dataset sample was selected by "
-                        f"multiple manifest entries: {logical}"
+                        f"The same logical dataset sample was selected by multiple manifest entries: {logical}"
                     )
                 seen_logical_ids.add(logical)
                 selected.append(sample)
@@ -421,12 +399,6 @@ class DatasetResolver:
         entry: ManifestEntry,
         record: DatasetRecord,
     ) -> str:
-        source_digest = hashlib.sha256(
-            record.identity.encode("utf-8")
-        ).hexdigest()[:16]
+        source_digest = hashlib.sha256(record.identity.encode("utf-8")).hexdigest()[:16]
 
-        return (
-            f"{entry.dataset_id}-"
-            f"{entry.id}-"
-            f"{source_digest}"
-        )
+        return f"{entry.dataset_id}-{entry.id}-{source_digest}"

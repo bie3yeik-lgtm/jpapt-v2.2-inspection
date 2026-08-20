@@ -16,7 +16,6 @@ from .errors import (
     ConfigValidationError,
 )
 
-
 ConfigDict = dict[str, Any]
 
 
@@ -83,8 +82,7 @@ def load_toml(
 
         if schema_version != 1:
             raise ConfigValidationError(
-                "Unsupported schema_version: "
-                f"{schema_version}. Expected schema_version = 1.",
+                f"Unsupported schema_version: {schema_version}. Expected schema_version = 1.",
                 path=config_path,
             )
 

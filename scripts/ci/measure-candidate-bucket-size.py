@@ -8,8 +8,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Protocol
 
 BUCKET_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CANDIDATE_RE = re.compile(r"^candidate-[0-9]{6}$")
@@ -21,9 +22,7 @@ class BucketItemLike(Protocol):
     size: int
 
 
-def candidate_files(
-    items: Iterable[BucketItemLike], relative_path: str
-) -> list[BucketItemLike]:
+def candidate_files(items: Iterable[BucketItemLike], relative_path: str) -> list[BucketItemLike]:
     prefix = relative_path.rstrip("/") + "/"
     selected: list[BucketItemLike] = []
     for item in items:
@@ -109,8 +108,7 @@ def resolve_request_candidate(
         command,
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     try:
         resolved = json.loads(completed.stdout)
@@ -152,8 +150,7 @@ def resolve_candidate(
         command,
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     # Invalid resolver output is an internal contract violation, not an external
     # availability problem. Keep it fail-closed even with --allow-unavailable.
@@ -257,8 +254,7 @@ def main() -> int:
     file_paths = sorted(
         item.path
         for item in items
-        if getattr(item, "type", None) == "file"
-        and isinstance(getattr(item, "path", None), str)
+        if getattr(item, "type", None) == "file" and isinstance(getattr(item, "path", None), str)
     )
     if not file_paths:
         result = availability_failure(

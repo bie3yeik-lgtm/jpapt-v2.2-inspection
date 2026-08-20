@@ -13,8 +13,7 @@ def invoke_json(command: list[str]) -> dict:
         command,
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"

@@ -51,15 +51,11 @@ def main() -> int:
             if getattr(item, "path", None) != object_path:
                 continue
             if getattr(item, "type", None) != "file":
-                raise RuntimeError(
-                    f"expected Bucket object path to be a file: {object_path}"
-                )
+                raise RuntimeError(f"expected Bucket object path to be a file: {object_path}")
             found = True
             break
     except Exception as error:
-        raise SystemExit(
-            f"Bucket object lookup failed for {bucket}/{object_path}: {error}"
-        ) from error
+        raise SystemExit(f"Bucket object lookup failed for {bucket}/{object_path}: {error}") from error
 
     print("true" if found else "false")
     return 0

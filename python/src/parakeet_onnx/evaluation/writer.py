@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import tempfile
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 from .models import (
     BenchmarkResult,
@@ -94,11 +94,7 @@ class SampleResultWriter:
         self.path = Path(path)
         self.validate = validate
 
-        self.schema_registry = (
-            schema_registry
-            if schema_registry is not None
-            else EvaluationSchemaRegistry()
-        )
+        self.schema_registry = schema_registry if schema_registry is not None else EvaluationSchemaRegistry()
 
         self._file = None
         self._count = 0
@@ -107,7 +103,7 @@ class SampleResultWriter:
     def count(self) -> int:
         return self._count
 
-    def __enter__(self) -> "SampleResultWriter":
+    def __enter__(self) -> SampleResultWriter:
         self.open()
         return self
 
@@ -149,16 +145,12 @@ class SampleResultWriter:
         result: SampleResult,
     ) -> None:
         if self._file is None:
-            raise RuntimeError(
-                "SampleResultWriter is not open."
-            )
+            raise RuntimeError("SampleResultWriter is not open.")
 
         value = result.to_dict()
 
         if self.validate:
-            self.schema_registry.validate_sample_result(
-                value
-            )
+            self.schema_registry.validate_sample_result(value)
 
         line = json.dumps(
             value,
@@ -199,11 +191,7 @@ class BenchmarkWriter:
         self.path = Path(path)
         self.validate = validate
 
-        self.schema_registry = (
-            schema_registry
-            if schema_registry is not None
-            else EvaluationSchemaRegistry()
-        )
+        self.schema_registry = schema_registry if schema_registry is not None else EvaluationSchemaRegistry()
 
     def write(
         self,
@@ -212,9 +200,7 @@ class BenchmarkWriter:
         value = benchmark.to_dict()
 
         if self.validate:
-            self.schema_registry.validate_benchmark(
-                value
-            )
+            self.schema_registry.validate_benchmark(value)
 
         payload = json.dumps(
             value,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datasets import Dataset
 import pytest
+from datasets import Dataset
 
 from parakeet_onnx.evaluation import (
     ExperimentCapsuleError,
@@ -132,11 +132,7 @@ def test_build_experiment_capsule_rows_is_flat_and_deterministic() -> None:
     assert rows[1]["hypothesis_text"] == "認識テキスト"
     assert rows[1]["schema_version"] == EXPERIMENT_CAPSULE_SCHEMA_VERSION
 
-    metric_names = {
-        row["metric_name"]
-        for row in rows
-        if row["record_kind"] == "metric"
-    }
+    metric_names = {row["metric_name"] for row in rows if row["record_kind"] == "metric"}
     assert "quality.cer" in metric_names
     assert "samples.total_audio_duration_sec" in metric_names
     assert "provider.execution_proven" not in metric_names

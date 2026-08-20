@@ -6,8 +6,15 @@ from pathlib import Path
 
 from parakeet_onnx.config import resolve_config
 from parakeet_onnx.config.catalog import load_repository_catalog
-from parakeet_onnx.datasets import DatasetMaterializer, DatasetResolver, HuggingFaceDatasetBackend
-from parakeet_onnx.evaluation.factory import EvaluatorBuildRequest, create_python_evaluator
+from parakeet_onnx.datasets import (
+    DatasetMaterializer,
+    DatasetResolver,
+    HuggingFaceDatasetBackend,
+)
+from parakeet_onnx.evaluation.factory import (
+    EvaluatorBuildRequest,
+    create_python_evaluator,
+)
 from parakeet_onnx.evaluation.runner import EvaluationRunInputs, run_evaluation
 from parakeet_onnx.hf.revisions import load_revision_bundle
 from parakeet_onnx.run_context import build_run_context
@@ -63,10 +70,7 @@ def main() -> int:
         repository_root=config.repository_root,
     )
     if args.candidate_id is not None and args.candidate_id != candidate.candidate_id:
-        raise SystemExit(
-            "candidate ID mismatch: "
-            f"argument={args.candidate_id!r}, resolved={candidate.candidate_id!r}"
-        )
+        raise SystemExit(f"candidate ID mismatch: argument={args.candidate_id!r}, resolved={candidate.candidate_id!r}")
     if candidate.profile_set_id != revisions.runtime.profile_set_id:
         raise SystemExit(
             "candidate/config profile-set mismatch: "
@@ -79,8 +83,7 @@ def main() -> int:
         )
     if candidate.decoder != expected_decoder:
         raise SystemExit(
-            "candidate/config decoder mismatch: "
-            f"candidate={candidate.decoder!r}, expected={expected_decoder!r}"
+            f"candidate/config decoder mismatch: candidate={candidate.decoder!r}, expected={expected_decoder!r}"
         )
 
     materializer_root = _resolve_under_root(
@@ -150,9 +153,7 @@ def main() -> int:
             candidate_id=candidate.candidate_id,
             decoder=candidate.decoder,
             candidate_bundle_sha256=candidate.bundle_sha256,
-            candidate_bundle_size_bytes=sum(
-                artifact.size_bytes for artifact in candidate.artifacts.values()
-            ),
+            candidate_bundle_size_bytes=sum(artifact.size_bytes for artifact in candidate.artifacts.values()),
         ),
     )
 

@@ -66,13 +66,7 @@ def test_repository_dispatch_null_booleans_default_to_true():
 @pytest.mark.parametrize("field", ["private_bucket", "write_repo_config"])
 @pytest.mark.parametrize("bad", ['"yes"', '"1"', "1", "[]", "{}"])
 def test_repository_dispatch_rejects_non_boolean_mutation_flags(field: str, bad: str):
-    payload = (
-        '{"repository":"owner/repo","hf_namespace":"ns","'
-        + field
-        + '":'
-        + bad
-        + "}"
-    )
+    payload = '{"repository":"owner/repo","hf_namespace":"ns","' + field + '":' + bad + "}"
     with pytest.raises(ValueError, match=f"{field} must be true or false"):
         resolve_dispatch(payload)
 

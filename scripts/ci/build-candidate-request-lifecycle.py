@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from candidate_lifecycle_common import STATES, parse_time
@@ -80,21 +80,25 @@ def validate(snapshot: dict) -> None:
         value = snapshot.get(field)
         if not isinstance(value, str) or not REPOSITORY_RE.fullmatch(value):
             raise SystemExit(f"{field} must use owner/name")
-    for field in ("gateway_run_id", "evaluation_run_id", "evaluation_run_attempt", "receiver_run_id"):
+    for field in (
+        "gateway_run_id",
+        "evaluation_run_id",
+        "evaluation_run_attempt",
+        "receiver_run_id",
+    ):
         value = snapshot.get(field)
         if value is not None and (not isinstance(value, int) or value < 1):
             raise SystemExit(f"{field} must be null or a positive integer")
     receipt_sha256 = snapshot.get("receipt_sha256")
-    if receipt_sha256 is not None and (
-        not isinstance(receipt_sha256, str) or not SHA256_RE.fullmatch(receipt_sha256)
-    ):
+    if receipt_sha256 is not None and (not isinstance(receipt_sha256, str) or not SHA256_RE.fullmatch(receipt_sha256)):
         raise SystemExit("receipt_sha256 is invalid")
     state = snapshot["state"]
     if state in {"dispatched", "rejected"} and snapshot["gateway_run_id"] is None:
         raise SystemExit(f"{state} requires gateway_run_id")
-    if state in {"running", "completed", "acknowledged"}:
-        if snapshot["evaluation_run_id"] is None or snapshot["evaluation_run_attempt"] is None:
-            raise SystemExit(f"{state} requires evaluation run identity")
+    if state in {"running", "completed", "acknowledged"} and (
+        snapshot["evaluation_run_id"] is None or snapshot["evaluation_run_attempt"] is None
+    ):
+        raise SystemExit(f"{state} requires evaluation run identity")
     if state in {"completed", "acknowledged"} and snapshot["receipt_sha256"] is None:
         raise SystemExit(f"{state} requires receipt_sha256")
     if state == "acknowledged" and snapshot["receiver_run_id"] is None:
@@ -186,7 +190,7 @@ def main() -> int:
         "evaluation_run_attempt": evaluation_run_attempt,
         "receipt_sha256": receipt_sha256,
         "receiver_run_id": receiver_run_id,
-        "updated_at": env("UPDATED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": env("UPDATED_AT") or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     if request_execution_id:
         snapshot["request_execution_id"] = request_execution_id

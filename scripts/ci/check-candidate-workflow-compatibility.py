@@ -85,9 +85,7 @@ def main() -> int:
         v2_contract = normalized_contract(v2_inputs[name])
         common[name] = {"legacy": legacy_contract, "v2": v2_contract}
         if legacy_contract != v2_contract:
-            errors.append(
-                f"input contract drift for {name}: legacy={legacy_contract!r} v2={v2_contract!r}"
-            )
+            errors.append(f"input contract drift for {name}: legacy={legacy_contract!r} v2={v2_contract!r}")
 
     for name in V2_ONLY_INPUTS:
         if name not in v2_inputs:

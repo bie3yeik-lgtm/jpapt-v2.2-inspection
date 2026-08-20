@@ -15,16 +15,14 @@ from .errors import DatasetManifestError
 from .models import ManifestEntry, ManifestFilters, ManifestSelection
 
 
-def stable_hash_bytes(
-    *, dataset_revision: str, sample_identity: str, seed: str
-) -> bytes:
+def stable_hash_bytes(*, dataset_revision: str, sample_identity: str, seed: str) -> bytes:
     if not dataset_revision:
         raise ValueError("dataset_revision must not be empty.")
     if not sample_identity:
         raise ValueError("sample_identity must not be empty.")
     if not seed:
         raise ValueError("seed must not be empty.")
-    key = f"{dataset_revision}\n{sample_identity}\n{seed}".encode("utf-8")
+    key = f"{dataset_revision}\n{sample_identity}\n{seed}".encode()
     return hashlib.sha256(key).digest()
 
 
@@ -50,9 +48,7 @@ class ManifestLoader:
         try:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise DatasetManifestError(
-                f"Invalid manifest JSON Schema: {exc}", path=schema_path
-            ) from exc
+            raise DatasetManifestError(f"Invalid manifest JSON Schema: {exc}", path=schema_path) from exc
         Draft202012Validator.check_schema(schema)
         self._validator = Draft202012Validator(schema)
 
@@ -92,9 +88,7 @@ class ManifestLoader:
                     entry = self._parse_entry(raw, line_number=line_number)
                     entry.validate()
                 except (TypeError, ValueError, KeyError) as exc:
-                    raise DatasetManifestError(
-                        str(exc), path=manifest_path, line_number=line_number
-                    ) from exc
+                    raise DatasetManifestError(str(exc), path=manifest_path, line_number=line_number) from exc
                 entries.append(entry)
 
         if not entries:
@@ -119,15 +113,7 @@ class ManifestLoader:
                 seed=str(raw["seed"]),
             ),
             filters=ManifestFilters(
-                min_duration_sec=(
-                    float(raw["min_duration_sec"])
-                    if raw.get("min_duration_sec") is not None
-                    else None
-                ),
-                max_duration_sec=(
-                    float(raw["max_duration_sec"])
-                    if raw.get("max_duration_sec") is not None
-                    else None
-                ),
+                min_duration_sec=(float(raw["min_duration_sec"]) if raw.get("min_duration_sec") is not None else None),
+                max_duration_sec=(float(raw["max_duration_sec"]) if raw.get("max_duration_sec") is not None else None),
             ),
         )

@@ -69,8 +69,7 @@ class ConfigResolver:
 
         if config.id != model_id:
             raise ConfigValidationError(
-                "Model filename and model.id disagree: "
-                f"filename={model_id!r}, model.id={config.id!r}",
+                f"Model filename and model.id disagree: filename={model_id!r}, model.id={config.id!r}",
                 path=path,
             )
 
@@ -89,8 +88,7 @@ class ConfigResolver:
 
         if config.id != provider_id:
             raise ConfigValidationError(
-                "Provider filename and provider.id disagree: "
-                f"filename={provider_id!r}, provider.id={config.id!r}",
+                f"Provider filename and provider.id disagree: filename={provider_id!r}, provider.id={config.id!r}",
                 path=path,
             )
 
@@ -100,13 +98,9 @@ class ConfigResolver:
         self,
         environment_id: str,
     ) -> ExecutionEnvironmentConfig:
-        normalized_id = normalize_environment_id(
-            environment_id
-        )
+        normalized_id = normalize_environment_id(environment_id)
 
-        path = self.paths.environment_config(
-            normalized_id
-        )
+        path = self.paths.environment_config(normalized_id)
 
         config = ExecutionEnvironmentConfig(
             path=path,
@@ -127,9 +121,7 @@ class ConfigResolver:
         self,
         evaluation_id: str,
     ) -> EvaluationConfig:
-        path = self.paths.evaluation_config(
-            evaluation_id
-        )
+        path = self.paths.evaluation_config(evaluation_id)
 
         config = EvaluationConfig(
             path=path,
@@ -190,20 +182,12 @@ class ConfigResolver:
             ResolvedConfig
         """
 
-        environment_id = (
-            normalize_environment_id(environment)
-            if environment is not None
-            else detect_environment_id()
-        )
+        environment_id = normalize_environment_id(environment) if environment is not None else detect_environment_id()
 
         model_config = self.load_model(model)
         provider_config = self.load_provider(provider)
-        environment_config = self.load_environment(
-            environment_id
-        )
-        evaluation_config = self.load_evaluation(
-            evaluation
-        )
+        environment_config = self.load_environment(environment_id)
+        evaluation_config = self.load_evaluation(evaluation)
 
         self._validate_compatibility(
             model=model_config,
@@ -252,11 +236,7 @@ class ConfigResolver:
                 environment.id,
             )
 
-        model_environment_providers = (
-            model.providers_for_environment(
-                environment.id
-            )
-        )
+        model_environment_providers = model.providers_for_environment(environment.id)
 
         if provider.id not in model_environment_providers:
             raise UnsupportedProviderError(
@@ -285,14 +265,9 @@ class ConfigResolver:
                     path=evaluation.path,
                 )
 
-            if (
-                environment.id
-                not in supported_eval_environments
-            ):
+            if environment.id not in supported_eval_environments:
                 raise ConfigValidationError(
-                    "Evaluation suite does not support "
-                    f"environment={environment.id!r}: "
-                    f"evaluation={evaluation.id!r}",
+                    f"Evaluation suite does not support environment={environment.id!r}: evaluation={evaluation.id!r}",
                     path=evaluation.path,
                 )
 

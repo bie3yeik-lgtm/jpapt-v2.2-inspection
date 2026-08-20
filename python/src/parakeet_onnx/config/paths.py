@@ -15,7 +15,6 @@ from pathlib import Path
 
 from .errors import ConfigError
 
-
 _REPOSITORY_ROOT_ENV = "PARAKEET_ONNX_REPO_ROOT"
 
 _ROOT_MARKERS = (
@@ -56,18 +55,11 @@ def find_repository_root(
         root = Path(explicit_root).expanduser().resolve()
 
         if not _looks_like_repository_root(root):
-            raise ConfigError(
-                f"{_REPOSITORY_ROOT_ENV} does not point to a valid "
-                f"repository root: {root}"
-            )
+            raise ConfigError(f"{_REPOSITORY_ROOT_ENV} does not point to a valid repository root: {root}")
 
         return root
 
-    candidate = (
-        Path(start).expanduser().resolve()
-        if start is not None
-        else Path.cwd().resolve()
-    )
+    candidate = Path(start).expanduser().resolve() if start is not None else Path.cwd().resolve()
 
     if candidate.is_file():
         candidate = candidate.parent
@@ -77,9 +69,7 @@ def find_repository_root(
             return current
 
     raise ConfigError(
-        "Unable to locate repository root. "
-        f"Set {_REPOSITORY_ROOT_ENV} explicitly when running outside "
-        "the repository."
+        f"Unable to locate repository root. Set {_REPOSITORY_ROOT_ENV} explicitly when running outside the repository."
     )
 
 
@@ -95,7 +85,7 @@ class RepositoryPaths:
     def discover(
         cls,
         start: str | Path | None = None,
-    ) -> "RepositoryPaths":
+    ) -> RepositoryPaths:
         return cls(
             root=find_repository_root(start),
         )

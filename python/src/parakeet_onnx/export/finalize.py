@@ -7,7 +7,11 @@ from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
-from .metadata import CandidateMetadata, CandidateVariantMetadata, write_candidate_metadata
+from .metadata import (
+    CandidateMetadata,
+    CandidateVariantMetadata,
+    write_candidate_metadata,
+)
 from .validate import validate_onnx_model
 
 
@@ -24,9 +28,7 @@ def finalize_candidate_variant(
 
     root = Path(output_dir).expanduser().resolve()
     repo_root = (
-        Path(repository_root).expanduser().resolve()
-        if repository_root is not None
-        else _discover_repository_root(root)
+        Path(repository_root).expanduser().resolve() if repository_root is not None else _discover_repository_root(root)
     )
     catalog = load_repository_catalog(repo_root)
     profile_set_value = catalog.profile_set(profile_set)
@@ -45,16 +47,11 @@ def finalize_candidate_variant(
 
     missing = sorted(set(profile.required_artifact_roles) - set(normalized_artifacts))
     if missing:
-        raise ValueError(
-            f"variant {variant!r} is missing profile-required artifact roles: {missing}"
-        )
+        raise ValueError(f"variant {variant!r} is missing profile-required artifact roles: {missing}")
     allowed = set(profile.required_artifact_roles) | set(profile.optional_artifact_roles)
     unexpected = sorted(set(normalized_artifacts) - allowed)
     if unexpected:
-        raise ValueError(
-            f"variant {variant!r} contains roles not allowed by profile {profile_id!r}: "
-            f"{unexpected}"
-        )
+        raise ValueError(f"variant {variant!r} contains roles not allowed by profile {profile_id!r}: {unexpected}")
 
     normalized_tokenizer: str | None = None
     if tokenizer_path is not None:

@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from candidate_protocol_common import parse_rfc3339_time
@@ -85,10 +85,12 @@ def main() -> int:
         source_path = Path(source)
         if not source_path.is_file():
             raise SystemExit(f"managed source file not found: {source}")
-        managed_files.append({
-            "path": target,
-            "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
-        })
+        managed_files.append(
+            {
+                "path": target,
+                "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            }
+        )
 
     value = {
         "schema_version": 1,
@@ -96,8 +98,7 @@ def main() -> int:
         "orchestrator_repository": os.environ.get("ORCHESTRATOR_REPOSITORY", ""),
         "orchestrator_commit_sha": os.environ.get("ORCHESTRATOR_COMMIT_SHA", ""),
         "managed_files": managed_files,
-        "installed_at": os.environ.get("INSTALLED_AT")
-        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "installed_at": os.environ.get("INSTALLED_AT") or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     validate(value)
     output = Path(args.output)

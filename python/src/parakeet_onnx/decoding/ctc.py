@@ -30,10 +30,5 @@ def greedy_ctc_ids(
     if values.ndim == 2:
         return ctc_collapse(np.argmax(values, axis=-1), blank_id=blank_id)
     if values.ndim == 3:
-        return [
-            ctc_collapse(row, blank_id=blank_id)
-            for row in np.argmax(values, axis=-1)
-        ]
-    raise ValueError(
-        f"CTC logits must have rank 2 or 3; got shape={values.shape!r}"
-    )
+        return [ctc_collapse(row, blank_id=blank_id) for row in np.argmax(values, axis=-1)]
+    raise ValueError(f"CTC logits must have rank 2 or 3; got shape={values.shape!r}")

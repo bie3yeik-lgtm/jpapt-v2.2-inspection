@@ -30,10 +30,7 @@ class CtcRuntimeAdapter:
             inference = self.runner.run_waveform(audio)
         else:
             if self.feature_extractor is None:
-                raise RuntimeError(
-                    "candidate expects external frontend features, but no "
-                    "FeatureExtractor was supplied"
-                )
+                raise RuntimeError("candidate expects external frontend features, but no FeatureExtractor was supplied")
             started = perf_counter()
             features = self.feature_extractor.extract(audio)
             frontend_ms = (perf_counter() - started) * 1000.0
@@ -45,9 +42,7 @@ class CtcRuntimeAdapter:
             logits[0] if logits.ndim == 3 else logits,
             blank_id=self.runner.contract.blank_id,
         )
-        if not isinstance(token_ids, list) or (
-            token_ids and isinstance(token_ids[0], list)
-        ):
+        if not isinstance(token_ids, list) or (token_ids and isinstance(token_ids[0], list)):
             raise RuntimeError("unexpected batched token result")
         ids = [int(item) for item in token_ids]
         text = _ids_to_text(self.tokenizer, ids)

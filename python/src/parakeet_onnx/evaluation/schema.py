@@ -78,9 +78,7 @@ class EvaluationSchemaRegistry:
         try:
             filename = self._FILES[schema_name]
         except KeyError as exc:
-            raise EvaluationSchemaError(
-                f"Unknown evaluation schema: {schema_name}"
-            ) from exc
+            raise EvaluationSchemaError(f"Unknown evaluation schema: {schema_name}") from exc
         return self.schema_root / filename
 
     def load_schema(self, schema_name: str) -> dict[str, Any]:
@@ -89,19 +87,13 @@ class EvaluationSchemaRegistry:
             return cached
         path = self.schema_path(schema_name)
         if not path.is_file():
-            raise EvaluationSchemaError(
-                f"Schema file does not exist: {path}", schema_name=schema_name
-            )
+            raise EvaluationSchemaError(f"Schema file does not exist: {path}", schema_name=schema_name)
         try:
             schema = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise EvaluationSchemaError(
-                f"Invalid JSON Schema file: {exc}", schema_name=schema_name
-            ) from exc
+            raise EvaluationSchemaError(f"Invalid JSON Schema file: {exc}", schema_name=schema_name) from exc
         if not isinstance(schema, dict):
-            raise EvaluationSchemaError(
-                "JSON Schema root must be an object.", schema_name=schema_name
-            )
+            raise EvaluationSchemaError("JSON Schema root must be an object.", schema_name=schema_name)
         try:
             Draft202012Validator.check_schema(schema)
         except SchemaError as exc:
@@ -164,19 +156,13 @@ class EvaluationSchemaRegistry:
         self.validate(self.BENCHMARK, instance)
 
 
-def validate_run_context(
-    instance: Any, *, repository_root: str | Path | None = None
-) -> None:
+def validate_run_context(instance: Any, *, repository_root: str | Path | None = None) -> None:
     EvaluationSchemaRegistry(repository_root).validate_run_context(instance)
 
 
-def validate_sample_result(
-    instance: Any, *, repository_root: str | Path | None = None
-) -> None:
+def validate_sample_result(instance: Any, *, repository_root: str | Path | None = None) -> None:
     EvaluationSchemaRegistry(repository_root).validate_sample_result(instance)
 
 
-def validate_benchmark(
-    instance: Any, *, repository_root: str | Path | None = None
-) -> None:
+def validate_benchmark(instance: Any, *, repository_root: str | Path | None = None) -> None:
     EvaluationSchemaRegistry(repository_root).validate_benchmark(instance)

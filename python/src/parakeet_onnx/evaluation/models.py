@@ -14,10 +14,9 @@ No NumPy arrays or framework-specific objects are stored here.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 import json
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
-
 
 RuntimeImplementation = Literal["python", "rust"]
 BackendName = Literal["onnxruntime", "nemo", "transformers"]
@@ -99,7 +98,7 @@ class AsrOutput(JsonModelMixin):
         text: str,
         normalized_text: str,
         tokens: list[int],
-    ) -> "AsrOutput":
+    ) -> AsrOutput:
         return cls(
             text=text,
             normalized_text=normalized_text,
@@ -144,7 +143,7 @@ class TensorComparison(JsonModelMixin):
     relative_l2: float | None = None
 
     @classmethod
-    def not_compared(cls) -> "TensorComparison":
+    def not_compared(cls) -> TensorComparison:
         return cls()
 
 
@@ -163,7 +162,7 @@ class ParityResult(JsonModelMixin):
     numeric: NumericParity = field(default_factory=NumericParity)
 
     @classmethod
-    def unavailable(cls) -> "ParityResult":
+    def unavailable(cls) -> ParityResult:
         return cls(reference_run_id=None, text_match=None, token_match=None)
 
 
@@ -178,7 +177,7 @@ class ProviderResult(JsonModelMixin):
     fallback_nodes: int | None
 
     @classmethod
-    def unknown(cls, requested: str) -> "ProviderResult":
+    def unknown(cls, requested: str) -> ProviderResult:
         return cls(
             requested=requested,
             registered=None,
@@ -226,7 +225,7 @@ class SampleResult(JsonModelMixin):
         memory: MemoryMetrics,
         parity: ParityResult,
         provider: ProviderResult,
-    ) -> "SampleResult":
+    ) -> SampleResult:
         return cls(
             schema_version=1,
             run_id=run_id,
@@ -343,7 +342,7 @@ class TensorSummary(JsonModelMixin):
     max_relative_l2: float | None
 
     @classmethod
-    def empty(cls) -> "TensorSummary":
+    def empty(cls) -> TensorSummary:
         return cls(0, 0, None, None, None)
 
 
@@ -395,7 +394,7 @@ class ErrorSummary(JsonModelMixin):
     by_code: dict[str, int]
 
     @classmethod
-    def empty(cls) -> "ErrorSummary":
+    def empty(cls) -> ErrorSummary:
         return cls(total=0, fatal=0, by_code={})
 
 
@@ -431,7 +430,7 @@ class BenchmarkResult(JsonModelMixin):
         provider: ProviderSummary,
         acceptance: AcceptanceSummary,
         errors: ErrorSummary,
-    ) -> "BenchmarkResult":
+    ) -> BenchmarkResult:
         return cls(
             schema_version=1,
             run_id=run_id,

@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from candidate_protocol_common import parse_rfc3339_time, validate_https_url
@@ -98,7 +98,7 @@ def main() -> int:
         "gateway_run_id": int(env("GATEWAY_RUN_ID")),
         "gateway_run_attempt": int(env("GATEWAY_RUN_ATTEMPT", "1")),
         "gateway_run_url": env("GATEWAY_RUN_URL"),
-        "rejected_at": env("REJECTED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "rejected_at": env("REJECTED_AT") or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     execution_id = env("REQUEST_EXECUTION_ID")
     if execution_id:
@@ -111,7 +111,12 @@ def main() -> int:
     dispatch_path.parent.mkdir(parents=True, exist_ok=True)
     rejection_path.write_text(json.dumps(rejection, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     dispatch_path.write_text(
-        json.dumps({"event_type": EVENT_TYPE, "client_payload": rejection}, separators=(",", ":"), ensure_ascii=False) + "\n",
+        json.dumps(
+            {"event_type": EVENT_TYPE, "client_payload": rejection},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(rejection_path.read_text(encoding="utf-8"), end="")
