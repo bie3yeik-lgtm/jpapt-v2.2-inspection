@@ -215,7 +215,8 @@ jobs:
               commit_message=f"Publish RTF fixture {os.environ['RUN_ID']}",
           )
           Path('.ci/rtf-resolver/output/fixture-revision').write_text(commit.oid)
-          source.write_text((fixture / 'benchmark-v1.jsonl').read_text())
+          source.unlink()
+          shutil.copy2(fixture / 'benchmark-v1.jsonl', source)
           canonical_sha = hashlib.sha256(source.read_bytes()).hexdigest()
           Path('rtf-scores/benchmark/benchmark-v1.jsonl.sha256').write_text(canonical_sha + '  benchmark-v1.jsonl\n')
           receipt_path = Path('rtf-scores/benchmark/benchmark-v1.receipt.json')
