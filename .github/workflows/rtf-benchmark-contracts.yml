@@ -93,6 +93,14 @@ jobs:
           script = Path("scripts/run-benchmark.sh").read_text()
           if 'hf jobs run --name "$RTF_RUN_ID"' not in script:
               raise SystemExit("HF Jobs must use a bounded explicit job name")
+          if '"$IMAGE" /opt/rtf-benchmark/entrypoint.sh' not in script:
+              raise SystemExit("HF Jobs must invoke the image entrypoint explicitly")
+          if '"$IMAGE" python benchmark.py' in script:
+              raise SystemExit("HF Jobs must not invoke a missing benchmark.py path")
+          if 't4) HF_FLAVOR="${HF_FLAVOR:-t4-small}"' not in script:
+              raise SystemExit("HF T4 must map to the T4 Jobs flavor")
+          if 'l4) HF_FLAVOR="${HF_FLAVOR:-l4x1}"' not in script:
+              raise SystemExit("HF L4 must map to the L4 Jobs flavor")
           if "exec /opt/rtf-benchmark/entrypoint.sh" not in script:
               raise SystemExit("RunPod must invoke the image entrypoint explicitly")
           if "exec python benchmark.py" in script:
