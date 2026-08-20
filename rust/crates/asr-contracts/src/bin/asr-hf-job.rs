@@ -449,6 +449,8 @@ fn expected_hf_args(plan: &HfJobPlan) -> Vec<String> {
     }
     args.extend([
         plan.image.clone(),
+        "python".to_owned(),
+        "/opt/jpapt/evaluate_candidate.py".to_owned(),
         "--suite".to_owned(),
         plan.suite.clone(),
         "--provider".to_owned(),
