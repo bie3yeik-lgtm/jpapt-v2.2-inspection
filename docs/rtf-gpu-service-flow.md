@@ -66,6 +66,10 @@ HF Inference Endpoint: T4, L4
 RunPod Pod:            A5000, L4, RTX 3090, RTX 4090
 ```
 
+今回のRTF測定ではA100/H100を対象外とする。Workflowの選択肢とwrapperの
+provider/GPU validationでも受け付けない。比較対象を追加する場合は、別のPhaseと
+別の固定matrixを定義する。
+
 したがって、HF Jobs、RunPod Serverless、RunPod PodのT4はPhase 1の対象外である。
 
 ## provider別の実推論

@@ -33,6 +33,11 @@ done
 : "${HF_FLAVOR:=a10g-small}"
 : "${RUNPOD_GPU_ID:=${RTF_GPU}}"
 
+case "$PROVIDER:$RTF_GPU" in
+  hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
+  *) echo "provider/GPU is outside the Phase 1 RTF matrix: $PROVIDER/$RTF_GPU" >&2; exit 2 ;;
+esac
+
 case "$PROVIDER" in
   hf)
     command -v hf >/dev/null || { echo "hf CLI is required" >&2; exit 1; }

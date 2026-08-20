@@ -15,7 +15,8 @@ on:
       gpu:
         description: Provider GPU name
         required: true
-        type: string
+        type: choice
+        options: [t4, l4, a5000, rtx3090, rtx4090]
       hf_flavor:
         description: Hugging Face Jobs flavor
         required: false
@@ -78,6 +79,10 @@ jobs:
           RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
           set -euo pipefail
+          case '${{ inputs.provider }}:${{ inputs.gpu }}' in
+            hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
+            *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
+          esac
           ./scripts/run-benchmark.sh \
             --provider '${{ inputs.provider }}' \
             --image '${{ inputs.image }}'
