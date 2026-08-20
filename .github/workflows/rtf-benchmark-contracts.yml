@@ -95,8 +95,10 @@ jobs:
           script = Path("scripts/run-benchmark.sh").read_text()
           if 'hf jobs run --name "$RTF_RUN_ID"' not in script:
               raise SystemExit("HF Jobs must use a bounded explicit job name")
-          if '"$IMAGE" /opt/rtf-benchmark/entrypoint.sh' not in script:
-              raise SystemExit("HF Jobs must invoke the image entrypoint explicitly")
+          if '"$IMAGE" /opt/rtf-benchmark/entrypoint.sh \\\n      --batch-size "$RTF_BATCH_SIZE"' not in script:
+              raise SystemExit("HF Jobs must pass batch size as an entrypoint argument")
+          if '-e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE"' in script:
+              raise SystemExit("HF Jobs must not pass batch size as an environment variable")
           if '"$IMAGE" python benchmark.py' in script:
               raise SystemExit("HF Jobs must not invoke a missing benchmark.py path")
           if 't4) HF_FLAVOR="${HF_FLAVOR:-t4-small}"' not in script:
