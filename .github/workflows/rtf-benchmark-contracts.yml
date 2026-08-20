@@ -127,6 +127,10 @@ jobs:
           for entry in value["entries"]:
               if entry["service_id"] == "hf-jobs" and not entry["flavor"]:
                   raise SystemExit("HF Jobs entries require a hardware flavor")
+              if entry["service_id"] == "hf-jobs" and entry["gpu"] == "t4" and entry["flavor"] != "t4-small":
+                  raise SystemExit("HF T4 entries require t4-small")
+              if entry["service_id"] == "hf-jobs" and entry["gpu"] == "l4" and entry["flavor"] != "l4x1":
+                  raise SystemExit("HF L4 entries require l4x1")
               if entry["service_id"] == "runpod-pod" and entry["flavor"] is not None:
                   raise SystemExit("RunPod Pod entries must not use HF flavor names")
               if entry["provider"] != "cuda" or entry["environment"] != "linux":
