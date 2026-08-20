@@ -3,7 +3,7 @@
   "inspection_profile": "lough inspection",
   "dataset_id": "japanese-asr/ja_asr.common_voice_8_0",
   "dataset_revision": "bf8819e8d9a5feb51b0c718686bd20ea67a3c729",
-  "configuration": "ja",
+  "configuration": "default",
   "split": "test",
   "selection_seed": "rtf-benchmark-v1-common-voice-ja",
   "min_duration_sec": 30.0,

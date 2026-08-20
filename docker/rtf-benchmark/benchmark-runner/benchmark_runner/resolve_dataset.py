@@ -16,7 +16,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-id", required=True)
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--configuration", default="ja")
+    parser.add_argument("--configuration", default="default")
     parser.add_argument("--split", default="test")
     parser.add_argument("--count-min", type=int, default=20)
     parser.add_argument("--count-max", type=int, default=50)
