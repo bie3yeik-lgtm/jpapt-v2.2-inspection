@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32406128389-b32",
+  "run_id": "rtf-runpod-32404123227-b1",
   "service_id": "runpod-pod",
   "status": "blocked",
   "provider": "cuda",
@@ -12,5 +12,5 @@
   "metrics_path": null,
   "metrics_sha256": null,
   "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "provider execution did not produce a result receipt for batch 32"
+  "error_message": "provider execution did not produce a result receipt for batch 1"
 }
