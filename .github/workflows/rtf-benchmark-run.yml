@@ -35,7 +35,8 @@ on:
         description: Benchmark batch size
         required: true
         default: "1"
-        type: string
+        type: choice
+        options: ["1", "8", "32"]
       inspection_profile:
         description: Fixture sizing profile; Phase 1 uses lough inspection
         required: true
@@ -76,12 +77,10 @@ jobs:
           if [[ -n "$image_input" ]]; then
             image="$image_input"
           else
-            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark:latest"
-            printf '%s' "$GH_TOKEN" | docker login ghcr.io \
-              --username "${GITHUB_ACTOR}" --password-stdin >/dev/null
-            docker pull "$image_tag"
-            image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_tag" \
-              | awk -v prefix="${image_tag%:latest}@sha256:" 'index($0, prefix) == 1 { print; exit }')"
+            package_digest="$(gh api --paginate --slurp \
+              "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/parakeet-rtf-benchmark/versions?per_page=100" \
+              | jq -er 'add | map(select((.metadata.container.tags // []) | index("latest"))) | max_by(.updated_at) | .metadata.container.digest')"
+            image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark@${package_digest}"
           fi
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
             echo 'resolved image must be an immutable GHCR digest reference' >&2
@@ -102,6 +101,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Resolved image: $image"
           echo "Resolved model revision: $model_revision"
+      - name: Restore provider package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: rtf-benchmark-pip-${{ runner.os }}-${{ hashFiles('docker/rtf-benchmark/requirements.lock') }}
+          restore-keys: |
+            rtf-benchmark-pip-${{ runner.os }}-
       - name: Install provider CLIs
         run: |
           python -m pip install --disable-pip-version-check --upgrade huggingface_hub
