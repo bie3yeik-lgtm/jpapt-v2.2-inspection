@@ -148,3 +148,40 @@ completion receipt、lifecycle artifact、ACKをrun IDとexecution identityで�
 定義する。plan/execute dispatch、HF Jobs、completion/ACKは外部computeとcallbackを
 発生させるため、権限と実行承認を確認してから着手する。最初の実装単位は、固定SHAの
 public workflow contractを読み取り、Unit 0の照合表を作ることである。
+
+## 実装着手記録 (2026-08-20)
+
+`recursive-delivery-entry-jpapt-issues-154-20260820.md`を着手エントリーとして追加した。
+既存public workflowを確認した結果、Gatewayのplan/execute分離、Gateway-owned execution
+identity、HF Jobs routing、completion/ACK/lifecycle契約は既に実装されているため、同じ責務を
+重複実装しない。Unit 0はstatic contract確認を受入れ、Unit 1〜3のremote実行とUnit 4の
+close判断は未実行・openとして記録した。
+
+検証境界:
+
+```text
+workflow/source/schema inspection: PASS
+local plan-only payload normalization: PASS
+local worktree external side effect: NONE
+public repository_dispatch: NOT RUN
+HF Jobs: NOT RUN
+completion/lifecycle/ACK: NOT VERIFIED
+private trusted builder acceptance: NOT VERIFIED
+```
+
+Unit 1 local dispatch wrapper (2026-08-20):
+`scripts/ci/dispatch-public-inspection-bypass.sh`を追加した。`plan`は`dry_run=true`/
+`execute=false`、`execute`は`dry_run=false`/`execute=true`を生成し、callerが
+`request_execution_id`を指定できない。`--print`で外部dispatchなしのpayload検証ができ、通常時は
+既存の`repository-dispatch-with-retry.sh`を介してpublic Gatewayへ送る。
+
+実行記録 (2026-08-20): plan-only Gateway run `32328515323`は、transport制限で包まれた
+`protocol_payload`を正規化側が展開せず`source_repository must be string`で拒否された。
+HF Jobs、V2 dispatch、candidate取得、completion/ACKは未発生。正規化側修正とnested payloadの
+local contract testはPASS、remote修正確認は未実施であり、Unit 1はBLOCKEDとする。
+
+Unit 0 read-only remote verification (2026-08-20): public `main`は固定SHA
+`149d689dfbc9a52774064305836c0ff45f5b7e9b`と一致した。固定SHA上のGateway workflow、V2
+workflow、completion receipt schemaを取得し、`jpapt.candidate-request`、`dry_run`、
+`execute`、orchestrator-owned `request_execution_id`、digest-pinned image、completion/ACK/
+lifecycle identityの契約を確認した。remote write、HF Jobs、source ACKは実行していない。
