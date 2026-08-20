@@ -100,21 +100,26 @@ jobs:
           resolver_uid="$(id -u)"
           resolver_gid="$(id -g)"
           docker run --rm \
-            --user "$resolver_uid:$resolver_gid" \
-            --entrypoint python \
-            -e HF_TOKEN -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
+            --entrypoint bash \
+            -e HF_TOKEN \
             -e PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
             -v "$PWD/.ci/rtf-resolver:/resolver" \
             "$IMAGE" \
-            -m benchmark_runner.resolve_dataset \
-            --dataset-id japanese-asr/ja_asr.common_voice_8_0 \
-            --revision "$DATASET_REVISION" \
-            --configuration default --split test \
-            --count-min "$count_min" --count-max "$count_max" \
-            --target-total-sec "$target_total" --max-duration-sec "$max_duration" \
-            --seed rtf-benchmark-v1-common-voice-ja \
-            --output-dir /resolver/audio \
-            --manifest /resolver/output/benchmark-v1.jsonl
+            -c "
+              set +e
+              python -m benchmark_runner.resolve_dataset \\
+                --dataset-id japanese-asr/ja_asr.common_voice_8_0 \\
+                --revision '$DATASET_REVISION' \\
+                --configuration default --split test \\
+                --count-min '$count_min' --count-max '$count_max' \\
+                --target-total-sec '$target_total' --max-duration-sec '$max_duration' \\
+                --seed rtf-benchmark-v1-common-voice-ja \\
+                --output-dir /resolver/audio \\
+                --manifest /resolver/output/benchmark-v1.jsonl
+              resolver_status=\$?
+              chown -R '$resolver_uid:$resolver_gid' /resolver
+              exit \$resolver_status
+            "
 
       - name: Write resolver receipt and repository manifest
         run: |
