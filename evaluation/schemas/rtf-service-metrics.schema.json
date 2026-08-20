@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/rtf-service-metrics.schema.json",
+  "title": "RTF service benchmark metrics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "model_id", "dataset_id", "dataset_revision", "manifest_sha256", "audio_duration_sec", "processing_duration_sec", "rtf", "rtfx", "rtf_scope", "provider", "environment", "gpu", "dtype", "batch_size", "cer", "peak_vram_bytes", "gpu_utilization_pct", "gpu_price_per_hour", "cost_per_audio_hour"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "dataset_revision": {"type": "string", "minLength": 1},
+    "manifest_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "audio_duration_sec": {"type": "number", "exclusiveMinimum": 0},
+    "processing_duration_sec": {"type": "number", "exclusiveMinimum": 0},
+    "rtf": {"type": "number", "exclusiveMinimum": 0},
+    "rtfx": {"type": "number", "exclusiveMinimum": 0},
+    "rtf_scope": {"type": "string", "enum": ["model", "service"]},
+    "provider": {"type": "string", "enum": ["cpu", "cuda", "directml", "coreml"]},
+    "environment": {"type": "string", "enum": ["linux", "windows", "macos"]},
+    "gpu": {"type": ["string", "null"]},
+    "dtype": {"type": "string", "enum": ["float32", "float16", "bfloat16"]},
+    "batch_size": {"type": "integer", "minimum": 1},
+    "cer": {"type": ["number", "null"], "minimum": 0},
+    "peak_vram_bytes": {"type": ["integer", "null"], "minimum": 0},
+    "gpu_utilization_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "gpu_price_per_hour": {"type": ["number", "null"], "minimum": 0},
+    "cost_per_audio_hour": {"type": ["number", "null"], "minimum": 0}
+  }
+}

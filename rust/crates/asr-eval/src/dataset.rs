@@ -44,6 +44,16 @@ impl ResolvedManifest {
         {
             return Err("resolved/expected sample counts disagree".into());
         }
+        let mut ids = std::collections::HashSet::with_capacity(self.samples.len());
+        if self.samples.iter().any(|sample| {
+            !sample.duration_sec.is_finite()
+                || sample.duration_sec <= 0.0
+                || !ids.insert(sample.id.as_str())
+        }) {
+            return Err(
+                "resolved manifest contains invalid duration or duplicate sample ID".into(),
+            );
+        }
         if self
             .samples
             .iter()
@@ -52,5 +62,46 @@ impl ResolvedManifest {
             return Err("every Rust evaluation sample must have materialized audio_path".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResolvedManifest, ResolvedSample};
+
+    fn sample(id: &str, duration_sec: f64) -> ResolvedSample {
+        ResolvedSample {
+            id: id.to_owned(),
+            manifest_entry_id: "entry-001".into(),
+            dataset_id: "dataset".into(),
+            dataset_repo_id: "owner/dataset".into(),
+            dataset_revision: "revision".into(),
+            subset: None,
+            split: Some("test".into()),
+            row_index: 0,
+            source_identity: id.into(),
+            selection_hash: "hash".into(),
+            selection_rank: 0,
+            duration_sec,
+            sample_rate_hz: Some(16_000),
+            transcription: "text".into(),
+            tags: vec![],
+            audio_path: Some("/tmp/materialized.wav".into()),
+            audio_sha256: None,
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_or_non_finite_samples() {
+        let mut manifest = ResolvedManifest {
+            schema_version: 1,
+            manifest_path: "manifest.jsonl".into(),
+            expected_sample_count: 2,
+            resolved_sample_count: 2,
+            samples: vec![sample("same", 1.0), sample("same", 1.0)],
+        };
+        assert!(manifest.validate().is_err());
+        manifest.samples[1] = sample("other", f64::NAN);
+        assert!(manifest.validate().is_err());
     }
 }

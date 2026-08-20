@@ -1,0 +1,97 @@
+name: RTF Benchmark Contracts
+
+on:
+  pull_request:
+    paths:
+      - "evaluation/manifests/rtf-phase1.jsonl"
+      - "evaluation/schemas/benchmark.schema.json"
+      - "rust/crates/asr-eval/**"
+      - "rust/crates/asr-metrics/**"
+      - "python/src/parakeet_onnx/evaluation/**"
+      - ".github/workflows/rtf-benchmark-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate deterministic RTF benchmark contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate fixed RTF manifest
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          path = Path("evaluation/manifests/rtf-phase1.jsonl")
+          expected = {
+              "common-voice-8-ja",
+              "jsut-basic5000",
+              "reazonspeech-test",
+          }
+          entries = []
+          for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+              value = json.loads(line)
+              required = {"dataset_id", "count", "seed"}
+              if set(value) - required - {"min_duration_sec", "max_duration_sec"}:
+                  raise SystemExit(f"line {line_number}: unknown field")
+              if set(value) & required != required:
+                  raise SystemExit(f"line {line_number}: missing required field")
+              if not isinstance(value["count"], int) or value["count"] <= 0:
+                  raise SystemExit(f"line {line_number}: count must be positive")
+              if not value["seed"]:
+                  raise SystemExit(f"line {line_number}: seed must not be empty")
+              if value.get("min_duration_sec", 0) < 0:
+                  raise SystemExit(f"line {line_number}: invalid minimum duration")
+              if value.get("max_duration_sec", 0) <= value.get("min_duration_sec", 0):
+                  raise SystemExit(f"line {line_number}: invalid maximum duration")
+              entries.append(value["dataset_id"])
+          if set(entries) != expected or len(entries) != len(expected):
+              raise SystemExit(f"unexpected dataset set: {entries!r}")
+          print("RTF manifest contract: PASS")
+
+      - name: Validate benchmark schema JSON
+        run: |
+          python -m json.tool evaluation/schemas/benchmark.schema.json >/dev/null
+          python -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
+          python -m json.tool evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
+
+      - name: Validate Phase 1 service matrix
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          value = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
+          if value["schema_version"] != 1 or value["repetitions"] != 3:
+              raise SystemExit("invalid Phase 1 matrix metadata")
+          if len(value["entries"]) != 6:
+              raise SystemExit("Phase 1 matrix must contain six provider/GPU entries")
+          for entry in value["entries"]:
+              if entry["service_id"] == "hf-jobs" and not entry["flavor"]:
+                  raise SystemExit("HF Jobs entries require a hardware flavor")
+              if entry["service_id"] == "runpod-pod" and entry["flavor"] is not None:
+                  raise SystemExit("RunPod Pod entries must not use HF flavor names")
+              if entry["provider"] != "cuda" or entry["environment"] != "linux":
+                  raise SystemExit("Phase 1 matrix has an invalid provider boundary")
+              if entry["batch_sizes"] != [1, 8, 32]:
+                  raise SystemExit("Phase 1 batch sizes must be [1, 8, 32]")
+          print("RTF Phase 1 matrix contract: PASS")
+          PY
+
+      - name: Run Rust RTF contract tests
+        run: cargo test --locked -p asr-metrics -p asr-eval -p asr-contracts
+
+      - name: Check Rust formatting and diff whitespace
+        run: |
+          cargo fmt --all -- --check
+          git diff --check

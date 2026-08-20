@@ -64,15 +64,10 @@ Endpoint、RunPod Pod、RunPod Serverless を区別し、将来 provider を追�
 artifact SHA-256、provider、環境、run identity、測定条件、各 dataset/decoder/batch
 の測定値を含め、サービスごとの検証結果を machine-readable artifact として保存する。
 
-実装はプロジェクトの Rust-first 方針に従い、算出・検証結果の正規化・JSON 永続化は
-可能な限り Rust に置く。GitHub Actions YAML は実行のオーケストレーションに限定し、
-候補結果が期待値・参照データを上書きしないようにする。結果にはモデル、revision、
-artifact SHA-256、provider、環境、run identity、測定値を含め、再現可能な証拠として
-保存する。
-
 ## 現時点の状態
 
 - ブランチ: `feat/rtf-score-validation-actions`
-- 実装状態: 仕様理解と測定契約の文書化済み。算出器、評価 runner、Actions は未実装
-- 次のアクション: テスト先行で RTF 算出・結果 schema・サービス検証 matrix・Actions
-  保存処理を実装し、固定 revision と実測証拠を添えて検証する
+- 実装状態: RTF算出器、metrics/envelope schema、Rust検証CLI、Actions保存処理、
+  deterministic rankingを実装済み。固定revision/audioと外部providerの実測は未検証
+- 次のアクション: 固定 revision、materialized audio、各サービスの実測metricsを投入し、
+  `rtf-service-result.yml` と `asr-rtf-service validate` で保存・検証する

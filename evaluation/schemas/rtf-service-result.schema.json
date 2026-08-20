@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/rtf-service-result.schema.json",
+  "title": "RTF service execution result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "service_id", "status", "provider", "environment"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "service_id": {"type": "string", "enum": ["hf-inference-endpoint", "hf-jobs", "runpod-pod", "runpod-serverless"]},
+    "status": {"type": "string", "enum": ["completed", "failed", "blocked", "not_verified"]},
+    "provider": {"type": "string", "enum": ["cpu", "cuda", "directml", "coreml"]},
+    "environment": {"type": "string", "enum": ["linux", "windows", "macos"]},
+    "job_id": {"type": ["string", "null"]},
+    "result_uri": {"type": ["string", "null"]},
+    "metrics_uri": {"type": ["string", "null"]},
+    "result_sha256": {"type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$"},
+    "metrics_sha256": {"type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$"},
+    "metrics_path": {"type": ["string", "null"]},
+    "error_code": {"type": ["string", "null"]},
+    "error_message": {"type": ["string", "null"]}
+  }
+}

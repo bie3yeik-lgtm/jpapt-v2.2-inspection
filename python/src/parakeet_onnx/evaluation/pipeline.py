@@ -24,6 +24,7 @@ from parakeet_onnx.evaluation.models import (
     SampleResult,
     TimingMetrics,
 )
+from parakeet_onnx.evaluation.rtf import calculate_rtf
 from parakeet_onnx.runtime.adapter import AsrRuntimeAdapter
 from parakeet_onnx.runtime.ctc import CtcRuntimeAdapter
 from parakeet_onnx.runtime.inference import OrtCtcRunner
@@ -62,9 +63,12 @@ class PythonAsrEvaluator:
             postprocess_ms = (output.postprocess_ms or 0.0) + normalization_ms
 
             total_ms = (perf_counter() - started_total) * 1000.0
-            rtf = (
-                total_ms / 1000.0 / canonical.duration_sec
-                if canonical.duration_sec > 0
+            rtf_metrics = (
+                calculate_rtf(
+                    audio_duration_sec=canonical.duration_sec,
+                    processing_duration_sec=total_ms / 1000.0,
+                )
+                if total_ms > 0
                 else None
             )
 
@@ -96,7 +100,7 @@ class PythonAsrEvaluator:
                     decoder_ms=output.decoder_ms,
                     postprocess_ms=postprocess_ms,
                     total_ms=total_ms,
-                    rtf=rtf,
+                    rtf=rtf_metrics.rtf if rtf_metrics else None,
                 ),
                 memory=MemoryMetrics(),
                 parity=ParityResult.unavailable(),

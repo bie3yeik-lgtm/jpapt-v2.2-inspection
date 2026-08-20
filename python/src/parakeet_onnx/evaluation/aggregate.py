@@ -7,6 +7,7 @@ from statistics import mean, median
 from typing import Iterable
 
 from .metrics import CorpusErrorAccumulator
+from .rtf import calculate_rtf
 from .models import (
     ComponentTimingSummary,
     ErrorSummary,
@@ -75,9 +76,12 @@ def aggregate_sample_results(
         r.timing.total_ms or 0.0
         for r in successful
     )
-    total_seconds = total_ms / 1000.0
-    rtf = (
-        total_seconds / total_audio
+    rtf_metrics = (
+        calculate_rtf(
+            audio_duration_sec=total_audio,
+            processing_duration_sec=total_ms / 1000.0,
+            scope="model",
+        )
         if total_audio > 0 and total_ms > 0
         else None
     )
@@ -131,7 +135,7 @@ def aggregate_sample_results(
             load_ms=None,
             session_creation_ms=None,
             total_processing_ms=total_ms if successful else None,
-            rtf=rtf,
+            rtf=rtf_metrics.rtf if rtf_metrics else None,
             per_sample=TimingDistribution(
                 mean_ms=mean(per_sample_ms) if per_sample_ms else None,
                 median_ms=median(per_sample_ms) if per_sample_ms else None,
@@ -164,6 +168,9 @@ def aggregate_sample_results(
                     r.timing.inference_ms for r in successful
                 ),
             ),
+            rtfx=rtf_metrics.rtfx if rtf_metrics else None,
+            rtf_scope=rtf_metrics.scope if rtf_metrics else None,
+            audio_hours_per_gpu_hour=rtf_metrics.rtfx if rtf_metrics else None,
         ),
         memory=MemorySummary(
             peak_ram_mb=max(

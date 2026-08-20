@@ -126,6 +126,11 @@
         "session_creation_ms": {"$ref": "#/$defs/nullableNonNegativeNumber"},
         "total_processing_ms": {"$ref": "#/$defs/nullableNonNegativeNumber"},
         "rtf": {"$ref": "#/$defs/nullableNonNegativeNumber"},
+        "rtfx": {"$ref": "#/$defs/nullableNonNegativeNumber"},
+        "rtf_scope": {"type": "string", "enum": ["model", "service"]},
+        "audio_hours_per_gpu_hour": {"$ref": "#/$defs/nullableNonNegativeNumber"},
+        "gpu_price_per_hour": {"$ref": "#/$defs/nullableNonNegativeNumber"},
+        "cost_per_audio_hour": {"$ref": "#/$defs/nullableNonNegativeNumber"},
         "per_sample": {"$ref": "#/$defs/distribution"},
         "components": {"$ref": "#/$defs/componentTimingSummary"}
       }

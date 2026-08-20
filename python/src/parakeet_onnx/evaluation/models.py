@@ -321,6 +321,11 @@ class PerformanceSummary(JsonModelMixin):
     rtf: float | None
     per_sample: TimingDistribution
     components: ComponentTimingSummary
+    rtfx: float | None = None
+    rtf_scope: str | None = None
+    audio_hours_per_gpu_hour: float | None = None
+    gpu_price_per_hour: float | None = None
+    cost_per_audio_hour: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
