@@ -394,7 +394,7 @@ jobs:
         shell: bash
         env:
           RECEIPT_REPOSITORY: ${{ steps.rejection.outputs.receipt_repository }}
-          RECEIPT_TOKEN: ${{ secrets.JPAPT_ACK_TOKEN }}
+          RECEIPT_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
