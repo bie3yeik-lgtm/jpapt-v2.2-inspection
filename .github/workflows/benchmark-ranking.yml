@@ -1,0 +1,57 @@
+name: Generate RTF Benchmark Ranking
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Benchmark phase to rank
+        required: true
+        type: choice
+        options: [phase1, full]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate deterministic ranking
+        env:
+          PHASE: ${{ inputs.phase }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mapfile -t records < <(find "rtf-scores/${PHASE}" -type f -name '*.json' ! -name 'summary.json' ! -name 'matrix.json' | sort)
+          [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
+          mkdir -p rtf-scores
+          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- rtf-scores/ranking.json "${records[@]}"
+          jq -r '.records[] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-rows
+          {
+            echo '# RTF benchmark ranking'
+            echo
+            echo '| Service | GPU | Batch | RTF | CER | $/audio-hour |'
+            echo '|---|---|---:|---:|---:|---:|'
+            cat /tmp/ranking-rows
+          } > rtf-scores/ranking.md
+          branch="inspection/rtf-benchmark-ranking-${PHASE}"
+          git fetch --no-tags origin main
+          git checkout --no-track -B "$branch" origin/main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- rtf-scores/ranking.json rtf-scores/ranking.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: generate RTF benchmark ranking ${PHASE}"
+            git push --set-upstream origin "$branch"
+          fi
+          if ! gh pr view "$branch" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh pr create --repo "$REPOSITORY" --base main --head "$branch" \
+              --title "chore: generate RTF benchmark ranking ${PHASE}" \
+              --body "Automated deterministic RTF benchmark ranking for ${PHASE}."
+          fi

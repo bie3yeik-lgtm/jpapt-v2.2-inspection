@@ -1,0 +1,9 @@
+datasets==4.0.0
+huggingface_hub==1.24.0
+jsonschema==4.25.1
+numpy==2.3.2
+scipy==1.16.1
+soundfile==0.13.1
+jiwer==4.0.0
+onnx==1.18.0
+onnxruntime-gpu==1.28.0

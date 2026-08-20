@@ -21,6 +21,8 @@ const RTF_SERVICE_RESULT_SCHEMA: &str =
     include_str!("../../../../evaluation/schemas/rtf-service-result.schema.json");
 const RTF_SERVICE_METRICS_SCHEMA: &str =
     include_str!("../../../../evaluation/schemas/rtf-service-metrics.schema.json");
+const RTF_BENCHMARK_RECORD_SCHEMA: &str =
+    include_str!("../../../../evaluation/schemas/rtf-benchmark-record.schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunValidationSummary {
@@ -82,6 +84,33 @@ pub fn validate_rtf_service_metrics(value: &Value) -> Result<()> {
                 "{pointer} must be finite and positive"
             )));
         }
+    }
+    Ok(())
+}
+
+pub fn validate_rtf_benchmark_record(value: &Value) -> Result<()> {
+    EmbeddedSchema::parse("rtf-benchmark-record", RTF_BENCHMARK_RECORD_SCHEMA)?.validate(value)?;
+    let status = required_string_at(value, "/status", "benchmark record status")?;
+    let image_digest = required_string_at(value, "/image_digest", "benchmark image digest")?;
+    if let Some(digest) = image_digest.strip_prefix("sha256:") {
+        require_sha256("image_digest", digest)?;
+    } else {
+        return Err(ContractError::validation(
+            "image_digest must use sha256:<64 hex characters>",
+        ));
+    }
+    let execution_proven = value
+        .pointer("/provider_execution_proof")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ContractError::validation("provider_execution_proof must be boolean"))?;
+    if status == "completed" && !execution_proven {
+        return Err(ContractError::validation("completed benchmark record requires provider execution proof"));
+    }
+    if status == "completed"
+        && (value.pointer("/cer").is_some_and(Value::is_null)
+            || value.pointer("/gpu_price_per_hour").is_some_and(Value::is_null))
+    {
+        return Err(ContractError::validation("completed benchmark record requires CER and GPU price"));
     }
     Ok(())
 }
