@@ -58,6 +58,7 @@ def main() -> int:
     manifest_sha256 = os.environ.get("RTF_FIXTURE_MANIFEST_SHA256", local_manifest_sha256)
     try:
         import torch
+        from huggingface_hub import snapshot_download
         from nemo.collections.asr.models import ASRModel
 
         if args.provider == "cuda" and not torch.cuda.is_available():
@@ -70,10 +71,18 @@ def main() -> int:
         else:
             autocast = None
 
-        model = ASRModel.from_pretrained(
-            model_name=args.model_id,
-            map_location=device,
+        model_dir = Path(snapshot_download(
+            repo_id=args.model_id,
             revision=args.model_revision,
+            token=os.environ.get("HF_TOKEN"),
+            allow_patterns=["*.nemo", "*.json", "*.yaml"],
+        ))
+        nemo_files = sorted(model_dir.glob("*.nemo"))
+        if not nemo_files:
+            raise RuntimeError(f"no .nemo model was found in pinned snapshot: {model_dir}")
+        model = ASRModel.restore_from(
+            restore_path=str(nemo_files[0]),
+            map_location=device,
         )
         model = model.to(device).eval()
         paths = [str(sample["audio_path"]) for sample in samples]
