@@ -67,6 +67,14 @@ def main() -> int:
             raise SystemExit(f"PAYLOAD is invalid JSON: {error}") from error
         if not isinstance(request, dict):
             raise SystemExit("PAYLOAD must be a JSON object")
+        # repository-dispatch-with-retry.py wraps oversized authority payloads
+        # under protocol_payload because GitHub limits client_payload fields.
+        # Unwrap that transport representation before applying the request
+        # contract; reject malformed nested values deterministically.
+        if "protocol_payload" in request:
+            request = request["protocol_payload"]
+            if not isinstance(request, dict):
+                raise SystemExit("protocol_payload must be a JSON object")
         execute = parse_bool(request.pop("execute", False), "execute")
         request.setdefault("request_id", generated_request_id())
         # Execution identity is owned by this orchestrator run, never by the
