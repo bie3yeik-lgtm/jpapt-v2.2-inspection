@@ -19,6 +19,8 @@ if ! digest="$(gh api --paginate --slurp \
   # Package-version listing requires a token scope that is not consistently
   # available to repository GITHUB_TOKENs. Registry manifest inspection reads
   # only the tag metadata and does not download image layers.
+  printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+    --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null 2>&1 || true
   digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:latest" \
     | awk '/^Digest:/ {print $2; exit}')"
 fi

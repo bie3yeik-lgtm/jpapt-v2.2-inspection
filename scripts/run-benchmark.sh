@@ -54,7 +54,13 @@ fi
 : "${RTF_REPEAT:=3}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
-: "${HF_FLAVOR:=a10g-small}"
+if [[ "$PROVIDER" == hf ]]; then
+  case "$RTF_GPU" in
+    t4) HF_FLAVOR="${HF_FLAVOR:-t4-small}" ;;
+    l4) HF_FLAVOR="${HF_FLAVOR:-l4x1}" ;;
+    *) echo "HF GPU has no Phase 1 flavor mapping: $RTF_GPU" >&2; exit 2 ;;
+  esac
+fi
 : "${RUNPOD_GPU_ID:=${RTF_GPU}}"
 
 case "$PROVIDER:$RTF_GPU" in
