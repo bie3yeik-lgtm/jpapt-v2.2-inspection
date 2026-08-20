@@ -178,8 +178,10 @@ jobs:
           [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required'; exit 1; }
           python -m pip install --disable-pip-version-check --upgrade huggingface_hub
           python - <<'PY'
+          import hashlib
           import json
           import os
+          import shutil
           from pathlib import Path
           from huggingface_hub import HfApi
 
