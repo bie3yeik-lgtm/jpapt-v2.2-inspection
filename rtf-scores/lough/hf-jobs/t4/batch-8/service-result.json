@@ -12,5 +12,5 @@
   "metrics_path": null,
   "metrics_sha256": null,
   "error_code": "BENCHMARK_INFERENCE_FAILED",
-  "error_message": "EncDecHybridRNNTCTCModel.transcribe() got an unexpected keyword argument 'paths2audio_files'"
+  "error_message": "CUDA out of memory. Tried to allocate 2.71 GiB. GPU 0 has a total capacity of 14.74 GiB of which 1.58 GiB is free. Process 23103 has 13.16 GiB memory in use. Of the allocated memory 12.89 GiB is allocated by PyTorch, and 137.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)"
 }
