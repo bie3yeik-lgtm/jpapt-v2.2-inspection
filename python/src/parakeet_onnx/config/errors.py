@@ -20,9 +20,7 @@ class ConfigFileNotFoundError(ConfigError):
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
-        super().__init__(
-            f"Required configuration file does not exist: {self.path}"
-        )
+        super().__init__(f"Required configuration file does not exist: {self.path}")
 
 
 class ConfigValidationError(ConfigError):
@@ -36,10 +34,7 @@ class ConfigValidationError(ConfigError):
     ) -> None:
         self.path = Path(path) if path is not None else None
 
-        if self.path is None:
-            full_message = message
-        else:
-            full_message = f"{message} [file: {self.path}]"
+        full_message = message if self.path is None else f"{message} [file: {self.path}]"
 
         super().__init__(full_message)
 
@@ -54,9 +49,7 @@ class UnsupportedEnvironmentError(ConfigError):
     def __init__(self, environment: str) -> None:
         self.environment = environment
 
-        super().__init__(
-            f"Unsupported execution environment: {environment}"
-        )
+        super().__init__(f"Unsupported execution environment: {environment}")
 
 
 class UnsupportedProviderError(ConfigError):

@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Resolve a minimal candidate into one generated execution contract."
-    )
+    parser = argparse.ArgumentParser(description="Resolve a minimal candidate into one generated execution contract.")
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--runtime-variant")
     parser.add_argument("--repository-root", type=Path, default=Path("."))
@@ -32,7 +30,13 @@ def main() -> int:
         )
         validate_candidate_runtime_contract(candidate)
         contract = candidate.generated_contract().to_dict()
-    except (CandidateMetadataError, KeyError, TypeError, ValueError, RuntimeError) as exc:
+    except (
+        CandidateMetadataError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

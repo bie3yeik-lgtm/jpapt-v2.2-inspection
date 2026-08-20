@@ -10,7 +10,6 @@ from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.hf.revisions import load_revision_bundle
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts
 
-
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -83,9 +82,7 @@ def test_one_minimal_candidate_metadata_selects_ctc_or_tdt_without_rewrite(
 ) -> None:
     _write_ctc(tmp_path / "model.onnx")
     _write_tdt(tmp_path)
-    (tmp_path / "vocabulary.json").write_text(
-        json.dumps(["<blank>", "<bos>", "a"]) + "\n", encoding="utf-8"
-    )
+    (tmp_path / "vocabulary.json").write_text(json.dumps(["<blank>", "<bos>", "a"]) + "\n", encoding="utf-8")
     metadata = {
         "profile_set": "parakeet-tdt-ctc-v1",
         "variants": {
@@ -159,9 +156,7 @@ def test_normalized_runtime_lock_resolves_variants_from_catalog(tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    (revisions / "datasets-lock.json").write_text(
-        json.dumps({"schema_version": 1, "datasets": []}), encoding="utf-8"
-    )
+    (revisions / "datasets-lock.json").write_text(json.dumps({"schema_version": 1, "datasets": []}), encoding="utf-8")
     (revisions / "runtime.json").write_text(
         json.dumps(
             {

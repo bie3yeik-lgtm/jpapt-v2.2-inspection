@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import re
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
 
 RUN_CONTEXT_SCHEMA_VERSION = 2
 GENERATED_CANDIDATE_SCHEMA_VERSION = 1
@@ -56,9 +56,7 @@ def require_config_version(value: str) -> str:
 def require_one_of(name: str, value: str, allowed: frozenset[str]) -> str:
     require_nonempty(name, value)
     if value not in allowed:
-        raise ContractError(
-            f"{name} has unsupported value {value!r}; expected one of {sorted(allowed)}"
-        )
+        raise ContractError(f"{name} has unsupported value {value!r}; expected one of {sorted(allowed)}")
     return value
 
 
@@ -93,9 +91,7 @@ class GeneratedArtifact:
         require_nonempty(f"candidate.artifacts.{role}.path", self.path)
         require_sha256(f"candidate.artifacts.{role}.sha256", self.sha256)
         if not isinstance(self.size_bytes, int) or isinstance(self.size_bytes, bool) or self.size_bytes <= 0:
-            raise ContractError(
-                f"candidate.artifacts.{role}.size_bytes must be a positive integer"
-            )
+            raise ContractError(f"candidate.artifacts.{role}.size_bytes must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +137,7 @@ class GeneratedCandidateContract:
 
     def validate(self) -> None:
         if self.schema_version != GENERATED_CANDIDATE_SCHEMA_VERSION:
-            raise ContractError(
-                f"generated candidate schema_version must equal {GENERATED_CANDIDATE_SCHEMA_VERSION}"
-            )
+            raise ContractError(f"generated candidate schema_version must equal {GENERATED_CANDIDATE_SCHEMA_VERSION}")
         for name, value in (
             ("candidate_root", self.candidate_root),
             ("candidate_id", self.candidate_id),
@@ -157,9 +151,7 @@ class GeneratedCandidateContract:
         require_sha256("candidate.bundle_sha256", self.bundle_sha256)
         self.catalog.validate()
         if self.decoder != self.runtime_contract.decoder:
-            raise ContractError(
-                "candidate.decoder must equal candidate.runtime_contract.decoder"
-            )
+            raise ContractError("candidate.decoder must equal candidate.runtime_contract.decoder")
         if not self.artifacts:
             raise ContractError("candidate.artifacts must not be empty")
         for role, artifact in self.artifacts.items():
@@ -186,10 +178,7 @@ class GeneratedCandidateContract:
             "artifact_contract": self.artifact_contract,
             "catalog": asdict(self.catalog),
             "bundle_sha256": self.bundle_sha256,
-            "artifacts": {
-                role: asdict(artifact)
-                for role, artifact in sorted(self.artifacts.items())
-            },
+            "artifacts": {role: asdict(artifact) for role, artifact in sorted(self.artifacts.items())},
             "features": dict(sorted(self.features.items())),
             "runtime_contract": {
                 "decoder": self.runtime_contract.decoder,
@@ -440,9 +429,7 @@ class RunContext:
 
     def validate(self) -> None:
         if self.schema_version != RUN_CONTEXT_SCHEMA_VERSION:
-            raise ContractError(
-                f"run-context schema_version must equal {RUN_CONTEXT_SCHEMA_VERSION}"
-            )
+            raise ContractError(f"run-context schema_version must equal {RUN_CONTEXT_SCHEMA_VERSION}")
         for name, value in (
             ("run_id", self.run_id),
             ("created_at", self.created_at),
@@ -465,13 +452,9 @@ class RunContext:
         if not isinstance(candidate, Mapping):
             raise ContractError("metadata.candidate is required")
         if candidate.get("candidate_id") != self.artifact.candidate_id:
-            raise ContractError(
-                "artifact.candidate_id must equal metadata.candidate.candidate_id"
-            )
+            raise ContractError("artifact.candidate_id must equal metadata.candidate.candidate_id")
         if candidate.get("profile_set") != self.revisions.runtime.profile_set:
-            raise ContractError(
-                "metadata.candidate.profile_set must equal revisions.runtime.profile_set"
-            )
+            raise ContractError("metadata.candidate.profile_set must equal revisions.runtime.profile_set")
         catalog = candidate.get("catalog")
         if not isinstance(catalog, Mapping):
             raise ContractError("metadata.candidate.catalog must be an object")
@@ -479,9 +462,7 @@ class RunContext:
             catalog.get("id") != self.revisions.runtime.catalog.id
             or catalog.get("sha256") != self.revisions.runtime.catalog.sha256
         ):
-            raise ContractError(
-                "metadata.candidate.catalog must equal revisions.runtime.catalog"
-            )
+            raise ContractError("metadata.candidate.catalog must equal revisions.runtime.catalog")
         reject_nulls(self.metadata, "$.metadata")
         reject_nulls(self.to_dict())
 

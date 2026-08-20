@@ -56,9 +56,7 @@ def compose_config(
 
     for namespace, raw in sources.items():
         if namespace in result:
-            raise ConfigMergeError(
-                f"Duplicate configuration namespace: {namespace}"
-            )
+            raise ConfigMergeError(f"Duplicate configuration namespace: {namespace}")
 
         result[namespace] = deepcopy(raw)
 

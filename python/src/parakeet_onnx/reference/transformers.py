@@ -52,7 +52,7 @@ class TransformersSpeechSeq2SeqReference:
         device: str = "cpu",
         language: str = "ja",
         task: str = "transcribe",
-    ) -> "TransformersSpeechSeq2SeqReference":
+    ) -> TransformersSpeechSeq2SeqReference:
         for name, value in (
             ("model_repo_id", model_repo_id),
             ("model_revision", model_revision),
@@ -69,8 +69,7 @@ class TransformersSpeechSeq2SeqReference:
             )
         except ImportError as exc:
             raise TransformersReferenceError(
-                "Transformers reference support requires the optional "
-                "'transformers' dependencies."
+                "Transformers reference support requires the optional 'transformers' dependencies."
             ) from exc
 
         try:
@@ -85,9 +84,7 @@ class TransformersSpeechSeq2SeqReference:
             model = model.to(device)
             model.eval()
         except Exception as exc:
-            raise TransformersReferenceError(
-                f"Failed to load pinned Transformers ASR reference: {exc}"
-            ) from exc
+            raise TransformersReferenceError(f"Failed to load pinned Transformers ASR reference: {exc}") from exc
 
         return cls(
             model=model,
@@ -106,21 +103,13 @@ class TransformersSpeechSeq2SeqReference:
         value = np.asarray(waveform, dtype=np.float32)
 
         if value.ndim != 1:
-            raise TransformersReferenceError(
-                "Transformers reference input must be a mono 1-D waveform."
-            )
+            raise TransformersReferenceError("Transformers reference input must be a mono 1-D waveform.")
         if value.size == 0:
-            raise TransformersReferenceError(
-                "Transformers reference input must not be empty."
-            )
+            raise TransformersReferenceError("Transformers reference input must not be empty.")
         if sample_rate_hz <= 0:
-            raise TransformersReferenceError(
-                "sample_rate_hz must be positive."
-            )
+            raise TransformersReferenceError("sample_rate_hz must be positive.")
         if not np.all(np.isfinite(value)):
-            raise TransformersReferenceError(
-                "Transformers reference input contains NaN or infinity."
-            )
+            raise TransformersReferenceError("Transformers reference input contains NaN or infinity.")
 
         try:
             import torch
@@ -134,8 +123,7 @@ class TransformersSpeechSeq2SeqReference:
             input_features = getattr(inputs, "input_features", None)
             if input_features is None:
                 raise TransformersReferenceError(
-                    "Processor did not return input_features required by "
-                    "speech-seq2seq generation."
+                    "Processor did not return input_features required by speech-seq2seq generation."
                 )
 
             input_features = input_features.to(self.device)
@@ -147,10 +135,7 @@ class TransformersSpeechSeq2SeqReference:
                     task=self.task,
                 )
 
-            token_ids = tuple(
-                int(item)
-                for item in generated[0].detach().cpu().tolist()
-            )
+            token_ids = tuple(int(item) for item in generated[0].detach().cpu().tolist())
             text = self.processor.batch_decode(
                 generated,
                 skip_special_tokens=True,
@@ -159,9 +144,7 @@ class TransformersSpeechSeq2SeqReference:
         except TransformersReferenceError:
             raise
         except Exception as exc:
-            raise TransformersReferenceError(
-                f"Transformers ASR reference execution failed: {exc}"
-            ) from exc
+            raise TransformersReferenceError(f"Transformers ASR reference execution failed: {exc}") from exc
 
         return TransformersReferenceOutput(
             text=str(text),

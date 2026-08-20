@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -43,16 +44,12 @@ class WhisperRuntimeContract:
     skip_special_tokens: bool
 
     @classmethod
-    def from_candidate(cls, candidate: CandidateArtifacts) -> "WhisperRuntimeContract":
+    def from_candidate(cls, candidate: CandidateArtifacts) -> WhisperRuntimeContract:
         if candidate.decoder != "whisper_autoregressive":
-            raise CandidateMetadataError(
-                f"Whisper contract cannot load decoder {candidate.decoder!r}"
-            )
+            raise CandidateMetadataError(f"Whisper contract cannot load decoder {candidate.decoder!r}")
         raw = candidate.runtime_contract
         if str(raw.get("input_kind")) != "features":
-            raise CandidateMetadataError(
-                "whisper-autoregressive-v1 currently requires input_kind='features'"
-            )
+            raise CandidateMetadataError("whisper-autoregressive-v1 currently requires input_kind='features'")
         io_raw = _mapping(raw, "io")
         encoder = _mapping(io_raw, "encoder")
         decoder = _decoder_io(_mapping(io_raw, "decoder"), allow_past_inputs=False)
@@ -63,28 +60,22 @@ class WhisperRuntimeContract:
                 raise CandidateMetadataError("io.decoder_with_past must be an object")
             decoder_with_past = _decoder_io(with_past_raw, allow_past_inputs=True)
             if len(decoder_with_past.past_inputs) != len(decoder_with_past.past_outputs):
-                raise CandidateMetadataError(
-                    "decoder_with_past past_inputs/past_outputs must have equal length"
-                )
-            if decoder.past_outputs and len(decoder.past_outputs) != len(
-                decoder_with_past.past_inputs
-            ):
+                raise CandidateMetadataError("decoder_with_past past_inputs/past_outputs must have equal length")
+            if decoder.past_outputs and len(decoder.past_outputs) != len(decoder_with_past.past_inputs):
                 raise CandidateMetadataError(
                     "decoder initial past_outputs count must match decoder_with_past past_inputs"
                 )
 
         generation = _mapping(raw, "decoder_config")
         prompt_raw = generation.get("prompt_token_ids")
-        if not isinstance(prompt_raw, list) or not prompt_raw or not all(
-            isinstance(value, int) for value in prompt_raw
+        if (
+            not isinstance(prompt_raw, list)
+            or not prompt_raw
+            or not all(isinstance(value, int) for value in prompt_raw)
         ):
-            raise CandidateMetadataError(
-                "decoder_config.prompt_token_ids must be a non-empty integer array"
-            )
+            raise CandidateMetadataError("decoder_config.prompt_token_ids must be a non-empty integer array")
         suppress_raw = generation.get("suppress_tokens", [])
-        if not isinstance(suppress_raw, list) or not all(
-            isinstance(value, int) for value in suppress_raw
-        ):
+        if not isinstance(suppress_raw, list) or not all(isinstance(value, int) for value in suppress_raw):
             raise CandidateMetadataError("decoder_config.suppress_tokens must be an integer array")
 
         return cls(
@@ -119,9 +110,7 @@ class OrtWhisperRuntimeAdapter:
         self.decoder_with_past_session = decoder_with_past_session
         self.processor = processor
         if self.contract.decoder_with_past is not None and decoder_with_past_session is None:
-            raise CandidateMetadataError(
-                "candidate contract defines decoder_with_past but artifact/session is missing"
-            )
+            raise CandidateMetadataError("candidate contract defines decoder_with_past but artifact/session is missing")
 
     def transcribe(self, audio: CanonicalAudio) -> RuntimeTranscription:
         frontend_started = perf_counter()
@@ -133,9 +122,7 @@ class OrtWhisperRuntimeAdapter:
         try:
             input_features = np.asarray(processed["input_features"], dtype=np.float32)
         except (KeyError, TypeError) as exc:
-            raise RuntimeError(
-                "Transformers processor did not produce input_features"
-            ) from exc
+            raise RuntimeError("Transformers processor did not produce input_features") from exc
         _require_finite_nonempty(input_features, "Whisper input_features")
         frontend_ms = (perf_counter() - frontend_started) * 1000.0
 
@@ -181,9 +168,7 @@ class OrtWhisperRuntimeAdapter:
             if use_cache:
                 assert cache is not None
                 if len(cache) != len(io.past_inputs):
-                    raise RuntimeError(
-                        "Whisper runtime cache arity no longer matches decoder_with_past inputs"
-                    )
+                    raise RuntimeError("Whisper runtime cache arity no longer matches decoder_with_past inputs")
                 for name, value in zip(io.past_inputs, cache, strict=True):
                     _require_finite_nonempty(value, f"Whisper past cache {name}")
                     feeds[name] = value
@@ -193,9 +178,7 @@ class OrtWhisperRuntimeAdapter:
             values = session.run(output_names, feeds)
             decoder_ort_ms += (perf_counter() - started) * 1000.0
             if len(values) != len(output_names):
-                raise RuntimeError(
-                    "Whisper decoder returned an output count that differs from the generated contract"
-                )
+                raise RuntimeError("Whisper decoder returned an output count that differs from the generated contract")
             logits = np.asarray(values[0])
             if logits.ndim < 2:
                 raise RuntimeError(f"Whisper logits have invalid shape: {logits.shape!r}")
@@ -217,9 +200,7 @@ class OrtWhisperRuntimeAdapter:
                     _validate_cache_transition(cache, next_cache)
                 cache = next_cache
             elif use_cache:
-                raise RuntimeError(
-                    "decoder_with_past consumed cache but did not return replacement cache"
-                )
+                raise RuntimeError("decoder_with_past consumed cache but did not return replacement cache")
 
             if next_token == self.contract.eos_token_id:
                 break
@@ -274,13 +255,12 @@ def _auxiliary_inputs(value: object) -> tuple[WhisperAuxInput, ...]:
         dtype = _string(item, "dtype")
         rank_raw = item.get("rank")
         if not isinstance(rank_raw, int) or rank_raw not in {1, 2}:
-            raise CandidateMetadataError(
-                f"Whisper auxiliary input {name!r} must have rank 1 or 2"
-            )
-        if kind in {"cache_position", "position_ids"} and dtype not in {"int32", "int64"}:
-            raise CandidateMetadataError(
-                f"Whisper {kind} input {name!r} must use int32 or int64"
-            )
+            raise CandidateMetadataError(f"Whisper auxiliary input {name!r} must have rank 1 or 2")
+        if kind in {"cache_position", "position_ids"} and dtype not in {
+            "int32",
+            "int64",
+        }:
+            raise CandidateMetadataError(f"Whisper {kind} input {name!r} must use int32 or int64")
         result.append(WhisperAuxInput(name=name, kind=kind, dtype=dtype, rank=rank_raw))
     return tuple(result)
 
@@ -318,25 +298,18 @@ def _numpy_dtype(name: str) -> np.dtype[Any]:
     try:
         return np.dtype(mapping[name])
     except KeyError as exc:
-        raise CandidateMetadataError(
-            f"unsupported Whisper auxiliary input dtype: {name}"
-        ) from exc
+        raise CandidateMetadataError(f"unsupported Whisper auxiliary input dtype: {name}") from exc
 
 
-def _validate_cache_transition(
-    previous: list[np.ndarray], current: list[np.ndarray]
-) -> None:
+def _validate_cache_transition(previous: list[np.ndarray], current: list[np.ndarray]) -> None:
     if len(previous) != len(current):
         raise RuntimeError("Whisper cache arity changed between decoder steps")
     for index, (before, after) in enumerate(zip(previous, current, strict=True)):
         if before.ndim != after.ndim:
-            raise RuntimeError(
-                f"Whisper cache rank changed at index {index}: {before.shape!r} -> {after.shape!r}"
-            )
+            raise RuntimeError(f"Whisper cache rank changed at index {index}: {before.shape!r} -> {after.shape!r}")
         if before.shape[0] != after.shape[0]:
             raise RuntimeError(
-                f"Whisper cache batch dimension changed at index {index}: "
-                f"{before.shape!r} -> {after.shape!r}"
+                f"Whisper cache batch dimension changed at index {index}: {before.shape!r} -> {after.shape!r}"
             )
 
 
@@ -371,8 +344,6 @@ def _optional_string(value: Mapping[str, Any], key: str) -> str | None:
 
 
 def _string_tuple(value: object, name: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) and item for item in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise CandidateMetadataError(f"{name} must be a string array")
     return tuple(value)

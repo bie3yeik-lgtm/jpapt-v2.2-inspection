@@ -3,7 +3,6 @@ from pathlib import Path
 
 import jsonschema
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = ROOT / "evaluation" / "schemas" / "windows-directml-external-receipt.schema.json"
 

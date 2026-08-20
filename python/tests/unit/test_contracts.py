@@ -3,18 +3,17 @@ from __future__ import annotations
 import pytest
 
 from parakeet_onnx.contracts import (
+    CatalogReference,
     ContractError,
     DatasetRevisionEntry,
     DatasetsRevisionSnapshot,
-    RevisionSnapshot,
-    RuntimeRevisionSnapshot,
-    CatalogReference,
+    EvaluationSchemaRevisionSnapshot,
     ReferenceRevisionSnapshot,
     RepoRevisionIdentity,
-    EvaluationSchemaRevisionSnapshot,
+    RevisionSnapshot,
+    RuntimeRevisionSnapshot,
     reject_nulls,
 )
-
 
 SHA = "a" * 64
 

@@ -22,9 +22,7 @@ def test_materializer_copies_existing_local_file(
         audio_path=str(mono_wav_16k),
     )
 
-    materializer = DatasetMaterializer(
-        tmp_path / "cache"
-    )
+    materializer = DatasetMaterializer(tmp_path / "cache")
 
     result = materializer.materialize(
         record=record,
@@ -52,9 +50,7 @@ def test_materializer_reuses_verified_cache(
         audio_path=str(mono_wav_16k),
     )
 
-    materializer = DatasetMaterializer(
-        tmp_path / "cache"
-    )
+    materializer = DatasetMaterializer(tmp_path / "cache")
 
     first = materializer.materialize(
         record=record,
@@ -91,9 +87,7 @@ def test_materializer_writes_decoded_array(
         },
     )
 
-    materializer = DatasetMaterializer(
-        tmp_path / "cache"
-    )
+    materializer = DatasetMaterializer(tmp_path / "cache")
 
     result = materializer.materialize(
         record=record,

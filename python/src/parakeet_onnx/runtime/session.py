@@ -19,9 +19,7 @@ def create_session(config: OrtSessionConfig):
     try:
         import onnxruntime as ort
     except ImportError as exc:
-        raise RuntimeError(
-            "onnxruntime is required. Install the appropriate project extra."
-        ) from exc
+        raise RuntimeError("onnxruntime is required. Install the appropriate project extra.") from exc
 
     model_path = Path(config.model_path).expanduser().resolve()
     if not model_path.is_file():
@@ -32,10 +30,7 @@ def create_session(config: OrtSessionConfig):
         allow_cpu_fallback=config.allow_cpu_fallback,
     )
 
-    options = [
-        config.provider_options.get(provider, {})
-        for provider in providers
-    ]
+    options = [config.provider_options.get(provider, {}) for provider in providers]
 
     session_options = ort.SessionOptions()
     return ort.InferenceSession(

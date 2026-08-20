@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from candidate_protocol_common import parse_rfc3339_time, validate_https_url
@@ -17,11 +17,30 @@ CANDIDATE_RE = re.compile(r"^candidate-[0-9]{6}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REQUIRED_FIELDS = {
-    "schema_version", "request_id", "source_repository", "receipt_repository", "conclusion",
-    "dry_run", "suite", "executor", "environment", "provider", "orchestrator_repository",
-    "workflow_file", "run_id", "run_attempt", "run_url", "commit_sha", "requested_candidate_id",
-    "resolved_candidate_id", "image_ref", "image_digest", "result_artifact", "result_uri",
-    "failed_jobs", "completed_at",
+    "schema_version",
+    "request_id",
+    "source_repository",
+    "receipt_repository",
+    "conclusion",
+    "dry_run",
+    "suite",
+    "executor",
+    "environment",
+    "provider",
+    "orchestrator_repository",
+    "workflow_file",
+    "run_id",
+    "run_attempt",
+    "run_url",
+    "commit_sha",
+    "requested_candidate_id",
+    "resolved_candidate_id",
+    "image_ref",
+    "image_digest",
+    "result_artifact",
+    "result_uri",
+    "failed_jobs",
+    "completed_at",
 }
 OPTIONAL_FIELDS = {"request_execution_id"}
 
@@ -55,7 +74,14 @@ def derive_conclusion(results: dict[str, str], dry_run: bool) -> tuple[str, list
     selected = [
         result
         for name, result in results.items()
-        if name in {"github-linux-cpu", "github-linux-cuda", "github-macos-coreml", "github-windows-directml", "hf-jobs"}
+        if name
+        in {
+            "github-linux-cpu",
+            "github-linux-cuda",
+            "github-macos-coreml",
+            "github-windows-directml",
+            "hf-jobs",
+        }
         and result != "skipped"
     ]
     if selected == ["success"]:
@@ -89,7 +115,12 @@ def validate(receipt: dict) -> None:
         raise SystemExit("suite is invalid")
     if receipt.get("executor") not in {"github", "hf_jobs"}:
         raise SystemExit("executor is invalid")
-    if receipt.get("environment") not in {"linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"}:
+    if receipt.get("environment") not in {
+        "linux-cpu",
+        "linux-cuda",
+        "macos-coreml",
+        "windows-directml",
+    }:
         raise SystemExit("environment is invalid")
     if not isinstance(receipt.get("provider"), str) or not receipt["provider"]:
         raise SystemExit("provider is invalid")
@@ -119,7 +150,12 @@ def validate(receipt: dict) -> None:
     if digest is not None and (not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest)):
         raise SystemExit("image_digest is invalid")
     if receipt["conclusion"] == "success" and not receipt["dry_run"]:
-        for field in ("resolved_candidate_id", "image_ref", "image_digest", "result_artifact"):
+        for field in (
+            "resolved_candidate_id",
+            "image_ref",
+            "image_digest",
+            "result_artifact",
+        ):
             if not receipt.get(field):
                 raise SystemExit(f"successful evaluation receipt requires {field}")
     failed_jobs = receipt.get("failed_jobs")
@@ -168,7 +204,7 @@ def build(receipt_path_text: str, dispatch_path_text: str) -> None:
             result_uri = f"hf://buckets/{env('HF_BUCKET')}/runs/hf-jobs/{resolved_candidate_id}/{suite}-{env('RUN_ID')}-{env('RUN_ATTEMPT')}/result.json"
         else:
             result_artifact = f"candidate-package-{resolved_candidate_id}-{environment}-{suite}"
-    completed_at = env("COMPLETED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    completed_at = env("COMPLETED_AT") or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     receipt = {
         "schema_version": 1,
         "request_id": env("REQUEST_ID"),
@@ -205,7 +241,12 @@ def build(receipt_path_text: str, dispatch_path_text: str) -> None:
     dispatch_path.parent.mkdir(parents=True, exist_ok=True)
     receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     dispatch_path.write_text(
-        json.dumps({"event_type": EVENT_TYPE, "client_payload": receipt}, separators=(",", ":"), ensure_ascii=False) + "\n",
+        json.dumps(
+            {"event_type": EVENT_TYPE, "client_payload": receipt},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(receipt_path.read_text(encoding="utf-8"), end="")

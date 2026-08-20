@@ -17,11 +17,7 @@ class TokenizerAdapter:
         if hasattr(tokenizer, "decode"):
             return str(tokenizer.decode(token_ids))
 
-        if hasattr(tokenizer, "tokenizer") and hasattr(
-            tokenizer.tokenizer, "decode"
-        ):
+        if hasattr(tokenizer, "tokenizer") and hasattr(tokenizer.tokenizer, "decode"):
             return str(tokenizer.tokenizer.decode(token_ids))
 
-        raise TypeError(
-            "Unsupported tokenizer object: no ids_to_text/decode method."
-        )
+        raise TypeError("Unsupported tokenizer object: no ids_to_text/decode method.")

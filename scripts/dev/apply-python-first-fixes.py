@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 
 def main() -> int:
@@ -34,9 +34,7 @@ def main() -> int:
     )
     text, count = pattern.subn(replacement, text, count=1)
     if count != 1:
-        raise RuntimeError(
-            "Could not uniquely locate the materializer block in resolver.py."
-        )
+        raise RuntimeError("Could not uniquely locate the materializer block in resolver.py.")
 
     text = re.sub(
         r"\n[ \t]*audio_path=materialized\.audio_path,\n"

@@ -12,6 +12,8 @@ from candidate_lifecycle_common import (
     load_json_object,
     observation_sha256,
     parse_time,
+)
+from candidate_lifecycle_common import (
     request_key as build_request_key,
 )
 
@@ -27,7 +29,8 @@ def load_snapshot(path: str, request_id: str, request_execution_id: str | None =
         raise SystemExit(f"invalid lifecycle snapshot {path}: {error}") from error
     if value.get("request_id") != request_id:
         raise SystemExit(
-            f"lifecycle snapshot request_id mismatch: expected={request_id} actual={value.get('request_id')} path={path}"
+            "lifecycle snapshot request_id mismatch: "
+            f"expected={request_id} actual={value.get('request_id')} path={path}"
         )
     if request_execution_id and value.get("request_execution_id") != request_execution_id:
         raise SystemExit(
@@ -90,7 +93,11 @@ def validate_timeline(value: dict) -> None:
     previous_key: tuple[datetime, int, str] | None = None
     seen_hashes: set[str] = set()
     for event in events:
-        if not isinstance(event, dict) or set(event) != {"observation_sha256", "sources", "snapshot"}:
+        if not isinstance(event, dict) or set(event) != {
+            "observation_sha256",
+            "sources",
+            "snapshot",
+        }:
             raise SystemExit("timeline event fields mismatch")
         digest = event.get("observation_sha256")
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):

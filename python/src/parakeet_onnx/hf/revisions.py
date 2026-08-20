@@ -9,11 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-from parakeet_onnx.config.catalog import AsrCatalog, AsrCatalogError, load_repository_catalog
+from parakeet_onnx.config.catalog import (
+    AsrCatalog,
+    AsrCatalogError,
+    load_repository_catalog,
+)
 from parakeet_onnx.contracts import (
     CatalogReference,
     DatasetRevisionEntry,
@@ -34,9 +39,7 @@ _CONFIG_VERSION_RE = re.compile(r"^config-\d{6}$")
 
 
 def _canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -49,9 +52,7 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RevisionError(f"Revision file root must be a JSON object: {path}")
     if value.get("schema_version") != 1:
-        raise RevisionError(
-            f"{path.name}: schema_version must equal 1; got {value.get('schema_version')!r}"
-        )
+        raise RevisionError(f"{path.name}: schema_version must equal 1; got {value.get('schema_version')!r}")
     if _contains_null(value):
         raise RevisionError(f"{path.name}: null values are not allowed in revision documents")
     return value
@@ -75,13 +76,8 @@ def _load_config_version(root: Path) -> str:
         )
     value = _load_json(path)
     config_version = value.get("config_version")
-    if (
-        not isinstance(config_version, str)
-        or _CONFIG_VERSION_RE.fullmatch(config_version) is None
-    ):
-        raise RevisionError(
-            f"{path.name}: config_version must match config-NNNNNN; got {config_version!r}"
-        )
+    if not isinstance(config_version, str) or _CONFIG_VERSION_RE.fullmatch(config_version) is None:
+        raise RevisionError(f"{path.name}: config_version must match config-NNNNNN; got {config_version!r}")
     return config_version
 
 
@@ -96,9 +92,7 @@ def _reject_unknown(
         raise RevisionError(f"{document}: unsupported fields are present: {unknown!r}")
 
 
-def _require_mapping(
-    source: Mapping[str, Any], key: str, *, document: str
-) -> Mapping[str, Any]:
+def _require_mapping(source: Mapping[str, Any], key: str, *, document: str) -> Mapping[str, Any]:
     value = source.get(key)
     if not isinstance(value, Mapping):
         raise RevisionError(f"{document}: {key!r} must be an object")
@@ -112,22 +106,16 @@ def _require_string(source: Mapping[str, Any], key: str, *, document: str) -> st
     return value.strip()
 
 
-def _optional_string(
-    source: Mapping[str, Any], key: str, *, document: str
-) -> str | None:
+def _optional_string(source: Mapping[str, Any], key: str, *, document: str) -> str | None:
     if key not in source:
         return None
     value = source[key]
     if not isinstance(value, str) or not value.strip():
-        raise RevisionError(
-            f"{document}: {key!r} must be a non-empty string when present"
-        )
+        raise RevisionError(f"{document}: {key!r} must be a non-empty string when present")
     return value.strip()
 
 
-def _identity(
-    raw: Mapping[str, Any], key: str, *, document: str
-) -> tuple[str, str]:
+def _identity(raw: Mapping[str, Any], key: str, *, document: str) -> tuple[str, str]:
     value = _require_mapping(raw, key, document=document)
     _reject_unknown(value, {"repo_id", "revision"}, document=f"{document}.{key}")
     return (
@@ -144,7 +132,7 @@ class RevisionDocument:
     sha256: str
 
     @classmethod
-    def load(cls, *, name: str, path: Path) -> "RevisionDocument":
+    def load(cls, *, name: str, path: Path) -> RevisionDocument:
         raw = _load_json(path)
         return cls(
             name=name,
@@ -164,9 +152,7 @@ class RuntimeRevision:
     default_variant: str
 
     @classmethod
-    def from_document(
-        cls, document: RevisionDocument, *, catalog: AsrCatalog
-    ) -> "RuntimeRevision":
+    def from_document(cls, document: RevisionDocument, *, catalog: AsrCatalog) -> RuntimeRevision:
         raw = document.raw
         _reject_unknown(
             raw,
@@ -174,24 +160,15 @@ class RuntimeRevision:
             document=document.name,
         )
         catalog_raw = _require_mapping(raw, "catalog", document=document.name)
-        _reject_unknown(
-            catalog_raw, {"id", "sha256"}, document=f"{document.name}.catalog"
-        )
-        catalog_id = _require_string(
-            catalog_raw, "id", document=f"{document.name}.catalog"
-        )
-        catalog_sha = _require_string(
-            catalog_raw, "sha256", document=f"{document.name}.catalog"
-        )
+        _reject_unknown(catalog_raw, {"id", "sha256"}, document=f"{document.name}.catalog")
+        catalog_id = _require_string(catalog_raw, "id", document=f"{document.name}.catalog")
+        catalog_sha = _require_string(catalog_raw, "sha256", document=f"{document.name}.catalog")
         if catalog_id != catalog.catalog_id:
             raise RevisionError(
-                f"runtime.json catalog id mismatch: lock={catalog_id!r}, "
-                f"repository={catalog.catalog_id!r}"
+                f"runtime.json catalog id mismatch: lock={catalog_id!r}, repository={catalog.catalog_id!r}"
             )
         if catalog_sha.lower() != catalog.sha256.lower():
-            raise RevisionError(
-                "runtime.json catalog SHA-256 does not match config/asr-catalog.json"
-            )
+            raise RevisionError("runtime.json catalog SHA-256 does not match config/asr-catalog.json")
         profile_set_id = _require_string(raw, "profile_set", document=document.name)
         try:
             profile_set = catalog.profile_set(profile_set_id)
@@ -206,16 +183,12 @@ class RuntimeRevision:
             default_variant=profile_set.default_variant,
         )
 
-    def resolve_variant(
-        self, variant: str | None, *, catalog: AsrCatalog
-    ) -> tuple[str, str, str]:
+    def resolve_variant(self, variant: str | None, *, catalog: AsrCatalog) -> tuple[str, str, str]:
         selected = variant or self.default_variant
         try:
             profile_id = self.variants[selected]
         except KeyError as exc:
-            raise RevisionError(
-                f"unknown runtime variant {selected!r}; available={sorted(self.variants)}"
-            ) from exc
+            raise RevisionError(f"unknown runtime variant {selected!r}; available={sorted(self.variants)}") from exc
         profile = catalog.decoder_profile(profile_id)
         return selected, profile_id, profile.decoder
 
@@ -234,7 +207,7 @@ class ReferenceRevision:
     canonical_framework: str
 
     @classmethod
-    def from_document(cls, document: RevisionDocument) -> "ReferenceRevision":
+    def from_document(cls, document: RevisionDocument) -> ReferenceRevision:
         raw = document.raw
         _reject_unknown(
             raw,
@@ -247,15 +220,9 @@ class ReferenceRevision:
             },
             document=document.name,
         )
-        development_repo_id, development_revision = _identity(
-            raw, "development_artifact", document=document.name
-        )
-        upstream_repo_id, upstream_revision = _identity(
-            raw, "upstream", document=document.name
-        )
-        tokenizer_repo_id, tokenizer_revision = _identity(
-            raw, "tokenizer", document=document.name
-        )
+        development_repo_id, development_revision = _identity(raw, "development_artifact", document=document.name)
+        upstream_repo_id, upstream_revision = _identity(raw, "upstream", document=document.name)
+        tokenizer_repo_id, tokenizer_revision = _identity(raw, "tokenizer", document=document.name)
         reference = _require_mapping(raw, "reference", document=document.name)
         _reject_unknown(
             reference,
@@ -270,12 +237,8 @@ class ReferenceRevision:
             upstream_revision=upstream_revision,
             tokenizer_repo_id=tokenizer_repo_id,
             tokenizer_revision=tokenizer_revision,
-            reference_id=_require_string(
-                reference, "id", document=f"{document.name}.reference"
-            ),
-            reference_revision=_require_string(
-                reference, "revision", document=f"{document.name}.reference"
-            ),
+            reference_id=_require_string(reference, "id", document=f"{document.name}.reference"),
+            reference_revision=_require_string(reference, "revision", document=f"{document.name}.reference"),
             canonical_framework=_require_string(
                 reference,
                 "canonical_framework",
@@ -291,25 +254,15 @@ class EvaluationSchemaRevision:
     schema_revision: str
 
     @classmethod
-    def from_document(
-        cls, document: RevisionDocument
-    ) -> "EvaluationSchemaRevision":
+    def from_document(cls, document: RevisionDocument) -> EvaluationSchemaRevision:
         raw = document.raw
-        _reject_unknown(
-            raw, {"schema_version", "schema"}, document=document.name
-        )
+        _reject_unknown(raw, {"schema_version", "schema"}, document=document.name)
         schema = _require_mapping(raw, "schema", document=document.name)
-        _reject_unknown(
-            schema, {"id", "revision"}, document=f"{document.name}.schema"
-        )
+        _reject_unknown(schema, {"id", "revision"}, document=f"{document.name}.schema")
         return cls(
             document=document,
-            schema_id=_require_string(
-                schema, "id", document=f"{document.name}.schema"
-            ),
-            schema_revision=_require_string(
-                schema, "revision", document=f"{document.name}.schema"
-            ),
+            schema_id=_require_string(schema, "id", document=f"{document.name}.schema"),
+            schema_revision=_require_string(schema, "revision", document=f"{document.name}.schema"),
         )
 
 
@@ -330,7 +283,7 @@ class DatasetLock:
     datasets: tuple[DatasetLockEntry, ...]
 
     @classmethod
-    def from_document(cls, document: RevisionDocument) -> "DatasetLock":
+    def from_document(cls, document: RevisionDocument) -> DatasetLock:
         raw = document.raw
         _reject_unknown(raw, {"schema_version", "datasets"}, document=document.name)
         raw_datasets = raw.get("datasets")
@@ -339,9 +292,7 @@ class DatasetLock:
         entries: list[DatasetLockEntry] = []
         for index, item in enumerate(raw_datasets):
             if not isinstance(item, dict):
-                raise RevisionError(
-                    f"{document.name}: datasets[{index}] must be an object"
-                )
+                raise RevisionError(f"{document.name}: datasets[{index}] must be an object")
             _reject_unknown(
                 item,
                 {"id", "repo_id", "revision", "subset", "split", "sha256", "manifest"},
@@ -352,18 +303,10 @@ class DatasetLock:
                     id=_require_string(item, "id", document=document.name),
                     repo_id=_require_string(item, "repo_id", document=document.name),
                     revision=_require_string(item, "revision", document=document.name),
-                    subset=_optional_string(
-                        item, "subset", document=f"{document.name}.datasets[{index}]"
-                    ),
-                    split=_optional_string(
-                        item, "split", document=f"{document.name}.datasets[{index}]"
-                    ),
-                    sha256=_optional_string(
-                        item, "sha256", document=f"{document.name}.datasets[{index}]"
-                    ),
-                    manifest=_optional_string(
-                        item, "manifest", document=f"{document.name}.datasets[{index}]"
-                    ),
+                    subset=_optional_string(item, "subset", document=f"{document.name}.datasets[{index}]"),
+                    split=_optional_string(item, "split", document=f"{document.name}.datasets[{index}]"),
+                    sha256=_optional_string(item, "sha256", document=f"{document.name}.datasets[{index}]"),
+                    manifest=_optional_string(item, "manifest", document=f"{document.name}.datasets[{index}]"),
                 )
             )
         ids = [entry.id for entry in entries]
@@ -375,9 +318,7 @@ class DatasetLock:
         for entry in self.datasets:
             if entry.id == dataset_id:
                 return entry
-        raise RevisionError(
-            f"Dataset is not present in datasets-lock.json: {dataset_id}"
-        )
+        raise RevisionError(f"Dataset is not present in datasets-lock.json: {dataset_id}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,13 +345,9 @@ class RevisionBundle:
         entries: list[DatasetRevisionEntry] = []
         for entry in self.datasets.datasets:
             if entry.sha256 is None:
-                raise RevisionError(
-                    f"datasets-lock entry {entry.id!r} requires sha256 before execution"
-                )
+                raise RevisionError(f"datasets-lock entry {entry.id!r} requires sha256 before execution")
             if entry.manifest is None:
-                raise RevisionError(
-                    f"datasets-lock entry {entry.id!r} requires manifest before execution"
-                )
+                raise RevisionError(f"datasets-lock entry {entry.id!r} requires manifest before execution")
             entries.append(
                 DatasetRevisionEntry(
                     id=entry.id,
@@ -481,9 +418,7 @@ class RevisionLoader:
         self.root = Path(root).expanduser().resolve()
 
     def load(self) -> RevisionBundle:
-        reference_document = RevisionDocument.load(
-            name=self.REFERENCE_FILE, path=self.root / self.REFERENCE_FILE
-        )
+        reference_document = RevisionDocument.load(name=self.REFERENCE_FILE, path=self.root / self.REFERENCE_FILE)
         evaluation_document = RevisionDocument.load(
             name=self.EVALUATION_SCHEMA_FILE,
             path=self.root / self.EVALUATION_SCHEMA_FILE,
@@ -496,9 +431,7 @@ class RevisionLoader:
         )
         runtime_path = self.root / self.RUNTIME_FILE
         if not runtime_path.is_file():
-            raise RevisionError(
-                "runtime.json is required; legacy three-file config bundles are unsupported"
-            )
+            raise RevisionError("runtime.json is required; legacy three-file config bundles are unsupported")
         try:
             catalog = load_repository_catalog(_discover_repository_root(self.root))
         except AsrCatalogError as exc:

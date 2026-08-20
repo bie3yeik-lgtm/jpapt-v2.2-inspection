@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import tempfile
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from typing import Any
 
 from parakeet_onnx.contracts import RunContext
 
@@ -13,9 +14,9 @@ from .capsule_artifacts import CapsuleArtifact
 from .capsule_diagnostics import CapsuleDiagnostic
 from .models import BenchmarkResult, SampleResult
 from .parquet import (
+    _CAPSULE_COLUMNS,
     DEFAULT_CAPSULE_ROW_BATCH_SIZE,
     EXPERIMENT_CAPSULE_SCHEMA_VERSION,
-    _CAPSULE_COLUMNS,
     iter_experiment_capsule_row_batches,
 )
 
@@ -91,8 +92,7 @@ def _pyarrow_modules() -> tuple[Any, Any]:
         import pyarrow.parquet as pq
     except ImportError as exc:  # pragma: no cover - environment contract failure
         raise RuntimeError(
-            "Streaming Parquet output requires pyarrow from the project's "
-            "locked 'datasets' optional dependency."
+            "Streaming Parquet output requires pyarrow from the project's locked 'datasets' optional dependency."
         ) from exc
     return pa, pq
 

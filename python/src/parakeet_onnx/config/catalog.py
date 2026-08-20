@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 
 class AsrCatalogError(RuntimeError):
@@ -48,7 +49,7 @@ class AsrCatalog:
     profile_sets: Mapping[str, ProfileSet]
 
     @classmethod
-    def load(cls, path: str | Path) -> "AsrCatalog":
+    def load(cls, path: str | Path) -> AsrCatalog:
         resolved = Path(path).expanduser().resolve()
         try:
             raw = json.loads(resolved.read_text(encoding="utf-8"))
@@ -63,28 +64,20 @@ class AsrCatalog:
         for profile_id, value in profiles_raw.items():
             profile_id = _nonempty_key(profile_id, "decoder_profiles")
             if not isinstance(value, Mapping):
-                raise AsrCatalogError(
-                    f"decoder_profiles.{profile_id} must be an object"
-                )
+                raise AsrCatalogError(f"decoder_profiles.{profile_id} must be an object")
             features_raw = _mapping(value, "features")
             features: dict[str, bool] = {}
             for key, feature_value in features_raw.items():
                 if not isinstance(key, str) or not isinstance(feature_value, bool):
-                    raise AsrCatalogError(
-                        f"decoder_profiles.{profile_id}.features must contain booleans"
-                    )
+                    raise AsrCatalogError(f"decoder_profiles.{profile_id}.features must contain booleans")
                 features[key] = feature_value
             decoder_profiles[profile_id] = DecoderProfile(
                 profile_id=profile_id,
                 decoder=_string(value, "decoder"),
                 artifact_contract=_string(value, "artifact_contract"),
                 tokenizer_kind=_string(value, "tokenizer_kind"),
-                required_artifact_roles=_string_array(
-                    value, "required_artifact_roles"
-                ),
-                optional_artifact_roles=_string_array(
-                    value, "optional_artifact_roles", required=False
-                ),
+                required_artifact_roles=_string_array(value, "required_artifact_roles"),
+                optional_artifact_roles=_string_array(value, "optional_artifact_roles", required=False),
                 features=features,
             )
 
@@ -93,30 +86,24 @@ class AsrCatalog:
         for profile_set_id, value in sets_raw.items():
             profile_set_id = _nonempty_key(profile_set_id, "profile_sets")
             if not isinstance(value, Mapping):
-                raise AsrCatalogError(
-                    f"profile_sets.{profile_set_id} must be an object"
-                )
+                raise AsrCatalogError(f"profile_sets.{profile_set_id} must be an object")
             variants_raw = _mapping(value, "variants")
             variants: dict[str, str] = {}
             for variant, profile_id in variants_raw.items():
-                variant = _nonempty_key(
-                    variant, f"profile_sets.{profile_set_id}.variants"
-                )
+                variant = _nonempty_key(variant, f"profile_sets.{profile_set_id}.variants")
                 profile_id = _string_value(
                     profile_id,
                     f"profile_sets.{profile_set_id}.variants.{variant}",
                 )
                 if profile_id not in decoder_profiles:
                     raise AsrCatalogError(
-                        f"profile set {profile_set_id!r} references unknown decoder "
-                        f"profile {profile_id!r}"
+                        f"profile set {profile_set_id!r} references unknown decoder profile {profile_id!r}"
                     )
                 variants[variant] = profile_id
             default_variant = _string(value, "default_variant")
             if default_variant not in variants:
                 raise AsrCatalogError(
-                    f"profile_sets.{profile_set_id}.default_variant must be one of "
-                    f"{sorted(variants)}"
+                    f"profile_sets.{profile_set_id}.default_variant must be one of {sorted(variants)}"
                 )
             profile_sets[profile_set_id] = ProfileSet(
                 profile_set_id=profile_set_id,
@@ -124,9 +111,7 @@ class AsrCatalog:
                 default_variant=default_variant,
             )
 
-        canonical = json.dumps(
-            raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        canonical = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return cls(
             path=resolved,
             catalog_id=catalog_id,
@@ -140,8 +125,7 @@ class AsrCatalog:
             return self.profile_sets[profile_set_id]
         except KeyError as exc:
             raise AsrCatalogError(
-                f"unknown profile set {profile_set_id!r}; "
-                f"available={sorted(self.profile_sets)}"
+                f"unknown profile set {profile_set_id!r}; available={sorted(self.profile_sets)}"
             ) from exc
 
     def decoder_profile(self, profile_id: str) -> DecoderProfile:
@@ -149,8 +133,7 @@ class AsrCatalog:
             return self.decoder_profiles[profile_id]
         except KeyError as exc:
             raise AsrCatalogError(
-                f"unknown decoder profile {profile_id!r}; "
-                f"available={sorted(self.decoder_profiles)}"
+                f"unknown decoder profile {profile_id!r}; available={sorted(self.decoder_profiles)}"
             ) from exc
 
 
@@ -175,15 +158,11 @@ def _string_value(value: object, name: str) -> str:
     return value.strip()
 
 
-def _string_array(
-    value: Mapping[str, Any], key: str, *, required: bool = True
-) -> tuple[str, ...]:
+def _string_array(value: Mapping[str, Any], key: str, *, required: bool = True) -> tuple[str, ...]:
     item = value.get(key)
     if item is None and not required:
         return ()
-    if not isinstance(item, list) or not all(
-        isinstance(entry, str) and entry.strip() for entry in item
-    ):
+    if not isinstance(item, list) or not all(isinstance(entry, str) and entry.strip() for entry in item):
         raise AsrCatalogError(f"{key} must be a string array")
     return tuple(entry.strip() for entry in item)
 

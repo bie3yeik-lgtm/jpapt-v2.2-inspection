@@ -38,10 +38,7 @@ def event_key(snapshot: dict) -> str:
             raise ValueError("acknowledged requires evaluation_run_attempt")
         if not isinstance(receiver_run_id, int) or receiver_run_id < 1:
             raise ValueError("acknowledged requires receiver_run_id")
-        return (
-            f"evaluation-{run_id}-{attempt}-receiver-{receiver_run_id}-"
-            f"acknowledged-{digest}"
-        )
+        return f"evaluation-{run_id}-{attempt}-receiver-{receiver_run_id}-acknowledged-{digest}"
     raise ValueError(f"unsupported lifecycle state: {state}")
 
 

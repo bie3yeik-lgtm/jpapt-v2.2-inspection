@@ -24,8 +24,8 @@ def main() -> None:
     assert text.index(resolve_only) < text.index(sync)
 
     resolve_block = text[text.index(resolve_only) : text.index(sync)]
-    assert 'exit 0' in resolve_block
-    assert 'Resolved candidate without materializing files' in resolve_block
+    assert "exit 0" in resolve_block
+    assert "Resolved candidate without materializing files" in resolve_block
 
     # Listing and the Rust resolver remain authoritative in both modes.
     assert 'hf buckets list --token "$HF_TOKEN" "$REMOTE_ROOT" -R -q' in text

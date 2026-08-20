@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
-
 
 SelectionStrategy = Literal["stable_hash"]
 
@@ -52,16 +51,12 @@ class ManifestFilters(JsonModelMixin):
             and self.max_duration_sec is not None
             and self.max_duration_sec <= self.min_duration_sec
         ):
-            raise ValueError(
-                "max_duration_sec must be greater than min_duration_sec."
-            )
+            raise ValueError("max_duration_sec must be greater than min_duration_sec.")
 
     def accepts(self, duration_sec: float) -> bool:
         if self.min_duration_sec is not None and duration_sec < self.min_duration_sec:
             return False
-        if self.max_duration_sec is not None and duration_sec >= self.max_duration_sec:
-            return False
-        return True
+        return not (self.max_duration_sec is not None and duration_sec >= self.max_duration_sec)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,11 +120,7 @@ class ResolvedDatasetSample(JsonModelMixin):
     audio_sha256: str | None = None
 
     def logical_identity(self) -> str:
-        return (
-            f"{self.dataset_id}:"
-            f"{self.dataset_revision}:"
-            f"{self.source_identity}"
-        )
+        return f"{self.dataset_id}:{self.dataset_revision}:{self.source_identity}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,9 +133,7 @@ class ResolvedManifest(JsonModelMixin):
 
     def validate(self) -> None:
         if self.schema_version != 1:
-            raise ValueError(
-                f"Unsupported resolved manifest schema: {self.schema_version}"
-            )
+            raise ValueError(f"Unsupported resolved manifest schema: {self.schema_version}")
         if self.resolved_sample_count != len(self.samples):
             raise ValueError("resolved_sample_count does not match samples.")
         if self.resolved_sample_count != self.expected_sample_count:

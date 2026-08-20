@@ -29,16 +29,12 @@ def request(url: str, token: str, *, accept: str) -> urllib.request.Request:
 
 
 def api_get(url: str, token: str) -> dict:
-    with urllib.request.urlopen(
-        request(url, token, accept="application/vnd.github+json"), timeout=30
-    ) as response:
+    with urllib.request.urlopen(request(url, token, accept="application/vnd.github+json"), timeout=30) as response:
         return json.load(response)
 
 
 def api_bytes(url: str, token: str) -> bytes:
-    with urllib.request.urlopen(
-        request(url, token, accept="application/vnd.github+json"), timeout=30
-    ) as response:
+    with urllib.request.urlopen(request(url, token, accept="application/vnd.github+json"), timeout=30) as response:
         return response.read()
 
 
@@ -73,13 +69,8 @@ def fallback_minutes(suite: str, executor: str, environment: str) -> int:
     return base
 
 
-def matching_artifact(
-    artifacts: list[dict], suite: str, environment: str, executor: str
-) -> dict | None:
-    if executor == "hf_jobs":
-        suffix = f"-hf-jobs-{suite}"
-    else:
-        suffix = f"-{environment}-{suite}"
+def matching_artifact(artifacts: list[dict], suite: str, environment: str, executor: str) -> dict | None:
+    suffix = f"-hf-jobs-{suite}" if executor == "hf_jobs" else f"-{environment}-{suite}"
     for item in artifacts:
         if str(item.get("name", "")).endswith(suffix):
             return item
@@ -103,11 +94,7 @@ def artifact_provenance(artifact: dict, token: str) -> dict:
         return {}
     try:
         archive = zipfile.ZipFile(io.BytesIO(api_bytes(url, token)))
-        candidates = [
-            name
-            for name in archive.namelist()
-            if name.endswith("evaluation-provenance.json")
-        ]
+        candidates = [name for name in archive.namelist() if name.endswith("evaluation-provenance.json")]
         if not candidates:
             return {}
         with archive.open(candidates[0]) as handle:
@@ -148,8 +135,7 @@ def cohort_samples(
         source_values = [
             sample
             for sample in samples
-            if (sample.get("provenance") or {}).get("source_repository")
-            == source_repository
+            if (sample.get("provenance") or {}).get("source_repository") == source_repository
         ]
         if len(source_values) >= 3:
             return "source-repository", source_values
@@ -187,9 +173,10 @@ def optional_positive_int(value: str | None, name: str) -> int | None:
 
 
 def workload_auto_enabled() -> bool:
-    return os.environ.get("GITHUB_ACTIONS", "").lower() == "true" or os.environ.get(
-        "ENABLE_WORKLOAD_PROBE", ""
-    ).lower() == "true"
+    return (
+        os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        or os.environ.get("ENABLE_WORKLOAD_PROBE", "").lower() == "true"
+    )
 
 
 def helper_json(command: list[str], label: str) -> dict:
@@ -197,12 +184,14 @@ def helper_json(command: list[str], label: str) -> dict:
         command,
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
-        return {"method": "unavailable", "warning": f"{label}: {detail}".replace("\n", " ")}
+        return {
+            "method": "unavailable",
+            "warning": f"{label}: {detail}".replace("\n", " "),
+        }
     try:
         value = json.loads(completed.stdout)
     except json.JSONDecodeError:
@@ -250,7 +239,10 @@ def auto_candidate_workload(hf_bucket: str) -> dict:
         or not isinstance(candidate_files, int)
         or candidate_files <= 0
     ):
-        return {"method": "unavailable", "warning": "candidate workload probe returned invalid size evidence"}
+        return {
+            "method": "unavailable",
+            "warning": "candidate workload probe returned invalid size evidence",
+        }
     return {
         "method": "metadata-only",
         "candidate_id": candidate_id,
@@ -261,7 +253,11 @@ def auto_candidate_workload(hf_bucket: str) -> dict:
 
 
 def auto_dataset_workload(hf_bucket: str, dataset_source: str, dataset_id: str) -> dict:
-    if not workload_auto_enabled() or dataset_source not in {"bucket", "repository", "custom"}:
+    if not workload_auto_enabled() or dataset_source not in {
+        "bucket",
+        "repository",
+        "custom",
+    }:
         return {"method": "none"}
     probe = Path(__file__).with_name("measure-dataset-source-size.py")
     command = [
@@ -295,7 +291,10 @@ def auto_dataset_workload(hf_bucket: str, dataset_source: str, dataset_id: str) 
         or not isinstance(dataset_files, int)
         or dataset_files <= 0
     ):
-        return {"method": "unavailable", "warning": "dataset workload probe returned invalid size evidence"}
+        return {
+            "method": "unavailable",
+            "warning": "dataset workload probe returned invalid size evidence",
+        }
     return {
         "method": "metadata-only",
         "dataset_bytes": dataset_bytes,
@@ -333,9 +332,7 @@ def main() -> int:
     parser.add_argument("--github-output")
     args = parser.parse_args()
 
-    target_candidate_bytes = optional_positive_int(
-        args.target_candidate_bytes, "target_candidate_bytes"
-    )
+    target_candidate_bytes = optional_positive_int(args.target_candidate_bytes, "target_candidate_bytes")
     candidate_workload = {"method": "explicit" if target_candidate_bytes is not None else "none"}
     if target_candidate_bytes is None:
         candidate_workload = auto_candidate_workload(args.hf_bucket)
@@ -343,14 +340,10 @@ def main() -> int:
         if isinstance(probed_bytes, int) and probed_bytes > 0:
             target_candidate_bytes = probed_bytes
 
-    target_dataset_bytes = optional_positive_int(
-        args.target_dataset_bytes, "target_dataset_bytes"
-    )
+    target_dataset_bytes = optional_positive_int(args.target_dataset_bytes, "target_dataset_bytes")
     dataset_workload = {"method": "explicit" if target_dataset_bytes is not None else "none"}
     if target_dataset_bytes is None:
-        dataset_workload = auto_dataset_workload(
-            args.hf_bucket, args.dataset_source, args.dataset_id
-        )
+        dataset_workload = auto_dataset_workload(args.hf_bucket, args.dataset_source, args.dataset_id)
         probed_dataset_bytes = dataset_workload.get("dataset_bytes")
         if isinstance(probed_dataset_bytes, int) and probed_dataset_bytes > 0:
             target_dataset_bytes = probed_dataset_bytes
@@ -404,17 +397,11 @@ def main() -> int:
                 run_id = run.get("id")
                 if not run_id:
                     continue
-                artifacts = api_get(
-                    f"{base}/actions/runs/{run_id}/artifacts?per_page=100", token
-                ).get("artifacts", [])
-                artifact = matching_artifact(
-                    artifacts, args.suite, args.environment, args.executor
-                )
+                artifacts = api_get(f"{base}/actions/runs/{run_id}/artifacts?per_page=100", token).get("artifacts", [])
+                artifact = matching_artifact(artifacts, args.suite, args.environment, args.executor)
                 if artifact is None:
                     continue
-                jobs = api_get(
-                    f"{base}/actions/runs/{run_id}/jobs?per_page=100", token
-                ).get("jobs", [])
+                jobs = api_get(f"{base}/actions/runs/{run_id}/jobs?per_page=100", token).get("jobs", [])
                 wanted = {
                     "Resolve request",
                     "Build digest-pinned candidate package",
@@ -426,10 +413,10 @@ def main() -> int:
                     if job.get("name") in wanted and job.get("conclusion") == "success"
                 ]
                 durations = [value for value in durations if value is not None]
-                if not any(
-                    job.get("name") == target_job and job.get("conclusion") == "success"
-                    for job in jobs
-                ) or not durations:
+                if (
+                    not any(job.get("name") == target_job and job.get("conclusion") == "success" for job in jobs)
+                    or not durations
+                ):
                     continue
                 samples.append(
                     {
@@ -462,12 +449,8 @@ def main() -> int:
                     observed_dataset_bytes_p50=observed_dataset_bytes,
                     observed_package_bytes_p50=median_metric(selected, "package_bytes"),
                     observed_candidate_bytes_p50=observed_candidate_bytes,
-                    candidate_size_ratio_p50=size_ratio(
-                        target_candidate_bytes, observed_candidate_bytes
-                    ),
-                    dataset_size_ratio_p50=size_ratio(
-                        target_dataset_bytes, observed_dataset_bytes
-                    ),
+                    candidate_size_ratio_p50=size_ratio(target_candidate_bytes, observed_candidate_bytes),
+                    dataset_size_ratio_p50=size_ratio(target_dataset_bytes, observed_dataset_bytes),
                 )
         except (
             urllib.error.URLError,

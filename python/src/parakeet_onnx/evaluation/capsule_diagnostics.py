@@ -7,9 +7,9 @@ artifacts, which use the artifact transport path.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
-
+from typing import Any
 
 _ALLOWED_DIAGNOSTIC_STATUSES = frozenset({"info", "warning", "error"})
 
@@ -43,8 +43,7 @@ class CapsuleDiagnostic:
             raise CapsuleDiagnosticError("diagnostic category must be non-empty")
         if self.status not in _ALLOWED_DIAGNOSTIC_STATUSES:
             raise CapsuleDiagnosticError(
-                "diagnostic status must be one of "
-                f"{sorted(_ALLOWED_DIAGNOSTIC_STATUSES)}; got {self.status!r}"
+                f"diagnostic status must be one of {sorted(_ALLOWED_DIAGNOSTIC_STATUSES)}; got {self.status!r}"
             )
         if self.message is not None and not isinstance(self.message, str):
             raise CapsuleDiagnosticError("diagnostic message must be a string or None")

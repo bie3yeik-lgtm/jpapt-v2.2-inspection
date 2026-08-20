@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import tempfile
-from typing import Any, Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from pathlib import Path
+from typing import Any
 
 from parakeet_onnx.contracts import RunContext
 
 from .capsule_artifacts import CapsuleArtifact, iter_artifact_parts
 from .capsule_diagnostics import CapsuleDiagnostic
 from .models import BenchmarkResult, SampleResult
-
 
 EXPERIMENT_CAPSULE_SCHEMA_VERSION = "experiment-capsule/v1"
 DEFAULT_CAPSULE_ROW_BATCH_SIZE = 512
@@ -134,8 +134,7 @@ def _sample_row(
     run_id = value.get("run_id")
     if run_id != expected_run_id:
         raise ValueError(
-            "sample result run_id does not match capsule run_id: "
-            f"sample={run_id!r}, capsule={expected_run_id!r}"
+            f"sample result run_id does not match capsule run_id: sample={run_id!r}, capsule={expected_run_id!r}"
         )
 
     sample = value["sample"]
@@ -385,9 +384,7 @@ def _features() -> Any:
     try:
         from datasets import Features, Value
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "Parquet capsule output requires the project's 'datasets' optional dependency."
-        ) from exc
+        raise RuntimeError("Parquet capsule output requires the project's 'datasets' optional dependency.") from exc
 
     nullable_strings = {
         "name",
@@ -464,9 +461,7 @@ def _atomic_write_parquet(destination: Path, rows: list[dict[str, Any]]) -> None
     try:
         from datasets import Dataset
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "Parquet capsule output requires the project's 'datasets' optional dependency."
-        ) from exc
+        raise RuntimeError("Parquet capsule output requires the project's 'datasets' optional dependency.") from exc
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(

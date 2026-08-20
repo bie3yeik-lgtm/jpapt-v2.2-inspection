@@ -6,8 +6,11 @@ from pathlib import Path
 import pytest
 
 from parakeet_onnx.datasets.errors import DatasetManifestError
-from parakeet_onnx.datasets.manifest import ManifestLoader, stable_hash, stable_hash_bytes
-
+from parakeet_onnx.datasets.manifest import (
+    ManifestLoader,
+    stable_hash,
+    stable_hash_bytes,
+)
 
 MANIFEST_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -34,12 +37,12 @@ def test_stable_hash_is_deterministic() -> None:
     b = stable_hash(dataset_revision="abc123", sample_identity="id:42", seed="seed-v1")
     assert a == b
     assert len(a) == 64
-    assert bytes.fromhex(a) == stable_hash_bytes(
-        dataset_revision="abc123", sample_identity="id:42", seed="seed-v1"
-    )
+    assert bytes.fromhex(a) == stable_hash_bytes(dataset_revision="abc123", sample_identity="id:42", seed="seed-v1")
 
 
-def test_manifest_loader_expands_minimal_jsonl_to_internal_model(tmp_repo: Path) -> None:
+def test_manifest_loader_expands_minimal_jsonl_to_internal_model(
+    tmp_repo: Path,
+) -> None:
     _write_schema(tmp_repo)
     manifest = tmp_repo / "evaluation" / "manifests" / "smoke.jsonl"
     manifest.write_text(

@@ -34,7 +34,6 @@ from .resample import (
     CanonicalAudio,
 )
 
-
 Float32Array = npt.NDArray[np.float32]
 Int64Array = npt.NDArray[np.int64]
 
@@ -74,38 +73,22 @@ class FeatureOutput:
 
     def validate(self) -> None:
         if self.features.dtype != np.float32:
-            raise FeatureExtractionError(
-                "Frontend features must use float32."
-            )
+            raise FeatureExtractionError("Frontend features must use float32.")
 
         if self.length.dtype != np.int64:
-            raise FeatureExtractionError(
-                "Frontend length must use int64."
-            )
+            raise FeatureExtractionError("Frontend length must use int64.")
 
         if self.features.ndim < 2:
-            raise FeatureExtractionError(
-                "Feature tensor rank is unexpectedly low."
-            )
+            raise FeatureExtractionError("Feature tensor rank is unexpectedly low.")
 
         if self.length.ndim != 1:
-            raise FeatureExtractionError(
-                "Feature length tensor must have shape [batch]."
-            )
+            raise FeatureExtractionError("Feature length tensor must have shape [batch].")
 
-        if not np.all(
-            np.isfinite(self.features)
-        ):
-            raise FeatureExtractionError(
-                "Feature tensor contains NaN or infinity."
-            )
+        if not np.all(np.isfinite(self.features)):
+            raise FeatureExtractionError("Feature tensor contains NaN or infinity.")
 
-        if np.any(
-            self.length < 0
-        ):
-            raise FeatureExtractionError(
-                "Feature length contains negative values."
-            )
+        if np.any(self.length < 0):
+            raise FeatureExtractionError("Feature length contains negative values.")
 
 
 class FeatureExtractor(ABC):
@@ -161,27 +144,15 @@ class NemoFeatureExtractor(FeatureExtractor):
     ) -> FeatureOutput:
         audio.validate()
 
-        if (
-            audio.sample_rate_hz
-            != CANONICAL_SAMPLE_RATE
-        ):
-            raise FeatureExtractionError(
-                "NeMo frontend received non-canonical sample rate: "
-                f"{audio.sample_rate_hz}"
-            )
+        if audio.sample_rate_hz != CANONICAL_SAMPLE_RATE:
+            raise FeatureExtractionError(f"NeMo frontend received non-canonical sample rate: {audio.sample_rate_hz}")
 
         try:
             import torch
         except ImportError as exc:
-            raise FeatureExtractionError(
-                "NeMo reference feature extraction requires PyTorch."
-            ) from exc
+            raise FeatureExtractionError("NeMo reference feature extraction requires PyTorch.") from exc
 
-        waveform = torch.from_numpy(
-            audio.waveform
-        ).to(
-            dtype=torch.float32
-        )
+        waveform = torch.from_numpy(audio.waveform).to(dtype=torch.float32)
 
         # NeMo preprocessors expect batch dimension.
         waveform = waveform.unsqueeze(0)
@@ -198,44 +169,22 @@ class NemoFeatureExtractor(FeatureExtractor):
                     length=length,
                 )
         except Exception as exc:
-            raise FeatureExtractionError(
-                f"NeMo feature extraction failed: {exc}"
-            ) from exc
+            raise FeatureExtractionError(f"NeMo feature extraction failed: {exc}") from exc
 
-        if (
-            not isinstance(output, tuple)
-            or len(output) != 2
-        ):
+        if not isinstance(output, tuple) or len(output) != 2:
             raise FeatureExtractionError(
-                "NeMo preprocessor returned an unexpected value. "
-                "Expected (features, feature_length)."
+                "NeMo preprocessor returned an unexpected value. Expected (features, feature_length)."
             )
 
         features_torch, length_torch = output
 
         try:
-            features = (
-                features_torch
-                .detach()
-                .cpu()
-                .to(dtype=torch.float32)
-                .contiguous()
-                .numpy()
-            )
+            features = features_torch.detach().cpu().to(dtype=torch.float32).contiguous().numpy()
 
-            feature_length = (
-                length_torch
-                .detach()
-                .cpu()
-                .to(dtype=torch.int64)
-                .contiguous()
-                .numpy()
-            )
+            feature_length = length_torch.detach().cpu().to(dtype=torch.int64).contiguous().numpy()
 
         except Exception as exc:
-            raise FeatureExtractionError(
-                "Failed to convert NeMo frontend output to NumPy."
-            ) from exc
+            raise FeatureExtractionError("Failed to convert NeMo frontend output to NumPy.") from exc
 
         result = FeatureOutput(
             features=np.ascontiguousarray(
@@ -276,10 +225,7 @@ class PassthroughWaveformExtractor(FeatureExtractor):
 
         # [samples] -> [batch, samples]
         features = np.ascontiguousarray(
-            audio.waveform[
-                np.newaxis,
-                :
-            ],
+            audio.waveform[np.newaxis, :],
             dtype=np.float32,
         )
 
@@ -319,27 +265,17 @@ def create_feature_extractor(
     an explicit "onnx_waveform" implementation.
     """
 
-    implementation = str(
-        model.require(
-            "frontend.implementation"
-        )
-    )
+    implementation = str(model.require("frontend.implementation"))
 
     if implementation == "nemo_compatible":
         if nemo_preprocessor is None:
             raise FeatureExtractionError(
-                "nemo_compatible frontend requires the preprocessor "
-                "from the pinned NeMo reference model."
+                "nemo_compatible frontend requires the preprocessor from the pinned NeMo reference model."
             )
 
-        return NemoFeatureExtractor(
-            nemo_preprocessor
-        )
+        return NemoFeatureExtractor(nemo_preprocessor)
 
     if implementation == "onnx_waveform":
         return PassthroughWaveformExtractor()
 
-    raise FeatureExtractionError(
-        "Unsupported frontend implementation: "
-        f"{implementation!r}"
-    )
+    raise FeatureExtractionError(f"Unsupported frontend implementation: {implementation!r}")

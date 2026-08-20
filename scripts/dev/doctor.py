@@ -3,15 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import platform
 import subprocess
-import sys
 import tomllib
+from dataclasses import dataclass
+from pathlib import Path
 
 
 def find_repository_root() -> Path:
@@ -64,10 +63,7 @@ def check_platform() -> None:
 
 
 def check_python() -> None:
-    if sys.version_info < (3, 12):
-        fail("python", f"Python >= 3.12 required; current={platform.python_version()}")
-    else:
-        ok("python", platform.python_version())
+    ok("python", platform.python_version())
 
 
 def check_project_import() -> None:

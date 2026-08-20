@@ -6,7 +6,8 @@ import json
 import os
 import re
 import sys
-from typing import Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 BUCKET_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")

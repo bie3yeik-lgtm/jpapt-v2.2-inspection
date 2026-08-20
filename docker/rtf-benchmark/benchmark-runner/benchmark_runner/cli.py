@@ -81,7 +81,10 @@ def main() -> int:
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         with torch.inference_mode():
             with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
-                model.transcribe(paths2audio_files=paths[: min(len(paths), args.batch_size)], batch_size=args.batch_size)
+                model.transcribe(
+                    paths2audio_files=paths[: min(len(paths), args.batch_size)],
+                    batch_size=args.batch_size,
+                )
             if device.type == "cuda":
                 torch.cuda.synchronize()
             timings = []
@@ -99,38 +102,38 @@ def main() -> int:
         audio_duration = sum(durations)
         processing_duration = max(elapsed, 1e-9)
         result = {
-        "schema_version": 1,
-        "run_id": args.run_id,
-        "status": "completed",
-        "model_id": args.model_id,
-        "model_revision": args.model_revision,
-        "dataset_id": args.dataset_id,
-        "dataset_revision": args.dataset_revision,
-        "decoder": args.decoder,
-        "batch_size": args.batch_size,
-        "precision": args.precision,
-        "repeat": args.repeat,
-        "provider": args.provider,
-        "environment": "linux",
-        "service_id": args.service_id,
-        "gpu": args.gpu,
-        "dtype": args.precision,
-        "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
-        "inspection_profile": args.profile,
-        "fixture_repo_id": args.fixture_repo_id,
-        "fixture_revision": args.fixture_revision,
-        "manifest_sha256": manifest_sha256,
-        "audio_duration_sec": audio_duration,
-        "processing_duration_sec": processing_duration,
-        "rtf": processing_duration / audio_duration,
-        "rtfx": audio_duration / processing_duration,
-        "rtf_scope": "model",
-        "cer": jiwer.cer(reference_text, hypothesis_text) if reference_text else None,
-        "peak_vram_bytes": torch.cuda.max_memory_allocated() if device.type == "cuda" else None,
-        "gpu_utilization_pct": None,
-        "gpu_price_per_hour": None,
-        "cost_per_audio_hour": None,
-    }
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "status": "completed",
+            "model_id": args.model_id,
+            "model_revision": args.model_revision,
+            "dataset_id": args.dataset_id,
+            "dataset_revision": args.dataset_revision,
+            "decoder": args.decoder,
+            "batch_size": args.batch_size,
+            "precision": args.precision,
+            "repeat": args.repeat,
+            "provider": args.provider,
+            "environment": "linux",
+            "service_id": args.service_id,
+            "gpu": args.gpu,
+            "dtype": args.precision,
+            "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
+            "inspection_profile": args.profile,
+            "fixture_repo_id": args.fixture_repo_id,
+            "fixture_revision": args.fixture_revision,
+            "manifest_sha256": manifest_sha256,
+            "audio_duration_sec": audio_duration,
+            "processing_duration_sec": processing_duration,
+            "rtf": processing_duration / audio_duration,
+            "rtfx": audio_duration / processing_duration,
+            "rtf_scope": "model",
+            "cer": jiwer.cer(reference_text, hypothesis_text) if reference_text else None,
+            "peak_vram_bytes": torch.cuda.max_memory_allocated() if device.type == "cuda" else None,
+            "gpu_utilization_pct": None,
+            "gpu_price_per_hour": None,
+            "cost_per_audio_hour": None,
+        }
     except Exception as exc:
         result = {
             "schema_version": 1,

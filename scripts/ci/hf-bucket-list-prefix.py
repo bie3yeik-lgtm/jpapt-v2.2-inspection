@@ -24,10 +24,7 @@ def validate_prefix(value: str) -> str:
     if not value or value.startswith("/") or value.endswith("/"):
         raise SystemExit(f"bucket prefix is invalid: {value}")
     parts = value.split("/")
-    if any(
-        part in {"", ".", ".."} or PREFIX_SEGMENT_RE.fullmatch(part) is None
-        for part in parts
-    ):
+    if any(part in {"", ".", ".."} or PREFIX_SEGMENT_RE.fullmatch(part) is None for part in parts):
         raise SystemExit(f"bucket prefix contains an unsafe path segment: {value}")
     return value
 
@@ -55,9 +52,7 @@ def main() -> int:
             if isinstance(path, str) and path:
                 print(path)
     except Exception as error:
-        raise SystemExit(
-            f"Bucket prefix listing failed for {bucket}/{prefix}: {error}"
-        ) from error
+        raise SystemExit(f"Bucket prefix listing failed for {bucket}/{prefix}: {error}") from error
 
     return 0
 

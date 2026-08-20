@@ -257,9 +257,7 @@ def validate(result_path: Path, samples_path: Path, metrics_path: Path) -> None:
         raise RuntimeError(f"Rust sample failed: {sample.get('errors')}")
     actual_text = sample.get("output", {}).get("text")
     if actual_text != expected_text:
-        raise RuntimeError(
-            f"Rust/ORT transcript mismatch: rust={actual_text!r}, ort={expected_text!r}"
-        )
+        raise RuntimeError(f"Rust/ORT transcript mismatch: rust={actual_text!r}, ort={expected_text!r}")
 
     metrics = load_json(metrics_path)
     acceptance = metrics.get("acceptance")

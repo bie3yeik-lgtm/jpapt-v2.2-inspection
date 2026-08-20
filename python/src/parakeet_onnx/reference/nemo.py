@@ -18,18 +18,14 @@ class NemoReference:
     def preprocessor(self) -> Any:
         value = getattr(self.model, "preprocessor", None)
         if value is None:
-            raise NemoReferenceError(
-                "Loaded NeMo model does not expose .preprocessor."
-            )
+            raise NemoReferenceError("Loaded NeMo model does not expose .preprocessor.")
         return value
 
     @property
     def tokenizer(self) -> Any:
         value = getattr(self.model, "tokenizer", None)
         if value is None:
-            raise NemoReferenceError(
-                "Loaded NeMo model does not expose .tokenizer."
-            )
+            raise NemoReferenceError("Loaded NeMo model does not expose .tokenizer.")
         return value
 
 
@@ -40,16 +36,13 @@ def load_pinned_nemo_model(
     map_location: str | None = None,
 ) -> NemoReference:
     if not revision or revision in {"main", "master", "HEAD", "latest"}:
-        raise NemoReferenceError(
-            "Canonical NeMo loading requires an explicit pinned revision."
-        )
+        raise NemoReferenceError("Canonical NeMo loading requires an explicit pinned revision.")
 
     try:
         import nemo.collections.asr as nemo_asr
     except ImportError as exc:
         raise NemoReferenceError(
-            "NeMo is required for canonical reference loading. "
-            "Run this path in the NeMo container."
+            "NeMo is required for canonical reference loading. Run this path in the NeMo container."
         ) from exc
 
     model_cls = getattr(nemo_asr.models, "ASRModel", None)

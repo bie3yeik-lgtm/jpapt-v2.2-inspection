@@ -4,7 +4,6 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = ROOT / "evaluation" / "schemas" / "provenance.schema.json"
 FIXTURE_ROOT = ROOT / "evaluation" / "provenance" / "fixtures"
