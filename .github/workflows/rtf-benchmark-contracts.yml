@@ -122,6 +122,18 @@ jobs:
               raise SystemExit("RunPod must obtain SSH connection info")
           if 'runpodctl exec' in script:
               raise SystemExit("deprecated runpodctl exec must not be used")
+          if '--cloud-type SECURE' not in script:
+              raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
+          if "--docker-args 'sleep infinity'" not in script:
+              raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
+          if '--wait --wait-timeout 10m' not in script:
+              raise SystemExit("RunPod Pod creation must wait for SSH readiness")
+          if 'trap \'delete_pod || true\' EXIT' not in script:
+              raise SystemExit("RunPod must retain a deletion safety trap")
+          if 'delete_pod\n    ;;' not in script:
+              raise SystemExit("RunPod must delete the Pod immediately after result collection")
+          if 'runpodctl pod delete "$pod_id"' not in script:
+              raise SystemExit("RunPod must delete each benchmark Pod")
           if "exec /opt/rtf-benchmark/entrypoint.sh" not in script:
               raise SystemExit("RunPod must invoke the image entrypoint explicitly")
           if "exec python benchmark.py" in script:
@@ -135,6 +147,12 @@ jobs:
               raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
           if "latest GHCR package digest" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must wait for the latest GHCR package digest")
+          if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must initialize its config file")
+          if 'runpodctl doctor --output json' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must run doctor validation")
+          if '.healthy == true' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must require a healthy doctor result")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
           if "max-parallel: 1" not in benchmark_workflow:

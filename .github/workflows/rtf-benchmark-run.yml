@@ -108,7 +108,15 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
           runpodctl config --apiKey="$RUNPOD_TOKEN"
+          doctor_json="$(runpodctl doctor --output json)"
+          echo "$doctor_json" | jq .
+          jq -e '.healthy == true' <<<"$doctor_json" >/dev/null || {
+            echo 'RunPod CLI doctor did not report a healthy configuration' >&2
+            exit 1
+          }
       - name: Run all benchmark batch sizes sequentially
         id: execute
         continue-on-error: true
