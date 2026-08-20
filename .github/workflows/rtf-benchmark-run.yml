@@ -31,16 +31,6 @@ on:
         required: true
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
         type: string
-      fixture_repo_id:
-        description: Hugging Face Dataset repository containing benchmark-v1.jsonl and WAV fixtures
-        required: false
-        default: gawohok7/rtf-benchmark-fixtures
-        type: string
-      fixture_revision:
-        description: Immutable fixture Dataset commit
-        required: false
-        default: ""
-        type: string
       batch_size:
         description: Benchmark batch size
         required: true
@@ -136,8 +126,8 @@ jobs:
           RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
           RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
           RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
-          RTF_FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
-          RTF_FIXTURE_REVISION: ${{ inputs.fixture_revision }}
+          RTF_FIXTURE_REPO_ID: ''
+          RTF_FIXTURE_REVISION: ''
           RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
           RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
           RTF_LOCAL_RECEIPT: result-receipt.json
@@ -157,14 +147,12 @@ jobs:
           RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
           set -euo pipefail
-          if [[ -z "${RTF_FIXTURE_REPO_ID}" || -z "${RTF_FIXTURE_REVISION}" ]]; then
-            [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
-              echo 'fixture inputs are empty and rtf-scores/benchmark/benchmark-v1.fixture.json is missing' >&2
-              exit 2
-            }
-            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
-            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
-          fi
+          [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
+            echo 'Resolver fixture pointer is missing; merge the RTF Resolver PR first' >&2
+            exit 2
+          }
+          export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
