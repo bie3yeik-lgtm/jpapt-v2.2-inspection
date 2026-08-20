@@ -178,7 +178,27 @@ issue 間の依存順序（親側 resolution plan より）:
 4. default branch merge 後にのみ `repository_dispatch` が有効（GitHub platform 制約）
 5. receipt / summary artifact に token redaction と machine-readable identity を含める
 
-## 7. 作業単位（recursive delivery）
+## 7. Unit 0 gap 表（2026-08-20 照合）
+
+着手 commit: `66b9ac4a37d72aeea7941691f8ba5cfff858dc1f`。`asr-workflow-dispatch validate` は全 workflow の `workflow_dispatch` 必須契約を満たすこと。
+
+| 親 local workflow | 親 dispatch route | route 状態 | 本 repo 既存 partial | 本ブランチ実装 target | 親 issue |
+|---|---|---|---|---|---|
+| `ghcr-package-provision.yml` | `jpapt.workflow` → `ghcr-audit` | partial | [`ghcr-audit.yml`](../.github/workflows/ghcr-audit.yml)（認証付き） | **`ghcr-public-verify`** | #160 |
+| `hf-model-bootstrap-package.yml` | `jpapt.bucket-bootstrap` | available | [`external-bucket-bootstrap.yml`](../.github/workflows/external-bucket-bootstrap.yml) | contract 確認のみ | — |
+| `hf-model-pipeline.yml` | `jpapt.candidate-request` | retired | [`candidate-request-gateway.yml`](../.github/workflows/candidate-request-gateway.yml) | 新規不要 | #154 |
+| `fixture-generation-and-inspection.yml` | `hf-jobs-smoke` 候補 | upstream-required | [`hf-jobs-smoke.yml`](../.github/workflows/hf-jobs-smoke.yml)（smoke dispatch のみ） | **`fixture-generation-and-inspection`** | — |
+| `jpapt-private-dispatch.yml` | `jpapt.candidate-request` | available | Gateway + [`dispatch-public-inspection-bypass.sh`](../scripts/ci/dispatch-public-inspection-bypass.sh) | 新規不要 | #154 |
+| `jpapt-package-artifact-verify.yml` | `private-consumer-trusted-acceptance` | blocked | [`private-consumer-trusted-acceptance.yml`](../.github/workflows/private-consumer-trusted-acceptance.yml) | **実装しない** | #154 |
+| `onnx-windows-x64-manual.yml` | `rust-eval` 候補 | upstream-required | [`rust-eval.yml`](../.github/workflows/rust-eval.yml) `windows-directml` | **`windows-directml-provider-route`** | — |
+| `jpapt-upstream-contract-diff.yml` | routing fetch 候補 | upstream-required | [`fetch-source-routing-config.sh`](../scripts/ci/fetch-source-routing-config.sh) のみ | **`upstream-contract-diff`** | #134 |
+
+**available partial の blocker（実装対象外）**
+
+- #154 live Gateway: `SOURCE_REPO_TOKEN` 未設定時は private source probe が 404
+- #160 即時迂回: `ghcr-audit` は匿名公開証明にならない
+
+## 8. 作業単位（recursive delivery）
 
 ### Unit 0: 正本固定と gap 分析
 
@@ -221,7 +241,7 @@ issue 間の依存順序（親側 resolution plan より）:
 - 親 `jpapt-external-dispatch.py plan` が新 workflow alias を解決できること（親側 config 更新は別 PR）
 - #154 plan/execute、#160 verify、#134 routing/provenance gate との境界を docs へ反映
 
-## 8. 非目標・禁止事項
+## 9. 非目標・禁止事項
 
 - 親 repository `.github/workflows/` へ実行 workflow を追加しない（親 migration 方針）
 - `upstream-required` workflow を未実装のまま dispatch 成功扱いしない
@@ -229,7 +249,7 @@ issue 間の依存順序（親側 resolution plan より）:
 - dispatch payload / artifact / log へ token、credential、private source 本文、音声を出力しない
 - #134 upload、#154 bypass、#160 verify を単独成功として issue close 条件へ自動昇格しない
 
-## 9. 参照資料
+## 10. 参照資料
 
 ### 親リポジトリ（dispatch 正本）
 

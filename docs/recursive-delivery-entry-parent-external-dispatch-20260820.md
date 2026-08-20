@@ -24,12 +24,24 @@ Unit 0 として、着手時 `main` SHA `5d4974fb8e10b04088a419e37545b1e5cedd900
 
 詳細要件・issue 対応・禁止事項は正本ドキュメントを参照する。
 
-## 検証境界（着手時）
+## 検証境界
+
+### Unit 0（2026-08-20）
 
 ```text
-branch + planning docs: PASS
-upstream-required workflow implementation: NOT STARTED
+gap table in parent-external-dispatch-workflows-20260820.md: PASS
+asr-workflow-dispatch validate (after workflow_dispatch fix): PASS
+upstream-required workflow implementation: IN PROGRESS
 repository_dispatch on default branch: BLOCKED until merge
 parent caller config update: OUT OF SCOPE for this repo
 remote dispatch / HF Jobs / completion: NOT RUN
 ```
+
+| Unit | 状態 | evidence |
+|---|---|---|
+| 0 | PASS | gap 表、validate |
+| 1 | pending | `ghcr-public-verify` |
+| 4 | pending | `upstream-contract-diff` |
+| 2 | pending | `fixture-generation-and-inspection` |
+| 3 | pending | `windows-directml-provider-route` |
+| 5 | pending | handoff docs |

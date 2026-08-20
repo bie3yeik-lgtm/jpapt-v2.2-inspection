@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/candidate-routing-config-fetch-contracts.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
