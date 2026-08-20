@@ -13,6 +13,10 @@ each sample is 30 seconds to 10 minutes, with 20--50 samples and approximately
 1.5 hours total audio. Short Common Voice clips are concatenated before timing;
 they are not treated as independent benchmark samples.
 
+This profile is labeled `lough inspection`. The separate `precise inspection`
+profile is 30 seconds to 30 minutes, 50--150 samples, and 5--10 hours total
+audio. The current RTF Phase 1 workflow accepts only `lough inspection`.
+
 ```bash
 docker build \
   --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \

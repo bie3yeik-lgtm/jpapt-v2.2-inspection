@@ -16,6 +16,8 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_DATASET_COUNT_MIN:=20}"
   : "${RTF_DATASET_COUNT_MAX:=50}"
   : "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
+  : "${RTF_INSPECTION_PROFILE:=lough inspection}"
+  : "${RTF_DATASET_MAX_DURATION_SEC:=600}"
   : "${RTF_MANIFEST:=/workspace/benchmark-v1.jsonl}"
   : "${RTF_FIXTURE_REPO_ID:=}"
   : "${RTF_FIXTURE_REVISION:=}"
@@ -43,7 +45,8 @@ if [[ "$#" -eq 0 ]]; then
       --dataset-id "$RTF_DATASET_ID" --revision "$RTF_DATASET_REVISION" \
       --configuration "$RTF_DATASET_CONFIGURATION" --split "$RTF_DATASET_SPLIT" \
       --count-min "$RTF_DATASET_COUNT_MIN" --count-max "$RTF_DATASET_COUNT_MAX" \
-      --target-total-sec "$RTF_DATASET_TARGET_TOTAL_SEC" --seed "$RTF_DATASET_SEED" \
+      --target-total-sec "$RTF_DATASET_TARGET_TOTAL_SEC" --max-duration-sec "$RTF_DATASET_MAX_DURATION_SEC" \
+      --seed "$RTF_DATASET_SEED" \
       --output-dir /workspace/benchmark-audio --manifest "$RTF_MANIFEST"
   fi
   set -- \

@@ -21,6 +21,7 @@ def main() -> int:
     parser.add_argument("--count-min", type=int, default=20)
     parser.add_argument("--count-max", type=int, default=50)
     parser.add_argument("--target-total-sec", type=float, default=5400.0)
+    parser.add_argument("--max-duration-sec", type=float, default=600.0)
     parser.add_argument("--seed", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -68,7 +69,7 @@ def main() -> int:
         duration = len(audio["array"]) / 16_000
         if duration <= 0:
             continue
-        if pending_duration >= 30.0 and pending_duration + duration > 600.0:
+        if pending_duration >= 30.0 and pending_duration + duration > args.max_duration_sec:
             flush()
         pending_audio.append(audio["array"])
         pending_text.append(str(row.get("sentence", "")))

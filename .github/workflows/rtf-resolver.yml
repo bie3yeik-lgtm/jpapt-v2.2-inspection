@@ -31,6 +31,12 @@ on:
         description: Hugging Face Dataset repo to publish the fixed fixture
         required: true
         type: string
+      inspection_profile:
+        description: Fixture sizing profile
+        required: true
+        default: lough inspection
+        type: choice
+        options: [lough inspection, precise inspection]
 
 permissions:
   contents: write
@@ -48,6 +54,7 @@ jobs:
       COUNT_MAX: ${{ inputs.count_max }}
       TARGET_TOTAL_SEC: ${{ inputs.target_total_sec }}
       FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
+      INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
       RUN_ID: rtf-resolver-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
@@ -70,6 +77,11 @@ jobs:
       - name: Resolve fixed Common Voice manifest in Docker
         run: |
           set -euo pipefail
+          case "$INSPECTION_PROFILE" in
+            'lough inspection') count_min=20; count_max=50; target_total=5400; max_duration=600 ;;
+            'precise inspection') count_min=50; count_max=150; target_total=27000; max_duration=1800 ;;
+            *) echo 'unknown inspection profile' >&2; exit 2 ;;
+          esac
           rm -rf .ci/rtf-resolver
           mkdir -p .ci/rtf-resolver/audio .ci/rtf-resolver/output
           docker pull "$IMAGE"
@@ -82,8 +94,8 @@ jobs:
             --dataset-id japanese-asr/ja_asr.common_voice_8_0 \
             --revision "$DATASET_REVISION" \
             --configuration ja --split test \
-            --count-min "$COUNT_MIN" --count-max "$COUNT_MAX" \
-            --target-total-sec "$TARGET_TOTAL_SEC" \
+            --count-min "$count_min" --count-max "$count_max" \
+            --target-total-sec "$target_total" --max-duration-sec "$max_duration" \
             --seed rtf-benchmark-v1-common-voice-ja \
             --output-dir /resolver/audio \
             --manifest /resolver/output/benchmark-v1.jsonl
@@ -102,15 +114,23 @@ jobs:
           manifest = Path('.ci/rtf-resolver/output/benchmark-v1.jsonl')
           records = [json.loads(line) for line in manifest.read_text().splitlines() if line]
           total = sum(float(record['audio_duration_sec']) for record in records)
-          if not 20 <= len(records) <= 50:
+          profile = os.environ['INSPECTION_PROFILE']
+          if profile == 'lough inspection':
+              count_min, count_max, total_min, duration_max = 20, 50, 3600, 600
+          elif profile == 'precise inspection':
+              count_min, count_max, total_min, duration_max = 50, 150, 18000, 1800
+          else:
+              raise SystemExit(f'unknown profile: {profile}')
+          if not count_min <= len(records) <= count_max:
               raise SystemExit(f'invalid sample count: {len(records)}')
-          if total < 5400:
+          if total < total_min:
               raise SystemExit(f'invalid total duration: {total}')
-          if any(not 30 <= float(record['audio_duration_sec']) <= 600 for record in records):
+          if any(not 30 <= float(record['audio_duration_sec']) <= duration_max for record in records):
               raise SystemExit('sample duration outside 30..600 seconds')
           receipt = {
               'schema_version': 1,
               'run_id': os.environ['RUN_ID'],
+              'inspection_profile': profile,
               'image': os.environ['IMAGE'],
               'dataset_id': 'japanese-asr/ja_asr.common_voice_8_0',
               'dataset_revision': os.environ['DATASET_REVISION'],

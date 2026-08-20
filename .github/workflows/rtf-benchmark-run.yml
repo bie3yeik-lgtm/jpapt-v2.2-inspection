@@ -49,6 +49,12 @@ on:
         required: true
         default: "1"
         type: string
+      inspection_profile:
+        description: Fixture sizing profile; Phase 1 uses lough inspection
+        required: true
+        default: lough inspection
+        type: choice
+        options: [lough inspection]
 
 permissions:
   contents: read
@@ -83,6 +89,7 @@ jobs:
           RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
           RTF_FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
           RTF_FIXTURE_REVISION: ${{ inputs.fixture_revision }}
+          RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ inputs.gpu }}
           RTF_BATCH_SIZE: ${{ inputs.batch_size }}
           HF_FLAVOR: ${{ inputs.hf_flavor }}
