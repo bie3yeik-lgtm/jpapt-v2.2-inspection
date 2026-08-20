@@ -41,7 +41,7 @@ on:
         description: Logical execution provider
         required: true
         type: choice
-        options: [cpu, cuda, directml, coreml]
+        options: [cpu, cuda, coreml]
       environment:
         description: Named execution environment
         required: true

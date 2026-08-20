@@ -62,7 +62,7 @@ on:
         required: false
         default: linux-cpu
         type: choice
-        options: [linux-cpu, linux-cuda, macos-coreml, windows-directml]
+        options: [linux-cpu, linux-cuda, macos-coreml]
       hf_flavor:
         description: HF Jobs flavor
         required: false
