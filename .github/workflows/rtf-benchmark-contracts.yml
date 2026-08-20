@@ -126,6 +126,10 @@ jobs:
               raise SystemExit("RTF Benchmark Run must not expose a batch-size input")
           if "for batch_size in 1 8 32; do" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
+          if "Waiting for GHCR image tag" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must wait for the workflow-tagged image")
+          if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
           if "max-parallel: 1" not in benchmark_workflow:
               raise SystemExit("RTF result collection must remain sequential")
           selection = Path(".github/workflows/rtf-verification-select.yml").read_text()

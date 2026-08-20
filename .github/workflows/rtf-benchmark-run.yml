@@ -64,8 +64,18 @@ jobs:
           if [[ -n "$image_input" ]]; then
             image="$image_input"
           else
-            image="$(bash scripts/ci/resolve-ghcr-package-digest.sh \
-              "ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark" "$GITHUB_SHA")"
+            image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark"
+            for attempt in {1..20}; do
+              if image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$image_name" "$GITHUB_SHA" 2>/dev/null)"; then
+                break
+              fi
+              [[ "$attempt" -lt 20 ]] || {
+                echo "GHCR image tag ${GITHUB_SHA} was not published within the retry window" >&2
+                exit 1
+              }
+              echo "Waiting for GHCR image tag ${GITHUB_SHA} (attempt ${attempt}/20)"
+              sleep 15
+            done
           fi
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
             echo 'resolved image must be an immutable GHCR digest reference' >&2
@@ -180,6 +190,17 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          for batch_size in 1 8 32; do
+            receipt_path="results/batches/batch-${batch_size}/result-receipt.json"
+            if [[ ! -s "$receipt_path" ]]; then
+              mkdir -p "$(dirname "$receipt_path")"
+              jq -n \
+                --arg run_id "rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}" \
+                --arg error_message "benchmark setup did not produce a result receipt for batch ${batch_size}" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"BENCHMARK_SETUP_FAILED",error_message:$error_message}' \
+                > "$receipt_path"
+            fi
+          done
           receipts="$(for batch_size in 1 8 32; do
             jq --arg batch_size "$batch_size" \
               '. + {batch_size:($batch_size | tonumber)}' \
