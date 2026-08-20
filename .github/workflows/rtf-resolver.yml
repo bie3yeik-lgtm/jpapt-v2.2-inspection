@@ -54,7 +54,7 @@ jobs:
         id: image
         env:
           IMAGE_INPUT: ${{ inputs.image }}
-          IMAGE_TAG: ghcr.io/bie3yeik-lgtm/jpapt-v2.2-inspection/parakeet-rtf-benchmark:latest
+          IMAGE_TAG: ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark:latest
         run: |
           set -euo pipefail
           if [[ -n "$IMAGE_INPUT" ]]; then
