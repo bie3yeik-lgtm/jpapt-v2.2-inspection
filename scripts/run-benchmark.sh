@@ -61,7 +61,15 @@ if [[ "$PROVIDER" == hf ]]; then
     *) echo "HF GPU has no Phase 1 flavor mapping: $RTF_GPU" >&2; exit 2 ;;
   esac
 fi
-: "${RUNPOD_GPU_ID:=${RTF_GPU}}"
+if [[ "$PROVIDER" == runpod ]]; then
+  case "$RTF_GPU" in
+    a5000) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A5000}" ;;
+    l4) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA L4}" ;;
+    rtx3090) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA GeForce RTX 3090}" ;;
+    rtx4090) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA GeForce RTX 4090}" ;;
+    *) echo "RunPod GPU has no Phase 1 GPU ID mapping: $RTF_GPU" >&2; exit 2 ;;
+  esac
+fi
 
 case "$PROVIDER:$RTF_GPU" in
   hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
@@ -132,14 +140,20 @@ case "$PROVIDER" in
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
       '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' --wait --output json)"
+      --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
+      --wait --wait-timeout 10m --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
+    ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '.sshCommand')"
+    runpod_ssh() {
+      local remote_command
+      printf -v remote_command '%q ' "$@"
+      eval "$ssh_command $remote_command"
+    }
     # The Pod command intentionally keeps the container alive. Invoke the
-    # image entrypoint explicitly so fixture loading, inference, publishing,
-    # and the result receipt all run through the same canonical path as HF.
-    runpodctl exec "$pod_id" -- sh -c \
-      "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
-    runpodctl exec "$pod_id" -- cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
-    runpodctl exec "$pod_id" -- cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    # image entrypoint explicitly over the supported SSH path so fixture
+    # loading, inference, publishing, and result collection share one path.
+    runpod_ssh sh -c "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
+    runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
+    runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     ;;
 esac

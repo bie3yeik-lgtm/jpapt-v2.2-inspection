@@ -71,6 +71,8 @@ runpodctl pod create --name parakeet-bench \
 ```
 
 The entrypoint converts both forms to the same `benchmark_runner` invocation.
+RunPod automation uses `runpodctl ssh info` and SSH after the Pod becomes
+reachable; the deprecated `runpodctl exec` command is not used.
 Missing runtime variables fail closed; credentials are not image defaults.
 
 GitHub Actions and local automation should use the lifecycle wrapper:

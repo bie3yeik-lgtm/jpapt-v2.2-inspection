@@ -148,7 +148,6 @@ jobs:
           RTF_DATASET_MAX_DURATION_SEC: 600
           RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
           RTF_FIXTURE_MANIFEST_SHA256: ''
-          RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
           set -euo pipefail
           [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {

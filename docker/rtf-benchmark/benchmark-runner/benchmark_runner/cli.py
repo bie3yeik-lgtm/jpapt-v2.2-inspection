@@ -25,7 +25,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--precision", choices=("float32", "float16", "bfloat16"), required=True)
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
-    p.add_argument("--service-id", choices=("hf-inference-endpoint", "runpod-pod"), required=True)
+    p.add_argument("--service-id", choices=("hf-jobs", "hf-inference-endpoint", "runpod-pod"), required=True)
     p.add_argument("--gpu", required=True)
     p.add_argument("--profile", choices=("lough", "precise"), required=True)
     p.add_argument("--fixture-repo-id", required=True)
