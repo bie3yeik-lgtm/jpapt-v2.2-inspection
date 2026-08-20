@@ -87,7 +87,7 @@ jobs:
           valid_gpu_service = any(
               entry["service_id"] == selected["SERVICE_ID"]
               and entry["gpu"] == selected["GPU"]
-              and entry["batch_sizes"] == [1, 2, 4]
+              and entry["batch_sizes"] == [1, 8, 32]
               for entry in matrix["entries"]
           )
           if not valid_gpu_service:
@@ -114,7 +114,7 @@ jobs:
               value.lower().replace("/", "-").replace("_", "-").replace(".", "-")
               for value in (selected["SERVICE_ID"], selected["GPU"], selected["DECODER"])
           )
-          selected["BATCH_SIZES"] = [1, 2, 4]
+          selected["BATCH_SIZES"] = [1, 8, 32]
           selected["RUN_ID"] = f"rtf-{slug}-r{os.environ['ACTIONS_RUN_ID']}-{digest}"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"run_id={selected['RUN_ID']}\n")

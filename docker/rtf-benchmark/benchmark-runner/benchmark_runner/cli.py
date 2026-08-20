@@ -22,7 +22,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset-id", required=True)
     p.add_argument("--dataset-revision", required=True)
     p.add_argument("--decoder", choices=("tdt", "ctc", "whisper"), required=True)
-    p.add_argument("--batch-size", type=int, choices=(1, 2, 4), required=True)
+    p.add_argument("--batch-size", type=int, choices=(1, 8, 32), required=True)
     p.add_argument("--precision", choices=("float32", "float16", "bfloat16"), required=True)
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
@@ -127,6 +127,8 @@ def main() -> int:
                         release_inference_temporaries(torch, device)
             elapsed = sum(timings) / len(timings)
         texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
+        del hypotheses
+        release_inference_temporaries(torch, device)
         reference_text = " ".join(references).strip()
         hypothesis_text = " ".join(texts).strip()
         audio_duration = sum(durations)

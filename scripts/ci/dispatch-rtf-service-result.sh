@@ -40,7 +40,7 @@ case "$inspection_profile" in
   lough|precise) ;;
   *) echo "ERROR: unsupported inspection_profile: $inspection_profile" >&2; exit 2 ;;
 esac
-[[ "$batch_size" =~ ^(1|2|4)$ ]] || { echo "ERROR: unsupported batch_size: $batch_size" >&2; exit 2; }
+[[ "$batch_size" =~ ^(1|8|32)$ ]] || { echo "ERROR: unsupported batch_size: $batch_size" >&2; exit 2; }
 
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT

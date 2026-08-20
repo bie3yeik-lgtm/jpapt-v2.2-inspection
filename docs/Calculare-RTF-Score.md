@@ -852,7 +852,7 @@ GPU 12種類 × batch 6種類 × decoder 2種類などを最初から全部や�
 ```text
 decoder   = TDT
 precision = BF16 または FP16
-batch     = 1, 2, 4
+batch     = 1, 8, 32
 dataset   = 共通固定sample
 ```
 
@@ -1364,7 +1364,7 @@ Hugging Face
 ```text
 1 audio-hour
 ×
-batch {1, 2, 4}
+batch {1, 8, 32}
 ×
 3 repetitions
 ```
@@ -1446,7 +1446,7 @@ Hugging Face JobsはCLI、Python API、HTTP APIのいずれからでも起動で
 matrix:
   provider: [hf, runpod]
   gpu: [t4, l4, a5000, 3090, 4090]
-  batch: [1, 2, 4]
+  batch: [1, 8, 32]
 ```
 
 とすると、
@@ -1554,7 +1554,7 @@ huggingface_hub
 python benchmark.py \
   --model nvidia/parakeet-tdt_ctc-0.6b-ja \
   --dataset-manifest benchmark-v1.jsonl \
-  --batch-size 4 \
+  --batch-size 32 \
   --decoder tdt \
   --precision fp16 \
   --repeat 3 \
@@ -2037,7 +2037,7 @@ GPU:
   HF:     T4, L4
 
 batch:
-  1, 2, 4
+  1, 8, 32
 
 各Job:
   1 audio-hour × 3回
