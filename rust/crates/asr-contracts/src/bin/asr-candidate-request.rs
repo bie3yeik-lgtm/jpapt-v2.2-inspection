@@ -347,6 +347,11 @@ fn resolve(
     if executor == "hf_jobs" && !environment.starts_with("linux-") {
         return Err("HF Jobs execution is restricted to Linux environments".to_owned());
     }
+    if environment == "windows-directml" {
+        return Err(
+            "DirectML route is retired; new windows-directml requests are rejected".to_owned(),
+        );
+    }
 
     let hf_flavor = choose(string(inputs, "hf_flavor")?, "cpu-basic");
     let hf_jobs_image = string(inputs, "hf_jobs_image")?;
@@ -368,7 +373,7 @@ fn resolve(
         "linux-cpu" => ("CPUExecutionProvider", "onnxruntime"),
         "linux-cuda" => ("CUDAExecutionProvider", "onnxruntime-gpu"),
         "macos-coreml" => ("CoreMLExecutionProvider", "onnxruntime"),
-        "windows-directml" => ("DmlExecutionProvider", "onnxruntime-directml"),
+        "windows-directml" => unreachable!("retired DirectML route"),
         _ => unreachable!(),
     };
     let registry_owner = if registry_owner.is_empty() {

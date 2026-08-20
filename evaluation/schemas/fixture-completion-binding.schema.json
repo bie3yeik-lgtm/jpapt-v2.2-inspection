@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/evaluation/schemas/fixture-completion-binding.schema.json",
+  "title": "Fixture completion binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generation_id", "inspection_id", "source_revision", "hf_bucket", "status", "evaluation_run_id", "evaluation_run_attempt", "candidate_receipt_sha256", "result_uri", "bucket_run_identity"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "generation_id": {"type": "string", "minLength": 1},
+    "inspection_id": {"type": "string", "minLength": 1},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "hf_bucket": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"},
+    "status": {"type": "string", "enum": ["completed", "blocked"]},
+    "evaluation_run_id": {"type": "integer", "minimum": 1},
+    "evaluation_run_attempt": {"type": "integer", "minimum": 1},
+    "candidate_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "result_uri": {"type": "string", "pattern": "^hf://buckets/"},
+    "bucket_run_identity": {"type": "string", "pattern": "^runs/hf-jobs/[^/]+/[^/]+$"},
+    "ack_run_id": {"type": ["integer", "null"], "minimum": 1},
+    "notes": {"type": ["string", "null"]}
+  }
+}

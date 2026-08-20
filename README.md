@@ -14,6 +14,14 @@ Production orchestrator protocol construction and trust-boundary validation shou
 
 Real external proofs remain distinct from local/static CI: cross-repository callback routing requires the dedicated fixture tracked by Issue #70, and real private Hugging Face lifecycle storage write/read proof is tracked by Issue #71.
 
+## DirectML retirement
+
+DirectML is retired from the active contract. New `directml` or
+`windows-directml` requests are rejected and must not produce reviewed
+execution receipts, HF Jobs runs, or Bucket completion evidence. Historical
+workflows and artifacts remain available only for audit; see
+[`docs/directml-retirement.md`](docs/directml-retirement.md).
+
 ## config/models
 
 Parakeetについては **`default = "ctc"` を意図的に設定**しています。元モデルそのものはTDT-CTC hybridですが、今回のONNX/Rust開発ではまずCTCを成立させ、その後TDTへ広げるためです。これは上流モデルのdefault decoderを書き換えているのではなく、このRepositoryにおけるdeployment defaultという意味です。上流モデル自体はHybrid FastConformer TDT-CTCとして提供されています。
