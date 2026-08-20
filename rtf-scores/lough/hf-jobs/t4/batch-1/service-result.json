@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32367122483-b1",
+  "run_id": "rtf-hf-32399367362-b1",
   "service_id": "hf-jobs",
-  "status": "blocked",
+  "status": "completed",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a86edcec81709766c802847",
-  "result_uri": null,
-  "result_sha256": null,
-  "metrics_uri": null,
-  "metrics_path": null,
-  "metrics_sha256": null,
-  "error_code": "BENCHMARK_INFERENCE_FAILED",
-  "error_message": "EncDecHybridRNNTCTCModel.transcribe() got an unexpected keyword argument 'paths2audio_files'"
+  "job_id": "6a873d45c81709766c802c32",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/a637b74fe6e11e16c93e0ef68d7ff8c6138cc276/results/rtf-hf-32399367362-b1/metrics.json",
+  "result_sha256": "6ae8485dfcfa770f6c0ae66902357a9ee916771a87177201dfc2e5422fe361d7",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/a637b74fe6e11e16c93e0ef68d7ff8c6138cc276/results/rtf-hf-32399367362-b1/metrics.json",
+  "metrics_path": "results/rtf-service/metrics.json",
+  "metrics_sha256": "6ae8485dfcfa770f6c0ae66902357a9ee916771a87177201dfc2e5422fe361d7",
+  "error_code": null,
+  "error_message": null
 }
