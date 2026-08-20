@@ -1620,7 +1620,7 @@ HF JobsではDocker imageとGPU flavorを指定して実行できます。公式
 ```bash
 hf jobs run \
   --flavor a10g-small \
-  ghcr.io/example/parakeet-bench:latest \
+  ghcr.io/example/parakeet-bench@sha256:<immutable-digest> \
   python benchmark.py
 ```
 

@@ -122,7 +122,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           load: false
           tags: |
-            ${{ matrix.image }}:latest
             ${{ matrix.image }}:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

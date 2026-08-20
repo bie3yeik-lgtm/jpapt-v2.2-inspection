@@ -350,7 +350,6 @@ jobs:
             --cache-to "type=gha,mode=max,scope=candidate-$PACKAGE_NAME-$RUNTIME_ENVIRONMENT" \
             --metadata-file /tmp/build-metadata.json \
             --tag "$tag" \
-            --tag "$IMAGE:latest-$RUNTIME_ENVIRONMENT" \
             --push
           digest="$(jq -er '."containerimage.digest"' /tmp/build-metadata.json)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::invalid image digest: $digest"; exit 1; }

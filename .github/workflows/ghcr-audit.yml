@@ -9,9 +9,9 @@ on:
         default: ""
         type: string
       image_tag:
-        description: "GHCR tag to resolve before auditing the immutable digest"
+        description: "Optional GHCR tag; blank resolves the newest package digest"
         required: false
-        default: latest
+        default: ""
         type: string
   schedule:
     - cron: "43 19 * * 3"
@@ -61,12 +61,19 @@ jobs:
       - id: image
         name: Pull and freeze digest
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'latest' }}"
-          tagged="${{ matrix.image }}:${tag}"
-          docker pull "$tagged"
-          pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || '' }}"
+          if [[ -n "$tag" ]]; then
+            tagged="${{ matrix.image }}:${tag}"
+            docker pull "$tagged"
+            pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          else
+            pinned="$(bash scripts/ci/resolve-ghcr-package-digest.sh '${{ matrix.image }}')"
+            docker pull "$pinned"
+          fi
           digest="${pinned#*@}"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid digest: $digest"; exit 1; }
           echo "reference=$pinned" >> "$GITHUB_OUTPUT"

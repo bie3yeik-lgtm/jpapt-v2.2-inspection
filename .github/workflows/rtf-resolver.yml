@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: Optional immutable image override; blank resolves latest GHCR package digest
+        description: Optional immutable image override; blank resolves the newest GHCR package digest
         required: false
         default: ""
         type: string
@@ -50,22 +50,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Resolve latest RTF benchmark image digest
+      - name: Resolve immutable RTF benchmark image digest
         id: image
         env:
           IMAGE_INPUT: ${{ inputs.image }}
-          IMAGE_TAG: ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark:latest
+          IMAGE_NAME: ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ -n "$IMAGE_INPUT" ]]; then
             image="$IMAGE_INPUT"
           else
-            digest="$(docker buildx imagetools inspect "$IMAGE_TAG" | awk '/^Digest:/ {print $2; exit}')"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-              echo "unable to resolve latest GHCR image digest: $digest" >&2
-              exit 2
-            }
-            image="${IMAGE_TAG%:latest}@$digest"
+            image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$IMAGE_NAME")"
           fi
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
             echo "image must be a digest-pinned GHCR reference: $image" >&2
