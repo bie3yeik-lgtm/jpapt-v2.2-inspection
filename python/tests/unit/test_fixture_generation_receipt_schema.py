@@ -37,4 +37,4 @@ def test_fixture_generation_receipt_schema_accepts_plan_receipt() -> None:
 def test_fixture_generation_receipt_schema_rejects_invalid_status() -> None:
     schema = load_json(SCHEMA_PATH)
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.Draft202012Validator(schema).validate(valid_receipt(status="completed"))
+        jsonschema.Draft202012Validator(schema).validate(valid_receipt(status="success"))
