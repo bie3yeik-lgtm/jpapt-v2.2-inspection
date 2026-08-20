@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -40,11 +41,9 @@ class TdtRuntimeContract:
     decoder: TdtDecoderConfig
 
     @classmethod
-    def from_candidate(cls, candidate: CandidateArtifacts) -> "TdtRuntimeContract":
+    def from_candidate(cls, candidate: CandidateArtifacts) -> TdtRuntimeContract:
         if candidate.decoder != "tdt":
-            raise CandidateMetadataError(
-                f"TDT contract cannot load decoder {candidate.decoder!r}"
-            )
+            raise CandidateMetadataError(f"TDT contract cannot load decoder {candidate.decoder!r}")
         raw = candidate.runtime_contract
         io_raw = _mapping(raw, "io")
         encoder = _mapping(io_raw, "encoder")
@@ -55,33 +54,25 @@ class TdtRuntimeContract:
         state_inputs = _string_tuple(predictor.get("state_inputs", []), "state_inputs")
         state_outputs = _string_tuple(predictor.get("state_outputs", []), "state_outputs")
         if len(state_inputs) != len(state_outputs):
-            raise CandidateMetadataError(
-                "predictor state_inputs and state_outputs must have equal length"
-            )
+            raise CandidateMetadataError("predictor state_inputs and state_outputs must have equal length")
         shapes_raw = predictor.get("state_shapes", [])
         if not isinstance(shapes_raw, list):
             raise CandidateMetadataError("predictor.state_shapes must be an array")
         state_shapes: list[tuple[int, ...]] = []
         for item in shapes_raw:
-            if not isinstance(item, list) or not item or not all(
-                isinstance(dim, int) and dim > 0 for dim in item
-            ):
+            if not isinstance(item, list) or not item or not all(isinstance(dim, int) and dim > 0 for dim in item):
                 raise CandidateMetadataError(
                     "each predictor.state_shapes entry must be a non-empty positive integer array"
                 )
             state_shapes.append(tuple(item))
         if state_inputs and len(state_shapes) != len(state_inputs):
-            raise CandidateMetadataError(
-                "predictor.state_shapes must describe every state input"
-            )
+            raise CandidateMetadataError("predictor.state_shapes must describe every state input")
         dtypes = _string_tuple(
             predictor.get("state_dtypes", ["float32"] * len(state_inputs)),
             "state_dtypes",
         )
         if len(dtypes) != len(state_inputs):
-            raise CandidateMetadataError(
-                "predictor.state_dtypes must describe every state input"
-            )
+            raise CandidateMetadataError("predictor.state_dtypes must describe every state input")
         for dtype in dtypes:
             _state_dtype(dtype)
 
@@ -91,34 +82,20 @@ class TdtRuntimeContract:
             or not durations_raw
             or not all(isinstance(value, int) and value >= 0 for value in durations_raw)
         ):
-            raise CandidateMetadataError(
-                "decoder_config.durations must be a non-empty non-negative integer array"
-            )
+            raise CandidateMetadataError("decoder_config.durations must be a non-empty non-negative integer array")
         if len(set(durations_raw)) != len(durations_raw):
             raise CandidateMetadataError("decoder_config.durations must not contain duplicates")
 
         duration_output = _optional_string(joint, "duration_output")
         output_mode = str(joint.get("output_mode", "separate"))
         if output_mode not in {"separate", "concatenated"}:
-            raise CandidateMetadataError(
-                "joint.output_mode must be 'separate' or 'concatenated'"
-            )
+            raise CandidateMetadataError("joint.output_mode must be 'separate' or 'concatenated'")
         token_vocab_size_value = joint.get("token_vocab_size")
-        token_vocab_size = (
-            int(token_vocab_size_value)
-            if token_vocab_size_value is not None
-            else None
-        )
-        if output_mode == "concatenated" and (
-            token_vocab_size is None or token_vocab_size <= 0
-        ):
-            raise CandidateMetadataError(
-                "joint.token_vocab_size is required and positive for concatenated TDT output"
-            )
+        token_vocab_size = int(token_vocab_size_value) if token_vocab_size_value is not None else None
+        if output_mode == "concatenated" and (token_vocab_size is None or token_vocab_size <= 0):
+            raise CandidateMetadataError("joint.token_vocab_size is required and positive for concatenated TDT output")
         if output_mode == "separate" and duration_output is None:
-            raise CandidateMetadataError(
-                "joint.duration_output is required for separate TDT output"
-            )
+            raise CandidateMetadataError("joint.duration_output is required for separate TDT output")
 
         max_symbols = int(decoder_raw.get("max_symbols_per_step", 10))
         if max_symbols <= 0:
@@ -184,9 +161,7 @@ class OrtTdtRuntimeAdapter:
         _require_finite_nonempty(waveform, "TDT waveform input")
         feeds: dict[str, np.ndarray] = {self.contract.io.encoder_input: waveform}
         if self.contract.io.encoder_length_input is not None:
-            feeds[self.contract.io.encoder_length_input] = np.asarray(
-                [audio.num_samples], dtype=np.int64
-            )
+            feeds[self.contract.io.encoder_length_input] = np.asarray([audio.num_samples], dtype=np.int64)
         encoder_outputs = [self.contract.io.encoder_output]
         if self.contract.io.encoder_length_output is not None:
             encoder_outputs.append(self.contract.io.encoder_length_output)
@@ -195,9 +170,7 @@ class OrtTdtRuntimeAdapter:
         encoder_values = self.encoder_session.run(encoder_outputs, feeds)
         encoder_ms = (perf_counter() - encoder_started) * 1000.0
         if len(encoder_values) != len(encoder_outputs):
-            raise RuntimeError(
-                "TDT encoder returned an output count that differs from the generated contract"
-            )
+            raise RuntimeError("TDT encoder returned an output count that differs from the generated contract")
         encoder = np.asarray(encoder_values[0])
         _require_finite_nonempty(encoder, "TDT encoder output")
         if encoder.ndim == 3 and encoder.shape[0] == 1:
@@ -205,19 +178,13 @@ class OrtTdtRuntimeAdapter:
         elif encoder.ndim == 2:
             encoder_frames = encoder
         else:
-            raise RuntimeError(
-                f"TDT encoder output must be [T,D] or [1,T,D], got {encoder.shape!r}"
-            )
+            raise RuntimeError(f"TDT encoder output must be [T,D] or [1,T,D], got {encoder.shape!r}")
         if encoder_frames.shape[0] <= 0 or encoder_frames.shape[-1] <= 0:
-            raise RuntimeError(
-                f"TDT encoder produced a zero-size frame tensor: {encoder_frames.shape!r}"
-            )
+            raise RuntimeError(f"TDT encoder produced a zero-size frame tensor: {encoder_frames.shape!r}")
         if len(encoder_values) > 1:
             length_value = np.asarray(encoder_values[1])
             if length_value.size != 1:
-                raise RuntimeError(
-                    "TDT encoder length output must contain exactly one scalar value"
-                )
+                raise RuntimeError("TDT encoder length output must contain exactly one scalar value")
             encoded_length = int(length_value.reshape(-1)[0])
             if not 0 < encoded_length <= encoder_frames.shape[0]:
                 raise RuntimeError(
@@ -242,17 +209,11 @@ class OrtTdtRuntimeAdapter:
         ) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
             nonlocal ort_decoder_ms
             if len(previous) != len(self.contract.io.predictor_state_inputs):
-                raise RuntimeError(
-                    "TDT predictor state arity changed before predictor invocation"
-                )
+                raise RuntimeError("TDT predictor state arity changed before predictor invocation")
             predictor_feeds: dict[str, np.ndarray] = {
-                self.contract.io.predictor_token_input: np.asarray(
-                    [[token_id]], dtype=np.int64
-                )
+                self.contract.io.predictor_token_input: np.asarray([[token_id]], dtype=np.int64)
             }
-            for index, (name, value) in enumerate(
-                zip(self.contract.io.predictor_state_inputs, previous, strict=True)
-            ):
+            for index, (name, value) in enumerate(zip(self.contract.io.predictor_state_inputs, previous, strict=True)):
                 _validate_state(index, value, self.contract)
                 predictor_feeds[name] = value
             outputs = [
@@ -263,9 +224,7 @@ class OrtTdtRuntimeAdapter:
             values = self.predictor_session.run(outputs, predictor_feeds)
             ort_decoder_ms += (perf_counter() - started) * 1000.0
             if len(values) != len(outputs):
-                raise RuntimeError(
-                    "TDT predictor returned an output count that differs from the generated contract"
-                )
+                raise RuntimeError("TDT predictor returned an output count that differs from the generated contract")
             prediction = np.asarray(values[0])
             _require_finite_nonempty(prediction, "TDT predictor output")
             next_state = tuple(np.asarray(value) for value in values[1:])
@@ -297,9 +256,7 @@ class OrtTdtRuntimeAdapter:
             )
             ort_decoder_ms += (perf_counter() - started) * 1000.0
             if len(values) != len(outputs):
-                raise RuntimeError(
-                    "TDT joint returned an output count that differs from the generated contract"
-                )
+                raise RuntimeError("TDT joint returned an output count that differs from the generated contract")
             token_values = np.asarray(values[0]).reshape(-1)
             _require_finite_nonempty(token_values, "TDT joint token output")
             if self.contract.io.joint_output_mode == "concatenated":
@@ -346,14 +303,10 @@ def _validate_state(index: int, value: np.ndarray, contract: TdtRuntimeContract)
     expected_dtype = _state_dtype(contract.io.predictor_state_dtypes[index])
     if tuple(value.shape) != expected_shape:
         raise RuntimeError(
-            f"TDT predictor state {index} changed shape: got={value.shape!r}, "
-            f"expected={expected_shape!r}"
+            f"TDT predictor state {index} changed shape: got={value.shape!r}, expected={expected_shape!r}"
         )
     if value.dtype != expected_dtype:
-        raise RuntimeError(
-            f"TDT predictor state {index} changed dtype: got={value.dtype}, "
-            f"expected={expected_dtype}"
-        )
+        raise RuntimeError(f"TDT predictor state {index} changed dtype: got={value.dtype}, expected={expected_dtype}")
     _require_finite_nonempty(value, f"TDT predictor state {index}")
 
 
@@ -402,9 +355,7 @@ def _optional_string(value: Mapping[str, Any], key: str) -> str | None:
 
 
 def _string_tuple(value: object, name: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) and item for item in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise CandidateMetadataError(f"{name} must be a string array")
     return tuple(value)
 

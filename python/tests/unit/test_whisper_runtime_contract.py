@@ -4,12 +4,11 @@ import json
 from pathlib import Path
 
 import onnx
-from onnx import TensorProto, helper
 import pytest
+from onnx import TensorProto, helper
 
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
 from parakeet_onnx.runtime.whisper import WhisperRuntimeContract
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -57,9 +56,7 @@ def _candidate(
             ]
         )
     if unknown_auxiliary:
-        initial_aux.append(
-            helper.make_tensor_value_info("mystery_control", TensorProto.INT64, [1])
-        )
+        initial_aux.append(helper.make_tensor_value_info("mystery_control", TensorProto.INT64, [1]))
     _save(
         root / "decoder.onnx",
         [
@@ -89,10 +86,7 @@ def _candidate(
             helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 1]),
             helper.make_tensor_value_info("encoder_hidden_states", TensorProto.FLOAT, [1, "frames", 1280]),
             *cached_aux,
-            *[
-                helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 20, "tokens", 64])
-                for name in past_inputs
-            ],
+            *[helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 20, "tokens", 64]) for name in past_inputs],
         ],
         [
             helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1, 51865]),
@@ -121,7 +115,9 @@ def _candidate(
     return CandidateArtifacts.load(root, repository_root=ROOT)
 
 
-def test_whisper_contract_is_derived_from_graph_and_generation_config(tmp_path: Path) -> None:
+def test_whisper_contract_is_derived_from_graph_and_generation_config(
+    tmp_path: Path,
+) -> None:
     contract = WhisperRuntimeContract.from_candidate(_candidate(tmp_path))
     assert contract.encoder_input == "input_features"
     assert contract.decoder.past_outputs == ("present.0.key", "present.0.value")
@@ -131,10 +127,10 @@ def test_whisper_contract_is_derived_from_graph_and_generation_config(tmp_path: 
     assert contract.max_new_tokens == 64
 
 
-def test_whisper_contract_separates_cache_position_from_kv_cache(tmp_path: Path) -> None:
-    contract = WhisperRuntimeContract.from_candidate(
-        _candidate(tmp_path, auxiliary_inputs=True)
-    )
+def test_whisper_contract_separates_cache_position_from_kv_cache(
+    tmp_path: Path,
+) -> None:
+    contract = WhisperRuntimeContract.from_candidate(_candidate(tmp_path, auxiliary_inputs=True))
     assert [item.kind for item in contract.decoder.auxiliary_inputs] == [
         "cache_position",
         "position_ids",

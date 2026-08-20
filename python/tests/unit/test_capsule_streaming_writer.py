@@ -42,9 +42,7 @@ def test_streaming_writer_round_trips_and_sets_file_metadata(tmp_path) -> None:
     assert metadata[b"jpapt.run_id"].decode() == "run-stream"
     assert metadata[b"jpapt.writer"].decode() == CAPSULE_PARQUET_WRITER_VERSION
     assert parquet_file.metadata.num_row_groups == 2
-    assert parquet_file.metadata.row_group(0).column(0).compression.lower() == (
-        CAPSULE_PARQUET_COMPRESSION
-    )
+    assert parquet_file.metadata.row_group(0).column(0).compression.lower() == (CAPSULE_PARQUET_COMPRESSION)
 
     capsule = read_experiment_capsule(path)
     assert capsule.run_id == "run-stream"

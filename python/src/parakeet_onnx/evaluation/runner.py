@@ -105,9 +105,7 @@ def run_evaluation(
             provider_passed=None,
             performance_passed=None,
             failed_checks=[] if acceptance_passed else ["sample_execution"],
-            warnings=[
-                "Threshold-based release acceptance remains controlled by evaluation-schema.json"
-            ],
+            warnings=["Threshold-based release acceptance remains controlled by evaluation-schema.json"],
         ),
         errors=aggregate.errors,
     )

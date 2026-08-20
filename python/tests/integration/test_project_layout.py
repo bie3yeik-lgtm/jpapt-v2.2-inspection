@@ -16,10 +16,6 @@ def test_expected_project_directories_exist() -> None:
         "tools",
     ]
 
-    missing = [
-        item
-        for item in expected
-        if not (root / item).exists()
-    ]
+    missing = [item for item in expected if not (root / item).exists()]
 
     assert missing == []

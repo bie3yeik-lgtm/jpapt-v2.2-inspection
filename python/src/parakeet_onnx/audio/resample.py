@@ -33,7 +33,6 @@ import numpy.typing as npt
 
 from .decode import DecodedAudio
 
-
 Float32Array = npt.NDArray[np.float32]
 
 
@@ -61,50 +60,30 @@ class CanonicalAudio:
 
     @property
     def num_samples(self) -> int:
-        return int(
-            self.waveform.shape[0]
-        )
+        return int(self.waveform.shape[0])
 
     @property
     def duration_sec(self) -> float:
-        return (
-            float(self.num_samples)
-            / float(self.sample_rate_hz)
-        )
+        return float(self.num_samples) / float(self.sample_rate_hz)
 
     def validate(self) -> None:
         if self.sample_rate_hz != CANONICAL_SAMPLE_RATE:
-            raise ResampleError(
-                "Canonical audio must use "
-                f"{CANONICAL_SAMPLE_RATE} Hz."
-            )
+            raise ResampleError(f"Canonical audio must use {CANONICAL_SAMPLE_RATE} Hz.")
 
         if self.waveform.dtype != np.float32:
-            raise ResampleError(
-                "Canonical waveform must be float32."
-            )
+            raise ResampleError("Canonical waveform must be float32.")
 
         if self.waveform.ndim != 1:
-            raise ResampleError(
-                "Canonical waveform must be mono with shape [samples]."
-            )
+            raise ResampleError("Canonical waveform must be mono with shape [samples].")
 
         if self.waveform.size == 0:
-            raise ResampleError(
-                "Canonical waveform is empty."
-            )
+            raise ResampleError("Canonical waveform is empty.")
 
         if not self.waveform.flags.c_contiguous:
-            raise ResampleError(
-                "Canonical waveform must be C-contiguous."
-            )
+            raise ResampleError("Canonical waveform must be C-contiguous.")
 
-        if not np.all(
-            np.isfinite(self.waveform)
-        ):
-            raise ResampleError(
-                "Canonical waveform contains NaN or infinity."
-            )
+        if not np.all(np.isfinite(self.waveform)):
+            raise ResampleError("Canonical waveform contains NaN or infinity.")
 
 
 def mix_to_mono(
@@ -131,15 +110,10 @@ def mix_to_mono(
         )
 
     if value.ndim != 2:
-        raise ResampleError(
-            "Waveform must have shape [samples] "
-            "or [samples, channels]."
-        )
+        raise ResampleError("Waveform must have shape [samples] or [samples, channels].")
 
     if value.shape[1] <= 0:
-        raise ResampleError(
-            "Waveform has no audio channels."
-        )
+        raise ResampleError("Waveform has no audio channels.")
 
     mono = np.mean(
         value,
@@ -169,9 +143,7 @@ def _resample_with_scipy(
     try:
         from scipy.signal import resample_poly
     except ImportError as exc:
-        raise ResampleError(
-            "Resampling requires the 'scipy' package."
-        ) from exc
+        raise ResampleError("Resampling requires the 'scipy' package.") from exc
 
     from math import gcd
 
@@ -180,15 +152,9 @@ def _resample_with_scipy(
         target_rate_hz,
     )
 
-    up = (
-        target_rate_hz
-        // divisor
-    )
+    up = target_rate_hz // divisor
 
-    down = (
-        source_rate_hz
-        // divisor
-    )
+    down = source_rate_hz // divisor
 
     try:
         output = resample_poly(
@@ -197,10 +163,7 @@ def _resample_with_scipy(
             down=down,
         )
     except Exception as exc:
-        raise ResampleError(
-            "Failed to resample audio from "
-            f"{source_rate_hz} Hz to {target_rate_hz} Hz: {exc}"
-        ) from exc
+        raise ResampleError(f"Failed to resample audio from {source_rate_hz} Hz to {target_rate_hz} Hz: {exc}") from exc
 
     return np.ascontiguousarray(
         output,
@@ -219,14 +182,10 @@ def resample_audio(
     """
 
     if source_rate_hz <= 0:
-        raise ResampleError(
-            "source_rate_hz must be positive."
-        )
+        raise ResampleError("source_rate_hz must be positive.")
 
     if target_rate_hz <= 0:
-        raise ResampleError(
-            "target_rate_hz must be positive."
-        )
+        raise ResampleError("target_rate_hz must be positive.")
 
     value = np.asarray(
         waveform,
@@ -234,14 +193,10 @@ def resample_audio(
     )
 
     if value.ndim != 1:
-        raise ResampleError(
-            "resample_audio expects a mono waveform."
-        )
+        raise ResampleError("resample_audio expects a mono waveform.")
 
     if value.size == 0:
-        raise ResampleError(
-            "Cannot resample an empty waveform."
-        )
+        raise ResampleError("Cannot resample an empty waveform.")
 
     if source_rate_hz == target_rate_hz:
         return np.ascontiguousarray(
@@ -273,12 +228,8 @@ def _sanitize_amplitude(
         dtype=np.float32,
     )
 
-    if not np.all(
-        np.isfinite(value)
-    ):
-        raise ResampleError(
-            "Waveform contains NaN or infinity."
-        )
+    if not np.all(np.isfinite(value)):
+        raise ResampleError("Waveform contains NaN or infinity.")
 
     value = np.clip(
         value,
@@ -313,9 +264,7 @@ def to_canonical_audio(
 
     decoded.validate()
 
-    mono = mix_to_mono(
-        decoded.waveform
-    )
+    mono = mix_to_mono(decoded.waveform)
 
     resampled = resample_audio(
         mono,
@@ -323,16 +272,12 @@ def to_canonical_audio(
         target_rate_hz=target_sample_rate_hz,
     )
 
-    sanitized = _sanitize_amplitude(
-        resampled
-    )
+    sanitized = _sanitize_amplitude(resampled)
 
     result = CanonicalAudio(
         waveform=sanitized,
         sample_rate_hz=target_sample_rate_hz,
-        source_sample_rate_hz=(
-            decoded.sample_rate_hz
-        ),
+        source_sample_rate_hz=(decoded.sample_rate_hz),
         source_channels=decoded.channels,
     )
 

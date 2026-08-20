@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import unicodedata
+from dataclasses import dataclass
 
 
 def normalize_text(text: str) -> str:
@@ -11,9 +11,7 @@ def normalize_text(text: str) -> str:
     controlled by evaluation-schema.json. This baseline intentionally avoids
     language-specific heuristics.
     """
-    return " ".join(
-        unicodedata.normalize("NFKC", text).strip().split()
-    )
+    return " ".join(unicodedata.normalize("NFKC", text).strip().split())
 
 
 def edit_distance(reference: list[str], hypothesis: list[str]) -> int:
@@ -57,7 +55,7 @@ class CorpusErrorAccumulator:
     word_edits: int = 0
     reference_words: int = 0
 
-    def add(self, reference: str, hypothesis: str) -> "CorpusErrorAccumulator":
+    def add(self, reference: str, hypothesis: str) -> CorpusErrorAccumulator:
         ref_text = normalize_text(reference)
         hyp_text = normalize_text(hypothesis)
         ref_chars = list(ref_text)
@@ -65,12 +63,8 @@ class CorpusErrorAccumulator:
         ref_words = ref_text.split()
         hyp_words = hyp_text.split()
         return CorpusErrorAccumulator(
-            character_edits=(
-                self.character_edits + edit_distance(ref_chars, hyp_chars)
-            ),
-            reference_characters=(
-                self.reference_characters + len(ref_chars)
-            ),
+            character_edits=(self.character_edits + edit_distance(ref_chars, hyp_chars)),
+            reference_characters=(self.reference_characters + len(ref_chars)),
             word_edits=self.word_edits + edit_distance(ref_words, hyp_words),
             reference_words=self.reference_words + len(ref_words),
         )

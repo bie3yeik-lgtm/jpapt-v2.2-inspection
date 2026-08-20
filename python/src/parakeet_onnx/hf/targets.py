@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
 from typing import Any
 
 from parakeet_onnx.config.catalog import AsrCatalogError, load_repository_catalog
@@ -87,14 +87,9 @@ def load_hf_target(path: str | Path) -> HfTarget:
         catalog = load_repository_catalog(repository_root)
         profile_set = catalog.profile_set(profile_set_id)
         decoders = tuple(
-            dict.fromkeys(
-                catalog.decoder_profile(profile_id).decoder
-                for profile_id in profile_set.variants.values()
-            )
+            dict.fromkeys(catalog.decoder_profile(profile_id).decoder for profile_id in profile_set.variants.values())
         )
-        default_decoder = catalog.decoder_profile(
-            profile_set.profile_id_for()
-        ).decoder
+        default_decoder = catalog.decoder_profile(profile_set.profile_id_for()).decoder
     except AsrCatalogError as exc:
         raise HfTargetError(f"{resolved}: {exc}") from exc
 
@@ -102,24 +97,18 @@ def load_hf_target(path: str | Path) -> HfTarget:
         id=_require_string(target, "id", path=resolved),
         model_id=_require_string(target, "model_id", path=resolved),
         upstream_repo_id=_require_string(upstream, "repo_id", path=resolved),
-        canonical_framework=_require_string(
-            reference, "canonical_framework", path=resolved
-        ),
+        canonical_framework=_require_string(reference, "canonical_framework", path=resolved),
         profile_set_id=profile_set_id,
         supported_decoders=decoders,
         default_decoder=default_decoder,
         default_variant=profile_set.default_variant,
         bucket=_require_string(storage, "bucket", path=resolved),
         model_repo=_require_string(storage, "model_repo", path=resolved),
-        datasets_policy=_require_string(
-            evaluation, "datasets_policy", path=resolved
-        ),
+        datasets_policy=_require_string(evaluation, "datasets_policy", path=resolved),
         path=resolved,
     )
 
 
-def load_hf_target_by_id(
-    target_id: str, *, repository_root: str | Path
-) -> HfTarget:
+def load_hf_target_by_id(target_id: str, *, repository_root: str | Path) -> HfTarget:
     root = Path(repository_root).expanduser().resolve()
     return load_hf_target(root / "config" / "hf-targets" / f"{target_id}.toml")

@@ -16,9 +16,7 @@ def available_provider_names() -> tuple[str, ...]:
     try:
         import onnxruntime as ort
     except ImportError as exc:
-        raise ProviderResolutionError(
-            "onnxruntime is required for runtime provider inspection."
-        ) from exc
+        raise ProviderResolutionError("onnxruntime is required for runtime provider inspection.") from exc
     return tuple(ort.get_available_providers())
 
 
@@ -30,21 +28,13 @@ def resolve_provider_chain(
     try:
         requested = _PROVIDER_NAMES[provider_id]
     except KeyError as exc:
-        raise ProviderResolutionError(
-            f"unsupported provider id: {provider_id!r}"
-        ) from exc
+        raise ProviderResolutionError(f"unsupported provider id: {provider_id!r}") from exc
 
     available = set(available_provider_names())
     if requested not in available:
-        raise ProviderResolutionError(
-            f"{requested} is not available; available={sorted(available)!r}"
-        )
+        raise ProviderResolutionError(f"{requested} is not available; available={sorted(available)!r}")
 
     chain = [requested]
-    if (
-        allow_cpu_fallback
-        and requested != "CPUExecutionProvider"
-        and "CPUExecutionProvider" in available
-    ):
+    if allow_cpu_fallback and requested != "CPUExecutionProvider" and "CPUExecutionProvider" in available:
         chain.append("CPUExecutionProvider")
     return chain

@@ -3,17 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
+from pathlib import Path
 
 import numpy as np
 import onnx
 import onnxruntime as ort
-from scipy.signal import resample_poly
 import soundfile as sf
 import torch
 from huggingface_hub import HfApi, hf_hub_download
+from scipy.signal import resample_poly
 from transformers import AutoModelForCTC, AutoProcessor
 
 MODEL_ID = os.environ.get("CTC_MODEL_ID", "TKU410410103/wav2vec2-base-japanese-asr")
@@ -42,9 +42,7 @@ def require_commit_sha(name: str, value: str | None) -> str:
 
 api = HfApi()
 model_revision = require_commit_sha("model revision", api.model_info(MODEL_ID).sha)
-dataset_revision = require_commit_sha(
-    "dataset revision", api.dataset_info(DATASET_ID).sha
-)
+dataset_revision = require_commit_sha("dataset revision", api.dataset_info(DATASET_ID).sha)
 
 sample_path = Path(
     hf_hub_download(
@@ -115,9 +113,7 @@ ort_logits = session.run(
     {"input_values": input_values.cpu().numpy()},
 )[0]
 if ort_logits.shape != torch_logits.shape:
-    raise RuntimeError(
-        f"ONNX logits shape mismatch: torch={torch_logits.shape}, ort={ort_logits.shape}"
-    )
+    raise RuntimeError(f"ONNX logits shape mismatch: torch={torch_logits.shape}, ort={ort_logits.shape}")
 if not np.isfinite(ort_logits).all():
     raise RuntimeError("ONNX logits contain NaN or Inf")
 
@@ -128,9 +124,7 @@ ort_text = processor.batch_decode(ort_ids)[0].strip()
 if not ort_text:
     raise RuntimeError("ONNX CTC transcript is empty")
 if pt_text != ort_text:
-    raise RuntimeError(
-        f"PyTorch/ONNX transcript mismatch: torch={pt_text!r}, ort={ort_text!r}"
-    )
+    raise RuntimeError(f"PyTorch/ONNX transcript mismatch: torch={pt_text!r}, ort={ort_text!r}")
 
 blank_id = int(model.config.pad_token_id)
 raw_vocab = processor.tokenizer.get_vocab()

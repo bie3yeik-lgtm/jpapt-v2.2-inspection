@@ -10,9 +10,7 @@ from parakeet_onnx.audio.decode import decode_audio_file
 def test_decode_mono_float32(
     mono_wav_16k: Path,
 ) -> None:
-    decoded = decode_audio_file(
-        mono_wav_16k
-    )
+    decoded = decode_audio_file(mono_wav_16k)
 
     assert decoded.sample_rate_hz == 16_000
     assert decoded.channels == 1

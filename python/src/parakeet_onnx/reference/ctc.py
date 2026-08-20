@@ -22,8 +22,7 @@ def ctc_reference_logits(
     method = getattr(model, "ctc_logits_from_features", None)
     if method is None:
         raise RuntimeError(
-            "NeMo integration adapter is not installed: expected "
-            "ctc_logits_from_features(features, lengths)."
+            "NeMo integration adapter is not installed: expected ctc_logits_from_features(features, lengths)."
         )
     value = method(features.features, features.length)
     return np.asarray(value, dtype=np.float32)

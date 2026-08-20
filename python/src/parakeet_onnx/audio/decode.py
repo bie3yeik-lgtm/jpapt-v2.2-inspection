@@ -28,7 +28,6 @@ import numpy.typing as npt
 
 from parakeet_onnx.datasets import ResolvedDatasetSample
 
-
 Float32Array = npt.NDArray[np.float32]
 
 
@@ -67,44 +66,25 @@ class DecodedAudio:
         if self.sample_rate_hz <= 0:
             return 0.0
 
-        return (
-            float(self.num_samples)
-            / float(self.sample_rate_hz)
-        )
+        return float(self.num_samples) / float(self.sample_rate_hz)
 
     def validate(self) -> None:
         if self.sample_rate_hz <= 0:
-            raise AudioDecodeError(
-                "Decoded audio sample rate must be positive."
-            )
+            raise AudioDecodeError("Decoded audio sample rate must be positive.")
 
         if self.channels <= 0:
-            raise AudioDecodeError(
-                "Decoded audio channel count must be positive."
-            )
+            raise AudioDecodeError("Decoded audio channel count must be positive.")
 
         if self.waveform.dtype != np.float32:
-            raise AudioDecodeError(
-                "Decoded waveform must use float32."
-            )
+            raise AudioDecodeError("Decoded waveform must use float32.")
 
         if self.waveform.ndim not in (1, 2):
-            raise AudioDecodeError(
-                "Decoded waveform must have shape [samples] "
-                "or [samples, channels]."
-            )
+            raise AudioDecodeError("Decoded waveform must have shape [samples] or [samples, channels].")
 
         if self.waveform.shape[0] == 0:
-            raise AudioDecodeError(
-                "Decoded waveform is empty."
-            )
+            raise AudioDecodeError("Decoded waveform is empty.")
 
-        if self.waveform.ndim == 1:
-            actual_channels = 1
-        else:
-            actual_channels = int(
-                self.waveform.shape[1]
-            )
+        actual_channels = 1 if self.waveform.ndim == 1 else int(self.waveform.shape[1])
 
         if actual_channels != self.channels:
             raise AudioDecodeError(
@@ -113,12 +93,8 @@ class DecodedAudio:
                 f"metadata={self.channels}"
             )
 
-        if not np.all(
-            np.isfinite(self.waveform)
-        ):
-            raise AudioDecodeError(
-                "Decoded waveform contains NaN or infinity."
-            )
+        if not np.all(np.isfinite(self.waveform)):
+            raise AudioDecodeError("Decoded waveform contains NaN or infinity.")
 
 
 def _decode_with_soundfile(
@@ -135,9 +111,7 @@ def _decode_with_soundfile(
     try:
         import soundfile as sf
     except ImportError as exc:
-        raise AudioDecodeError(
-            "Audio decoding requires the 'soundfile' package."
-        ) from exc
+        raise AudioDecodeError("Audio decoding requires the 'soundfile' package.") from exc
 
     try:
         waveform, sample_rate = sf.read(
@@ -146,9 +120,7 @@ def _decode_with_soundfile(
             always_2d=True,
         )
     except Exception as exc:
-        raise AudioDecodeError(
-            f"Failed to decode audio file {path}: {exc}"
-        ) from exc
+        raise AudioDecodeError(f"Failed to decode audio file {path}: {exc}") from exc
 
     waveform = np.asarray(
         waveform,
@@ -156,9 +128,7 @@ def _decode_with_soundfile(
         order="C",
     )
 
-    channels = int(
-        waveform.shape[1]
-    )
+    channels = int(waveform.shape[1])
 
     # Keep mono in canonical one-dimensional representation.
     if channels == 1:
@@ -186,20 +156,12 @@ def decode_audio_file(
     be mono or 16 kHz.
     """
 
-    audio_path = (
-        Path(path)
-        .expanduser()
-        .resolve()
-    )
+    audio_path = Path(path).expanduser().resolve()
 
     if not audio_path.is_file():
-        raise AudioDecodeError(
-            f"Audio file does not exist: {audio_path}"
-        )
+        raise AudioDecodeError(f"Audio file does not exist: {audio_path}")
 
-    return _decode_with_soundfile(
-        audio_path
-    )
+    return _decode_with_soundfile(audio_path)
 
 
 def decode_audio_sample(
@@ -225,17 +187,11 @@ def decode_audio_sample(
             "Dataset materialization must occur before audio decoding."
         )
 
-    decoded = decode_audio_file(
-        sample.audio_path
-    )
+    decoded = decode_audio_file(sample.audio_path)
 
     # This is diagnostic rather than authoritative because the dataset
     # metadata may describe the original asset before materialization.
-    if (
-        sample.sample_rate_hz is not None
-        and decoded.sample_rate_hz
-        != sample.sample_rate_hz
-    ):
+    if sample.sample_rate_hz is not None and decoded.sample_rate_hz != sample.sample_rate_hz:
         raise AudioDecodeError(
             "Decoded sample rate disagrees with resolved dataset metadata: "
             f"sample={sample.id!r}, "

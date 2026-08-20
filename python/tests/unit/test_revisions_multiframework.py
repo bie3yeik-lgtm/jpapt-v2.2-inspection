@@ -8,7 +8,6 @@ import pytest
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.hf.revisions import RevisionError, load_revision_bundle
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SHA = "1" * 64
 

@@ -18,10 +18,7 @@ def export_tdt_candidate(
     paths = (root / "encoder.onnx", root / "predictor.onnx", root / "joint.onnx")
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
-        raise RuntimeError(
-            "TDT finalization requires encoder.onnx, predictor.onnx, and joint.onnx; "
-            f"missing={missing}"
-        )
+        raise RuntimeError(f"TDT finalization requires encoder.onnx, predictor.onnx, and joint.onnx; missing={missing}")
     finalize_candidate_variant(
         output_dir=root,
         profile_set=profile_set,

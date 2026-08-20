@@ -65,9 +65,7 @@ def resolve_request(
         payload = parse_payload(payload_json)
         repository = payload.get("repository", "")
         namespace = payload.get("hf_namespace", "")
-        private_bucket = strict_bool(
-            payload.get("private_bucket"), default=True, field="private_bucket"
-        )
+        private_bucket = strict_bool(payload.get("private_bucket"), default=True, field="private_bucket")
         write_repo_config = strict_bool(
             payload.get("write_repo_config"),
             default=True,
@@ -78,12 +76,8 @@ def resolve_request(
     elif event_name == "workflow_dispatch":
         repository = repository_input
         namespace = namespace_input
-        private_bucket = strict_bool(
-            private_input, default=True, field="private_bucket"
-        )
-        write_repo_config = strict_bool(
-            write_input, default=True, field="write_repo_config"
-        )
+        private_bucket = strict_bool(private_input, default=True, field="private_bucket")
+        write_repo_config = strict_bool(write_input, default=True, field="write_repo_config")
     else:
         raise ValueError(f"unsupported bootstrap event: {event_name}")
 

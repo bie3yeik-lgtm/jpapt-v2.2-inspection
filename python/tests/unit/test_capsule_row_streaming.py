@@ -59,10 +59,7 @@ def test_row_batches_are_bounded_and_lossless() -> None:
         "run_context": {"run_id": "run-001"},
         "samples": [],
         "benchmark": _benchmark(),
-        "diagnostics": [
-            CapsuleDiagnostic(name=f"diagnostic-{index}", category="runtime")
-            for index in range(5)
-        ],
+        "diagnostics": [CapsuleDiagnostic(name=f"diagnostic-{index}", category="runtime") for index in range(5)],
     }
 
     rows = list(iter_experiment_capsule_rows(**kwargs))

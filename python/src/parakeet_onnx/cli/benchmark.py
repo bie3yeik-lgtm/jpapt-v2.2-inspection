@@ -19,9 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    session = create_session(
-        OrtSessionConfig(model_path=args.model, provider_id=args.provider)
-    )
+    session = create_session(OrtSessionConfig(model_path=args.model, provider_id=args.provider))
     print("inputs:", input_metadata(session))
     print("providers:", session.get_providers())
     print(

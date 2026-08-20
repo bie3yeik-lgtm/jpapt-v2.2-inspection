@@ -18,9 +18,7 @@ def export_ctc_candidate(
     root.mkdir(parents=True, exist_ok=True)
     model_path = root / "model.onnx"
     if not model_path.is_file():
-        raise RuntimeError(
-            f"No exported model exists at {model_path}. Run the pinned export adapter first."
-        )
+        raise RuntimeError(f"No exported model exists at {model_path}. Run the pinned export adapter first.")
     finalize_candidate_variant(
         output_dir=root,
         profile_set=profile_set,

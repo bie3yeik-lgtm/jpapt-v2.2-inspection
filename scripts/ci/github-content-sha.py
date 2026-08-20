@@ -6,7 +6,9 @@ import json
 import os
 import re
 import sys
-from typing import Callable, ContextManager, Protocol
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -22,7 +24,7 @@ class Response(Protocol):
     def read(self) -> bytes: ...
 
 
-Opener = Callable[..., ContextManager[Response]]
+Opener = Callable[..., AbstractContextManager[Response]]
 
 
 def validate_repository(value: str) -> str:
@@ -38,10 +40,7 @@ def validate_content_path(value: str) -> str:
     if not value or value.startswith("/") or value.endswith("/") or "\\" in value:
         raise ValueError("content path must be a safe relative path")
     parts = value.split("/")
-    if any(
-        part in {"", ".", ".."} or not PATH_SEGMENT_RE.fullmatch(part)
-        for part in parts
-    ):
+    if any(part in {"", ".", ".."} or not PATH_SEGMENT_RE.fullmatch(part) for part in parts):
         raise ValueError("content path contains an unsafe path segment")
     return value
 
@@ -59,10 +58,7 @@ def build_url(api_url: str, repository: str, path: str, ref: str = "") -> str:
         ref = validate_ref(ref)
     owner, name = repository.split("/", 1)
     encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
-    url = (
-        f"{api_url.rstrip('/')}/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
-        f"/contents/{encoded_path}"
-    )
+    url = f"{api_url.rstrip('/')}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/contents/{encoded_path}"
     if ref:
         url = f"{url}?{urlencode({'ref': ref})}"
     return url
@@ -93,16 +89,12 @@ def fetch_content_sha(
     try:
         with opener(request, timeout=20) as response:
             if response.status != 200:
-                raise RuntimeError(
-                    f"GitHub Contents lookup returned unexpected HTTP {response.status}"
-                )
+                raise RuntimeError(f"GitHub Contents lookup returned unexpected HTTP {response.status}")
             raw = response.read()
     except HTTPError as error:
         if error.code == 404:
             return None
-        raise RuntimeError(
-            f"GitHub Contents lookup failed with HTTP {error.code}"
-        ) from error
+        raise RuntimeError(f"GitHub Contents lookup failed with HTTP {error.code}") from error
     except URLError as error:
         raise RuntimeError(f"GitHub Contents lookup transport failure: {error}") from error
 

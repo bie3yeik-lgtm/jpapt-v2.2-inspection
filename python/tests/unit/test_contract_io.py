@@ -8,7 +8,6 @@ from parakeet_onnx.contract_io import parse_run_context
 from parakeet_onnx.contracts import ContractError
 from parakeet_onnx.generated_candidate_io import parse_generated_candidate_contract
 
-
 SHA = "a" * 64
 
 
@@ -24,9 +23,7 @@ def _candidate() -> dict[str, object]:
         "artifact_contract": "ctc-single-graph-v1",
         "catalog": {"id": "asr-runtime-catalog-v1", "sha256": SHA},
         "bundle_sha256": SHA,
-        "artifacts": {
-            "primary": {"path": "model.onnx", "sha256": SHA, "size_bytes": 1}
-        },
+        "artifacts": {"primary": {"path": "model.onnx", "sha256": SHA, "size_bytes": 1}},
         "features": {},
         "runtime_contract": {
             "decoder": "ctc",

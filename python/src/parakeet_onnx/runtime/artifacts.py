@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -38,16 +39,12 @@ class CandidateArtifact:
     size_bytes: int
 
     @classmethod
-    def from_file(cls, *, role: str, path: Path) -> "CandidateArtifact":
+    def from_file(cls, *, role: str, path: Path) -> CandidateArtifact:
         if not path.is_file():
-            raise CandidateMetadataError(
-                f"candidate artifact for role {role!r} does not exist: {path}"
-            )
+            raise CandidateMetadataError(f"candidate artifact for role {role!r} does not exist: {path}")
         size_bytes = path.stat().st_size
         if size_bytes <= 0:
-            raise CandidateMetadataError(
-                f"candidate artifact for role {role!r} must not be empty: {path}"
-            )
+            raise CandidateMetadataError(f"candidate artifact for role {role!r} must not be empty: {path}")
         return cls(
             role=role,
             path=path,
@@ -57,9 +54,7 @@ class CandidateArtifact:
 
     def verify(self) -> None:
         if not self.path.is_file():
-            raise CandidateMetadataError(
-                f"candidate artifact for role {self.role!r} does not exist: {self.path}"
-            )
+            raise CandidateMetadataError(f"candidate artifact for role {self.role!r} does not exist: {self.path}")
         if self.path.stat().st_size != self.size_bytes:
             raise CandidateMetadataError(
                 f"candidate artifact size changed for role {self.role!r}: "
@@ -68,8 +63,7 @@ class CandidateArtifact:
         actual = _sha256_file(self.path)
         if actual.lower() != self.sha256.lower():
             raise CandidateMetadataError(
-                f"candidate artifact SHA-256 changed for role {self.role!r}: "
-                f"expected={self.sha256}, actual={actual}"
+                f"candidate artifact SHA-256 changed for role {self.role!r}: expected={self.sha256}, actual={actual}"
             )
 
 
@@ -107,7 +101,7 @@ class CandidateArtifacts:
         verify_artifacts: bool = True,
         repository_root: str | Path | None = None,
         catalog: AsrCatalog | None = None,
-    ) -> "CandidateArtifacts":
+    ) -> CandidateArtifacts:
         root = Path(candidate_dir).expanduser().resolve()
         metadata_path = root / "metadata.json"
         if not metadata_path.is_file():
@@ -116,9 +110,7 @@ class CandidateArtifacts:
         try:
             raw = json.loads(metadata_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise CandidateMetadataError(
-                f"candidate metadata is not valid JSON: {metadata_path}: {exc}"
-            ) from exc
+            raise CandidateMetadataError(f"candidate metadata is not valid JSON: {metadata_path}: {exc}") from exc
         if not isinstance(raw, dict):
             raise CandidateMetadataError("candidate metadata root must be an object")
 
@@ -145,8 +137,7 @@ class CandidateArtifacts:
         unknown_variants = sorted(set(variants_raw) - set(profile_set.variants))
         if unknown_variants:
             raise CandidateMetadataError(
-                f"candidate contains variants not defined by profile set "
-                f"{profile_set_id!r}: {unknown_variants}"
+                f"candidate contains variants not defined by profile set {profile_set_id!r}: {unknown_variants}"
             )
         selected_variant = variant or profile_set.default_variant
         if selected_variant not in profile_set.variants:
@@ -209,8 +200,7 @@ class CandidateArtifacts:
             return self.artifacts[role]
         except KeyError as exc:
             raise CandidateMetadataError(
-                f"candidate artifact role {role!r} is not defined; "
-                f"available={sorted(self.artifacts)}"
+                f"candidate artifact role {role!r} is not defined; available={sorted(self.artifacts)}"
             ) from exc
 
     @property
@@ -221,9 +211,7 @@ class CandidateArtifacts:
             return next(iter(self.artifacts.values()))
         if "encoder" in self.artifacts:
             return self.artifacts["encoder"]
-        raise CandidateMetadataError(
-            "candidate has multiple artifacts and no primary/encoder role"
-        )
+        raise CandidateMetadataError("candidate has multiple artifacts and no primary/encoder role")
 
     @property
     def bundle_sha256(self) -> str:
@@ -231,7 +219,7 @@ class CandidateArtifacts:
         for role in sorted(self.artifacts):
             artifact = self.artifacts[role]
             relative = artifact.path.relative_to(self.root).as_posix()
-            digest.update(f"{role}\0{relative}\0{artifact.sha256}\n".encode("utf-8"))
+            digest.update(f"{role}\0{relative}\0{artifact.sha256}\n".encode())
         return digest.hexdigest()
 
     def generated_contract(self) -> GeneratedCandidateContract:
@@ -305,9 +293,7 @@ def _validate_metadata_schema(raw: Mapping[str, Any], repository_root: Path) -> 
     if errors:
         first = errors[0]
         location = ".".join(str(item) for item in first.absolute_path) or "$"
-        raise CandidateMetadataError(
-            f"candidate metadata schema violation at {location}: {first.message}"
-        )
+        raise CandidateMetadataError(f"candidate metadata schema violation at {location}: {first.message}")
 
 
 def _load_artifacts(root: Path, raw: object) -> dict[str, CandidateArtifact]:
@@ -324,9 +310,7 @@ def _load_artifacts(root: Path, raw: object) -> dict[str, CandidateArtifact]:
     return artifacts
 
 
-def _validate_artifact_roles(
-    profile: DecoderProfile, artifacts: Mapping[str, CandidateArtifact]
-) -> None:
+def _validate_artifact_roles(profile: DecoderProfile, artifacts: Mapping[str, CandidateArtifact]) -> None:
     missing = sorted(set(profile.required_artifact_roles) - set(artifacts))
     if missing:
         raise CandidateMetadataError(
@@ -340,9 +324,7 @@ def _validate_artifact_roles(
         )
 
 
-def _load_tokenizer(
-    root: Path, raw: object, profile: DecoderProfile
-) -> CandidateTokenizer | None:
+def _load_tokenizer(root: Path, raw: object, profile: DecoderProfile) -> CandidateTokenizer | None:
     explicit: Path | None = None
     if raw is not None:
         if not isinstance(raw, str) or not raw.strip():
@@ -379,7 +361,11 @@ def _discover_tokenizer(root: Path, kind: str) -> Path | None:
             path = (root / relative).resolve()
             if path.is_dir() and any(
                 (path / name).is_file()
-                for name in ("preprocessor_config.json", "tokenizer_config.json", "config.json")
+                for name in (
+                    "preprocessor_config.json",
+                    "tokenizer_config.json",
+                    "config.json",
+                )
             ):
                 return path
         return None
@@ -417,9 +403,7 @@ def _under_root(root: Path, relative: str) -> Path:
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise CandidateMetadataError(
-            f"candidate metadata path escapes candidate root: {relative!r}"
-        ) from exc
+        raise CandidateMetadataError(f"candidate metadata path escapes candidate root: {relative!r}") from exc
     return path
 
 
@@ -439,6 +423,4 @@ def _discover_repository_root(start: Path) -> Path:
     for parent in (cwd, *cwd.parents):
         if (parent / "config" / "asr-catalog.json").is_file():
             return parent
-    raise CandidateMetadataError(
-        "could not locate config/asr-catalog.json; pass repository_root explicitly"
-    )
+    raise CandidateMetadataError("could not locate config/asr-catalog.json; pass repository_root explicitly")

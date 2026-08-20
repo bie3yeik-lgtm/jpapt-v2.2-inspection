@@ -5,7 +5,11 @@ import argparse
 from pathlib import Path
 
 from parakeet_onnx.config import resolve_config
-from parakeet_onnx.datasets import DatasetMaterializer, DatasetResolver, HuggingFaceDatasetBackend
+from parakeet_onnx.datasets import (
+    DatasetMaterializer,
+    DatasetResolver,
+    HuggingFaceDatasetBackend,
+)
 from parakeet_onnx.hf.revisions import load_revision_bundle
 
 
@@ -22,7 +26,12 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
-    config = resolve_config(model=args.model_config, provider=args.provider, evaluation=args.evaluation, environment=args.environment)
+    config = resolve_config(
+        model=args.model_config,
+        provider=args.provider,
+        evaluation=args.evaluation,
+        environment=args.environment,
+    )
     revisions = load_revision_bundle(args.revisions)
     materializer_root = Path(str(config.environment.get("path.materialized_audio_cache", ".cache/evaluation/audio")))
     if not materializer_root.is_absolute():
@@ -36,7 +45,10 @@ def main() -> int:
         materializer=DatasetMaterializer(materializer_root),
         repository_root=config.repository_root,
     )
-    resolved = resolver.resolve(config.manifest_path, expected_sample_count=config.evaluation.expected_sample_count)
+    resolved = resolver.resolve(
+        config.manifest_path,
+        expected_sample_count=config.evaluation.expected_sample_count,
+    )
     resolved.write_json(args.output)
     print(f"resolved_manifest={args.output}")
     print(f"samples={resolved.resolved_sample_count}")

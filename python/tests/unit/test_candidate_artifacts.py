@@ -4,12 +4,11 @@ import json
 from pathlib import Path
 
 import onnx
-from onnx import TensorProto, helper
 import pytest
+from onnx import TensorProto, helper
 
 from parakeet_onnx.config.catalog import load_repository_catalog
 from parakeet_onnx.runtime.artifacts import CandidateArtifacts, CandidateMetadataError
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -25,9 +24,7 @@ def _write_ctc_model(path: Path) -> None:
 
 def _write_minimal_candidate(root: Path) -> None:
     _write_ctc_model(root / "model.onnx")
-    (root / "vocabulary.json").write_text(
-        json.dumps(["a", "b", "<blank>"]) + "\n", encoding="utf-8"
-    )
+    (root / "vocabulary.json").write_text(json.dumps(["a", "b", "<blank>"]) + "\n", encoding="utf-8")
     (root / "metadata.json").write_text(
         json.dumps(
             {
@@ -86,7 +83,9 @@ def test_conventional_vocabulary_path_can_be_omitted(tmp_path: Path) -> None:
     assert candidate.tokenizer.path == tmp_path / "vocabulary.json"
 
 
-def test_verbose_generated_fields_are_rejected_from_human_metadata(tmp_path: Path) -> None:
+def test_verbose_generated_fields_are_rejected_from_human_metadata(
+    tmp_path: Path,
+) -> None:
     _write_minimal_candidate(tmp_path)
     path = tmp_path / "metadata.json"
     value = json.loads(path.read_text(encoding="utf-8"))

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from parakeet_onnx.contracts import (
     ArtifactIdentity,
@@ -120,9 +121,7 @@ def parse_revision_snapshot(value: Any) -> RevisionSnapshot:
         },
     )
 
-    evaluation_raw = _object(
-        raw["evaluation_schema"], name="revisions.evaluation_schema"
-    )
+    evaluation_raw = _object(raw["evaluation_schema"], name="revisions.evaluation_schema")
     _exact(
         evaluation_raw,
         name="revisions.evaluation_schema",
@@ -145,7 +144,15 @@ def parse_revision_snapshot(value: Any) -> RevisionSnapshot:
         _exact(
             entry_raw,
             name=name,
-            required={"id", "repo_id", "revision", "subset", "split", "sha256", "manifest"},
+            required={
+                "id",
+                "repo_id",
+                "revision",
+                "subset",
+                "split",
+                "sha256",
+                "manifest",
+            },
         )
         entries.append(
             DatasetRevisionEntry(
@@ -163,40 +170,24 @@ def parse_revision_snapshot(value: Any) -> RevisionSnapshot:
         config_version=_string(raw, "config_version", name="revisions"),
         bundle_sha256=_string(raw, "bundle_sha256", name="revisions"),
         runtime=RuntimeRevisionSnapshot(
-            document_sha256=_string(
-                runtime_raw, "document_sha256", name="revisions.runtime"
-            ),
+            document_sha256=_string(runtime_raw, "document_sha256", name="revisions.runtime"),
             catalog=CatalogReference(
                 id=_string(catalog_raw, "id", name="revisions.runtime.catalog"),
-                sha256=_string(
-                    catalog_raw, "sha256", name="revisions.runtime.catalog"
-                ),
+                sha256=_string(catalog_raw, "sha256", name="revisions.runtime.catalog"),
             ),
             profile_set=_string(runtime_raw, "profile_set", name="revisions.runtime"),
         ),
         reference=ReferenceRevisionSnapshot(
-            document_sha256=_string(
-                reference_raw, "document_sha256", name="revisions.reference"
-            ),
+            document_sha256=_string(reference_raw, "document_sha256", name="revisions.reference"),
             development_artifact=_repo_revision(
                 reference_raw["development_artifact"],
                 name="revisions.reference.development_artifact",
             ),
-            upstream=_repo_revision(
-                reference_raw["upstream"], name="revisions.reference.upstream"
-            ),
-            tokenizer=_repo_revision(
-                reference_raw["tokenizer"], name="revisions.reference.tokenizer"
-            ),
-            reference_id=_string(
-                reference_raw, "reference_id", name="revisions.reference"
-            ),
-            reference_revision=_string(
-                reference_raw, "reference_revision", name="revisions.reference"
-            ),
-            canonical_framework=_string(
-                reference_raw, "canonical_framework", name="revisions.reference"
-            ),
+            upstream=_repo_revision(reference_raw["upstream"], name="revisions.reference.upstream"),
+            tokenizer=_repo_revision(reference_raw["tokenizer"], name="revisions.reference.tokenizer"),
+            reference_id=_string(reference_raw, "reference_id", name="revisions.reference"),
+            reference_revision=_string(reference_raw, "reference_revision", name="revisions.reference"),
+            canonical_framework=_string(reference_raw, "canonical_framework", name="revisions.reference"),
         ),
         evaluation_schema=EvaluationSchemaRevisionSnapshot(
             document_sha256=_string(
@@ -204,9 +195,7 @@ def parse_revision_snapshot(value: Any) -> RevisionSnapshot:
                 "document_sha256",
                 name="revisions.evaluation_schema",
             ),
-            schema_id=_string(
-                evaluation_raw, "schema_id", name="revisions.evaluation_schema"
-            ),
+            schema_id=_string(evaluation_raw, "schema_id", name="revisions.evaluation_schema"),
             schema_revision=_string(
                 evaluation_raw,
                 "schema_revision",
@@ -214,9 +203,7 @@ def parse_revision_snapshot(value: Any) -> RevisionSnapshot:
             ),
         ),
         datasets=DatasetsRevisionSnapshot(
-            document_sha256=_string(
-                datasets_raw, "document_sha256", name="revisions.datasets"
-            ),
+            document_sha256=_string(datasets_raw, "document_sha256", name="revisions.datasets"),
             entries=tuple(entries),
         ),
     )
@@ -321,15 +308,9 @@ def parse_run_context(value: Any) -> RunContext:
         artifact=ArtifactIdentity(
             path=_string(artifact_raw, "path", name="run-context.artifact"),
             sha256=_string(artifact_raw, "sha256", name="run-context.artifact"),
-            size_bytes=_positive_int(
-                artifact_raw, "size_bytes", name="run-context.artifact"
-            ),
-            candidate_id=_string(
-                artifact_raw, "candidate_id", name="run-context.artifact"
-            ),
-            artifact_role=_string(
-                artifact_raw, "artifact_role", name="run-context.artifact"
-            ),
+            size_bytes=_positive_int(artifact_raw, "size_bytes", name="run-context.artifact"),
+            candidate_id=_string(artifact_raw, "candidate_id", name="run-context.artifact"),
+            artifact_role=_string(artifact_raw, "artifact_role", name="run-context.artifact"),
         ),
         git=GitIdentity(
             repository=_string(git_raw, "repository", name="run-context.git"),
@@ -339,47 +320,23 @@ def parse_run_context(value: Any) -> RunContext:
         ),
         host=HostIdentity(
             os=_string(host_raw, "os", name="run-context.host"),
-            architecture=_string(
-                host_raw, "architecture", name="run-context.host"
-            ),
+            architecture=_string(host_raw, "architecture", name="run-context.host"),
             hostname=_string(host_raw, "hostname", name="run-context.host"),
-            python_version=_string(
-                host_raw, "python_version", name="run-context.host"
-            ),
-            implementation=_string(
-                host_raw, "implementation", name="run-context.host"
-            ),
+            python_version=_string(host_raw, "python_version", name="run-context.host"),
+            implementation=_string(host_raw, "implementation", name="run-context.host"),
             is_wsl=_boolean(host_raw, "is_wsl", name="run-context.host"),
-            github_runner_os=_string(
-                host_raw, "github_runner_os", name="run-context.host"
-            ),
-            github_runner_arch=_string(
-                host_raw, "github_runner_arch", name="run-context.host"
-            ),
-            github_run_id=_string(
-                host_raw, "github_run_id", name="run-context.host"
-            ),
-            github_run_attempt=_string(
-                host_raw, "github_run_attempt", name="run-context.host"
-            ),
+            github_runner_os=_string(host_raw, "github_runner_os", name="run-context.host"),
+            github_runner_arch=_string(host_raw, "github_runner_arch", name="run-context.host"),
+            github_run_id=_string(host_raw, "github_run_id", name="run-context.host"),
+            github_run_attempt=_string(host_raw, "github_run_attempt", name="run-context.host"),
         ),
         runtime=RuntimeIdentity(
-            implementation=_string(
-                runtime_raw, "implementation", name="run-context.runtime"
-            ),
+            implementation=_string(runtime_raw, "implementation", name="run-context.runtime"),
             backend=_string(runtime_raw, "backend", name="run-context.runtime"),
-            backend_version=_string(
-                runtime_raw, "backend_version", name="run-context.runtime"
-            ),
-            provider_id=_string(
-                runtime_raw, "provider_id", name="run-context.runtime"
-            ),
-            provider_ort_name=_string(
-                runtime_raw, "provider_ort_name", name="run-context.runtime"
-            ),
-            provider_available=_boolean(
-                runtime_raw, "provider_available", name="run-context.runtime"
-            ),
+            backend_version=_string(runtime_raw, "backend_version", name="run-context.runtime"),
+            provider_id=_string(runtime_raw, "provider_id", name="run-context.runtime"),
+            provider_ort_name=_string(runtime_raw, "provider_ort_name", name="run-context.runtime"),
+            provider_available=_boolean(runtime_raw, "provider_available", name="run-context.runtime"),
         ),
         revisions=parse_revision_snapshot(raw["revisions"]),
         config=ConfigSnapshot(

@@ -16,9 +16,7 @@ def test_calculates_corpus_rtf_and_rtfx() -> None:
     ("audio_duration_sec", "processing_duration_sec"),
     [(0.0, 1.0), (float("nan"), 1.0), (1.0, 0.0), (1.0, float("inf"))],
 )
-def test_rejects_invalid_measurements(
-    audio_duration_sec: float, processing_duration_sec: float
-) -> None:
+def test_rejects_invalid_measurements(audio_duration_sec: float, processing_duration_sec: float) -> None:
     with pytest.raises(ValueError):
         calculate_rtf(
             audio_duration_sec=audio_duration_sec,

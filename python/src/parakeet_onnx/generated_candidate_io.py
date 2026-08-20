@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from parakeet_onnx.contracts import (
     ContractError,
@@ -125,9 +126,7 @@ def parse_generated_candidate_contract(value: Any) -> GeneratedCandidateContract
             raise ContractError(f"metadata.candidate.features.{key} must be boolean")
         features[key] = item
 
-    runtime_raw = _object(
-        raw["runtime_contract"], name="metadata.candidate.runtime_contract"
-    )
+    runtime_raw = _object(raw["runtime_contract"], name="metadata.candidate.runtime_contract")
     _exact(
         runtime_raw,
         name="metadata.candidate.runtime_contract",
@@ -147,14 +146,10 @@ def parse_generated_candidate_contract(value: Any) -> GeneratedCandidateContract
         variant=_string(raw, "variant", name="metadata.candidate"),
         profile=_string(raw, "profile", name="metadata.candidate"),
         decoder=_string(raw, "decoder", name="metadata.candidate"),
-        artifact_contract=_string(
-            raw, "artifact_contract", name="metadata.candidate"
-        ),
+        artifact_contract=_string(raw, "artifact_contract", name="metadata.candidate"),
         catalog=GeneratedCatalog(
             id=_string(catalog_raw, "id", name="metadata.candidate.catalog"),
-            sha256=_string(
-                catalog_raw, "sha256", name="metadata.candidate.catalog"
-            ),
+            sha256=_string(catalog_raw, "sha256", name="metadata.candidate.catalog"),
         ),
         bundle_sha256=_string(raw, "bundle_sha256", name="metadata.candidate"),
         artifacts=artifacts,

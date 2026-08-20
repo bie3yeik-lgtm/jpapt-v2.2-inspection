@@ -57,14 +57,16 @@ def main() -> int:
 
         merged = np.concatenate([np.asarray(part, dtype=np.float32) for part in pending_audio])
         sf.write(path, merged, 16_000, subtype="PCM_16")
-        records.append({
-            "dataset_id": args.dataset_id,
-            "dataset_revision": args.revision,
-            "audio_path": str(path.resolve()),
-            "audio_duration_sec": pending_duration,
-            "text": " ".join(pending_text),
-            "audio_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        })
+        records.append(
+            {
+                "dataset_id": args.dataset_id,
+                "dataset_revision": args.revision,
+                "audio_path": str(path.resolve()),
+                "audio_duration_sec": pending_duration,
+                "text": " ".join(pending_text),
+                "audio_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
         pending_audio, pending_text, pending_duration = [], [], 0.0
 
     for index in candidates:

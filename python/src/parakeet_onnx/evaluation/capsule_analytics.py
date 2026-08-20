@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
 
 from .capsule_reader import ExperimentCapsuleError
 from .parquet import EXPERIMENT_CAPSULE_SCHEMA_VERSION
@@ -33,7 +33,10 @@ class CapsuleMetricComparison:
         available = [(run_id, value) for run_id, value in self.values if value is not None]
         if not available:
             return None
-        key = lambda item: item[1]
+
+        def key(item):
+            return item[1]
+
         return min(available, key=key) if lower_is_better else max(available, key=key)
 
 
@@ -67,11 +70,7 @@ def rank_rtf_services(
         candidate = getattr(record, metric)
         return candidate if candidate is not None else None
 
-    ranked = [
-        record
-        for record in materialized
-        if record.status == "completed" and value(record) is not None
-    ]
+    ranked = [record for record in materialized if record.status == "completed" and value(record) is not None]
     return tuple(
         sorted(
             ranked,
@@ -85,8 +84,7 @@ def _pyarrow_parquet() -> object:
         import pyarrow.parquet as pq
     except ImportError as exc:  # pragma: no cover - environment contract failure
         raise RuntimeError(
-            "Capsule analytics requires pyarrow from the project's locked "
-            "'datasets' optional dependency."
+            "Capsule analytics requires pyarrow from the project's locked 'datasets' optional dependency."
         ) from exc
     return pq
 
@@ -110,9 +108,7 @@ def summarize_experiment_capsule(path: str | Path) -> CapsuleRunSummary:
     schema_version = _decode_metadata(metadata, b"jpapt.capsule.schema")
     run_id_from_metadata = _decode_metadata(metadata, b"jpapt.run_id")
     if schema_version is not None and schema_version != EXPERIMENT_CAPSULE_SCHEMA_VERSION:
-        raise ExperimentCapsuleError(
-            f"unsupported capsule schema metadata: {schema_version!r}"
-        )
+        raise ExperimentCapsuleError(f"unsupported capsule schema metadata: {schema_version!r}")
 
     table = parquet_file.read(
         columns=[
@@ -129,14 +125,10 @@ def summarize_experiment_capsule(path: str | Path) -> CapsuleRunSummary:
 
     run_ids = {row["run_id"] for row in values if row.get("run_id")}
     if len(run_ids) != 1:
-        raise ExperimentCapsuleError(
-            f"capsule contains multiple run IDs: {sorted(run_ids)}"
-        )
+        raise ExperimentCapsuleError(f"capsule contains multiple run IDs: {sorted(run_ids)}")
     run_id = str(next(iter(run_ids)))
     if run_id_from_metadata is not None and run_id_from_metadata != run_id:
-        raise ExperimentCapsuleError(
-            "Parquet file metadata run ID does not match analytical rows"
-        )
+        raise ExperimentCapsuleError("Parquet file metadata run ID does not match analytical rows")
 
     sample_count = 0
     diagnostic_count = 0
@@ -182,9 +174,7 @@ def summarize_experiment_capsules(
     for path in paths:
         summary = summarize_experiment_capsule(path)
         if summary.run_id in run_ids:
-            raise ExperimentCapsuleError(
-                f"duplicate run_id across capsule set: {summary.run_id}"
-            )
+            raise ExperimentCapsuleError(f"duplicate run_id across capsule set: {summary.run_id}")
         run_ids.add(summary.run_id)
         summaries.append(summary)
     return tuple(summaries)

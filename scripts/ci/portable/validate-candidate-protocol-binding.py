@@ -33,10 +33,7 @@ def validate_receiver_binding(
     if orchestrator == receiver_repository:
         return
     if not allowed:
-        raise SystemExit(
-            f"external {label} orchestrator is not allowed: configure "
-            "JPAPT_ORCHESTRATOR_REPOSITORIES"
-        )
+        raise SystemExit(f"external {label} orchestrator is not allowed: configure JPAPT_ORCHESTRATOR_REPOSITORIES")
     if orchestrator not in allowed:
         raise SystemExit(f"{label} orchestrator_repository is not allowlisted: {orchestrator}")
 

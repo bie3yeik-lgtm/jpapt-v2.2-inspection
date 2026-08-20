@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 import numpy as np
-
 
 StateT = TypeVar("StateT")
 
@@ -32,7 +32,7 @@ class TdtDecodeResult:
     durations: list[int]
 
 
-def greedy_tdt_decode(
+def greedy_tdt_decode[StateT](
     encoder_frames: np.ndarray,
     *,
     config: TdtDecoderConfig,

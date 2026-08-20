@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import compileall
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -17,11 +17,14 @@ def main() -> int:
     ok = True
     for path in paths:
         if path.exists():
-            ok = compileall.compile_dir(
-                str(path),
-                quiet=1,
-                force=True,
-            ) and ok
+            ok = (
+                compileall.compile_dir(
+                    str(path),
+                    quiet=1,
+                    force=True,
+                )
+                and ok
+            )
 
     resolver = root / "python/src/parakeet_onnx/datasets/resolver.py"
     text = resolver.read_text(encoding="utf-8")

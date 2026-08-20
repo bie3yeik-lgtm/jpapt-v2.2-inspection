@@ -26,19 +26,13 @@ def test_materialized_dataset_audio_to_canonical_waveform(
         audio_path=str(stereo_wav_48k),
     )
 
-    materialized = DatasetMaterializer(
-        tmp_path / ".cache" / "evaluation" / "audio"
-    ).materialize(
+    materialized = DatasetMaterializer(tmp_path / ".cache" / "evaluation" / "audio").materialize(
         record=record,
         dataset_revision="dataset-revision-a",
     )
 
-    decoded = decode_audio_file(
-        materialized.path
-    )
-    canonical = to_canonical_audio(
-        decoded
-    )
+    decoded = decode_audio_file(materialized.path)
+    canonical = to_canonical_audio(decoded)
 
     assert canonical.sample_rate_hz == 16_000
     assert canonical.waveform.dtype == np.float32

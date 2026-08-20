@@ -49,7 +49,10 @@ def main() -> int:
     p.add_argument(
         "--allow-provider-fallback",
         action="store_true",
-        help="Allow CPU fallback when the requested provider is unavailable or cannot execute the graph. Disabled by default.",
+        help=(
+            "Allow CPU fallback when the requested provider is unavailable or "
+            "cannot execute the graph. Disabled by default."
+        ),
     )
     args = p.parse_args()
 
@@ -174,7 +177,11 @@ def main() -> int:
             )
         else:
             report["cases"].append(
-                {"case": None, "passed": True, "note": "structural smoke: no .npz case supplied"}
+                {
+                    "case": None,
+                    "passed": True,
+                    "note": "structural smoke: no .npz case supplied",
+                }
             )
     else:
         if not cases:
@@ -189,11 +196,15 @@ def main() -> int:
             if not inputs or not expected:
                 report["passed"] = False
                 report["cases"].append(
-                    {"case": str(case), "passed": False, "reason": "parity case requires input__* and output__*"}
+                    {
+                        "case": str(case),
+                        "passed": False,
+                        "reason": "parity case requires input__* and output__*",
+                    }
                 )
                 continue
             actual_values = sess.run(output_names, inputs)
-            actual = dict(zip(output_names, actual_values))
+            actual = dict(zip(output_names, actual_values, strict=False))
             checks = []
             passed = True
             for name, exp in expected.items():
@@ -201,7 +212,15 @@ def main() -> int:
                     checks.append({"output": name, "passed": False, "reason": "missing output"})
                     passed = False
                     continue
-                ok = bool(np.allclose(actual[name], exp, atol=args.atol, rtol=args.rtol, equal_nan=True))
+                ok = bool(
+                    np.allclose(
+                        actual[name],
+                        exp,
+                        atol=args.atol,
+                        rtol=args.rtol,
+                        equal_nan=True,
+                    )
+                )
                 max_abs = float(np.max(np.abs(actual[name] - exp))) if actual[name].size else 0.0
                 checks.append({"output": name, "passed": ok, "max_abs": max_abs})
                 passed &= ok

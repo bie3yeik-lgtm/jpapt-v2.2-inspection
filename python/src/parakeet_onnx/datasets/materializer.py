@@ -70,17 +70,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
-from pathlib import Path
 import shutil
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
 from .errors import DatasetResolutionError
 from .models import DatasetRecord
-
 
 MaterializationSource = Literal[
     "local_file",
@@ -89,9 +88,7 @@ MaterializationSource = Literal[
 ]
 
 
-class DatasetMaterializationError(
-    DatasetResolutionError
-):
+class DatasetMaterializationError(DatasetResolutionError):
     """
     Raised when a selected dataset record cannot be converted into a
     durable local audio asset.
@@ -127,28 +124,18 @@ class MaterializedAudio:
 
     def validate(self) -> None:
         if not self.path.is_file():
-            raise DatasetMaterializationError(
-                "Materialized audio asset does not exist: "
-                f"{self.path}"
-            )
+            raise DatasetMaterializationError(f"Materialized audio asset does not exist: {self.path}")
 
         if self.size_bytes <= 0:
-            raise DatasetMaterializationError(
-                "Materialized audio asset is empty: "
-                f"{self.path}"
-            )
+            raise DatasetMaterializationError(f"Materialized audio asset is empty: {self.path}")
 
         if len(self.sha256) != 64:
-            raise DatasetMaterializationError(
-                "Materialized audio SHA-256 is invalid."
-            )
+            raise DatasetMaterializationError("Materialized audio SHA-256 is invalid.")
 
         try:
             int(self.sha256, 16)
         except ValueError as exc:
-            raise DatasetMaterializationError(
-                "Materialized audio SHA-256 is not hexadecimal."
-            ) from exc
+            raise DatasetMaterializationError("Materialized audio SHA-256 is not hexadecimal.") from exc
 
 
 def _sha256_file(
@@ -160,9 +147,7 @@ def _sha256_file(
 
     with path.open("rb") as file:
         while True:
-            chunk = file.read(
-                chunk_size
-            )
+            chunk = file.read(chunk_size)
 
             if not chunk:
                 break
@@ -175,9 +160,7 @@ def _sha256_file(
 def _sha256_bytes(
     value: bytes,
 ) -> str:
-    return hashlib.sha256(
-        value
-    ).hexdigest()
+    return hashlib.sha256(value).hexdigest()
 
 
 def _materialization_key(
@@ -199,24 +182,14 @@ def _materialization_key(
     """
 
     if not dataset_revision:
-        raise DatasetMaterializationError(
-            "dataset_revision must not be empty."
-        )
+        raise DatasetMaterializationError("dataset_revision must not be empty.")
 
     if not source_identity:
-        raise DatasetMaterializationError(
-            "source_identity must not be empty."
-        )
+        raise DatasetMaterializationError("source_identity must not be empty.")
 
-    value = (
-        "parakeet-onnx-materialized-audio-v1\n"
-        f"{dataset_revision}\n"
-        f"{source_identity}"
-    ).encode("utf-8")
+    value = (f"parakeet-onnx-materialized-audio-v1\n{dataset_revision}\n{source_identity}").encode()
 
-    return hashlib.sha256(
-        value
-    ).hexdigest()
+    return hashlib.sha256(value).hexdigest()
 
 
 def _safe_suffix(
@@ -232,9 +205,7 @@ def _safe_suffix(
     if path is None:
         return ".audio"
 
-    suffix = Path(
-        str(path)
-    ).suffix.lower()
+    suffix = Path(str(path)).suffix.lower()
 
     supported = {
         ".wav",
@@ -265,23 +236,15 @@ def _atomic_copy(
         exist_ok=True,
     )
 
-    file_descriptor, temporary_name = (
-        tempfile.mkstemp(
-            prefix=(
-                f".{destination.name}."
-            ),
-            suffix=".tmp",
-            dir=destination.parent,
-        )
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=(f".{destination.name}."),
+        suffix=".tmp",
+        dir=destination.parent,
     )
 
-    os.close(
-        file_descriptor
-    )
+    os.close(file_descriptor)
 
-    temporary = Path(
-        temporary_name
-    )
+    temporary = Path(temporary_name)
 
     try:
         shutil.copyfile(
@@ -290,12 +253,8 @@ def _atomic_copy(
         )
 
         # Force file contents to durable storage before replace.
-        with temporary.open(
-            "rb"
-        ) as file:
-            os.fsync(
-                file.fileno()
-            )
+        with temporary.open("rb") as file:
+            os.fsync(file.fileno())
 
         os.replace(
             temporary,
@@ -316,34 +275,24 @@ def _atomic_write_bytes(
         exist_ok=True,
     )
 
-    file_descriptor, temporary_name = (
-        tempfile.mkstemp(
-            prefix=(
-                f".{destination.name}."
-            ),
-            suffix=".tmp",
-            dir=destination.parent,
-        )
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=(f".{destination.name}."),
+        suffix=".tmp",
+        dir=destination.parent,
     )
 
-    temporary = Path(
-        temporary_name
-    )
+    temporary = Path(temporary_name)
 
     try:
         with os.fdopen(
             file_descriptor,
             "wb",
         ) as file:
-            file.write(
-                value
-            )
+            file.write(value)
 
             file.flush()
 
-            os.fsync(
-                file.fileno()
-            )
+            os.fsync(file.fileno())
 
         os.replace(
             temporary,
@@ -372,10 +321,7 @@ def _write_float_wav(
     """
 
     if sample_rate_hz <= 0:
-        raise DatasetMaterializationError(
-            "Cannot materialize decoded audio without "
-            "a valid sample rate."
-        )
+        raise DatasetMaterializationError("Cannot materialize decoded audio without a valid sample rate.")
 
     value = np.asarray(
         waveform,
@@ -392,16 +338,10 @@ def _write_float_wav(
         )
 
     if value.size == 0:
-        raise DatasetMaterializationError(
-            "Cannot materialize an empty decoded audio array."
-        )
+        raise DatasetMaterializationError("Cannot materialize an empty decoded audio array.")
 
-    if not np.all(
-        np.isfinite(value)
-    ):
-        raise DatasetMaterializationError(
-            "Cannot materialize audio containing NaN or infinity."
-        )
+    if not np.all(np.isfinite(value)):
+        raise DatasetMaterializationError("Cannot materialize audio containing NaN or infinity.")
 
     value = np.ascontiguousarray(
         value,
@@ -412,8 +352,7 @@ def _write_float_wav(
         import soundfile as sf
     except ImportError as exc:
         raise DatasetMaterializationError(
-            "Materializing decoded audio arrays requires "
-            "the 'soundfile' package."
+            "Materializing decoded audio arrays requires the 'soundfile' package."
         ) from exc
 
     destination.parent.mkdir(
@@ -421,23 +360,15 @@ def _write_float_wav(
         exist_ok=True,
     )
 
-    file_descriptor, temporary_name = (
-        tempfile.mkstemp(
-            prefix=(
-                f".{destination.name}."
-            ),
-            suffix=".wav.tmp",
-            dir=destination.parent,
-        )
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=(f".{destination.name}."),
+        suffix=".wav.tmp",
+        dir=destination.parent,
     )
 
-    os.close(
-        file_descriptor
-    )
+    os.close(file_descriptor)
 
-    temporary = Path(
-        temporary_name
-    )
+    temporary = Path(temporary_name)
 
     try:
         try:
@@ -450,17 +381,10 @@ def _write_float_wav(
             )
 
         except Exception as exc:
-            raise DatasetMaterializationError(
-                "Failed to materialize decoded audio array "
-                f"as float WAV: {exc}"
-            ) from exc
+            raise DatasetMaterializationError(f"Failed to materialize decoded audio array as float WAV: {exc}") from exc
 
-        with temporary.open(
-            "rb"
-        ) as file:
-            os.fsync(
-                file.fileno()
-            )
+        with temporary.open("rb") as file:
+            os.fsync(file.fileno())
 
         os.replace(
             temporary,
@@ -505,11 +429,7 @@ class DatasetMaterializer:
         self,
         root: str | Path,
     ) -> None:
-        self.root = (
-            Path(root)
-            .expanduser()
-            .resolve()
-        )
+        self.root = Path(root).expanduser().resolve()
 
     def materialize(
         self,
@@ -532,20 +452,14 @@ class DatasetMaterializer:
         try:
             record.validate()
         except ValueError as exc:
-            raise DatasetMaterializationError(
-                f"Invalid DatasetRecord: {exc}"
-            ) from exc
+            raise DatasetMaterializationError(f"Invalid DatasetRecord: {exc}") from exc
 
         key = _materialization_key(
             dataset_revision=dataset_revision,
             source_identity=record.identity,
         )
 
-        directory = (
-            self.root
-            / key[:2]
-            / key
-        )
+        directory = self.root / key[:2] / key
 
         existing = self._load_existing(
             directory=directory,
@@ -556,11 +470,7 @@ class DatasetMaterializer:
         if existing is not None:
             return existing
 
-        local_source = (
-            self._resolve_local_source(
-                record
-            )
-        )
+        local_source = self._resolve_local_source(record)
 
         if local_source is not None:
             result = self._materialize_local_file(
@@ -571,32 +481,24 @@ class DatasetMaterializer:
             )
 
         else:
-            encoded = self._extract_encoded_bytes(
-                record.audio
-            )
+            encoded = self._extract_encoded_bytes(record.audio)
 
             if encoded is not None:
-                encoded_bytes, suggested_path = (
-                    encoded
-                )
+                encoded_bytes, suggested_path = encoded
 
-                result = (
-                    self._materialize_encoded_bytes(
-                        record=record,
-                        value=encoded_bytes,
-                        suggested_path=suggested_path,
-                        directory=directory,
-                        dataset_revision=dataset_revision,
-                    )
+                result = self._materialize_encoded_bytes(
+                    record=record,
+                    value=encoded_bytes,
+                    suggested_path=suggested_path,
+                    directory=directory,
+                    dataset_revision=dataset_revision,
                 )
 
             else:
-                result = (
-                    self._materialize_decoded_array(
-                        record=record,
-                        directory=directory,
-                        dataset_revision=dataset_revision,
-                    )
+                result = self._materialize_decoded_array(
+                    record=record,
+                    directory=directory,
+                    dataset_revision=dataset_revision,
                 )
 
         result.validate()
@@ -621,30 +523,22 @@ class DatasetMaterializer:
         candidates: list[str] = []
 
         if record.audio_path:
-            candidates.append(
-                record.audio_path
-            )
+            candidates.append(record.audio_path)
 
         if isinstance(
             record.audio,
             str,
         ):
-            candidates.append(
-                record.audio
-            )
+            candidates.append(record.audio)
 
         if isinstance(
             record.audio,
             dict,
         ):
-            path_value = record.audio.get(
-                "path"
-            )
+            path_value = record.audio.get("path")
 
             if path_value:
-                candidates.append(
-                    str(path_value)
-                )
+                candidates.append(str(path_value))
 
         for value in candidates:
             # Do not interpret remote references as local paths.
@@ -661,10 +555,7 @@ class DatasetMaterializer:
             ):
                 continue
 
-            path = (
-                Path(value)
-                .expanduser()
-            )
+            path = Path(value).expanduser()
 
             try:
                 path = path.resolve()
@@ -679,10 +570,13 @@ class DatasetMaterializer:
     @staticmethod
     def _extract_encoded_bytes(
         audio: Any,
-    ) -> tuple[
-        bytes,
-        str | None,
-    ] | None:
+    ) -> (
+        tuple[
+            bytes,
+            str | None,
+        ]
+        | None
+    ):
         """
         Extract encoded source bytes from common HF-style structures.
 
@@ -711,9 +605,7 @@ class DatasetMaterializer:
         ):
             return None
 
-        value = audio.get(
-            "bytes"
-        )
+        value = audio.get("bytes")
 
         if value is None:
             return None
@@ -726,15 +618,9 @@ class DatasetMaterializer:
                 memoryview,
             ),
         ):
-            raise DatasetMaterializationError(
-                "audio['bytes'] exists but is not bytes-like."
-            )
+            raise DatasetMaterializationError("audio['bytes'] exists but is not bytes-like.")
 
-        suggested_path = (
-            str(audio["path"])
-            if audio.get("path")
-            else None
-        )
+        suggested_path = str(audio["path"]) if audio.get("path") else None
 
         return (
             bytes(value),
@@ -749,14 +635,9 @@ class DatasetMaterializer:
         directory: Path,
         dataset_revision: str,
     ) -> MaterializedAudio:
-        suffix = _safe_suffix(
-            source
-        )
+        suffix = _safe_suffix(source)
 
-        destination = (
-            directory
-            / f"audio{suffix}"
-        )
+        destination = directory / f"audio{suffix}"
 
         directory.mkdir(
             parents=True,
@@ -768,16 +649,12 @@ class DatasetMaterializer:
             destination,
         )
 
-        digest = _sha256_file(
-            destination
-        )
+        digest = _sha256_file(destination)
 
         return MaterializedAudio(
             path=destination,
             sha256=digest,
-            size_bytes=(
-                destination.stat().st_size
-            ),
+            size_bytes=(destination.stat().st_size),
             source_kind="local_file",
             dataset_revision=dataset_revision,
             source_identity=record.identity,
@@ -793,18 +670,11 @@ class DatasetMaterializer:
         dataset_revision: str,
     ) -> MaterializedAudio:
         if not value:
-            raise DatasetMaterializationError(
-                "Encoded audio payload is empty."
-            )
+            raise DatasetMaterializationError("Encoded audio payload is empty.")
 
-        suffix = _safe_suffix(
-            suggested_path
-        )
+        suffix = _safe_suffix(suggested_path)
 
-        destination = (
-            directory
-            / f"audio{suffix}"
-        )
+        destination = directory / f"audio{suffix}"
 
         directory.mkdir(
             parents=True,
@@ -816,9 +686,7 @@ class DatasetMaterializer:
             value,
         )
 
-        digest = _sha256_bytes(
-            value
-        )
+        digest = _sha256_bytes(value)
 
         return MaterializedAudio(
             path=destination,
@@ -836,9 +704,7 @@ class DatasetMaterializer:
         directory: Path,
         dataset_revision: str,
     ) -> MaterializedAudio:
-        waveform = self._extract_decoded_array(
-            record.audio
-        )
+        waveform = self._extract_decoded_array(record.audio)
 
         if waveform is None:
             raise DatasetMaterializationError(
@@ -848,23 +714,14 @@ class DatasetMaterializer:
                 f"identity={record.identity!r}"
             )
 
-        sample_rate = (
-            self._extract_sample_rate(
-                record
-            )
-        )
+        sample_rate = self._extract_sample_rate(record)
 
         if sample_rate is None:
             raise DatasetMaterializationError(
-                "Decoded waveform is available but its sample rate "
-                "cannot be determined: "
-                f"identity={record.identity!r}"
+                f"Decoded waveform is available but its sample rate cannot be determined: identity={record.identity!r}"
             )
 
-        destination = (
-            directory
-            / "audio.wav"
-        )
+        destination = directory / "audio.wav"
 
         _write_float_wav(
             destination=destination,
@@ -872,16 +729,12 @@ class DatasetMaterializer:
             sample_rate_hz=sample_rate,
         )
 
-        digest = _sha256_file(
-            destination
-        )
+        digest = _sha256_file(destination)
 
         return MaterializedAudio(
             path=destination,
             sha256=digest,
-            size_bytes=(
-                destination.stat().st_size
-            ),
+            size_bytes=(destination.stat().st_size),
             source_kind="decoded_array",
             dataset_revision=dataset_revision,
             source_identity=record.identity,
@@ -901,9 +754,7 @@ class DatasetMaterializer:
             audio,
             dict,
         ):
-            return audio.get(
-                "array"
-            )
+            return audio.get("array")
 
         return None
 
@@ -912,22 +763,13 @@ class DatasetMaterializer:
         record: DatasetRecord,
     ) -> int | None:
         if record.sample_rate_hz is not None:
-            return int(
-                record.sample_rate_hz
-            )
+            return int(record.sample_rate_hz)
 
         if isinstance(
             record.audio,
             dict,
         ):
-            value = (
-                record.audio.get(
-                    "sampling_rate"
-                )
-                or record.audio.get(
-                    "sample_rate"
-                )
-            )
+            value = record.audio.get("sampling_rate") or record.audio.get("sample_rate")
 
             if value is not None:
                 return int(value)
@@ -938,10 +780,7 @@ class DatasetMaterializer:
         self,
         directory: Path,
     ) -> Path:
-        return (
-            directory
-            / "metadata.json"
-        )
+        return directory / "metadata.json"
 
     def _write_metadata(
         self,
@@ -950,38 +789,27 @@ class DatasetMaterializer:
         result: MaterializedAudio,
     ) -> None:
         metadata = {
-            "schema_version": (
-                self.METADATA_SCHEMA_VERSION
-            ),
-            "dataset_revision": (
-                result.dataset_revision
-            ),
-            "source_identity": (
-                result.source_identity
-            ),
-            "source_kind": (
-                result.source_kind
-            ),
-            "audio_file": (
-                result.path.name
-            ),
+            "schema_version": (self.METADATA_SCHEMA_VERSION),
+            "dataset_revision": (result.dataset_revision),
+            "source_identity": (result.source_identity),
+            "source_kind": (result.source_kind),
+            "audio_file": (result.path.name),
             "sha256": result.sha256,
-            "size_bytes": (
-                result.size_bytes
-            ),
+            "size_bytes": (result.size_bytes),
         }
 
-        payload = json.dumps(
-            metadata,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        ).encode("utf-8") + b"\n"
+        payload = (
+            json.dumps(
+                metadata,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+        )
 
         _atomic_write_bytes(
-            self._metadata_path(
-                directory
-            ),
+            self._metadata_path(directory),
             payload,
         )
 
@@ -997,21 +825,13 @@ class DatasetMaterializer:
         content digest.
         """
 
-        metadata_path = (
-            self._metadata_path(
-                directory
-            )
-        )
+        metadata_path = self._metadata_path(directory)
 
         if not metadata_path.is_file():
             return None
 
         try:
-            metadata = json.loads(
-                metadata_path.read_text(
-                    encoding="utf-8"
-                )
-            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (
             OSError,
             json.JSONDecodeError,
@@ -1024,41 +844,20 @@ class DatasetMaterializer:
         ):
             return None
 
-        if (
-            metadata.get(
-                "schema_version"
-            )
-            != self.METADATA_SCHEMA_VERSION
-        ):
+        if metadata.get("schema_version") != self.METADATA_SCHEMA_VERSION:
             return None
 
-        if (
-            metadata.get(
-                "dataset_revision"
-            )
-            != dataset_revision
-        ):
+        if metadata.get("dataset_revision") != dataset_revision:
             return None
 
-        if (
-            metadata.get(
-                "source_identity"
-            )
-            != source_identity
-        ):
+        if metadata.get("source_identity") != source_identity:
             return None
 
-        audio_file = metadata.get(
-            "audio_file"
-        )
+        audio_file = metadata.get("audio_file")
 
-        expected_sha256 = metadata.get(
-            "sha256"
-        )
+        expected_sha256 = metadata.get("sha256")
 
-        source_kind = metadata.get(
-            "source_kind"
-        )
+        source_kind = metadata.get("source_kind")
 
         if not isinstance(
             audio_file,
@@ -1079,27 +878,17 @@ class DatasetMaterializer:
         ):
             return None
 
-        audio_path = (
-            directory
-            / audio_file
-        )
+        audio_path = directory / audio_file
 
         if not audio_path.is_file():
             return None
 
-        actual_sha256 = _sha256_file(
-            audio_path
-        )
+        actual_sha256 = _sha256_file(audio_path)
 
-        if (
-            actual_sha256
-            != expected_sha256
-        ):
+        if actual_sha256 != expected_sha256:
             return None
 
-        size_bytes = (
-            audio_path.stat().st_size
-        )
+        size_bytes = audio_path.stat().st_size
 
         if size_bytes <= 0:
             return None
@@ -1132,17 +921,11 @@ class DatasetMaterializer:
             source_identity=source_identity,
         )
 
-        directory = (
-            self.root
-            / key[:2]
-            / key
-        )
+        directory = self.root / key[:2] / key
 
         if not directory.exists():
             return False
 
-        shutil.rmtree(
-            directory
-        )
+        shutil.rmtree(directory)
 
         return True

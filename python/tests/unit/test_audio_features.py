@@ -12,9 +12,7 @@ def test_passthrough_waveform_extractor() -> None:
         dtype=np.float32,
     )
 
-    audio = CanonicalAudio(
-        waveform=waveform
-    )
+    audio = CanonicalAudio(waveform=waveform)
 
     extractor = PassthroughWaveformExtractor()
     output = extractor.extract(audio)

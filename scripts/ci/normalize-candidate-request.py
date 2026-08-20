@@ -25,10 +25,7 @@ def validate_repository_transport(value: str, name: str) -> None:
         raise SystemExit(f"{name} must use owner/name")
     if any(part in {".", ".."} for part in parts):
         raise SystemExit(f"{name} must not contain dot path segments")
-    if any(
-        not all(ch.isascii() and (ch.isalnum() or ch in "._-") for ch in part)
-        for part in parts
-    ):
+    if any(not all(ch.isascii() and (ch.isalnum() or ch in "._-") for ch in part) for part in parts):
         raise SystemExit(f"{name} contains unsupported characters")
 
 

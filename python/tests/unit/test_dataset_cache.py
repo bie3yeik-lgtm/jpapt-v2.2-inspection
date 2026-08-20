@@ -55,9 +55,7 @@ def test_cache_key_changes_with_lock_hash() -> None:
 
 
 def test_cache_roundtrip(tmp_path: Path) -> None:
-    cache = DatasetCache(
-        tmp_path / "cache"
-    )
+    cache = DatasetCache(tmp_path / "cache")
 
     resolved = _resolved_manifest()
 

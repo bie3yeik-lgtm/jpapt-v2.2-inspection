@@ -100,12 +100,7 @@ def test_only_http_404_is_treated_as_missing():
     def opener(request, timeout=0):
         raise HTTPError(request.full_url, 404, "Not Found", None, io.BytesIO(b"{}"))
 
-    assert (
-        MODULE.fetch_content_sha(
-            "owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener
-        )
-        is None
-    )
+    assert MODULE.fetch_content_sha("owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener) is None
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500, 503])
@@ -114,9 +109,7 @@ def test_http_errors_other_than_404_fail_closed(status: int):
         raise HTTPError(request.full_url, status, "error", None, io.BytesIO(b"{}"))
 
     with pytest.raises(RuntimeError, match=f"HTTP {status}"):
-        MODULE.fetch_content_sha(
-            "owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener
-        )
+        MODULE.fetch_content_sha("owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener)
 
 
 def test_transport_failure_fails_closed():
@@ -124,9 +117,7 @@ def test_transport_failure_fails_closed():
         raise URLError("offline")
 
     with pytest.raises(RuntimeError, match="transport failure"):
-        MODULE.fetch_content_sha(
-            "owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener
-        )
+        MODULE.fetch_content_sha("owner/repo", ".jpapt/hf-bucket.yml", "token", opener=opener)
 
 
 @pytest.mark.parametrize(
@@ -170,15 +161,11 @@ def test_rejects_unsafe_repository_before_network(repository: str):
         return FakeResponse(200, {"sha": "a" * 40})
 
     with pytest.raises(ValueError):
-        MODULE.fetch_content_sha(
-            repository, ".jpapt/hf-bucket.yml", "token", opener=opener
-        )
+        MODULE.fetch_content_sha(repository, ".jpapt/hf-bucket.yml", "token", opener=opener)
     assert not called
 
 
-@pytest.mark.parametrize(
-    "path", ["", "/absolute", "trailing/", "a//b", "a/../b", "a/./b", "bad path"]
-)
+@pytest.mark.parametrize("path", ["", "/absolute", "trailing/", "a//b", "a/../b", "a/./b", "bad path"])
 def test_rejects_unsafe_content_path_before_network(path: str):
     called = False
 
@@ -219,4 +206,4 @@ def test_receiver_bootstrap_uses_pinned_fail_closed_content_reads():
     assert '--ref "$TARGET_COMMIT"' in text
     assert "TARGET_COMMIT: ${{ steps.install.outputs.target_commit }}" in text
     assert '?ref=$TARGET_COMMIT" --jq .content' in text
-    assert 'repository must not contain dot-only path segments' in text
+    assert "repository must not contain dot-only path segments" in text

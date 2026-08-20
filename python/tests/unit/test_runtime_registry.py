@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 
 import onnx
-from onnx import TensorProto, helper
 import pytest
+from onnx import TensorProto, helper
 
 from parakeet_onnx.runtime import CandidateArtifacts, registered_decoders
 from parakeet_onnx.runtime.artifacts import CandidateMetadataError
 from parakeet_onnx.runtime.factory import validate_candidate_runtime_contract
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -20,9 +19,7 @@ def _save(path: Path, inputs: list[object], outputs: list[object]) -> None:
 
 
 def _write_tdt_candidate(tmp_path: Path, *, write_durations: bool = True) -> None:
-    (tmp_path / "vocabulary.json").write_text(
-        '["<blank>", "<bos>"]\n', encoding="utf-8"
-    )
+    (tmp_path / "vocabulary.json").write_text('["<blank>", "<bos>"]\n', encoding="utf-8")
     if write_durations:
         (tmp_path / "model_config.json").write_text(
             json.dumps({"tdt_durations": [0, 1, 2, 3]}) + "\n",
@@ -85,7 +82,9 @@ def test_registry_contains_all_python_decoder_adapters() -> None:
     assert registered_decoders() == ("ctc", "tdt", "whisper_autoregressive")
 
 
-def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(tmp_path: Path) -> None:
+def test_tdt_runtime_contract_is_derived_without_authored_runtime_json(
+    tmp_path: Path,
+) -> None:
     _write_tdt_candidate(tmp_path)
 
     candidate = CandidateArtifacts.load(tmp_path, variant="tdt", repository_root=ROOT)

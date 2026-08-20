@@ -29,6 +29,11 @@ from .manifest import (
     stable_hash,
     stable_hash_bytes,
 )
+from .materializer import (
+    DatasetMaterializationError,
+    DatasetMaterializer,
+    MaterializedAudio,
+)
 from .models import (
     DatasetRecord,
     ManifestEntry,
@@ -41,12 +46,6 @@ from .resolver import (
     DatasetBackend,
     DatasetResolver,
     HuggingFaceDatasetBackend,
-)
-
-from .materializer import (
-    DatasetMaterializationError,
-    DatasetMaterializer,
-    MaterializedAudio,
 )
 
 __all__ = [

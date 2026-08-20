@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from .artifacts import CandidateArtifacts, CandidateMetadataError
-
 
 InputKind = Literal["canonical_waveform", "features"]
 
@@ -24,7 +24,7 @@ class ModelContract:
     decoder: str = "ctc"
 
     @classmethod
-    def load(cls, candidate_dir: str | Path) -> "ModelContract":
+    def load(cls, candidate_dir: str | Path) -> ModelContract:
         try:
             candidate = CandidateArtifacts.load(candidate_dir, verify_artifacts=False)
         except CandidateMetadataError as exc:
@@ -32,11 +32,9 @@ class ModelContract:
         return cls.from_candidate(candidate)
 
     @classmethod
-    def from_candidate(cls, candidate: CandidateArtifacts) -> "ModelContract":
+    def from_candidate(cls, candidate: CandidateArtifacts) -> ModelContract:
         if candidate.decoder != "ctc":
-            raise ModelContractError(
-                f"CTC ModelContract cannot load decoder {candidate.decoder!r}"
-            )
+            raise ModelContractError(f"CTC ModelContract cannot load decoder {candidate.decoder!r}")
         contract = candidate.runtime_contract
         input_kind = str(contract.get("input_kind", "canonical_waveform"))
         if input_kind not in {"canonical_waveform", "features"}:

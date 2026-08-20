@@ -27,9 +27,7 @@ def write_candidate_metadata(path: Path, metadata: CandidateMetadata) -> None:
             raise ValueError(f"candidate variant {variant!r} is incomplete")
         for role, artifact_path in value.artifacts.items():
             if not role or not artifact_path:
-                raise ValueError(
-                    f"candidate variant {variant!r} contains an empty artifact role/path"
-                )
+                raise ValueError(f"candidate variant {variant!r} contains an empty artifact role/path")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     value = asdict(metadata)

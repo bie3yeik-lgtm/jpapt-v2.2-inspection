@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from candidate_protocol_common import parse_rfc3339_time, validate_https_url
@@ -16,10 +16,18 @@ REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED_FIELDS = {
-    "schema_version", "request_id", "receipt_sha256", "receipt_repository",
-    "orchestrator_repository", "evaluation_run_id", "evaluation_run_attempt",
-    "receiver_repository", "receiver_run_id", "receiver_run_attempt",
-    "receiver_run_url", "accepted_at",
+    "schema_version",
+    "request_id",
+    "receipt_sha256",
+    "receipt_repository",
+    "orchestrator_repository",
+    "evaluation_run_id",
+    "evaluation_run_attempt",
+    "receiver_repository",
+    "receiver_run_id",
+    "receiver_run_attempt",
+    "receiver_run_url",
+    "accepted_at",
 }
 OPTIONAL_FIELDS = {"request_execution_id"}
 
@@ -50,11 +58,20 @@ def validate_ack(ack: dict) -> None:
     receipt_sha256 = ack.get("receipt_sha256")
     if not isinstance(receipt_sha256, str) or not SHA256_RE.fullmatch(receipt_sha256):
         raise SystemExit("receipt_sha256 is invalid")
-    for field in ("receipt_repository", "orchestrator_repository", "receiver_repository"):
+    for field in (
+        "receipt_repository",
+        "orchestrator_repository",
+        "receiver_repository",
+    ):
         value = ack.get(field)
         if not isinstance(value, str) or not REPOSITORY_RE.fullmatch(value):
             raise SystemExit(f"{field} must use owner/name")
-    for field in ("evaluation_run_id", "evaluation_run_attempt", "receiver_run_id", "receiver_run_attempt"):
+    for field in (
+        "evaluation_run_id",
+        "evaluation_run_attempt",
+        "receiver_run_id",
+        "receiver_run_attempt",
+    ):
         value = ack.get(field)
         if not isinstance(value, int) or value < 1:
             raise SystemExit(f"{field} must be a positive integer")
@@ -90,7 +107,13 @@ def main() -> int:
         parser.error("--receipt, --ack, and --dispatch-body are required when building an acknowledgement")
 
     receipt = load_json(args.receipt)
-    for field in ("request_id", "receipt_repository", "orchestrator_repository", "run_id", "run_attempt"):
+    for field in (
+        "request_id",
+        "receipt_repository",
+        "orchestrator_repository",
+        "run_id",
+        "run_attempt",
+    ):
         if field not in receipt:
             raise SystemExit(f"receipt is missing {field}")
 
@@ -106,7 +129,7 @@ def main() -> int:
         "receiver_run_id": int(env("RECEIVER_RUN_ID")),
         "receiver_run_attempt": int(env("RECEIVER_RUN_ATTEMPT", "1")),
         "receiver_run_url": env("RECEIVER_RUN_URL"),
-        "accepted_at": env("ACCEPTED_AT") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "accepted_at": env("ACCEPTED_AT") or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     if receipt.get("request_execution_id"):
         ack["request_execution_id"] = receipt["request_execution_id"]
@@ -117,7 +140,12 @@ def main() -> int:
     dispatch_path.parent.mkdir(parents=True, exist_ok=True)
     ack_path.write_text(json.dumps(ack, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     dispatch_path.write_text(
-        json.dumps({"event_type": EVENT_TYPE, "client_payload": ack}, separators=(",", ":"), ensure_ascii=False) + "\n",
+        json.dumps(
+            {"event_type": EVENT_TYPE, "client_payload": ack},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(ack_path.read_text(encoding="utf-8"), end="")

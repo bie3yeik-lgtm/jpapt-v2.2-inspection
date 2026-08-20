@@ -32,13 +32,9 @@ def test_mix_to_mono() -> None:
 def test_to_canonical_audio_from_stereo_48k(
     stereo_wav_48k: Path,
 ) -> None:
-    decoded = decode_audio_file(
-        stereo_wav_48k
-    )
+    decoded = decode_audio_file(stereo_wav_48k)
 
-    canonical = to_canonical_audio(
-        decoded
-    )
+    canonical = to_canonical_audio(decoded)
 
     assert canonical.sample_rate_hz == CANONICAL_SAMPLE_RATE
     assert canonical.waveform.dtype == np.float32

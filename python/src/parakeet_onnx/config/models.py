@@ -14,7 +14,6 @@ from typing import Any, TypeVar
 
 from .errors import ConfigValidationError
 
-
 T = TypeVar("T")
 _MISSING = object()
 
@@ -105,9 +104,7 @@ class ModelConfig(BaseConfig):
 
     @property
     def family(self) -> str:
-        return _string(
-            self.require("model.family"), field="model.family", path=self.path
-        )
+        return _string(self.require("model.family"), field="model.family", path=self.path)
 
     @property
     def architecture(self) -> str:
@@ -119,9 +116,7 @@ class ModelConfig(BaseConfig):
 
     @property
     def language(self) -> str:
-        return _string(
-            self.require("model.language"), field="model.language", path=self.path
-        )
+        return _string(self.require("model.language"), field="model.language", path=self.path)
 
     @property
     def upstream_repo_id(self) -> str:
@@ -140,9 +135,7 @@ class ModelConfig(BaseConfig):
         )
 
     def providers_for_environment(self, environment_id: str) -> tuple[str, ...]:
-        environment_id = _string(
-            environment_id, field="environment_id", path=self.path
-        )
+        environment_id = _string(environment_id, field="environment_id", path=self.path)
         return _string_array(
             self.require(f"execution.platforms.{environment_id}"),
             field=f"execution.platforms.{environment_id}",
@@ -154,9 +147,7 @@ class ModelConfig(BaseConfig):
 class ProviderConfig(BaseConfig):
     @property
     def id(self) -> str:
-        return _string(
-            self.require("provider.id"), field="provider.id", path=self.path
-        )
+        return _string(self.require("provider.id"), field="provider.id", path=self.path)
 
     @property
     def ort_name(self) -> str:
@@ -195,15 +186,11 @@ class ProviderConfig(BaseConfig):
 class ExecutionEnvironmentConfig(BaseConfig):
     @property
     def id(self) -> str:
-        return _string(
-            self.require("environment.id"), field="environment.id", path=self.path
-        )
+        return _string(self.require("environment.id"), field="environment.id", path=self.path)
 
     @property
     def os(self) -> str:
-        return _string(
-            self.require("environment.os"), field="environment.os", path=self.path
-        )
+        return _string(self.require("environment.os"), field="environment.os", path=self.path)
 
     @property
     def architecture(self) -> str:
@@ -225,9 +212,7 @@ class ExecutionEnvironmentConfig(BaseConfig):
 class EvaluationConfig(BaseConfig):
     @property
     def id(self) -> str:
-        return _string(
-            self.require("evaluation.id"), field="evaluation.id", path=self.path
-        )
+        return _string(self.require("evaluation.id"), field="evaluation.id", path=self.path)
 
     @property
     def manifest(self) -> str:
@@ -272,12 +257,7 @@ class ResolvedConfig:
 
     @property
     def identity(self) -> str:
-        return (
-            f"{self.model.id}:"
-            f"{self.environment.id}:"
-            f"{self.provider.id}:"
-            f"{self.evaluation.id}"
-        )
+        return f"{self.model.id}:{self.environment.id}:{self.provider.id}:{self.evaluation.id}"
 
     def get(self, key: str, default: T | None = None) -> Any | T | None:
         return _get_nested(self.merged, key, default)
@@ -286,6 +266,4 @@ class ResolvedConfig:
         try:
             return _get_nested(self.merged, key)
         except KeyError as exc:
-            raise ConfigValidationError(
-                f"Missing resolved configuration field: {key}"
-            ) from exc
+            raise ConfigValidationError(f"Missing resolved configuration field: {key}") from exc
