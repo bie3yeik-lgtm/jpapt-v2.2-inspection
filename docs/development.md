@@ -8,7 +8,7 @@
 
 ```toml
 python = "3.14"
-uv = "latest"
+uv = "0.11.1"
 rust = "1.97.1"
 node = "26"
 pnpm = "11.20.0"

@@ -9,7 +9,7 @@ on:
         type: choice
         options: [hf, runpod]
       image:
-        description: Optional image override; blank resolves the latest GHCR package digest
+        description: Optional image override; blank resolves the newest GHCR package digest
         required: false
         type: string
       gpu:
@@ -77,10 +77,8 @@ jobs:
           if [[ -n "$image_input" ]]; then
             image="$image_input"
           else
-            package_digest="$(gh api --paginate --slurp \
-              "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/parakeet-rtf-benchmark/versions?per_page=100" \
-              | jq -er 'add | map(select((.metadata.container.tags // []) | index("latest"))) | max_by(.updated_at) | .metadata.container.digest')"
-            image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark@${package_digest}"
+            image="$(bash scripts/ci/resolve-ghcr-package-digest.sh \
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark")"
           fi
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
             echo 'resolved image must be an immutable GHCR digest reference' >&2

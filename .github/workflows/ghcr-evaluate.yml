@@ -25,9 +25,9 @@ on:
         type: choice
         options: [smoke, parity, full]
       image_tag:
-        description: "Human-facing GHCR tag to resolve; the actual run is pinned to the pulled digest"
+        description: "Optional GHCR tag; blank resolves the newest package digest"
         required: false
-        default: latest
+        default: ""
         type: string
   schedule:
     - cron: "17 18 * * 1"
@@ -191,12 +191,19 @@ jobs:
       - name: Pull tag and freeze digest
         id: image
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'latest' }}"
-          tagged="${{ matrix.image }}:${tag}"
-          docker pull "$tagged"
-          pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || '' }}"
+          if [[ -n "$tag" ]]; then
+            tagged="${{ matrix.image }}:${tag}"
+            docker pull "$tagged"
+            pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tagged")"
+          else
+            pinned="$(bash scripts/ci/resolve-ghcr-package-digest.sh '${{ matrix.image }}')"
+            docker pull "$pinned"
+          fi
           [[ "$pinned" == "${{ matrix.image }}@sha256:"* ]] || { echo "::error::Unexpected RepoDigest: $pinned"; exit 1; }
           digest="${pinned#*@}"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Invalid digest: $digest"; exit 1; }

@@ -12,6 +12,7 @@ on:
       - ".github/workflows/rtf-benchmark-run.yml"
       - ".github/workflows/rtf-service-result.yml"
       - "scripts/run-benchmark.sh"
+      - "scripts/ci/resolve-ghcr-package-digest.sh"
       - "scripts/ci/dispatch-rtf-service-result.sh"
       - "scripts/ci/build-rtf-benchmark-record.py"
       - "docker/rtf-benchmark/**"
@@ -79,6 +80,7 @@ jobs:
       - name: Validate RTF orchestration syntax
         run: |
           bash -n scripts/run-benchmark.sh
+          bash -n scripts/ci/resolve-ghcr-package-digest.sh
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py

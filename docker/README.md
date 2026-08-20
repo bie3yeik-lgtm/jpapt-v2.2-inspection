@@ -132,7 +132,7 @@ Such a change should result in:
 Do not use:
 
 ```text
-nvcr.io/nvidia/nemo:latest
+nvcr.io/nvidia/nemo@sha256:<immutable-digest>
 ```
 
 for canonical evaluations.
