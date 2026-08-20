@@ -148,6 +148,15 @@ case "$PROVIDER" in
       fi
     }
     trap cleanup_runpod EXIT
+    terminate_after="$(date -u -d '+4 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+    if [[ -z "$terminate_after" ]]; then
+      # BSD date (for local macOS execution) uses a different flag shape.
+      terminate_after="$(date -u -v+4H '+%Y-%m-%dT%H:%M:%SZ')"
+    fi
+    [[ "$terminate_after" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+      echo "failed to generate RunPod termination deadline: $terminate_after" >&2
+      exit 2
+    }
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
@@ -167,7 +176,7 @@ case "$PROVIDER" in
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --wait --wait-timeout 10m --terminate-after 4h --output json 2>&1)"
+      --wait --wait-timeout 10m --terminate-after "$terminate_after" --output json 2>&1)"
     pod_create_status=$?
     set -e
     # `jq -e` prints JSON null before returning failure for an error response;

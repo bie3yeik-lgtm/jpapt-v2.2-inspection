@@ -62,12 +62,18 @@ hf jobs run --flavor a10g-small \
   /opt/rtf-benchmark/entrypoint.sh
 ```
 
-RunPod may start the same image without a command:
+RunPod may start the same image with the lifecycle keepalive command. The
+benchmark environment variables (including the runtime `HF_TOKEN`) must be
+supplied through `--env`; they are omitted below intentionally:
 
 ```bash
 runpodctl pod create --name parakeet-bench \
   --image ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<digest> \
-  --gpu-id "NVIDIA RTX A5000"
+  --cloud-type SECURE \
+  --gpu-id "NVIDIA RTX A5000" \
+  --env '{"RTF_RUN_ID":"...","RTF_MODEL_ID":"..."}' \
+  --docker-args 'sleep infinity' \
+  --wait --wait-timeout 10m
 ```
 
 The entrypoint converts both forms to the same `benchmark_runner` invocation.
@@ -85,8 +91,9 @@ GitHub Actions and local automation should use the lifecycle wrapper:
 The HF branch submits one Job. The RunPod branch creates one Pod with
 `sleep infinity`, executes the complete benchmark once, collects the result,
 deletes the Pod immediately, and retains an EXIT-trap/orphan-name cleanup
-path. RunPod also receives a four-hour `--terminate-after` safety limit so a
-runner or network failure cannot leave a benchmark Pod running indefinitely.
+path. RunPod also receives an absolute UTC deadline four hours in the future
+through `--terminate-after` as a safety limit so a runner or network failure
+cannot leave a benchmark Pod running indefinitely.
 
 `RTF Resolver` writes the uploaded fixture repository and immutable commit SHA
 to `rtf-scores/benchmark/benchmark-v1.fixture.json`. `RTF Benchmark Run` reads that
