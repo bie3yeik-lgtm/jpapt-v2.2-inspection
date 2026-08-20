@@ -24,7 +24,7 @@ private Actionsのtrusted package artifactを代替しない。#154をcloseす�
 | public repository | `bie3yeik-lgtm/jpapt-v2.2-inspection` |
 | inspected default-branch SHA | `149d689dfbc9a52774064305836c0ff45f5b7e9b` |
 | source repository | `largoyo/Premiere-AutoProcess-Plugin` |
-| HF Bucket | `gawohok7/premiere-autoprocess-plugin-bucket` |
+| HF Bucket | `gawohok7/tf-v2.2-onnx-dev-bucket` |
 | candidate | `candidate-000001` |
 | candidate digest | `sha256:e9861e822dcb24acd936142488c344dc6a4cbcb35b0b06e24a2a549d1419eb25` |
 | executable image | `ghcr.io/bie3yeik-lgtm/jpapt-candidate@sha256:ee2ae53d748b0c3a748d306621d218787c1ff4aa76c6fedf8045a4c3c0803bec` |
@@ -52,7 +52,7 @@ private Actionsのtrusted package artifactを代替しない。#154をcloseす�
   environmentから生成する。
 - HTTP 204は受付証拠に限定し、Gateway runでresolved identityと副作用なしを確認する。
 
-受入れ条件: planが`candidate-000001`、指定Bucket、digest image、`smoke/hf_jobs/linux-cpu`
+受入れ条件: planが`candidate-000001`、指定Bucket、`ctc` runtime variant、digest image、`smoke/hf_jobs/linux-cpu`
 へ解決され、HF Jobs起動・Bucket mutationが発生していない。
 
 ### Unit 2: execute dispatch
