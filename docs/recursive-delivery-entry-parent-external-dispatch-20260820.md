@@ -60,6 +60,6 @@ mise run check: run in CI / local environment with mise
 
 ### 次の安全なアクション
 
-1. PR を `main` へ merge する
-2. 親 repo の `config/jpapt-external-dispatch.v1.json` を新 alias へ更新する
+1. 本 PR を `main` へ merge する
+2. 親 repo で [`parent-repository-external-dispatch-config-handoff-20260820.md`](./parent-repository-external-dispatch-config-handoff-20260820.md) に従い `jpapt-external-dispatch.v1.json` を更新する
 3. reviewed remote dispatch で receipt / artifact を保存する

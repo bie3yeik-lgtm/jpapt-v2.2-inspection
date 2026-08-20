@@ -284,7 +284,7 @@ issue 間の依存順序（親側 resolution plan より）:
 **NOT VERIFIED until merge / reviewed remote run**
 
 - `repository_dispatch` router on default branch
-- 親 `config/jpapt-external-dispatch.v1.json` 更新
+- 親 `config/jpapt-external-dispatch.v1.json` 更新 → [`parent-repository-external-dispatch-config-handoff-20260820.md`](./parent-repository-external-dispatch-config-handoff-20260820.md)
 - #154 Gateway plan/execute + completion/ACK live run
 - private trusted package evidence
 
