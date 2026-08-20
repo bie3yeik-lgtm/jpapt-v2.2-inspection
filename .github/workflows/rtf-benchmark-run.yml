@@ -9,42 +9,27 @@ on:
         type: choice
         options: [hf, runpod]
       image:
-        description: Immutable GHCR image digest
-        required: true
+        description: Optional image override; blank resolves the latest GHCR package digest
+        required: false
         type: string
       gpu:
         description: Provider GPU name
         required: true
         type: choice
         options: [t4, l4, a5000, rtx3090, rtx4090]
-      hf_flavor:
-        description: Hugging Face Jobs flavor
-        required: false
-        default: a10g-small
-        type: string
       model_id:
         description: Model repository ID
         required: true
         default: nvidia/parakeet-tdt_ctc-0.6b-ja
         type: string
       model_revision:
-        description: Immutable model revision
-        required: true
+        description: Optional model commit; blank resolves the current HF model commit
+        required: false
         type: string
       dataset_revision:
         description: Immutable Common Voice revision
         required: true
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
-        type: string
-      fixture_repo_id:
-        description: Hugging Face Dataset repository containing benchmark-v1.jsonl and WAV fixtures
-        required: false
-        default: gawohok7/rtf-benchmark-fixtures
-        type: string
-      fixture_revision:
-        description: Immutable fixture Dataset commit
-        required: false
-        default: ""
         type: string
       batch_size:
         description: Benchmark batch size
@@ -78,6 +63,45 @@ jobs:
       error_message: ${{ steps.receipt.outputs.error_message }}
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve immutable image and model revisions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          IMAGE_INPUT: ${{ inputs.image }}
+          MODEL_ID: ${{ inputs.model_id }}
+        run: |
+          set -euo pipefail
+          image_input="${IMAGE_INPUT:-}"
+          if [[ -n "$image_input" ]]; then
+            image="$image_input"
+          else
+            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark:latest"
+            printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+              --username "${GITHUB_ACTOR}" --password-stdin >/dev/null
+            docker pull "$image_tag"
+            image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_tag" \
+              | awk -v prefix="${image_tag%:latest}@sha256:" 'index($0, prefix) == 1 { print; exit }')"
+          fi
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo 'resolved image must be an immutable GHCR digest reference' >&2
+            exit 2
+          }
+
+          [[ -n "${HF_TOKEN:-}" ]] || { echo 'HF_TOKEN is required to resolve model revision'; exit 1; }
+          model_revision="$(curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $HF_TOKEN" \
+            "https://huggingface.co/api/models/${MODEL_ID}" | jq -er '.sha')"
+          [[ "$model_revision" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'HF model API did not return an immutable 40-character commit SHA' >&2
+            exit 2
+          }
+          {
+            echo "image=$image"
+            echo "model_revision=$model_revision"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved image: $image"
+          echo "Resolved model revision: $model_revision"
       - name: Install provider CLIs
         run: |
           python -m pip install --disable-pip-version-check --upgrade huggingface_hub
@@ -99,13 +123,13 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           RTF_RUN_ID: rtf-${{ inputs.provider }}-${{ github.run_id }}
           RTF_MODEL_ID: ${{ inputs.model_id }}
-          RTF_MODEL_REVISION: ${{ inputs.model_revision }}
+          RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
           RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
           RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
-          RTF_FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
-          RTF_FIXTURE_REVISION: ${{ inputs.fixture_revision }}
+          RTF_FIXTURE_REPO_ID: ''
+          RTF_FIXTURE_REVISION: ''
           RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
-          RTF_IMAGE_DIGEST: ${{ inputs.image }}
+          RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
           RTF_LOCAL_RECEIPT: result-receipt.json
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ inputs.gpu }}
@@ -120,18 +144,15 @@ jobs:
           RTF_DATASET_MAX_DURATION_SEC: 600
           RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
           RTF_FIXTURE_MANIFEST_SHA256: ''
-          HF_FLAVOR: ${{ inputs.hf_flavor }}
           RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
           set -euo pipefail
-          if [[ -z "${RTF_FIXTURE_REPO_ID}" || -z "${RTF_FIXTURE_REVISION}" ]]; then
-            [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
-              echo 'fixture inputs are empty and rtf-scores/benchmark/benchmark-v1.fixture.json is missing' >&2
-              exit 2
-            }
-            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
-            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
-          fi
+          [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
+            echo 'Resolver fixture pointer is missing; merge the RTF Resolver PR first' >&2
+            exit 2
+          }
+          export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
@@ -141,7 +162,7 @@ jobs:
           esac
           ./scripts/run-benchmark.sh \
             --provider '${{ inputs.provider }}' \
-            --image '${{ inputs.image }}'
+            --image '${{ steps.resolve.outputs.image }}'
       - name: Normalize provider receipt
         id: receipt
         if: always()
