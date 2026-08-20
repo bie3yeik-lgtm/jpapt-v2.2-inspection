@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32364671294-b8",
+  "run_id": "rtf-hf-32367122483-b8",
   "service_id": "hf-jobs",
   "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a86e7d3c81709766c8027ff",
+  "job_id": "6a86eefdc81709766c802855",
   "result_uri": null,
   "result_sha256": null,
   "metrics_uri": null,
   "metrics_path": null,
   "metrics_sha256": null,
   "error_code": "BENCHMARK_INFERENCE_FAILED",
-  "error_message": "Model.from_pretrained() got an unexpected keyword argument 'revision'"
+  "error_message": "EncDecHybridRNNTCTCModel.transcribe() got an unexpected keyword argument 'paths2audio_files'"
 }
