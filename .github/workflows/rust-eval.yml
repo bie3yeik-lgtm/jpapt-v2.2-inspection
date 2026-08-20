@@ -119,11 +119,6 @@ jobs:
             environment: windows
             provider: cpu
             features: cpu
-          - name: windows-directml
-            os: windows-latest
-            environment: windows
-            provider: directml
-            features: cpu,directml
           - name: macos-cpu
             os: macos-15
             environment: macos

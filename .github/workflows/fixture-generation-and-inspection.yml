@@ -98,9 +98,28 @@ jobs:
       - name: Dispatch guarded HF Jobs smoke only after reviewed receipt
         if: ${{ inputs.confirm_execute && inputs.dry_run == false }}
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo '::notice::HF Jobs dispatch remains a separate reviewed action; this workflow records generation/inspection identity only.'
+          request_id="fixture-${{ inputs.generation_id }}"
+          jq -n \
+            --arg ref main \
+            --arg request_id "$request_id" \
+            --arg source_repository "largoyo/Premiere-AutoProcess-Plugin" \
+            --arg receipt_repository "largoyo/Premiere-AutoProcess-Plugin" \
+            --arg hf_bucket "${{ inputs.hf_bucket }}" \
+            --arg candidate_id "candidate-000001" \
+            --arg package_name "jpapt-candidate" \
+            '{ref:$ref,inputs:{request_id:$request_id,source_repository:$source_repository,receipt_repository:$receipt_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:"auto",dataset_id:"",suite:"smoke",executor:"hf_jobs",environment:"linux-cpu",hf_flavor:"cpu-basic",hf_jobs_image:"",dry_run:"false",execute:"true"}}' \
+            >/tmp/candidate-gateway-dispatch.json
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-request-gateway.yml/dispatches" \
+            --input /tmp/candidate-gateway-dispatch.json
+          jq -n --arg request_id "$request_id" --arg generation_id '${{ inputs.generation_id }}' \
+            '{request_id:$request_id,generation_id:$generation_id,status:"dispatched",next:"run fixture-generation-completion after canonical candidate receipt exists"}' \
+            > .ci/fixture-generation/dispatch.json
+          echo "::notice::canonical candidate request dispatched as $request_id"
 
       - uses: actions/upload-artifact@v7
         if: ${{ inputs.confirm_execute }}

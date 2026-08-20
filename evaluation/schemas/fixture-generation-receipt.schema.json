@@ -22,7 +22,7 @@
     "hf_bucket": {"type": "string", "minLength": 3},
     "status": {
       "type": "string",
-      "enum": ["planned", "ready_for_dispatch", "blocked"]
+      "enum": ["planned", "ready_for_dispatch", "dispatched", "blocked"]
     },
     "dry_run": {"type": "boolean"},
     "execute": {"type": "boolean"},

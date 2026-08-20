@@ -130,12 +130,11 @@ Do not use final transcript equality as the only numerical correctness test.
 
 ## Execution Providers
 
-Supported logical EPs in the current project specification:
+Supported active logical EPs in the current project specification:
 
 ```text
 cpu
 cuda
-directml
 coreml
 ```
 
@@ -144,13 +143,12 @@ Platform boundaries are part of the contract:
 ```text
 CPU       Linux / Windows / macOS
 CUDA      Linux GPU
-DirectML  Windows
 CoreML    macOS / Apple Silicon
 ```
 
-CoreML means ONNX Runtime CoreML Execution Provider only. DirectML means ONNX
-Runtime DirectML Execution Provider on Windows. Linux HF Jobs cannot substitute
-for DirectML or CoreML execution proof.
+CoreML means ONNX Runtime CoreML Execution Provider only. DirectML is retired;
+old DirectML artifacts are historical audit data only and are not an active
+execution or acceptance route.
 
 Keep provider registration, successful session creation, successful inference,
 provider execution proof, and node-assignment proof separate. Non-CPU strict
@@ -160,6 +158,13 @@ Do not introduce MLX or native Core ML model conversion into the canonical
 runtime path unless the project specification is explicitly changed.
 
 ## Hugging Face lifecycle
+
+### DirectML retirement
+
+DirectML is retired from the active JPAPT contract as of 2026-08-20. New
+DirectML or `windows-directml` requests, dispatches, receipts, HF Jobs, and
+Bucket completion claims are rejected. Existing DirectML workflow code and
+artifacts remain only for historical audit and must not be extended.
 
 Development:
 

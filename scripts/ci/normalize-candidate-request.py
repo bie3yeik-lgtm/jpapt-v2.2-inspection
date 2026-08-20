@@ -112,6 +112,12 @@ def main() -> int:
     if not isinstance(request_execution_id, str):
         raise SystemExit("request_execution_id must be string")
 
+    environment = request.get("environment")
+    if environment == "windows-directml":
+        raise SystemExit("DirectML route is retired; new windows-directml requests are rejected")
+    if request.get("provider") == "directml":
+        raise SystemExit("DirectML provider is retired; new directml requests are rejected")
+
     output = Path(args.output)
     output.write_text(
         json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n",

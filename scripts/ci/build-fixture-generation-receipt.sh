@@ -38,8 +38,8 @@ bucket_run_id=""
 notes="plan-only; no Bucket mutation or HF Jobs dispatch"
 
 if [[ "$execute" == true ]]; then
-  status="ready_for_dispatch"
-  notes="reviewed execute request; HF Jobs dispatch requires separate confirmation gate"
+  status="dispatched"
+  notes="reviewed execute request; canonical Candidate Request Gateway dispatch is required for HF Jobs"
 fi
 
 command -v jq >/dev/null 2>&1 || {

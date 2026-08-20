@@ -8,6 +8,8 @@ on:
       - .github/workflows/fixture-generation-and-inspection-contracts.yml
       - scripts/ci/build-fixture-generation-receipt.sh
       - evaluation/schemas/fixture-generation-receipt.schema.json
+      - evaluation/schemas/fixture-completion-binding.schema.json
+      - scripts/ci/build-fixture-completion-binding.py
       - python/tests/unit/test_fixture_generation_receipt_schema.py
   pull_request:
     paths:
@@ -15,6 +17,8 @@ on:
       - .github/workflows/fixture-generation-and-inspection-contracts.yml
       - scripts/ci/build-fixture-generation-receipt.sh
       - evaluation/schemas/fixture-generation-receipt.schema.json
+      - evaluation/schemas/fixture-completion-binding.schema.json
+      - scripts/ci/build-fixture-completion-binding.py
       - python/tests/unit/test_fixture_generation_receipt_schema.py
   workflow_dispatch:
 
@@ -40,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/ci/build-fixture-generation-receipt.sh
-          pytest -q python/tests/unit/test_fixture_generation_receipt_schema.py
+          pytest -q --confcutdir=python/tests/unit python/tests/unit/test_fixture_generation_receipt_schema.py
           cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe fixture-generation-and-inspection
 
       - name: Accept plan-only receipt without execute

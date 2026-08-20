@@ -40,9 +40,6 @@ jobs:
           - name: linux-cpu
             os: ubuntu-latest
             features: cpu
-          - name: windows-directml
-            os: windows-latest
-            features: cpu,directml
           - name: macos-coreml
             os: macos-15
             features: cpu,coreml

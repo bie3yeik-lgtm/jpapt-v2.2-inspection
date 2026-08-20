@@ -29,7 +29,7 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            features: cpu,directml
+            features: cpu
             binary: asr-eval.exe
             archive: zip
           - name: macos-aarch64
