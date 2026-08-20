@@ -25,7 +25,7 @@ jq -n \
   --arg request_id "$request_id" \
   --argjson dry_run "$dry_run" \
   --argjson execute "$execute" \
-  '{event_type:"jpapt.candidate-request",client_payload:{request_id:$request_id,source_repository:"largoyo/Premiere-AutoProcess-Plugin",receipt_repository:"largoyo/Premiere-AutoProcess-Plugin",hf_bucket:"gawohok7/tf-v2.2-onnx-dev-bucket",candidate_id:"candidate-000001",package_name:"jpapt-candidate",dataset_source:"bucket",suite:"smoke",executor:"hf_jobs",environment:"linux-cpu",hf_flavor:"cpu-basic",hf_jobs_image:"ghcr.io/bie3yeik-lgtm/jpapt-candidate@sha256:ee2ae53d748b0c3a748d306621d218787c1ff4aa76c6fedf8045a4c3c0803bec",dry_run:$dry_run,execute:$execute}}' > "$body_file"
+  '{event_type:"jpapt.candidate-request",client_payload:{request_id:$request_id,source_repository:"largoyo/Premiere-AutoProcess-Plugin",receipt_repository:"largoyo/Premiere-AutoProcess-Plugin",hf_bucket:"gawohok7/tf-v2.2-onnx-dev-bucket",candidate_id:"candidate-000001",package_name:"jpapt-candidate",dataset_source:"bucket",suite:"smoke",executor:"hf_jobs",environment:"linux-cpu",hf_flavor:"cpu-basic",hf_jobs_image:"",dry_run:$dry_run,execute:$execute}}' > "$body_file"
 
 if [[ "$print_only" == "--print" ]]; then
   jq -S . "$body_file"
