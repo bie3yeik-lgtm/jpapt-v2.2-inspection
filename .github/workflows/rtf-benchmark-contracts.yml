@@ -94,10 +94,10 @@ jobs:
           if "exec python benchmark.py" in script:
               raise SystemExit("RunPod must not bypass the image entrypoint")
           resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
-          if '--user "$resolver_uid:$resolver_gid"' not in resolver:
-              raise SystemExit("Docker resolver must preserve host ownership")
-          if "-e HOME=/tmp -e HF_HOME=/tmp/huggingface" not in resolver:
-              raise SystemExit("non-root Docker resolver needs writable cache paths")
+          if "chown -R '$resolver_uid:$resolver_gid' /resolver" not in resolver:
+              raise SystemExit("Docker resolver must restore host ownership")
+          if '--entrypoint bash' not in resolver:
+              raise SystemExit("Docker resolver must use a cleanup-capable shell")
           print("Docker provider path contract: PASS")
           PY
 
