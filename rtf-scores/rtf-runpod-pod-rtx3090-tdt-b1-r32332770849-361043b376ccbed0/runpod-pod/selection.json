@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "SERVICE_ID": "runpod-pod",
+  "GPU": "rtx3090",
+  "MODEL_ID": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+  "DATASET_ID": "japanese-asr/ja_asr.common_voice_8_0",
+  "DECODER": "tdt",
+  "BATCH_SIZE": "1",
+  "RUN_ID": "rtf-runpod-pod-rtx3090-tdt-b1-r32332770849-361043b376ccbed0"
+}
