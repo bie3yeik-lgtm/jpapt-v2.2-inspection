@@ -79,7 +79,10 @@ jobs:
           else
             package_digest="$(gh api --paginate --slurp \
               "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/parakeet-rtf-benchmark/versions?per_page=100" \
-              | jq -er 'add | map(select((.metadata.container.tags // []) | index("latest"))) | max_by(.updated_at) | .metadata.container.digest')"
+              | jq -er 'add | (map(select((.metadata.container.tags // []) | index("latest"))) // []) as $tagged | (if ($tagged | length) > 0 then $tagged else . end) | max_by(.updated_at) | .metadata.container.digest')" || {
+                echo 'unable to resolve a GHCR package version digest' >&2
+                exit 2
+              }
             image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark@${package_digest}"
           fi
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
