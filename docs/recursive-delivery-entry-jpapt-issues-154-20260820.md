@@ -130,4 +130,11 @@ Unit 1のlocal wrapperは`scripts/ci/dispatch-public-inspection-bypass.sh`であ
 `protocol_payload`を正規化側が展開せず`source_repository must be string`で拒否された。
 HF Jobs、V2 dispatch、candidate取得、completion/ACKは未発生。正規化側修正とnested payloadの
 local contract testはPASS、remote修正確認は未実施であり、Unit 1はBLOCKEDとする。
+
+再検証記録 (2026-08-20): payload正規化修正をmainへ反映後、Gateway run
+`32328830992`を実行した。正規化処理は通過したが、source repository
+`largoyo/Premiere-AutoProcess-Plugin`はprivateであり、Gatewayの`SOURCE_REPO_TOKEN`が空のため
+`.jpapt/hf-bucket.yml`取得とrepository probeが404で失敗した。HF Jobs、V2 dispatch、candidate
+取得、completion/ACKは未発生。この工程の継続には、source repository Contents read権限を持つ
+`SOURCE_REPO_TOKEN`をGateway repositoryへ登録する必要がある。
 `plan`/`execute`のpayloadを固定値から生成し、`--print`で外部writeなしに確認できる。

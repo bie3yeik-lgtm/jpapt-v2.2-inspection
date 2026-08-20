@@ -180,6 +180,13 @@ Unit 1 local dispatch wrapper (2026-08-20):
 HF Jobs、V2 dispatch、candidate取得、completion/ACKは未発生。正規化側修正とnested payloadの
 local contract testはPASS、remote修正確認は未実施であり、Unit 1はBLOCKEDとする。
 
+再検証記録 (2026-08-20): payload正規化修正をmainへ反映後、Gateway run
+`32328830992`を実行した。正規化処理は通過したが、source repository
+`largoyo/Premiere-AutoProcess-Plugin`はprivateであり、Gatewayの`SOURCE_REPO_TOKEN`が空のため
+`.jpapt/hf-bucket.yml`取得とrepository probeが404で失敗した。HF Jobs、V2 dispatch、candidate
+取得、completion/ACKは未発生。この工程の継続には、source repository Contents read権限を持つ
+`SOURCE_REPO_TOKEN`をGateway repositoryへ登録する必要がある。
+
 Unit 0 read-only remote verification (2026-08-20): public `main`は固定SHA
 `149d689dfbc9a52774064305836c0ff45f5b7e9b`と一致した。固定SHA上のGateway workflow、V2
 workflow、completion receipt schemaを取得し、`jpapt.candidate-request`、`dry_run`、
