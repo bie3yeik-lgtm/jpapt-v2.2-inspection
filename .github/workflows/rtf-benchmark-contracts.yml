@@ -134,6 +134,8 @@ jobs:
               raise SystemExit("RunPod create failures must clean up Pods by unique name")
           if 'pod_create_failed=1' not in script:
               raise SystemExit("RunPod create failures must activate orphan cleanup")
+          if "(.id // .podId // .pod_id) // empty" not in script:
+              raise SystemExit("RunPod create errors must not pass a literal null pod id to delete")
           if 'delete_pod\n    ;;' not in script:
               raise SystemExit("RunPod must delete the Pod immediately after result collection")
           if 'runpodctl pod delete "$pod_id"' not in script:

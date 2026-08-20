@@ -170,7 +170,9 @@ case "$PROVIDER" in
       --wait --wait-timeout 10m --output json 2>&1)"
     pod_create_status=$?
     set -e
-    pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json" 2>/dev/null || true)"
+    # `jq -e` prints JSON null before returning failure for an error response;
+    # use `// empty` so the literal string "null" can never reach pod delete.
+    pod_id="$(jq -er '(.id // .podId // .pod_id) // empty' <<<"$pod_json" 2>/dev/null || true)"
     if [[ "$pod_create_status" -ne 0 || -z "$pod_id" ]]; then
       pod_create_failed=1
       printf '%s\n' "$pod_json" >&2
