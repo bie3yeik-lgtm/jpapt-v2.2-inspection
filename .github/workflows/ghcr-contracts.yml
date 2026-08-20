@@ -99,6 +99,11 @@ jobs:
           cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- \
             resolve --workflow ghcr-evaluate --ref main --inputs-json '{}' \
             > .ci/ghcr-contracts/dispatch-smoke.json
+          digest="$(printf 'e%.0s' {1..64})"
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- \
+            resolve --workflow ghcr-public-verify --ref main \
+            --inputs-json "{\"image\":\"ghcr.io/owner/package@sha256:${digest}\",\"require_public\":true}" \
+            > .ci/ghcr-contracts/dispatch-smoke-ghcr-public-verify.json
 
       - uses: actions/upload-artifact@v7
         with:

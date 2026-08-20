@@ -1,0 +1,71 @@
+name: Upstream Contract Diff
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_revision:
+        description: "Public authority revision (40-hex SHA on this repository)"
+        required: true
+        type: string
+      baseline_revision:
+        description: "Baseline revision to compare against (40-hex SHA)"
+        required: true
+        type: string
+      source_repository:
+        description: "Parent source repository owner/name for report metadata"
+        required: false
+        default: largoyo/Premiere-AutoProcess-Plugin
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-contract-diff-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  diff:
+    name: Produce contract diff report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build upstream contract diff report
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-upstream-contract-diff.sh \
+            "${{ inputs.baseline_revision }}" \
+            "${{ inputs.public_revision }}" \
+            .ci/upstream-contract-diff/report.json
+
+      - name: Summarize contract diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq . .ci/upstream-contract-diff/report.json
+          contract_count="$(jq -r '.summary.contract_changed_files' .ci/upstream-contract-diff/report.json)"
+          total_count="$(jq -r '.summary.total_changed_files' .ci/upstream-contract-diff/report.json)"
+          {
+            echo "### Upstream contract diff"
+            echo "- baseline: \`${{ inputs.baseline_revision }}\`"
+            echo "- public: \`${{ inputs.public_revision }}\`"
+            echo "- source_repository: \`${{ inputs.source_repository }}\`"
+            echo "- contract_changed_files: \`${contract_count}\`"
+            echo "- total_changed_files: \`${total_count}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: upstream-contract-diff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/upstream-contract-diff
+          retention-days: 30
+          if-no-files-found: error

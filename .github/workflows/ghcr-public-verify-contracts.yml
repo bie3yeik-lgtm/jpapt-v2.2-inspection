@@ -1,0 +1,102 @@
+name: GHCR Public Verify Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ghcr-public-verify.yml
+      - .github/workflows/ghcr-public-verify-contracts.yml
+      - scripts/ci/ghcr-public-verify.sh
+      - rust/crates/asr-contracts/src/bin/asr-workflow-dispatch.rs
+  pull_request:
+    paths:
+      - .github/workflows/ghcr-public-verify.yml
+      - .github/workflows/ghcr-public-verify-contracts.yml
+      - scripts/ci/ghcr-public-verify.sh
+      - rust/crates/asr-contracts/src/bin/asr-workflow-dispatch.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate GHCR public verify helper and dispatch contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate helper syntax and dispatch registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/ghcr-public-verify.sh
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe ghcr-public-verify
+          digest="$(printf 'a%.0s' {1..64})"
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- \
+            resolve --workflow ghcr-public-verify --ref main \
+            --inputs-json "{\"image\":\"ghcr.io/owner/package@sha256:${digest}\",\"require_public\":true}"
+
+      - name: Accept anonymously resolvable digest-pinned image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fake-bin
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${DOCKER_CONFIG:?DOCKER_CONFIG must be isolated}"
+          [[ ! -e "$DOCKER_CONFIG/config.json" ]]
+          [[ "${1:-}" == manifest && "${2:-}" == inspect ]]
+          printf '%s\n' "$3" > /tmp/ghcr-public-verify-image
+          exit 0
+          SH
+          chmod +x /tmp/fake-bin/docker
+          image="ghcr.io/owner/package@sha256:$(printf 'b%.0s' {1..64})"
+          GHCR_VERIFY_OUTPUT_DIR=/tmp/ghcr-public-verify-out PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/ghcr-public-verify.sh "$image"
+          test "$(cat /tmp/ghcr-public-verify-image)" = "$image"
+          jq -e '.credentials_used == false and .anonymous_pull_namespace == true' \
+            /tmp/ghcr-public-verify-out/receipt.json >/dev/null
+
+      - name: Reject malformed image before Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          echo invoked > /tmp/unexpected-ghcr-public-docker
+          exit 99
+          SH
+          chmod +x /tmp/fake-bin/docker
+          rm -f /tmp/unexpected-ghcr-public-docker
+          digest="$(printf 'c%.0s' {1..64})"
+          for image in \
+            ghcr.io/owner/package:latest \
+            "ghcr.io/owner/package@sha256:$(printf 'D%.0s' {1..64})"; do
+            if PATH="/tmp/fake-bin:$PATH" bash scripts/ci/ghcr-public-verify.sh "$image"; then
+              echo "invalid image unexpectedly accepted: $image" >&2
+              exit 1
+            fi
+          done
+          test ! -e /tmp/unexpected-ghcr-public-docker
+
+      - name: Reject non-public image when require_public is true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-bin/docker <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          [[ "${1:-}" == manifest && "${2:-}" == inspect ]]
+          exit 1
+          SH
+          chmod +x /tmp/fake-bin/docker
+          image="ghcr.io/owner/private@sha256:$(printf 'd%.0s' {1..64})"
+          if GHCR_REQUIRE_PUBLIC=true PATH="/tmp/fake-bin:$PATH" \
+            bash scripts/ci/ghcr-public-verify.sh "$image"; then
+            echo 'non-public image unexpectedly accepted' >&2
+            exit 1
+          fi

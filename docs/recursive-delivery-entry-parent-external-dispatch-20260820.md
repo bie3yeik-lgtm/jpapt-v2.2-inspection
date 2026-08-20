@@ -1,0 +1,65 @@
+# Recursive Delivery Entry: Parent External Dispatch Workflows
+
+作成日: 2026-08-20
+対象ブランチ: `feat/parent-external-dispatch-workflows`
+親リポジトリ: `largoyo/Premiere-AutoProcess-Plugin`
+正本ドキュメント: [`parent-external-dispatch-workflows-20260820.md`](./parent-external-dispatch-workflows-20260820.md)
+
+## 着手目的
+
+親リポジトリは Private Actions Billing に依存せず、JPAPT 実行を公開正本
+`bie3yeik-lgtm/jpapt-v2.2-inspection` へ `repository_dispatch` する。本ブランチは、
+親 migration 文書で `upstream-required` とされた公開 workflow を実装し、#134 / #154 / #160
+に関連する dispatch 経路を router から解決可能にする。
+
+## 最初の作業単位
+
+Unit 0 として、着手時 `main` SHA `5d4974fb8e10b04088a419e37545b1e5cedd900e` 上の workflow
+一覧と親 migration 表を照合し、次の 4 workflow を実装 backlog として固定する。
+
+1. `ghcr-public-verify`
+2. `fixture-generation-and-inspection`
+3. Windows/DirectML provider route
+4. upstream contract diff route
+
+詳細要件・issue 対応・禁止事項は正本ドキュメントを参照する。
+
+## 検証境界
+
+### Unit 0（2026-08-20）
+
+```text
+gap table in parent-external-dispatch-workflows-20260820.md: PASS
+asr-workflow-dispatch validate (after workflow_dispatch fix): PASS
+upstream-required workflow implementation: IN PROGRESS
+repository_dispatch on default branch: BLOCKED until merge
+parent caller config update: OUT OF SCOPE for this repo
+remote dispatch / HF Jobs / completion: NOT RUN
+```
+
+| Unit | 状態 | evidence |
+|---|---|---|
+| 0 | PASS | gap 表、validate |
+| 1 | PASS | `ghcr-public-verify` workflow + contracts + script |
+| 4 | PASS | `upstream-contract-diff` Rust engine + workflow + contracts |
+| 2 | PASS | `fixture-generation-and-inspection` schema + plan/execute scaffold |
+| 3 | PASS | `windows-directml-provider-route` workflow + external receipt + contracts |
+| 5 | PASS | handoff docs + local validate |
+
+### 最終検証境界
+
+```text
+asr-workflow-dispatch validate: PASS (92 workflows)
+Unit 1-4 workflow YAML + contract gates: IMPLEMENTED
+repository_dispatch on default branch: NOT VERIFIED until merge
+parent jpapt-external-dispatch.v1.json update: OUT OF SCOPE
+HF Jobs / Gateway live execute: NOT RUN
+Windows DirectML execute job: NOT VERIFIED locally (requires windows-latest CI)
+mise run check: run in CI / local environment with mise
+```
+
+### 次の安全なアクション
+
+1. 本 PR を `main` へ merge する
+2. 親 repo で [`parent-repository-external-dispatch-config-handoff-20260820.md`](./parent-repository-external-dispatch-config-handoff-20260820.md) に従い `jpapt-external-dispatch.v1.json` を更新する
+3. reviewed remote dispatch で receipt / artifact を保存する

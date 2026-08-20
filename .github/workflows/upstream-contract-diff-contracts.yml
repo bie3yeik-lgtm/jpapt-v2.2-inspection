@@ -1,0 +1,62 @@
+name: Upstream Contract Diff Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/upstream-contract-diff.yml
+      - .github/workflows/upstream-contract-diff-contracts.yml
+      - scripts/ci/run-upstream-contract-diff.sh
+      - rust/crates/asr-contracts/src/bin/asr-upstream-contract-diff.rs
+      - evaluation/schemas/upstream-contract-diff-report.schema.json
+  pull_request:
+    paths:
+      - .github/workflows/upstream-contract-diff.yml
+      - .github/workflows/upstream-contract-diff-contracts.yml
+      - scripts/ci/run-upstream-contract-diff.sh
+      - rust/crates/asr-contracts/src/bin/asr-upstream-contract-diff.rs
+      - evaluation/schemas/upstream-contract-diff-report.schema.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate upstream contract diff engine and dispatch contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust unit tests and dispatch registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/run-upstream-contract-diff.sh
+          cargo test --quiet --locked -p asr-contracts --bin asr-upstream-contract-diff
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe upstream-contract-diff
+
+      - name: Build report for adjacent commits without Bucket mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          baseline="$(git rev-parse HEAD~1)"
+          bash scripts/ci/run-upstream-contract-diff.sh "$baseline" "$head" /tmp/upstream-contract-diff.json
+          jq -e '.schema_version == 1 and (.changed_files | type) == "array"' \
+            /tmp/upstream-contract-diff.json >/dev/null
+
+      - name: Reject identical revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if cargo run --quiet --locked -p asr-contracts --bin asr-upstream-contract-diff -- \
+            compare --repo-root . --baseline "$sha" --head "$sha" --output /tmp/bad.json; then
+            echo 'identical revisions unexpectedly accepted' >&2
+            exit 1
+          fi
