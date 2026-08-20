@@ -89,7 +89,7 @@ jobs:
           echo "Resolved image: $image"
           echo "Resolved model revision: $model_revision"
       - name: Restore provider package cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pip
           key: rtf-benchmark-pip-${{ runner.os }}-${{ hashFiles('docker/rtf-benchmark/requirements.lock') }}
