@@ -85,8 +85,9 @@ GitHub Actions and local automation should use the lifecycle wrapper:
 The HF branch submits one Job. The RunPod branch creates one Pod with
 `sleep infinity`, executes the complete benchmark once, collects the result,
 deletes the Pod immediately, and retains an EXIT-trap/orphan-name cleanup
-path. RunPod also receives a four-hour `--terminate-after` safety limit so a
-runner or network failure cannot leave a benchmark Pod running indefinitely.
+path. RunPod also receives an absolute UTC deadline four hours in the future
+through `--terminate-after` as a safety limit so a runner or network failure
+cannot leave a benchmark Pod running indefinitely.
 
 `RTF Resolver` writes the uploaded fixture repository and immutable commit SHA
 to `rtf-scores/benchmark/benchmark-v1.fixture.json`. `RTF Benchmark Run` reads that
