@@ -118,12 +118,18 @@ case "$PROVIDER" in
   runpod)
     command -v runpodctl >/dev/null || { echo "runpodctl is required" >&2; exit 1; }
     pod_id=""
-    cleanup() {
+    delete_pod() {
       if [[ -n "$pod_id" ]]; then
-        runpodctl pod delete "$pod_id" >/dev/null || true
+        echo "Deleting RunPod Pod $pod_id" >&2
+        if runpodctl pod delete "$pod_id" >/dev/null; then
+          pod_id=""
+        else
+          echo "::error::failed to delete RunPod Pod $pod_id" >&2
+          return 1
+        fi
       fi
     }
-    trap cleanup EXIT
+    trap 'delete_pod || true' EXIT
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
@@ -141,7 +147,7 @@ case "$PROVIDER" in
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
       '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
+      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
       --wait --wait-timeout 10m --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
     ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '.sshCommand')"
@@ -156,5 +162,8 @@ case "$PROVIDER" in
     runpod_ssh sh -c "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
     runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
     runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    # Delete this Pod as soon as its metrics and receipt have been copied.
+    # The EXIT trap remains as a failure-path safety net.
+    delete_pod
     ;;
 esac
