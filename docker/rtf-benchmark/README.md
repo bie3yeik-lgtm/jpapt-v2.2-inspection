@@ -58,7 +58,7 @@ Jobs may invoke the image as:
 
 ```bash
 hf jobs run --flavor a10g-small \
-  ghcr.io/bie3yeik-lgtm/jpapt-v2.2-inspection/parakeet-rtf-benchmark@sha256:<digest> \
+  ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<digest> \
   python benchmark.py
 ```
 
@@ -66,7 +66,7 @@ RunPod may start the same image without a command:
 
 ```bash
 runpodctl pod create --name parakeet-bench \
-  --image ghcr.io/bie3yeik-lgtm/jpapt-v2.2-inspection/parakeet-rtf-benchmark@sha256:<digest> \
+  --image ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<digest> \
   --gpu-id "NVIDIA RTX A5000"
 ```
 

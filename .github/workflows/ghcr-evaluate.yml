@@ -259,7 +259,9 @@ jobs:
               --output results/ghcr-cpu
 
       - name: Persist GHCR environment evidence
-        if: always()
+        # Candidate/revision preparation is a prerequisite. If it fails, the
+        # evidence payload cannot contain a trustworthy candidate identity.
+        if: steps.candidate.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
