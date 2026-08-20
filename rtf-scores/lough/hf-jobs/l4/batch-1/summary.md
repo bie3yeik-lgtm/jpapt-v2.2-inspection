@@ -1,7 +1,7 @@
 ## RTF service result
 
-- run_id: `rtf-hf-32367692260-b1`
+- run_id: `rtf-hf-32401077937-b1`
 - service: `hf-jobs`
-- status: `blocked`
+- status: `completed`
 - provider: `cuda`
 - environment: `linux`
