@@ -69,6 +69,7 @@ fn run() -> Result<(), String> {
     let git_commit = git_commit()?;
     let config_identity = "strict-provider-probe-v1";
     let model_id = "synthetic-strict-provider-ctc";
+    let enable_mem_pattern = provider != "directml";
 
     let context = json!({
         "schema_version": 2,
@@ -127,7 +128,7 @@ fn run() -> Result<(), String> {
                     "session": {
                         "graph_optimization_level": "all",
                         "execution_mode": "sequential",
-                        "enable_mem_pattern": true
+                        "enable_mem_pattern": enable_mem_pattern
                     },
                     "validation": {
                         "allow_cpu_fallback": false,
