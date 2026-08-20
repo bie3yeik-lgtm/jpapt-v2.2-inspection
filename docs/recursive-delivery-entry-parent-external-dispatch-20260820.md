@@ -44,4 +44,22 @@ remote dispatch / HF Jobs / completion: NOT RUN
 | 4 | PASS | `upstream-contract-diff` Rust engine + workflow + contracts |
 | 2 | PASS | `fixture-generation-and-inspection` schema + plan/execute scaffold |
 | 3 | PASS | `windows-directml-provider-route` workflow + external receipt + contracts |
-| 5 | pending | handoff docs |
+| 5 | PASS | handoff docs + local validate |
+
+### 最終検証境界
+
+```text
+asr-workflow-dispatch validate: PASS (92 workflows)
+Unit 1-4 workflow YAML + contract gates: IMPLEMENTED
+repository_dispatch on default branch: NOT VERIFIED until merge
+parent jpapt-external-dispatch.v1.json update: OUT OF SCOPE
+HF Jobs / Gateway live execute: NOT RUN
+Windows DirectML execute job: NOT VERIFIED locally (requires windows-latest CI)
+mise run check: run in CI / local environment with mise
+```
+
+### 次の安全なアクション
+
+1. PR を `main` へ merge する
+2. 親 repo の `config/jpapt-external-dispatch.v1.json` を新 alias へ更新する
+3. reviewed remote dispatch で receipt / artifact を保存する

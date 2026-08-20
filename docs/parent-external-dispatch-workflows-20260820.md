@@ -241,6 +241,53 @@ issue 間の依存順序（親側 resolution plan より）:
 - 親 `jpapt-external-dispatch.py plan` が新 workflow alias を解決できること（親側 config 更新は別 PR）
 - #154 plan/execute、#160 verify、#134 routing/provenance gate との境界を docs へ反映
 
+## 11. 実装完了と dispatch 例（2026-08-20）
+
+本ブランチで追加した upstream-required workflow と、`jpapt.workflow` 経由の dispatch 例。merge 前の branch では GitHub platform 制約により `repository_dispatch` は default branch 上でのみ有効。
+
+| workflow alias | 用途 | evidence 境界 |
+|---|---|---|
+| `ghcr-public-verify` | #160 匿名 GHCR verify | `credentials_used=false` receipt。`ghcr-audit` 代替ではない |
+| `upstream-contract-diff` | #134 contract delta | git diff のみ。Bucket mutation なし |
+| `fixture-generation-and-inspection` | fixture generation plan/execute | generation_id / inspection_id 分離。HF Jobs は別 gate |
+| `windows-directml-provider-route` | Windows DirectML external route | `linux_hf_jobs_smoke_equivalent=false` |
+
+```json
+{
+  "event_type": "jpapt.workflow",
+  "client_payload": {
+    "workflow": "ghcr-public-verify",
+    "ref": "main",
+    "inputs": {
+      "image": "ghcr.io/bie3yeik-lgtm/jpapt-candidate@sha256:ee2ae53d748b0c3a748d306621d218787c1ff4aa76c6fedf8045a4c3c0803bec",
+      "require_public": true
+    }
+  }
+}
+```
+
+```json
+{
+  "event_type": "jpapt.workflow",
+  "client_payload": {
+    "workflow": "upstream-contract-diff",
+    "ref": "main",
+    "inputs": {
+      "baseline_revision": "5d4974fb8e10b04088a419e37545b1e5cedd900e",
+      "public_revision": "66b9ac4a37d72aeea7941691f8ba5cfff858dc1f",
+      "source_repository": "largoyo/Premiere-AutoProcess-Plugin"
+    }
+  }
+}
+```
+
+**NOT VERIFIED until merge / reviewed remote run**
+
+- `repository_dispatch` router on default branch
+- 親 `config/jpapt-external-dispatch.v1.json` 更新
+- #154 Gateway plan/execute + completion/ACK live run
+- private trusted package evidence
+
 ## 9. 非目標・禁止事項
 
 - 親 repository `.github/workflows/` へ実行 workflow を追加しない（親 migration 方針）
