@@ -144,12 +144,14 @@ reviewed execute（`confirm_execute=true` 必須）:
     "generation_id": "gen-<stable-id>",
     "dry_run": false,
     "execute": true,
-    "confirm_execute": true
+    "confirm_execute": true,
+    "source_repository": "largoyo/Premiere-AutoProcess-Plugin",
+    "candidate_id": "candidate-000001"
   }
 }
 ```
 
-受入れ: `generation_id` と `inspection_id` が receipt 上で分離。HF Jobs smoke 単体を fixture generation 完了とみなさない。
+受入れ: `generation_id` と `inspection_id` が receipt 上で分離。`generation_id` を canonical `request_id` として `candidate-request-gateway` へ渡し、lifecycle `acknowledged` と completion `result_uri` を fixture receipt へ結合する。HF Jobs smoke 単体や `status=ready_for_dispatch` だけでは fixture execute 完了とみなさない。DirectML は受入れ対象外のため `environment=linux-cpu` 固定。
 
 ### 5.4 `windows-directml-provider-route`
 

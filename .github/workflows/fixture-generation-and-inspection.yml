@@ -21,7 +21,7 @@ on:
         default: true
         type: boolean
       execute:
-        description: "Reviewed execute request; still requires confirm_execute for dispatch"
+        description: "Reviewed execute; confirm_execute dispatches canonical candidate evaluator"
         required: false
         default: false
         type: boolean
@@ -30,6 +30,26 @@ on:
         required: false
         default: false
         type: boolean
+      source_repository:
+        description: "Caller repository owner/name bound into candidate request"
+        required: false
+        default: "largoyo/Premiere-AutoProcess-Plugin"
+        type: string
+      candidate_id:
+        description: "candidate-NNNNNN for canonical evaluator"
+        required: false
+        default: "candidate-000001"
+        type: string
+      receipt_repository:
+        description: "Completion receipt repo; blank = this inspection repository"
+        required: false
+        default: ""
+        type: string
+      wait_timeout_seconds:
+        description: "Seconds to wait for candidate lifecycle acknowledged"
+        required: false
+        default: "1800"
+        type: string
 
 permissions:
   contents: read
@@ -71,9 +91,12 @@ jobs:
     name: Reviewed execute path
     if: ${{ inputs.execute }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
 
       - name: Require explicit execute confirmation
         if: ${{ !inputs.confirm_execute }}
@@ -82,7 +105,7 @@ jobs:
           echo '::error::execute=true requires confirm_execute=true'
           exit 1
 
-      - name: Build reviewed execute receipt
+      - name: Build reviewed execute identity receipt
         if: ${{ inputs.confirm_execute }}
         shell: bash
         run: |
@@ -95,34 +118,118 @@ jobs:
             false \
             true
 
-      - name: Dispatch guarded HF Jobs smoke only after reviewed receipt
+      - name: Dispatch canonical candidate evaluator
+        if: ${{ inputs.confirm_execute && inputs.dry_run == false }}
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENERATION_ID: ${{ inputs.generation_id }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          RECEIPT_REPOSITORY: ${{ inputs.receipt_repository }}
+          HF_BUCKET: ${{ inputs.hf_bucket }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check jsonschema
+          receipt_repository="${RECEIPT_REPOSITORY:-$GITHUB_REPOSITORY}"
+          request_key="$(python scripts/ci/build-candidate-request-lifecycle.py --request-key "$GENERATION_ID")"
+          mkdir -p .ci/fixture-generation
+          jq -n \
+            --arg ref "${GITHUB_REF_NAME}" \
+            --arg request_id "$GENERATION_ID" \
+            --arg source_repository "$SOURCE_REPOSITORY" \
+            --arg receipt_repository "$receipt_repository" \
+            --arg hf_bucket "$HF_BUCKET" \
+            --arg candidate_id "$CANDIDATE_ID" \
+            '{
+              ref: $ref,
+              inputs: {
+                request_id: $request_id,
+                source_repository: $source_repository,
+                receipt_repository: $receipt_repository,
+                hf_bucket: $hf_bucket,
+                candidate_id: $candidate_id,
+                package_name: "",
+                dataset_source: "auto",
+                dataset_id: "",
+                suite: "smoke",
+                executor: "hf_jobs",
+                environment: "linux-cpu",
+                hf_flavor: "cpu-basic",
+                hf_jobs_image: "",
+                dry_run: "false",
+                execute: "true"
+              }
+            }' > /tmp/fixture-evaluator-dispatch.json
+          bash scripts/ci/workflow-dispatch-with-retry.sh \
+            "$GITHUB_REPOSITORY" \
+            candidate-request-gateway.yml \
+            /tmp/fixture-evaluator-dispatch.json \
+            3
+          jq --arg request_id "$GENERATION_ID" \
+            '.status = "dispatched"
+             | .request_id = $request_id
+             | .evaluator_workflow = "candidate-request-gateway.yml"
+             | .notes = "canonical candidate-request-gateway dispatched; waiting for completion receipt/ACK"' \
+            .ci/fixture-generation/receipt.json > /tmp/fixture-dispatched.json
+          mv /tmp/fixture-dispatched.json .ci/fixture-generation/receipt.json
+          {
+            echo "request_key=$request_key"
+            echo "receipt_repository=$receipt_repository"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait for evaluator completion and bind fixture receipt
         if: ${{ inputs.confirm_execute && inputs.dry_run == false }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUEST_KEY: ${{ steps.dispatch.outputs.request_key }}
+          TIMEOUT_SECONDS: ${{ inputs.wait_timeout_seconds }}
+          GENERATION_ID: ${{ inputs.generation_id }}
         run: |
           set -euo pipefail
-          request_id="fixture-${{ inputs.generation_id }}"
-          jq -n \
-            --arg ref main \
-            --arg request_id "$request_id" \
-            --arg source_repository "largoyo/Premiere-AutoProcess-Plugin" \
-            --arg receipt_repository "largoyo/Premiere-AutoProcess-Plugin" \
-            --arg hf_bucket "${{ inputs.hf_bucket }}" \
-            --arg candidate_id "candidate-000001" \
-            --arg package_name "jpapt-candidate" \
-            '{ref:$ref,inputs:{request_id:$request_id,source_repository:$source_repository,receipt_repository:$receipt_repository,hf_bucket:$hf_bucket,candidate_id:$candidate_id,package_name:$package_name,dataset_source:"auto",dataset_id:"",suite:"smoke",executor:"hf_jobs",environment:"linux-cpu",hf_flavor:"cpu-basic",hf_jobs_image:"",dry_run:"false",execute:"true"}}' \
-            >/tmp/candidate-gateway-dispatch.json
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/candidate-request-gateway.yml/dispatches" \
-            --input /tmp/candidate-gateway-dispatch.json
-          jq -n --arg request_id "$request_id" --arg generation_id '${{ inputs.generation_id }}' \
-            '{request_id:$request_id,generation_id:$generation_id,status:"dispatched",next:"run fixture-generation-completion after canonical candidate receipt exists"}' \
-            > .ci/fixture-generation/dispatch.json
-          echo "::notice::canonical candidate request dispatched as $request_id"
+          mkdir -p .ci/fixture-generation/lifecycle .ci/fixture-generation/completion
+          bash scripts/ci/wait-candidate-lifecycle.sh \
+            "$GITHUB_REPOSITORY" \
+            "$REQUEST_KEY" \
+            "$TIMEOUT_SECONDS" \
+            "$GITHUB_OUTPUT"
+          artifact_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&name=candidate-lifecycle-$REQUEST_KEY-acknowledged" \
+            --jq '.artifacts | sort_by(.created_at) | reverse | .[0].id // empty')"
+          [[ -n "$artifact_id" ]] || { echo '::error::acknowledged lifecycle artifact missing after wait'; exit 1; }
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/fixture-lifecycle.zip
+          unzip -qo /tmp/fixture-lifecycle.zip -d .ci/fixture-generation/lifecycle
+          lifecycle=.ci/fixture-generation/lifecycle/candidate-request-lifecycle.json
+          python scripts/ci/build-candidate-request-lifecycle.py --validate "$lifecycle"
+          evaluation_run_id="$(jq -er '.evaluation_run_id' "$lifecycle")"
+          evaluation_run_attempt="$(jq -er '.evaluation_run_attempt' "$lifecycle")"
+          receipt_name="candidate-completion-$evaluation_run_id-$evaluation_run_attempt"
+          receipt_artifact_id="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$evaluation_run_id/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$receipt_name\") | .id" | head -n1)"
+          [[ -n "$receipt_artifact_id" ]] || { echo '::error::candidate completion receipt artifact missing'; exit 1; }
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$receipt_artifact_id/zip" > /tmp/fixture-completion.zip
+          unzip -qo /tmp/fixture-completion.zip -d .ci/fixture-generation/completion
+          completion=.ci/fixture-generation/completion/candidate-completion-receipt.json
+          python scripts/ci/bind-fixture-completion-receipt.py \
+            --receipt .ci/fixture-generation/receipt.json \
+            --lifecycle "$lifecycle" \
+            --completion-receipt "$completion" \
+            --output .ci/fixture-generation/receipt.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import jsonschema
+          schema = json.loads(Path("evaluation/schemas/fixture-generation-receipt.schema.json").read_text(encoding="utf-8"))
+          receipt = json.loads(Path(".ci/fixture-generation/receipt.json").read_text(encoding="utf-8"))
+          jsonschema.Draft202012Validator(schema).validate(receipt)
+          assert receipt["status"] == "completed"
+          assert receipt["generation_id"] != receipt["inspection_id"]
+          assert receipt["request_id"] == receipt["generation_id"]
+          PY
 
       - uses: actions/upload-artifact@v7
-        if: ${{ inputs.confirm_execute }}
+        if: ${{ always() && inputs.confirm_execute }}
         with:
           name: fixture-generation-execute-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci/fixture-generation

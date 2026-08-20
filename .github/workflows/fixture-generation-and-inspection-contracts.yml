@@ -7,19 +7,25 @@ on:
       - .github/workflows/fixture-generation-and-inspection.yml
       - .github/workflows/fixture-generation-and-inspection-contracts.yml
       - scripts/ci/build-fixture-generation-receipt.sh
+      - scripts/ci/bind-fixture-completion-receipt.py
+      - scripts/ci/wait-candidate-lifecycle.sh
       - evaluation/schemas/fixture-generation-receipt.schema.json
       - evaluation/schemas/fixture-completion-binding.schema.json
       - scripts/ci/build-fixture-completion-binding.py
       - python/tests/unit/test_fixture_generation_receipt_schema.py
+      - python/tests/unit/test_bind_fixture_completion_receipt.py
   pull_request:
     paths:
       - .github/workflows/fixture-generation-and-inspection.yml
       - .github/workflows/fixture-generation-and-inspection-contracts.yml
       - scripts/ci/build-fixture-generation-receipt.sh
+      - scripts/ci/bind-fixture-completion-receipt.py
+      - scripts/ci/wait-candidate-lifecycle.sh
       - evaluation/schemas/fixture-generation-receipt.schema.json
       - evaluation/schemas/fixture-completion-binding.schema.json
       - scripts/ci/build-fixture-completion-binding.py
       - python/tests/unit/test_fixture_generation_receipt_schema.py
+      - python/tests/unit/test_bind_fixture_completion_receipt.py
   workflow_dispatch:
 
 permissions:
@@ -44,7 +50,11 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/ci/build-fixture-generation-receipt.sh
-          pytest -q --confcutdir=python/tests/unit python/tests/unit/test_fixture_generation_receipt_schema.py
+          bash -n scripts/ci/wait-candidate-lifecycle.sh
+          python -m py_compile scripts/ci/bind-fixture-completion-receipt.py
+          pytest -q --confcutdir=python/tests/unit \
+            python/tests/unit/test_fixture_generation_receipt_schema.py \
+            python/tests/unit/test_bind_fixture_completion_receipt.py
           cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe fixture-generation-and-inspection
 
       - name: Accept plan-only receipt without execute
@@ -65,5 +75,17 @@ jobs:
           if bash scripts/ci/build-fixture-generation-receipt.sh \
             gen-002 "$sha" gawohok7/example-bucket /tmp/fixture-bad.json true true; then
             echo 'execute=true with dry_run=true unexpectedly accepted' >&2
+            exit 1
+          fi
+
+      - name: Require evaluator dispatch on reviewed execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'candidate-request-gateway.yml' .github/workflows/fixture-generation-and-inspection.yml
+          grep -F 'bind-fixture-completion-receipt.py' .github/workflows/fixture-generation-and-inspection.yml
+          if grep -F 'HF Jobs dispatch remains a separate reviewed action' \
+            .github/workflows/fixture-generation-and-inspection.yml; then
+            echo 'fixture execute still treats HF Jobs as a separate gate' >&2
             exit 1
           fi

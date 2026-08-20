@@ -96,9 +96,9 @@ issue 間の依存順序（親側 resolution plan より）:
 要件:
 
 - fixed source SHA、Bucket run、generation ID、upload-only reviewed plan、delete 禁止、receipt を contract 化
-- HF Jobs は必要な場合のみ起動
-- generation と inspection を別 identity で保存
-- HF Jobs smoke 単体を fixture generation の代替とみなさない
+- HF Jobs は必要な場合のみ、canonical `candidate-request-gateway` → `candidate-package-evaluate-v2` 経由で起動する
+- generation と inspection を別 identity で保存し、完了時は evaluator の completion receipt / ACK / `result_uri` を fixture receipt へ結合する
+- HF Jobs smoke 単体を fixture generation の代替とみなさない。fixture execute は `ready_for_dispatch` で止めない
 
 ### 4.3 Windows/DirectML provider route
 
@@ -249,7 +249,7 @@ issue 間の依存順序（親側 resolution plan より）:
 |---|---|---|
 | `ghcr-public-verify` | #160 匿名 GHCR verify | `credentials_used=false` receipt。`ghcr-audit` 代替ではない |
 | `upstream-contract-diff` | #134 contract delta | git diff のみ。Bucket mutation なし |
-| `fixture-generation-and-inspection` | fixture generation plan/execute | generation_id / inspection_id 分離。HF Jobs は別 gate |
+| `fixture-generation-and-inspection` | fixture generation + canonical evaluator bind | generation_id / inspection_id 分離。execute は Gateway/V2/HF Jobs completion を fixture receipt へ結合 |
 | `windows-directml-provider-route` | Windows DirectML external route | `linux_hf_jobs_smoke_equivalent=false` |
 
 ```json
