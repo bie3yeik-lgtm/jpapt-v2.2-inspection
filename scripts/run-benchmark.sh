@@ -128,7 +128,11 @@ case "$PROVIDER" in
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' --wait --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
-    runpodctl exec "$pod_id" -- sh -c "export RTF_JOB_ID='$pod_id'; exec python benchmark.py"
+    # The Pod command intentionally keeps the container alive. Invoke the
+    # image entrypoint explicitly so fixture loading, inference, publishing,
+    # and the result receipt all run through the same canonical path as HF.
+    runpodctl exec "$pod_id" -- sh -c \
+      "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
     runpodctl exec "$pod_id" -- cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
     runpodctl exec "$pod_id" -- cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     ;;

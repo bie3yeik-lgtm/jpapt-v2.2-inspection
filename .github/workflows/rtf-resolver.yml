@@ -97,9 +97,12 @@ jobs:
           rm -rf .ci/rtf-resolver
           mkdir -p .ci/rtf-resolver/audio .ci/rtf-resolver/output
           docker pull "$IMAGE"
+          resolver_uid="$(id -u)"
+          resolver_gid="$(id -g)"
           docker run --rm \
+            --user "$resolver_uid:$resolver_gid" \
             --entrypoint python \
-            -e HF_TOKEN \
+            -e HF_TOKEN -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
             -e PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
             -v "$PWD/.ci/rtf-resolver:/resolver" \
             "$IMAGE" \
