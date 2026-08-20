@@ -74,7 +74,7 @@ runpodctl pod create --name parakeet-bench \
   --env '{"RTF_RUN_ID":"...","RTF_MODEL_ID":"..."}' \
   --docker-args 'sleep infinity' \
   --ports 22/tcp \
-  --wait --wait-timeout 10m
+  --wait --wait-timeout 30m
 ```
 
 The entrypoint converts both forms to the same `benchmark_runner` invocation.
