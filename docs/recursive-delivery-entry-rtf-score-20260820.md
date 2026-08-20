@@ -272,3 +272,19 @@ matrix JSON parse: PASS
 Phase 1 entry count: PASS (6)
 runpod-pod/t4 rejection: PASS (not in matrix)
 ```
+
+## 2026-08-20: completed-run Artifact persistence
+
+Actions run `32331930386` はselection Artifactのuploadまで成功していたが、Artifactを
+`rtf-scores/`へ保存するWorkflowを呼び出していなかった。そのため、`workflow_run` の
+completedイベントでArtifactを回収し、`inspection/rtf-artifacts-<actions_run_id>`へcommitして
+`main`向けPRを作る独立Workflow `rtf-verification-artifact-persist.yml` を追加した。
+
+検証:
+
+```text
+source run conclusion: success
+selection artifact: present
+workflow YAML parse: NOT VERIFIED (local parser check pending)
+remote workflow execution: NOT VERIFIED
+```

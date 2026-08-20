@@ -1,0 +1,87 @@
+name: Persist RTF Verification Artifacts
+
+on:
+  workflow_run:
+    workflows: [RTF Verification Select]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Completed RTF Verification Select workflow run ID to recover
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  persist:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Download selection artifacts from completed run
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.run_id }}
+          pattern: rtf-verification-selection-*
+          path: /tmp/rtf-verification-artifacts
+          merge-multiple: false
+
+      - name: Persist artifacts and open pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(/tmp/rtf-verification-artifacts/*/selection.json)
+          [[ ${#files[@]} -gt 0 ]] || { echo 'No RTF selection artifacts found'; exit 1; }
+
+          git fetch --no-tags origin main
+          artifact_branch="inspection/rtf-artifacts-${WORKFLOW_RUN_ID}"
+          if git ls-remote --exit-code --heads origin "${artifact_branch}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "${artifact_branch}:${artifact_branch}"
+            git checkout "${artifact_branch}"
+          else
+            git checkout --no-track -b "${artifact_branch}" origin/main
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for file in "${files[@]}"; do
+            run_id="$(jq -er '.RUN_ID' "$file")"
+            service_id="$(jq -er '.SERVICE_ID' "$file")"
+            destination="rtf-scores/${run_id}/${service_id}"
+            mkdir -p "$destination"
+            cp "$file" "$destination/selection.json"
+            jq -r '"## RTF verification selection\n\n- run_id: `\(.RUN_ID)`\n- service: `\(.SERVICE_ID)`\n- GPU: `\(.GPU)`\n- model: `\(.MODEL_ID)`\n- dataset: `\(.DATASET_ID)`\n- decoder: `\(.DECODER)`\n- batch size: `\(.BATCH_SIZE)`"' \
+              "$file" > "$destination/summary.md"
+          done
+
+          git add -- rtf-scores
+          if git diff --cached --quiet; then
+            echo 'No new RTF verification artifact content to commit.'
+          else
+            git commit -m "chore: persist RTF verification artifacts ${WORKFLOW_RUN_ID}"
+            git push --set-upstream origin "${artifact_branch}"
+          fi
+
+          if ! gh pr view "${artifact_branch}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
+            gh pr create \
+              --repo "${REPOSITORY}" \
+              --base main \
+              --head "${artifact_branch}" \
+              --title "chore: persist RTF verification artifacts ${WORKFLOW_RUN_ID}" \
+              --body "Automated persistence of RTF verification artifacts from Actions run ${WORKFLOW_RUN_ID}."
+          fi

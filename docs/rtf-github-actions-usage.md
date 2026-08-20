@@ -94,6 +94,13 @@ GH_TOKEN="$GH_TOKEN" scripts/ci/dispatch-rtf-service-result.sh \
 `inspection/<run_id>-<service_id>`ブランチから`main`向けPRを作成する。これにより、
 workflowを起動したブランチが保護されていても結果をリポジトリへ保存できる。
 
+`RTF Verification Select`が生成するselection Artifactは、完了イベントを受けた
+`Persist RTF Verification Artifacts` Workflowが回収する。このWorkflowはArtifact生成完了後に
+起動し、`inspection/rtf-artifacts-<actions_run_id>`ブランチへまとめてcommitし、`main`向けPRを
+作成する。Artifact回収はproviderのmetrics結果回収とは別経路である。
+完了済みrunを再回収する場合は、このWorkflowを手動起動し、`run_id`に対象の
+`RTF Verification Select` run IDを指定する。
+
 ```text
 rtf-scores/
 └── <run_id>/
