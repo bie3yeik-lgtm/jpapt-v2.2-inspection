@@ -19,16 +19,13 @@ revisionとSHA-256を持つ機械可読なベンチマークとする。
 
 ```text
 rtf-scores/
-├── run_summary_history/       # 既存の選択・回収履歴。ランキング入力ではない
-├── phase1/
-│   ├── matrix.json
-│   ├── results.jsonl
-│   └── summary.json
-├── full/
-│   ├── matrix.json
-│   ├── results.jsonl
-│   └── summary.json
-└── ranking.json
+├── run_summary_history/       # 選択・回収履歴。ランキング入力ではない
+├── benchmark/                 # 固定入力manifestとfixture pointer
+│   └── benchmark-v1.jsonl
+├── lough/                     # 今回のPhase 1
+│   └── <service>/<gpu>/batch-<n>/
+└── precise/                    # 将来の長時間検査
+    └── <service>/<gpu>/batch-<n>/
 ```
 
 大きな音声、モデル、テンソル、Docker layer、providerの生ログはGitへ保存しない。GitHub

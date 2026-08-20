@@ -99,12 +99,12 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${RTF_FIXTURE_REPO_ID}" || -z "${RTF_FIXTURE_REVISION}" ]]; then
-            [[ -f rtf-scores/benchmark-v1.fixture.json ]] || {
-              echo 'fixture inputs are empty and rtf-scores/benchmark-v1.fixture.json is missing' >&2
+            [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
+              echo 'fixture inputs are empty and rtf-scores/benchmark/benchmark-v1.fixture.json is missing' >&2
               exit 2
             }
-            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark-v1.fixture.json)"
-            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark-v1.fixture.json)"
+            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           fi
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"

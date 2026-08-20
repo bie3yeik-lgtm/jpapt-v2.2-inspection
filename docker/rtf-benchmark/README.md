@@ -78,7 +78,7 @@ The HF branch submits one Job. The RunPod branch creates one Pod with
 and deletes the Pod in an EXIT trap, including failure paths.
 
 `RTF Resolver` writes the uploaded fixture repository and immutable commit SHA
-to `rtf-scores/benchmark-v1.fixture.json`. `RTF Benchmark Run` reads that
+to `rtf-scores/benchmark/benchmark-v1.fixture.json`. `RTF Benchmark Run` reads that
 pointer automatically when its fixture inputs are empty.
 
 `evaluation/manifests/rtf-benchmark-v1.json` is the Common Voice dataset

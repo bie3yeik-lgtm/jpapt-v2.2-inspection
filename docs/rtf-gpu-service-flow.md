@@ -112,9 +112,9 @@ provider/GPU validationでも受け付けない。比較対象を追加する場
 Actionsはmetricsを取得し、Rust validatorでSHA-256とschemaを検証する。成功すると次へ保存する。
 
 ```text
-rtf-scores/<run_id>/<service_id>/service-result.json
-rtf-scores/<run_id>/<service_id>/metrics.json
-rtf-scores/<run_id>/<service_id>/summary.md
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/service-result.json
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/metrics.json
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/summary.md
 ```
 
 Actions botが保存commitを作成し、artifactにも同じ結果を保存する。
