@@ -135,6 +135,8 @@ jobs:
               raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
           if "latest GHCR package digest" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must wait for the latest GHCR package digest")
+          if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must initialize its config file")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
           if "max-parallel: 1" not in benchmark_workflow:

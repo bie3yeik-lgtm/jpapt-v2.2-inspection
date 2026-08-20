@@ -108,6 +108,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
           runpodctl config --apiKey="$RUNPOD_TOKEN"
       - name: Run all benchmark batch sizes sequentially
         id: execute
