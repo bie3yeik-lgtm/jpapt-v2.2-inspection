@@ -176,7 +176,8 @@ case "$PROVIDER" in
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --wait --wait-timeout 10m --terminate-after "$terminate_after" --output json 2>&1)"
+      --ports 22/tcp --wait --wait-timeout 10m --terminate-after "$terminate_after" \
+      --output json 2>&1)"
     pod_create_status=$?
     set -e
     # `jq -e` prints JSON null before returning failure for an error response;

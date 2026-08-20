@@ -73,6 +73,7 @@ runpodctl pod create --name parakeet-bench \
   --gpu-id "NVIDIA RTX A5000" \
   --env '{"RTF_RUN_ID":"...","RTF_MODEL_ID":"..."}' \
   --docker-args 'sleep infinity' \
+  --ports 22/tcp \
   --wait --wait-timeout 10m
 ```
 
