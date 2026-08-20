@@ -78,7 +78,10 @@ jobs:
             image="ghcr.io/${namespace}/${package}"
             item="$(jq -cn --arg context "$context" --arg dockerfile "$dockerfile" --arg package "$package" --arg image "$image" --arg source_repo "$source_repo" --arg role "$role" '{context:$context,dockerfile:$dockerfile,package:$package,image:$image,source_repo:$source_repo,role:$role}')"
             entries="$(jq -c --argjson item "$item" '. + [$item]' <<<"$entries")"
-          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort)
+          # The generic candidate package is built by the candidate evaluation
+          # workflow and has runtime parameters instead of a static GHCR
+          # package identity. Only labeled static packages belong here.
+          done < <(find docker -mindepth 2 -maxdepth 2 -type f -name Dockerfile ! -path 'docker/candidate-package/Dockerfile' -print | sort)
           [[ "$(jq 'length' <<<"$entries")" -gt 0 ]] || { echo "::error::No docker/*/Dockerfile found"; exit 1; }
           printf 'matrix=%s\n' "$(jq -c '{include:.}' <<<"$entries")" >> "$GITHUB_OUTPUT"
 
