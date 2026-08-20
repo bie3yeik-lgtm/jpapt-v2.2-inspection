@@ -257,3 +257,18 @@ git diff --check: PASS
 actionlint: NOT VERIFIED (command unavailable on this host)
 remote workflow execution and PR creation: NOT VERIFIED
 ```
+
+## 2026-08-20: Phase 1 GPU combination correction
+
+Actions run `32331959739` の選択値は `runpod-pod / t4 / batch-32` だったが、参照表の対象外
+だった。Phase 1 matrixからHF Jobsを除き、対象をHF Inference EndpointのT4/L4とRunPod
+ PodのA5000/L4/RTX 3090/RTX 4090の6組へ修正した。選択Workflowのserviceもこの2種類に
+限定した。
+
+検証:
+
+```text
+matrix JSON parse: PASS
+Phase 1 entry count: PASS (6)
+runpod-pod/t4 rejection: PASS (not in matrix)
+```
