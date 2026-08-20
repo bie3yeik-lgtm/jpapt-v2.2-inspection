@@ -83,6 +83,24 @@ jobs:
           bash -n docker/rtf-benchmark/entrypoint.sh
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
 
+      - name: Validate Docker provider path contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          script = Path("scripts/run-benchmark.sh").read_text()
+          if "exec /opt/rtf-benchmark/entrypoint.sh" not in script:
+              raise SystemExit("RunPod must invoke the image entrypoint explicitly")
+          if "exec python benchmark.py" in script:
+              raise SystemExit("RunPod must not bypass the image entrypoint")
+          resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
+          if '--user "$resolver_uid:$resolver_gid"' not in resolver:
+              raise SystemExit("Docker resolver must preserve host ownership")
+          if "-e HOME=/tmp -e HF_HOME=/tmp/huggingface" not in resolver:
+              raise SystemExit("non-root Docker resolver needs writable cache paths")
+          print("Docker provider path contract: PASS")
+          PY
+
       - name: Validate Phase 1 service matrix
         run: |
           python - <<'PY'
