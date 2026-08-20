@@ -175,6 +175,13 @@ Unit 1 local dispatch wrapper (2026-08-20):
 `request_execution_id`を指定できない。`--print`で外部dispatchなしのpayload検証ができ、通常時は
 既存の`repository-dispatch-with-retry.sh`を介してpublic Gatewayへ送る。
 
+Unit 2 execute記録 (2026-08-20): Gateway run `32330498316`はresolve・dispatchともPASSし、
+V2 run `32330542209`まで到達した。legacy candidate `ctc/candidate-000001`を5ファイル取得
+したが、`metadata.json`が0 byteでcandidate contractのminimal metadataを満たさずmaterializeを
+拒否した。HF Jobs実推論は未起動、completion receipt dispatchは対象private repositoryへの
+HTTP 404で失敗した。空metadataを生成して候補を有効化することはせず、Unit 2は
+`BLOCKED / INVALID CANDIDATE ARTIFACT`とする。
+
 実行記録 (2026-08-20): plan-only Gateway run `32328515323`は、transport制限で包まれた
 `protocol_payload`を正規化側が展開せず`source_repository must be string`で拒否された。
 HF Jobs、V2 dispatch、candidate取得、completion/ACKは未発生。正規化側修正とnested payloadの

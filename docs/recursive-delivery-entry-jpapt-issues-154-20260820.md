@@ -126,6 +126,12 @@ workflow、event、branch、head SHA、artifact SHA、run/attemptを別途確認
 
 Unit 1のlocal wrapperは`scripts/ci/dispatch-public-inspection-bypass.sh`である。
 
+Unit 2 execute記録 (2026-08-20): Gateway run `32330498316`はresolve・dispatchともPASSし、
+V2 run `32330542209`まで到達した。legacy candidate `ctc/candidate-000001`の5ファイルを
+取得したが`metadata.json`が0 byteでcandidate contract違反となりmaterializeを拒否した。
+HF Jobs実推論は未起動、completion receipt dispatchも対象private repositoryへのHTTP 404で
+失敗した。空metadataの生成は行わず、Unit 2は`BLOCKED / INVALID CANDIDATE ARTIFACT`とする。
+
 実行記録 (2026-08-20): plan-only Gateway run `32328515323`は、transport制限で包まれた
 `protocol_payload`を正規化側が展開せず`source_repository must be string`で拒否された。
 HF Jobs、V2 dispatch、candidate取得、completion/ACKは未発生。正規化側修正とnested payloadの
