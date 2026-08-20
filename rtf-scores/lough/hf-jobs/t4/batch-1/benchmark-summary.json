@@ -1,0 +1,16 @@
+{
+  "model": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+  "provider": "hf",
+  "gpu": "t4",
+  "batch_size": 1,
+  "decoder": "tdt",
+  "precision": "fp16",
+  "audio_seconds": 5402.784,
+  "elapsed_seconds": 55.99499431933335,
+  "rtf": 0.010364100123072355,
+  "rtfx": 96.48691040467853,
+  "peak_vram_gb": 5.127823352813721,
+  "cer": null,
+  "gpu_price_hour": null,
+  "cost_per_audio_hour": null
+}
