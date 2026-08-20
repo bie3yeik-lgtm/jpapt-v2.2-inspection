@@ -1,0 +1,171 @@
+name: Windows DirectML Provider Route
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repository:
+        description: "Source GitHub repository owner/name"
+        required: true
+        default: largoyo/Premiere-AutoProcess-Plugin
+        type: string
+      source_revision:
+        description: "Fixed source repository revision (40-hex SHA)"
+        required: true
+        type: string
+      hf_bucket:
+        description: "HF Bucket namespace/name"
+        required: true
+        type: string
+      candidate_id:
+        description: "candidate-NNNNNN"
+        required: true
+        type: string
+      hf_target:
+        description: "Source-controlled HF target ID"
+        required: false
+        default: parakeet-tdt_ctc-0.6b-ja
+        type: string
+      validation_mode:
+        description: "External provider validation mode"
+        required: false
+        default: smoke
+        type: choice
+        options: [smoke, parity]
+      dry_run:
+        description: "Plan-only mode without provider execution"
+        required: false
+        default: true
+        type: boolean
+      execute:
+        description: "Reviewed execute request on Windows DirectML runner"
+        required: false
+        default: false
+        type: boolean
+      confirm_execute:
+        description: "Explicitly confirm Windows DirectML execution"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-directml-route-${{ inputs.candidate_id }}-${{ inputs.source_revision }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan Windows DirectML external route
+    if: ${{ !inputs.execute }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build plan-only external receipt
+        shell: bash
+        env:
+          HF_TARGET: ${{ inputs.hf_target }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/build-windows-directml-external-receipt.sh \
+            "${{ inputs.source_repository }}" \
+            "${{ inputs.source_revision }}" \
+            "${{ inputs.hf_bucket }}" \
+            "${{ inputs.candidate_id }}" \
+            "${{ inputs.validation_mode }}" \
+            .ci/windows-directml-provider/receipt.json \
+            "${{ inputs.dry_run }}" \
+            false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-directml-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/windows-directml-provider
+          retention-days: 30
+          if-no-files-found: error
+
+  evaluate:
+    name: Execute Windows DirectML external route
+    if: ${{ inputs.execute && inputs.confirm_execute }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+
+      - name: Sync minimal authoritative environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --extra onnx
+
+      - name: Materialize synthetic DirectML provider probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/windows-directml-provider
+          uv run python scripts/ci/e2e-provider-ctc.py --output .ci/windows-directml-provider/probe
+          uv run python scripts/ci/resolve-candidate-artifacts.py \
+            --candidate-dir .ci/windows-directml-provider/probe/candidate \
+            --runtime-variant ctc \
+            --contract-out .ci/windows-directml-provider/probe/candidate-contract.json
+          cargo run --quiet --locked -p asr-contracts --bin asr-provider-probe-context -- \
+            --contract .ci/windows-directml-provider/probe/candidate-contract.json \
+            --provider directml \
+            --output .ci/windows-directml-provider/probe/run-context.json
+
+      - name: Build DirectML evaluator
+        shell: bash
+        run: cargo build --locked --release -p asr-eval --no-default-features --features directml
+
+      - name: Measure DirectML strict readiness
+        id: directml
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          target/release/asr-eval.exe evaluate \
+            --provider directml \
+            --candidate-contract .ci/windows-directml-provider/probe/candidate-contract.json \
+            --run-context .ci/windows-directml-provider/probe/run-context.json \
+            --resolved-manifest .ci/windows-directml-provider/probe/resolved-manifest.json \
+            --output .ci/windows-directml-provider/probe/results \
+            > .ci/windows-directml-provider/directml.stdout.txt \
+            2> .ci/windows-directml-provider/directml.stderr.txt
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Record external DirectML provider receipt
+        if: always()
+        shell: bash
+        env:
+          HF_TARGET: ${{ inputs.hf_target }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/build-windows-directml-external-receipt.sh \
+            "${{ inputs.source_repository }}" \
+            "${{ inputs.source_revision }}" \
+            "${{ inputs.hf_bucket }}" \
+            "${{ inputs.candidate_id }}" \
+            "${{ inputs.validation_mode }}" \
+            .ci/windows-directml-provider/receipt.json \
+            false \
+            true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-directml-execute-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/windows-directml-provider
+          retention-days: 30
+          if-no-files-found: error
