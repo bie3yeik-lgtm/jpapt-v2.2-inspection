@@ -48,6 +48,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify provider credential
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ID" in
+            hf-inference-endpoint|hf-jobs)
+              [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error \
+                -H "Authorization: Bearer $HF_TOKEN" \
+                https://huggingface.co/api/whoami-v2 >/dev/null
+              ;;
+            runpod-pod|runpod-serverless)
+              [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error \
+                -H "Authorization: Bearer $RUNPOD_TOKEN" \
+                -H 'Content-Type: application/json' \
+                --data '{"query":"query { myself { id } }"}' \
+                https://api.runpod.io/graphql >/dev/null
+              ;;
+            *) echo "unsupported service_id: $SERVICE_ID"; exit 1 ;;
+          esac
+
       - name: Validate selected target
         env:
           SERVICE_ID: ${{ inputs.service_id }}

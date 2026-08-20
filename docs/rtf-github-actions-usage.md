@@ -4,6 +4,7 @@
 artifactとして保存する手順を定義する。ベンチマークの仕様と受入れ境界は
 [recursive-delivery-entry-rtf-score-20260820.md](recursive-delivery-entry-rtf-score-20260820.md)、
 入力と比較条件は [Calculare-RTF-Score.md](Calculare-RTF-Score.md) を参照する。
+環境別の詳細な実推論フローは [rtf-gpu-service-flow.md](rtf-gpu-service-flow.md) を参照する。
 
 ## 前提
 
