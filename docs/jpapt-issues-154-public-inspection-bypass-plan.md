@@ -52,7 +52,7 @@ private Actionsのtrusted package artifactを代替しない。#154をcloseす�
   environmentから生成する。
 - HTTP 204は受付証拠に限定し、Gateway runでresolved identityと副作用なしを確認する。
 
-受入れ条件: planが`candidate-000001`、指定Bucket、`ctc` runtime variant、digest image、`smoke/hf_jobs/linux-cpu`
+受入れ条件: planが`candidate-000001`、指定Bucket、`ctc` runtime variant、実build済みdigest image、`smoke/hf_jobs/linux-cpu`
 へ解決され、HF Jobs起動・Bucket mutationが発生していない。
 
 ### Unit 2: execute dispatch
