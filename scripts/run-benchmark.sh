@@ -24,6 +24,8 @@ done
 : "${RTF_MODEL_REVISION:?RTF_MODEL_REVISION is required}"
 : "${RTF_DATASET_ID:?RTF_DATASET_ID is required}"
 : "${RTF_DATASET_REVISION:?RTF_DATASET_REVISION is required}"
+: "${RTF_FIXTURE_REPO_ID:?RTF_FIXTURE_REPO_ID is required}"
+: "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required}"
 : "${RTF_GPU:?RTF_GPU is required}"
 : "${RTF_OUTPUT:=/output/metrics.json}"
 : "${RTF_BATCH_SIZE:=1}"
@@ -48,6 +50,7 @@ case "$PROVIDER" in
       -e "RTF_OUTPUT=$RTF_OUTPUT" -e "RTF_MODEL_ID=$RTF_MODEL_ID"
       -e "RTF_MODEL_REVISION=$RTF_MODEL_REVISION" -e "RTF_DATASET_ID=$RTF_DATASET_ID"
       -e "RTF_DATASET_REVISION=$RTF_DATASET_REVISION" -e "RTF_GPU=$RTF_GPU"
+      -e "RTF_FIXTURE_REPO_ID=$RTF_FIXTURE_REPO_ID" -e "RTF_FIXTURE_REVISION=$RTF_FIXTURE_REVISION"
       -e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE" -e "RTF_PRECISION=$RTF_PRECISION"
       -e "RTF_DECODER=$RTF_DECODER" -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
     )
@@ -70,8 +73,9 @@ case "$PROVIDER" in
       --arg model_revision "$RTF_MODEL_REVISION" --arg dataset_id "$RTF_DATASET_ID" \
       --arg dataset_revision "$RTF_DATASET_REVISION" --arg gpu "$RTF_GPU" \
       --arg batch "$RTF_BATCH_SIZE" --arg precision "$RTF_PRECISION" \
-      --arg decoder "$RTF_DECODER" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_DECODER:$decoder,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      --arg decoder "$RTF_DECODER" --arg fixture_repo "$RTF_FIXTURE_REPO_ID" \
+      --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg hf_token "${HF_TOKEN:-}" \
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' --wait --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"

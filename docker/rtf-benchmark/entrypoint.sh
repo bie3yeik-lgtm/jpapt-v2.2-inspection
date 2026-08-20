@@ -17,6 +17,9 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_DATASET_COUNT_MAX:=50}"
   : "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
   : "${RTF_MANIFEST:=/workspace/benchmark-v1.jsonl}"
+  : "${RTF_FIXTURE_REPO_ID:=}"
+  : "${RTF_FIXTURE_REVISION:=}"
+  : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
   : "${RTF_OUTPUT:=/output/metrics.json}"
   : "${RTF_RUN_ID:?RTF_RUN_ID is required}"
   : "${RTF_MODEL_ID:?RTF_MODEL_ID is required}"
@@ -28,7 +31,14 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_PROVIDER:=cuda}"
   : "${RTF_SERVICE_ID:?RTF_SERVICE_ID is required}"
   : "${RTF_GPU:?RTF_GPU is required}"
-  if [[ ! -f "$RTF_MANIFEST" ]]; then
+  if [[ -n "$RTF_FIXTURE_REPO_ID" ]]; then
+    : "${HF_TOKEN:?HF_TOKEN is required when RTF_FIXTURE_REPO_ID is set}"
+    : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required when RTF_FIXTURE_REPO_ID is set}"
+    python -m benchmark_runner.load_fixture \
+      --repo-id "$RTF_FIXTURE_REPO_ID" --revision "$RTF_FIXTURE_REVISION" \
+      --filename "$RTF_FIXTURE_FILENAME" --output-manifest "$RTF_MANIFEST" \
+      --audio-dir /workspace/benchmark-audio
+  elif [[ ! -f "$RTF_MANIFEST" ]]; then
     python -m benchmark_runner.resolve_dataset \
       --dataset-id "$RTF_DATASET_ID" --revision "$RTF_DATASET_REVISION" \
       --configuration "$RTF_DATASET_CONFIGURATION" --split "$RTF_DATASET_SPLIT" \

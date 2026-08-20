@@ -27,6 +27,10 @@ on:
         required: true
         default: "5400"
         type: string
+      fixture_repo_id:
+        description: Hugging Face Dataset repo to publish the fixed fixture
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -43,6 +47,7 @@ jobs:
       COUNT_MIN: ${{ inputs.count_min }}
       COUNT_MAX: ${{ inputs.count_max }}
       TARGET_TOTAL_SEC: ${{ inputs.target_total_sec }}
+      FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
       RUN_ID: rtf-resolver-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
@@ -128,12 +133,55 @@ jobs:
           )
           PY
 
+      - name: Publish fixture to Hugging Face Dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required'; exit 1; }
+          python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from huggingface_hub import HfApi
+
+          source = Path('rtf-scores/benchmark-v1.jsonl')
+          fixture = Path('.ci/rtf-resolver/fixture')
+          (fixture / 'audio').mkdir(parents=True, exist_ok=True)
+          records = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              name = Path(record['audio_path']).name
+              Path(record['audio_path']).replace(fixture / 'audio' / name)
+              record['audio_path'] = f'audio/{name}'
+              records.append(record)
+          (fixture / 'benchmark-v1.jsonl').write_text(
+              ''.join(json.dumps(record, sort_keys=True) + '\n' for record in records)
+          )
+          api = HfApi(token=os.environ['HF_TOKEN'])
+          api.create_repo(os.environ['FIXTURE_REPO_ID'], repo_type='dataset', private=True, exist_ok=True)
+          commit = api.upload_folder(
+              repo_id=os.environ['FIXTURE_REPO_ID'],
+              repo_type='dataset',
+              folder_path=str(fixture),
+              commit_message=f"Publish RTF fixture {os.environ['RUN_ID']}",
+          )
+          Path('.ci/rtf-resolver/output/fixture-revision').write_text(commit.oid)
+          source.write_text((fixture / 'benchmark-v1.jsonl').read_text())
+          PY
+
+          fixture_revision="$(cat .ci/rtf-resolver/output/fixture-revision)"
+          jq --arg repo "$FIXTURE_REPO_ID" --arg revision "$fixture_revision" \
+            '. + {fixture_repo_id:$repo,fixture_revision:$revision}' \
+            rtf-scores/benchmark-v1.receipt.json > /tmp/receipt.json
+          mv /tmp/receipt.json rtf-scores/benchmark-v1.receipt.json
+
       - name: Upload resolved audio and outputs
         uses: actions/upload-artifact@v7
         with:
           name: rtf-resolver-${{ github.run_id }}
           path: |
-            .ci/rtf-resolver/audio
             rtf-scores/benchmark-v1.jsonl
             rtf-scores/benchmark-v1.receipt.json
             rtf-scores/benchmark-v1.jsonl.sha256
