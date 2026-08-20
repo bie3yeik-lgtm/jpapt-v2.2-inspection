@@ -227,6 +227,28 @@ jobs:
             echo
             jq -r '"- run_id: `\(.run_id)`\n- service: `\(.service_id)`\n- status: `\(.status)`\n- provider: `\(.provider)`\n- environment: `\(.environment)`"' results/rtf-service/service-result.json
           } | tee .ci/rtf-service/summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ inputs.status }}" == completed ]]; then
+            jq \
+              --arg provider "${{ inputs.service_id == 'runpod-pod' && 'runpod' || 'hf' }}" \
+              '{
+                model: .model_id,
+                provider: $provider,
+                gpu: (if .service_id == "runpod-pod" then
+                        ({a5000:"NVIDIA RTX A5000",l4:"NVIDIA L4",rtx3090:"NVIDIA GeForce RTX 3090",rtx4090:"NVIDIA GeForce RTX 4090"}[.gpu] // .gpu)
+                      else .gpu end),
+                batch_size,
+                decoder,
+                precision: (if .dtype == "float16" then "fp16" elif .dtype == "bfloat16" then "bf16" else .dtype end),
+                audio_seconds: .audio_duration_sec,
+                elapsed_seconds: .processing_duration_sec,
+                rtf,
+                rtfx,
+                peak_vram_gb: (if .peak_vram_bytes == null then null else (.peak_vram_bytes / 1073741824) end),
+                cer,
+                gpu_price_hour: .gpu_price_per_hour,
+                cost_per_audio_hour
+              }' results/rtf-service/metrics.json > .ci/rtf-service/benchmark-summary.json
+          fi
 
       - name: Persist RTF score in repository
         shell: bash
@@ -253,6 +275,9 @@ jobs:
           fi
           mkdir -p "$destination"
           cp .ci/rtf-service/summary.md "${destination}/summary.md"
+          if [[ -f .ci/rtf-service/benchmark-summary.json ]]; then
+            cp .ci/rtf-service/benchmark-summary.json "${destination}/benchmark-summary.json"
+          fi
           cp results/rtf-service/service-result.json "${destination}/service-result.json"
           if [[ -f results/rtf-service/metrics.json ]]; then
             cp results/rtf-service/metrics.json "${destination}/metrics.json"
