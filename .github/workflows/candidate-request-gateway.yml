@@ -94,6 +94,7 @@ jobs:
   plan:
     name: Resolve and estimate request
     runs-on: ubuntu-latest
+    environment: Private-Secrets
     permissions:
       contents: read
       actions: read
@@ -339,6 +340,7 @@ jobs:
     needs: plan
     if: ${{ always() && needs.plan.result == 'failure' }}
     runs-on: ubuntu-latest
+    environment: Private-Secrets
     permissions:
       contents: read
     steps:
