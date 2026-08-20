@@ -13,31 +13,56 @@ GitHub Actions からリポジトリへ保存する仕組みを実装する。
 provider fallback を別々の証拠として扱い、最終 transcript の一致だけを数値的な
 正しさの根拠にしない。
 
-## 参照仕様
+## 参照仕様の要約
 
-指定された参照ファイル:
+参照ファイルは [docs/Calculare-RTF-Score.md](Calculare-RTF-Score.md) に保存する。
+ブランチの実装対象は、その内容に基づく次のベンチマークである。
 
-`https://github.com/largoyo/Premiere-AutoProcess-Plugin/blob/main/inspection/advices/Calculare-RTF-Score.md`
+### RTF の定義
 
-2026-08-20 に次の方法で取得を試みた。
+```text
+RTF = 処理時間 / 入力音声の総再生時間
+RTFx = 1 / RTF
+```
 
-| 方法 | 結果 |
-|---|---|
-| GitHub blob URL | `404 Not Found` |
-| `raw.githubusercontent.com` URL | `404 Not Found` |
-| GitHub Contents API (`inspection/advices`) | `404 Not Found` |
+主指標は個々の音声の RTF の平均ではなく、`total_processing_time /
+total_audio_duration` とする。GPU の非同期実行を正しく測るため、CUDA 実行前後に
+`torch.cuda.synchronize()` 相当の同期を行う。
 
-したがって、このコミット時点では参照ファイルの本文、RTF の計算式、測定区間、
-対象サービス一覧を確認できていない。仕様を推測して実装することはしない。
+### 固定する共通入力と比較対象
 
-## 実装契約（仕様取得後に確定）
+入力は 16 kHz、mono、PCM WAV に正規化し、次の 3 データセットを同じ入力として
+使用する。
 
-参照ファイルが取得可能になったら、少なくとも次を本文から明示的に転記・固定する。
+- `japanese-asr/ja_asr.common_voice_8_0`
+- `japanese-asr/ja_asr.jsut_basic5000`
+- `japanese-asr/ja_asr.reazonspeech_test`
 
-1. RTF の分子・分母と単位、丸め規則、無効値の扱い。
-2. 音声の測定対象区間と、推論・前処理・I/O のどこを経過時間に含めるか。
-3. 検証対象となる全サービス名、入力、期待結果、再試行・タイムアウト条件。
-4. 結果 JSON のスキーマ、保存先、成果物名、コミットまたは artifact の保持方針。
+比較対象は `nvidia/parakeet-tdt_ctc-0.6b-ja` の TDT/CTC と
+`kotoba-tech/kotoba-whisper-v2.0`。Kotoba の Model Card にある `6.3x faster` は
+Whisper large-v3 に対する相対値であり、実測した絶対 RTF とは別の指標として扱う。
+
+### 測定範囲と行列
+
+モデル比較用の `RTF_model`（モデル入力から推論完了まで）と、製品原価用の
+`RTF_service`（Opus decode、resample、前処理、推論、後処理を含む）を分離する。
+batch=1 の latency RTF と、batch=16/32 などの throughput RTF も分けて保存する。
+
+最低限、GPU、provider、dtype、decoder、batch size、dataset、音声総時間、処理時間、
+RTF、RTFx、CER、ピーク VRAM、GPU utilization、warm-up 回数を記録する。初期 GPU
+選別は RunPod の A5000/L4/3090/4090 と HF の T4/L4 を対象に、TDT・FP16/BF16・
+batch 1/8/32 で行い、上位 GPU を詳細測定へ進める。検証対象サービスは HF Inference
+Endpoint、RunPod Pod、RunPod Serverless を区別し、将来 provider を追加できる形式に
+する。単価を取得できる場合は
+`GPU price/hour * RTF_service` で audio-hour 原価も算出する。
+
+## 実装契約
+
+実装はプロジェクトの Rust-first 方針に従い、算出・検証結果の正規化・JSON 永続化は
+可能な限り Rust に置く。GitHub Actions YAML は実行のオーケストレーションに限定し、
+候補結果が期待値・参照データを上書きしないようにする。結果にはモデル、revision、
+artifact SHA-256、provider、環境、run identity、測定条件、各 dataset/decoder/batch
+の測定値を含め、サービスごとの検証結果を machine-readable artifact として保存する。
 
 実装はプロジェクトの Rust-first 方針に従い、算出・検証結果の正規化・JSON 永続化は
 可能な限り Rust に置く。GitHub Actions YAML は実行のオーケストレーションに限定し、
@@ -45,10 +70,9 @@ provider fallback を別々の証拠として扱い、最終 transcript の一�
 artifact SHA-256、provider、環境、run identity、測定値を含め、再現可能な証拠として
 保存する。
 
-## 現時点の状態とブロッカー
+## 現時点の状態
 
 - ブランチ: `feat/rtf-score-validation-actions`
-- 実装状態: 参照仕様が取得不能のため未実装
-- ブロッカー: 指定 URL が 404 で、RTF 式と全サービス一覧が不明
-- 次のアクション: 正しい URL、公開されたファイル、またはファイル本文を提供し、
-  その内容を固定したうえでテスト先行の算出器・Actions・保存スキーマを実装する
+- 実装状態: 仕様理解と測定契約の文書化済み。算出器、評価 runner、Actions は未実装
+- 次のアクション: テスト先行で RTF 算出・結果 schema・サービス検証 matrix・Actions
+  保存処理を実装し、固定 revision と実測証拠を添えて検証する
