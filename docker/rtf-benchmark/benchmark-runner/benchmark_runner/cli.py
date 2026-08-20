@@ -91,7 +91,7 @@ def main() -> int:
         with torch.inference_mode():
             with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
                 model.transcribe(
-                    paths2audio_files=paths[: min(len(paths), args.batch_size)],
+                    paths[: min(len(paths), args.batch_size)],
                     batch_size=args.batch_size,
                 )
             if device.type == "cuda":
@@ -100,7 +100,7 @@ def main() -> int:
             hypotheses = []
             for _ in range(args.repeat):
                 started = time.perf_counter()
-                hypotheses = model.transcribe(paths2audio_files=paths, batch_size=args.batch_size)
+                hypotheses = model.transcribe(paths, batch_size=args.batch_size)
                 if device.type == "cuda":
                     torch.cuda.synchronize()
                 timings.append(time.perf_counter() - started)

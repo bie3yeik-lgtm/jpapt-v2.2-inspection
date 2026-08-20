@@ -87,6 +87,10 @@ jobs:
           bash -n docker/rtf-benchmark/entrypoint.sh
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
           rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
+          if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
+            echo 'NeMo transcribe must use positional audio paths' >&2
+            exit 1
+          fi
 
       - name: Validate Docker provider path contract
         run: |
