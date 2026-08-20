@@ -29,7 +29,9 @@ HF Bucket upload/read-back: NOT VERIFIED
 `nvcr.io/nvidia/nemo-speech:26.07.00`に固定し、依存lock、Dockerfile、entrypoint、
 manifest contract runner、README、`.dockerignore`を配置した。runnerは現在、resolved
 manifestのmaterialized local audio、duration、manifest SHA-256を検証し、model-specific
-inference未接続を`BENCHMARK_INFERENCE_NOT_IMPLEMENTED`として`blocked`で出力する。
+NeMo `ASRModel.from_pretrained`を固定model revisionでロードし、固定manifestをwarm-up後に
+実推論する。CUDA要求時にCUDAが利用できなければfail-closedで`blocked`とし、成功時は
+audio duration、processing duration、RTF/RTFx、CER、予測、peak VRAMを出力する。
 contract validationをcompleted benchmarkへ昇格させないfail-closed境界である。
 
 `benchmark-build.yml`はGHCRへimageをpushし、registryから取得したimmutable digestを
