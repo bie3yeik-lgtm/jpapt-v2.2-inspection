@@ -8,6 +8,7 @@ import json
 import random
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 from datasets import Audio, load_dataset
 
@@ -33,7 +34,7 @@ def main() -> int:
         name=args.configuration,
         split=args.split,
         revision=args.revision,
-    ).cast_column("audio", Audio(sampling_rate=16_000, mono=True))
+    ).cast_column("audio", Audio(sampling_rate=16_000))
     rng = random.Random(args.seed)
     candidates = list(range(len(dataset)))
     rng.shuffle(candidates)
@@ -66,12 +67,17 @@ def main() -> int:
     for index in candidates:
         row = dataset[index]
         audio = row["audio"]
-        duration = len(audio["array"]) / 16_000
+        array = np.asarray(audio["array"], dtype=np.float32)
+        if array.ndim == 2:
+            array = array.mean(axis=1)
+        if array.ndim != 1 or not np.isfinite(array).all():
+            continue
+        duration = len(array) / 16_000
         if duration <= 0:
             continue
         if pending_duration >= 30.0 and pending_duration + duration > args.max_duration_sec:
             flush()
-        pending_audio.append(audio["array"])
+        pending_audio.append(array)
         pending_text.append(str(row.get("sentence", "")))
         pending_duration += duration
         if pending_duration >= 30.0 and sum(r["audio_duration_sec"] for r in records) + pending_duration >= args.target_total_sec:
