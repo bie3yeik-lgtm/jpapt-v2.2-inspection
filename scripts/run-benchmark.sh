@@ -118,6 +118,18 @@ case "$PROVIDER" in
   runpod)
     command -v runpodctl >/dev/null || { echo "runpodctl is required" >&2; exit 1; }
     pod_id=""
+    pod_create_failed=0
+    delete_named_pods() {
+      local candidate_ids candidate_id
+      candidate_ids="$(runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>/dev/null \
+        | jq -r '.[] | (.id // .podId // .pod_id)' 2>/dev/null || true)"
+      while IFS= read -r candidate_id; do
+        [[ -n "$candidate_id" ]] || continue
+        echo "Deleting RunPod Pod $candidate_id found after create failure" >&2
+        runpodctl pod delete "$candidate_id" >/dev/null || \
+          echo "::error::failed to delete RunPod Pod $candidate_id" >&2
+      done <<< "$candidate_ids"
+    }
     delete_pod() {
       if [[ -n "$pod_id" ]]; then
         echo "Deleting RunPod Pod $pod_id" >&2
@@ -129,7 +141,13 @@ case "$PROVIDER" in
         fi
       fi
     }
-    trap 'delete_pod || true' EXIT
+    cleanup_runpod() {
+      delete_pod || true
+      if [[ "$pod_create_failed" -eq 1 ]]; then
+        delete_named_pods
+      fi
+    }
+    trap cleanup_runpod EXIT
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
@@ -146,10 +164,20 @@ case "$PROVIDER" in
       --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
       '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+    set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --wait --wait-timeout 10m --output json)"
-    pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
+      --wait --wait-timeout 10m --output json 2>&1)"
+    pod_create_status=$?
+    set -e
+    pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json" 2>/dev/null || true)"
+    if [[ "$pod_create_status" -ne 0 || -z "$pod_id" ]]; then
+      pod_create_failed=1
+      printf '%s\n' "$pod_json" >&2
+      [[ "$pod_create_status" -ne 0 ]] && exit "$pod_create_status"
+      echo 'RunPod pod create did not return a pod id' >&2
+      exit 1
+    fi
     ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '.sshCommand')"
     runpod_ssh() {
       local remote_command

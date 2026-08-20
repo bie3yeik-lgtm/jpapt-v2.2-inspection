@@ -128,8 +128,12 @@ jobs:
               raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
           if '--wait --wait-timeout 10m' not in script:
               raise SystemExit("RunPod Pod creation must wait for SSH readiness")
-          if 'trap \'delete_pod || true\' EXIT' not in script:
+          if 'trap cleanup_runpod EXIT' not in script:
               raise SystemExit("RunPod must retain a deletion safety trap")
+          if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
+              raise SystemExit("RunPod create failures must clean up Pods by unique name")
+          if 'pod_create_failed=1' not in script:
+              raise SystemExit("RunPod create failures must activate orphan cleanup")
           if 'delete_pod\n    ;;' not in script:
               raise SystemExit("RunPod must delete the Pod immediately after result collection")
           if 'runpodctl pod delete "$pod_id"' not in script:
