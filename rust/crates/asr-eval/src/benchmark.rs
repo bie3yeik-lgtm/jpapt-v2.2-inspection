@@ -1,4 +1,4 @@
-use asr_metrics::distribution;
+use asr_metrics::{distribution, rtf_metrics};
 
 #[derive(Debug, Clone)]
 pub struct SampleAggregate {
@@ -114,6 +114,12 @@ pub fn build_benchmark(input: BenchmarkInput<'_>) -> serde_json::Value {
     let artifact_size_bytes = run_context["artifact"]["size_bytes"].clone();
     let decoder = candidate["decoder"].clone();
 
+    let rtf = if agg.total_audio > 0.0 {
+        rtf_metrics(agg.total_audio, total_ms / 1000.0).ok()
+    } else {
+        None
+    };
+
     serde_json::json!({
         "schema_version": 1,
         "run_id": run_context["run_id"],
@@ -159,7 +165,12 @@ pub fn build_benchmark(input: BenchmarkInput<'_>) -> serde_json::Value {
             "load_ms": null,
             "session_creation_ms": session_creation_ms,
             "total_processing_ms": total_ms,
-            "rtf": if agg.total_audio > 0.0 { Some(total_ms / 1000.0 / agg.total_audio) } else { None },
+            "rtf": rtf.map(|value| value.rtf),
+            "rtfx": rtf.map(|value| value.rtfx),
+            "rtf_scope": "model",
+            "audio_hours_per_gpu_hour": rtf.map(|value| value.rtfx),
+            "gpu_price_per_hour": null,
+            "cost_per_audio_hour": null,
             "per_sample": {
                 "mean_ms": dist.mean_ms,
                 "median_ms": dist.median_ms,

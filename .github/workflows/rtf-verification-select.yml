@@ -1,0 +1,123 @@
+name: RTF Verification Select
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_id:
+        description: Verification target service
+        required: true
+        type: choice
+        options: [hf-inference-endpoint, hf-jobs, runpod-pod, runpod-serverless]
+      gpu:
+        description: GPU target (must be compatible with service_id)
+        required: true
+        type: choice
+        options: [t4, l4, a5000, rtx3090, rtx4090]
+      model_id:
+        description: Model target
+        required: true
+        type: choice
+        options: [nvidia/parakeet-tdt_ctc-0.6b-ja, kotoba-tech/kotoba-whisper-v2.0]
+      dataset_id:
+        description: Dataset target
+        required: true
+        type: choice
+        options: [japanese-asr/ja_asr.common_voice_8_0, japanese-asr/ja_asr.jsut_basic5000, japanese-asr/ja_asr.reazonspeech_test]
+      decoder:
+        description: Decoder target
+        required: true
+        type: choice
+        options: [tdt, ctc, whisper]
+      batch_size:
+        description: Batch size target
+        required: true
+        type: choice
+        options: ["1", "8", "32"]
+      run_id:
+        description: Immutable run identity
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify provider credential
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ID" in
+            hf-inference-endpoint|hf-jobs)
+              [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error \
+                -H "Authorization: Bearer $HF_TOKEN" \
+                https://huggingface.co/api/whoami-v2 >/dev/null
+              ;;
+            runpod-pod|runpod-serverless)
+              [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error \
+                -H "Authorization: Bearer $RUNPOD_TOKEN" \
+                -H 'Content-Type: application/json' \
+                --data '{"query":"query { myself { id } }"}' \
+                https://api.runpod.io/graphql >/dev/null
+              ;;
+            *) echo "unsupported service_id: $SERVICE_ID"; exit 1 ;;
+          esac
+
+      - name: Validate selected target
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          GPU: ${{ inputs.gpu }}
+          MODEL_ID: ${{ inputs.model_id }}
+          DATASET_ID: ${{ inputs.dataset_id }}
+          DECODER: ${{ inputs.decoder }}
+          BATCH_SIZE: ${{ inputs.batch_size }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          selected = {key: os.environ[key] for key in (
+              "SERVICE_ID", "GPU", "MODEL_ID", "DATASET_ID", "DECODER", "BATCH_SIZE", "RUN_ID"
+          )}
+          matrix = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
+          valid_gpu_service = any(
+              entry["service_id"] == selected["SERVICE_ID"]
+              and entry["gpu"] == selected["GPU"]
+              and int(selected["BATCH_SIZE"]) in entry["batch_sizes"]
+              for entry in matrix["entries"]
+          )
+          if not valid_gpu_service:
+              raise SystemExit("selected service/GPU/batch is not in the approved Phase 1 matrix")
+          if selected["MODEL_ID"] not in matrix["models"]:
+              raise SystemExit("selected model is not in the approved matrix")
+          if selected["DECODER"] not in matrix["decoders"]:
+              raise SystemExit("selected decoder is not in the approved matrix")
+          if not selected["RUN_ID"] or any(c.isspace() for c in selected["RUN_ID"]):
+              raise SystemExit("run_id must be non-empty and whitespace-free")
+          output = Path("results/rtf-service")
+          output.mkdir(parents=True, exist_ok=True)
+          (output / "selection.json").write_text(
+              json.dumps({"schema_version": 1, **selected}, indent=2) + "\n"
+          )
+          print("selected RTF verification target: " + json.dumps(selected, sort_keys=True))
+          PY
+
+      - name: Publish selected target
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtf-verification-selection-${{ inputs.run_id }}
+          path: results/rtf-service/selection.json
+          if-no-files-found: error

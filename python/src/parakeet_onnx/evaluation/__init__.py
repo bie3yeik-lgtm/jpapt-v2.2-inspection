@@ -4,7 +4,9 @@ from .aggregate import AggregateResult, aggregate_sample_results
 from .capsule_analytics import (
     CapsuleMetricComparison,
     CapsuleRunSummary,
+    RtfServiceRecord,
     compare_capsule_metric,
+    rank_rtf_services,
     summarize_experiment_capsule,
     summarize_experiment_capsules,
 )
@@ -48,6 +50,7 @@ from .parquet import (
 )
 from .pipeline import PythonAsrEvaluator, PythonCtcEvaluator
 from .runner import EvaluationRunInputs, run_evaluation
+from .rtf import RtfMetrics, calculate_rtf
 from .schema import (
     EvaluationSchemaError,
     EvaluationSchemaRegistry,
@@ -70,6 +73,7 @@ __all__ = [
     "CapsuleMetricComparison",
     "CapsuleRunSummary",
     "CorpusErrorAccumulator",
+    "RtfServiceRecord",
     "DEFAULT_CAPSULE_ROW_BATCH_SIZE",
     "EmbeddedCapsuleArtifact",
     "EXPERIMENT_CAPSULE_SCHEMA_VERSION",
@@ -96,7 +100,10 @@ __all__ = [
     "iter_experiment_capsule_rows",
     "normalize_text",
     "read_experiment_capsule",
+    "rank_rtf_services",
+    "RtfMetrics",
     "run_evaluation",
+    "calculate_rtf",
     "summarize_experiment_capsule",
     "summarize_experiment_capsules",
     "validate_benchmark",

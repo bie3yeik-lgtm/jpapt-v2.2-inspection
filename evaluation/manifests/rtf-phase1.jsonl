@@ -1,0 +1,3 @@
+{"dataset_id":"common-voice-8-ja","count":12,"seed":"rtf-phase1-common-voice-8-ja-v1","min_duration_sec":1.0,"max_duration_sec":20.0}
+{"dataset_id":"jsut-basic5000","count":12,"seed":"rtf-phase1-jsut-basic5000-v1","min_duration_sec":1.0,"max_duration_sec":20.0}
+{"dataset_id":"reazonspeech-test","count":12,"seed":"rtf-phase1-reazonspeech-test-v1","min_duration_sec":1.0,"max_duration_sec":20.0}

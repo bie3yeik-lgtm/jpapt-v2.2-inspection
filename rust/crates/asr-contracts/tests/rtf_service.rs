@@ -1,0 +1,87 @@
+use asr_contracts::{validate_rtf_service_metrics, validate_rtf_service_result};
+use serde_json::json;
+
+#[test]
+fn accepts_completed_service_result() {
+    let value = json!({
+        "schema_version": 1,
+        "run_id": "run-1",
+        "service_id": "hf-jobs",
+        "status": "completed",
+        "provider": "cuda",
+        "environment": "linux",
+        "job_id": "job-1",
+        "result_uri": "hf://buckets/example/runs/run-1/metrics.json",
+        "result_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    });
+    assert!(validate_rtf_service_result(&value).is_ok());
+}
+
+#[test]
+fn rejects_blocked_result_without_error_code() {
+    let value = json!({
+        "schema_version": 1,
+        "run_id": "run-1",
+        "service_id": "runpod-pod",
+        "status": "blocked",
+        "provider": "cuda",
+        "environment": "linux"
+    });
+    assert!(validate_rtf_service_result(&value).is_err());
+}
+
+#[test]
+fn accepts_metrics_with_nullable_telemetry() {
+    let value = json!({
+        "schema_version": 1,
+        "run_id": "run-1",
+        "model_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+        "dataset_id": "japanese-asr/ja_asr.jsut_basic5000",
+        "dataset_revision": "dataset-revision-1",
+        "manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "audio_duration_sec": 10.0,
+        "processing_duration_sec": 2.0,
+        "rtf": 0.2,
+        "rtfx": 5.0,
+        "rtf_scope": "service",
+        "provider": "cuda",
+        "environment": "linux",
+        "gpu": "NVIDIA L4",
+        "dtype": "float16",
+        "batch_size": 1,
+        "cer": null,
+        "peak_vram_bytes": null,
+        "gpu_utilization_pct": null,
+        "gpu_price_per_hour": null,
+        "cost_per_audio_hour": null
+    });
+    assert!(validate_rtf_service_metrics(&value).is_ok());
+}
+
+#[test]
+fn rejects_metrics_with_zero_audio_duration() {
+    let value = json!({
+        "schema_version": 1,
+        "run_id": "run-1",
+        "model_id": "model",
+        "dataset_id": "dataset",
+        "dataset_revision": "revision",
+        "manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "audio_duration_sec": 0,
+        "processing_duration_sec": 1.0,
+        "rtf": 1.0,
+        "rtfx": 1.0,
+        "rtf_scope": "model",
+        "provider": "cpu",
+        "environment": "linux",
+        "gpu": null,
+        "dtype": "float32",
+        "batch_size": 1,
+        "cer": null,
+        "peak_vram_bytes": null,
+        "gpu_utilization_pct": null,
+        "gpu_price_per_hour": null,
+        "cost_per_audio_hour": null
+    });
+    assert!(validate_rtf_service_metrics(&value).is_err());
+}

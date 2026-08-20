@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "manifest_id": "rtf-phase1-matrix-v1",
+  "image_ref": "ghcr.io/REPLACE_OWNER/parakeet-rtf-benchmark@sha256:REPLACE_DIGEST",
+  "models": [
+    "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "kotoba-tech/kotoba-whisper-v2.0"
+  ],
+  "decoders": ["tdt", "ctc", "whisper"],
+  "repetitions": 3,
+  "entries": [
+    {"service_id":"hf-jobs","gpu":"t4","flavor":"t4-small","provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"hf-jobs","gpu":"l4","flavor":"l4","provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"runpod-pod","gpu":"a5000","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"runpod-pod","gpu":"l4","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"runpod-pod","gpu":"rtx3090","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"runpod-pod","gpu":"rtx4090","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]}
+  ]
+}

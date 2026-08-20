@@ -1,0 +1,179 @@
+name: RTF Service Result Collection
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Immutable benchmark run identity
+        required: true
+        type: string
+      service_id:
+        description: Service that executed the benchmark
+        required: true
+        type: choice
+        options: [hf-inference-endpoint, hf-jobs, runpod-pod, runpod-serverless]
+      status:
+        description: Provider execution status
+        required: true
+        type: choice
+        options: [completed, failed, blocked, not_verified]
+      provider:
+        description: Logical execution provider
+        required: true
+        type: choice
+        options: [cpu, cuda, directml, coreml]
+      environment:
+        description: Named execution environment
+        required: true
+        type: choice
+        options: [linux, windows, macos]
+      job_id:
+        description: Remote provider job identity, if available
+        required: false
+        default: ""
+        type: string
+      result_uri:
+        description: Immutable result URI, required for completed status
+        required: false
+        default: ""
+        type: string
+      result_sha256:
+        description: SHA-256 of the immutable result
+        required: false
+        default: ""
+        type: string
+      metrics_sha256:
+        description: SHA-256 of the metrics payload
+        required: false
+        default: ""
+        type: string
+      metrics_uri:
+        description: HTTPS URI of the metrics payload to fetch and validate
+        required: false
+        default: ""
+        type: string
+      error_code:
+        description: Required for failed/blocked/not_verified status
+        required: false
+        default: ""
+        type: string
+      error_message:
+        description: Non-secret diagnostic message
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify provider credential
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ID" in
+            hf-inference-endpoint|hf-jobs)
+              [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error -H "Authorization: Bearer $HF_TOKEN" \
+                https://huggingface.co/api/whoami-v2 >/dev/null
+              ;;
+            runpod-pod|runpod-serverless)
+              [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+              curl --fail --silent --show-error \
+                -H "Authorization: Bearer $RUNPOD_TOKEN" \
+                -H 'Content-Type: application/json' \
+                --data '{"query":"query { myself { id } }"}' \
+                https://api.runpod.io/graphql >/dev/null
+              ;;
+            *) echo "unsupported service_id: $SERVICE_ID"; exit 1 ;;
+          esac
+
+      - name: Write service result envelope
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          SERVICE_ID: ${{ inputs.service_id }}
+          STATUS: ${{ inputs.status }}
+          PROVIDER: ${{ inputs.provider }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          JOB_ID: ${{ inputs.job_id }}
+          RESULT_URI: ${{ inputs.result_uri }}
+          RESULT_SHA256: ${{ inputs.result_sha256 }}
+          METRICS_SHA256: ${{ inputs.metrics_sha256 }}
+          METRICS_URI: ${{ inputs.metrics_uri }}
+          ERROR_CODE: ${{ inputs.error_code }}
+          ERROR_MESSAGE: ${{ inputs.error_message }}
+        run: |
+          set -euo pipefail
+          mkdir -p results/rtf-service
+          if [[ -n "$METRICS_URI" ]]; then
+            curl --fail --location --proto '=https' --tlsv1.2 "$METRICS_URI" \
+              -o results/rtf-service/metrics.json
+          fi
+          jq -n \
+            --arg run_id "$RUN_ID" \
+            --arg service_id "$SERVICE_ID" \
+            --arg status "$STATUS" \
+            --arg provider "$PROVIDER" \
+            --arg environment "$ENVIRONMENT" \
+            --arg job_id "$JOB_ID" \
+            --arg result_uri "$RESULT_URI" \
+            --arg result_sha256 "$RESULT_SHA256" \
+            --arg metrics_sha256 "$METRICS_SHA256" \
+            --arg metrics_uri "$METRICS_URI" \
+            --arg error_code "$ERROR_CODE" \
+            --arg error_message "$ERROR_MESSAGE" \
+            '{schema_version:1,run_id:$run_id,service_id:$service_id,status:$status,provider:$provider,environment:$environment,job_id:($job_id | if . == "" then null else . end),result_uri:($result_uri | if . == "" then null else . end),result_sha256:($result_sha256 | if . == "" then null else . end),metrics_uri:($metrics_uri | if . == "" then null else . end),metrics_path:(if $metrics_uri == "" then null else "results/rtf-service/metrics.json" end),metrics_sha256:($metrics_sha256 | if . == "" then null else . end),error_code:($error_code | if . == "" then null else . end),error_message:($error_message | if . == "" then null else . end)}' \
+            > results/rtf-service/service-result.json
+
+      - name: Validate service result envelope
+        run: cargo run --quiet --locked -p asr-contracts --bin asr-rtf-service -- validate results/rtf-service/service-result.json
+
+      - name: Write Actions summary
+        shell: bash
+        run: |
+          mkdir -p rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}
+          {
+            echo '## RTF service result'
+            echo
+            jq -r '"- run_id: `\(.run_id)`\n- service: `\(.service_id)`\n- status: `\(.status)`\n- provider: `\(.provider)`\n- environment: `\(.environment)`"' results/rtf-service/service-result.json
+          } | tee rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Persist RTF score in repository
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          SERVICE_ID: ${{ inputs.service_id }}
+        run: |
+          set -euo pipefail
+          destination="rtf-scores/${RUN_ID}/${SERVICE_ID}"
+          cp results/rtf-service/service-result.json "${destination}/service-result.json"
+          if [[ -f results/rtf-service/metrics.json ]]; then
+            cp results/rtf-service/metrics.json "${destination}/metrics.json"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${destination}"
+          if git diff --cached --quiet; then
+            echo 'No new RTF score content to commit.'
+            exit 0
+          fi
+          git commit -m "chore: persist RTF score ${RUN_ID} ${SERVICE_ID}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload validated service result
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtf-service-result-${{ inputs.run_id }}
+          path: results/rtf-service/
+          if-no-files-found: error

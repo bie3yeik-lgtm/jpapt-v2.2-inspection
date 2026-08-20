@@ -1,0 +1,4 @@
+interface:
+  display_name: "Recursive Delivery"
+  short_description: "Iterate through small accepted work units"
+  default_prompt: "Use $recursive-delivery to decompose this request into accepted work units and iterate through SA, PM, PG, Debug, and acceptance."

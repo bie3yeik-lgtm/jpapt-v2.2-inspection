@@ -17,6 +17,10 @@ const RUN_CONTEXT_SCHEMA: &str =
 const SAMPLE_RESULT_SCHEMA: &str =
     include_str!("../../../../evaluation/schemas/result.schema.json");
 const BENCHMARK_SCHEMA: &str = include_str!("../../../../evaluation/schemas/benchmark.schema.json");
+const RTF_SERVICE_RESULT_SCHEMA: &str =
+    include_str!("../../../../evaluation/schemas/rtf-service-result.schema.json");
+const RTF_SERVICE_METRICS_SCHEMA: &str =
+    include_str!("../../../../evaluation/schemas/rtf-service-metrics.schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunValidationSummary {
@@ -36,6 +40,50 @@ pub fn validate_sample_result(value: &Value) -> Result<()> {
 
 pub fn validate_benchmark(value: &Value) -> Result<()> {
     EmbeddedSchema::parse("benchmark", BENCHMARK_SCHEMA)?.validate(value)
+}
+
+pub fn validate_rtf_service_result(value: &Value) -> Result<()> {
+    EmbeddedSchema::parse("rtf-service-result", RTF_SERVICE_RESULT_SCHEMA)?.validate(value)?;
+    let status = required_string_at(value, "/status", "service result status")?;
+    if status == "completed" {
+        required_string_at(value, "/job_id", "completed service result job_id")?;
+        required_string_at(value, "/result_uri", "completed service result result_uri")?;
+        required_string_at(
+            value,
+            "/result_sha256",
+            "completed service result result_sha256",
+        )?;
+    } else if value
+        .get("error_code")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(ContractError::validation(
+            "non-completed service result requires error_code",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_rtf_service_metrics(value: &Value) -> Result<()> {
+    EmbeddedSchema::parse("rtf-service-metrics", RTF_SERVICE_METRICS_SCHEMA)?.validate(value)?;
+    for pointer in [
+        "/audio_duration_sec",
+        "/processing_duration_sec",
+        "/rtf",
+        "/rtfx",
+    ] {
+        let number = value
+            .pointer(pointer)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| ContractError::validation(format!("{pointer} must be a number")))?;
+        if !number.is_finite() || number <= 0.0 {
+            return Err(ContractError::validation(format!(
+                "{pointer} must be finite and positive"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_run_directory(path: impl AsRef<Path>) -> Result<RunValidationSummary> {

@@ -40,8 +40,8 @@ def find_repository_root(
 
     Resolution order:
 
-    1. PARAKEET_ONNX_REPO_ROOT
-    2. ``start`` if supplied
+    1. ``start`` if supplied (an explicit caller location is authoritative)
+    2. PARAKEET_ONNX_REPO_ROOT when no start is supplied
     3. current working directory
     4. parents of the selected starting location
 
@@ -50,7 +50,7 @@ def find_repository_root(
             If no repository root can be found.
     """
 
-    explicit_root = os.environ.get(_REPOSITORY_ROOT_ENV)
+    explicit_root = os.environ.get(_REPOSITORY_ROOT_ENV) if start is None else None
 
     if explicit_root:
         root = Path(explicit_root).expanduser().resolve()

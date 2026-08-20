@@ -37,6 +37,49 @@ class CapsuleMetricComparison:
         return min(available, key=key) if lower_is_better else max(available, key=key)
 
 
+@dataclass(frozen=True, slots=True)
+class RtfServiceRecord:
+    """One normalized service benchmark observation."""
+
+    run_id: str
+    service_id: str
+    status: str
+    rtf: float | None
+    rtfx: float | None
+    cost_per_audio_hour: float | None
+
+
+def rank_rtf_services(
+    records: Iterable[RtfServiceRecord],
+    *,
+    metric: str = "cost_per_audio_hour",
+) -> tuple[RtfServiceRecord, ...]:
+    """Return deterministic ranking, excluding non-completed/unmeasured records."""
+
+    if metric not in {"rtf", "cost_per_audio_hour"}:
+        raise ValueError(f"Unsupported RTF ranking metric: {metric!r}")
+    materialized = list(records)
+    run_ids = [record.run_id for record in materialized]
+    if len(run_ids) != len(set(run_ids)):
+        raise ValueError("duplicate run_id in RTF service records")
+
+    def value(record: RtfServiceRecord) -> float | None:
+        candidate = getattr(record, metric)
+        return candidate if candidate is not None else None
+
+    ranked = [
+        record
+        for record in materialized
+        if record.status == "completed" and value(record) is not None
+    ]
+    return tuple(
+        sorted(
+            ranked,
+            key=lambda record: (value(record), record.service_id, record.run_id),
+        )
+    )
+
+
 def _pyarrow_parquet() -> object:
     try:
         import pyarrow.parquet as pq

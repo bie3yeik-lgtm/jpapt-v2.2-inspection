@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Preflight"
+  short_description: "Repository-aware VSDD planning and evidence checks"
+  default_prompt: "Use $develop-preflight to establish repository authority, protect existing work, implement with fail-first checks, and report evidence precisely."
