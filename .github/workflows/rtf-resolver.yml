@@ -12,21 +12,6 @@ on:
         required: true
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
         type: string
-      count_min:
-        description: Minimum composite sample count
-        required: true
-        default: "20"
-        type: string
-      count_max:
-        description: Maximum composite sample count
-        required: true
-        default: "50"
-        type: string
-      target_total_sec:
-        description: Target total audio duration
-        required: true
-        default: "5400"
-        type: string
       fixture_repo_id:
         description: Hugging Face Dataset repo to publish the fixed fixture
         required: true
@@ -50,9 +35,6 @@ jobs:
     env:
       IMAGE: ${{ inputs.image }}
       DATASET_REVISION: ${{ inputs.dataset_revision }}
-      COUNT_MIN: ${{ inputs.count_min }}
-      COUNT_MAX: ${{ inputs.count_max }}
-      TARGET_TOTAL_SEC: ${{ inputs.target_total_sec }}
       FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
       INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
       RUN_ID: rtf-resolver-${{ github.run_id }}
@@ -121,17 +103,19 @@ jobs:
           total = sum(float(record['audio_duration_sec']) for record in records)
           profile = os.environ['INSPECTION_PROFILE']
           if profile == 'lough inspection':
-              count_min, count_max, total_min, duration_max = 20, 50, 3600, 600
+              count_min, count_max, total_min, total_max, duration_max = 20, 50, 3600, 7200, 600
           elif profile == 'precise inspection':
-              count_min, count_max, total_min, duration_max = 50, 150, 18000, 1800
+              count_min, count_max, total_min, total_max, duration_max = 50, 150, 18000, 36000, 1800
           else:
               raise SystemExit(f'unknown profile: {profile}')
           if not count_min <= len(records) <= count_max:
               raise SystemExit(f'invalid sample count: {len(records)}')
           if total < total_min:
               raise SystemExit(f'invalid total duration: {total}')
+          if total > total_max:
+              raise SystemExit(f'invalid total duration: {total}')
           if any(not 30 <= float(record['audio_duration_sec']) <= duration_max for record in records):
-              raise SystemExit('sample duration outside 30..600 seconds')
+              raise SystemExit(f'sample duration outside 30..{duration_max} seconds')
           receipt = {
               'schema_version': 1,
               'run_id': os.environ['RUN_ID'],
@@ -236,4 +220,4 @@ jobs:
             --head "$branch" \
             --draft \
             --title "Add resolved RTF benchmark manifest ${RUN_ID}" \
-            --body "Resolver output for ${IMAGE}. Audio WAV files are preserved in the GitHub Artifact rtf-resolver-${{ github.run_id }}; Git contains only the lightweight manifest, receipt, and SHA-256."
+            --body "Resolver output for ${IMAGE}. The fixed audio fixture is stored in the revision-pinned Hugging Face Dataset; Git contains only the lightweight manifest, fixture pointer, receipt, and SHA-256."

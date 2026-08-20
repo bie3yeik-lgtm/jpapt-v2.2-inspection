@@ -176,11 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           destination="rtf-scores/${INSPECTION_PROFILE}/${SERVICE_ID}/${GPU}/batch-${BATCH_SIZE}"
-          artifact_branch="inspection/${RUN_ID}-${SERVICE_ID}"
-          cp results/rtf-service/service-result.json "${destination}/service-result.json"
-          if [[ -f results/rtf-service/metrics.json ]]; then
-            cp results/rtf-service/metrics.json "${destination}/metrics.json"
-          fi
+          artifact_branch="inspection/${RUN_ID}-${INSPECTION_PROFILE}-${SERVICE_ID}-${GPU}-batch-${BATCH_SIZE}"
 
           # Keep generated measurements independent from the workflow's source
           # branch. This also works when that branch is protected or read-only.
@@ -190,6 +186,11 @@ jobs:
             git checkout "${artifact_branch}"
           else
             git checkout --no-track -b "${artifact_branch}" origin/main
+          fi
+          mkdir -p "$destination"
+          cp results/rtf-service/service-result.json "${destination}/service-result.json"
+          if [[ -f results/rtf-service/metrics.json ]]; then
+            cp results/rtf-service/metrics.json "${destination}/metrics.json"
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
