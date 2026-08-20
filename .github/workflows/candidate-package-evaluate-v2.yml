@@ -307,6 +307,7 @@ jobs:
           CANDIDATE_ID: ${{ needs.resolve.outputs.candidate_id }}
           EXECUTOR: ${{ needs.resolve.outputs.executor }}
           HF_JOBS_IMAGE: ${{ needs.resolve.outputs.hf_jobs_image }}
+          ASR_RUNTIME_VARIANT: ctc
         run: |
           set -euo pipefail
           if [[ "$EXECUTOR" == hf_jobs && -n "$HF_JOBS_IMAGE" ]]; then

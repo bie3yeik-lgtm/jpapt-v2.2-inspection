@@ -24,7 +24,7 @@ completion、lifecycle、ACKを機械的に突合できる状態を受入れと�
 | public repository | `bie3yeik-lgtm/jpapt-v2.2-inspection` |
 | inspected default-branch SHA | `149d689dfbc9a52774064305836c0ff45f5b7e9b` |
 | source / receipt repository | `largoyo/Premiere-AutoProcess-Plugin` |
-| HF Bucket | `gawohok7/premiere-autoprocess-plugin-bucket` |
+| HF Bucket | `gawohok7/tf-v2.2-onnx-dev-bucket` |
 | candidate / candidate digest | `candidate-000001` / `sha256:e9861e822dcb24acd936142488c344dc6a4cbcb35b0b06e24a2a549d1419eb25` |
 | executable image | `ghcr.io/bie3yeik-lgtm/jpapt-candidate@sha256:ee2ae53d748b0c3a748d306621d218787c1ff4aa76c6fedf8045a4c3c0803bec` |
 | suite / executor / environment | `smoke` / `hf_jobs` / `linux-cpu` |
