@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32362148967-b1",
+  "run_id": "rtf-hf-32362148967-b32",
   "service_id": "hf-jobs",
   "status": "blocked",
   "provider": "cuda",
@@ -12,5 +12,5 @@
   "metrics_path": null,
   "metrics_sha256": null,
   "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "provider execution did not produce a result receipt for batch 1"
+  "error_message": "provider execution did not produce a result receipt for batch 32"
 }
