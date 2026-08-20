@@ -242,3 +242,18 @@ No commit, push, remote workflow dispatch, HF mutation, or RunPod mutation has b
 in this local execution. The next safe action requiring external state is to provision the fixed
 revision bundle, credentials, immutable benchmark image, and named provider endpoints, then run
 each service through `rtf-service-result.yml` and validate the resulting metrics SHA-256.
+
+## 2026-08-20: repository persistence fallback
+
+実行結果が起動元ブランチへ保存されない場合に備え、`.github/workflows/rtf-service-result.yml`
+の保存先を `inspection/<run_id>-<service_id>` ブランチへ分離し、`main` 向けPRを自動作成する
+よう変更した。既存の同名ブランチとPRは再利用する。`contents: write` に加えて
+`pull-requests: write` が必要である。
+
+検証:
+
+```text
+git diff --check: PASS
+actionlint: NOT VERIFIED (command unavailable on this host)
+remote workflow execution and PR creation: NOT VERIFIED
+```

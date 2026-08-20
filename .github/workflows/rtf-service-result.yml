@@ -65,6 +65,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   collect:
@@ -154,22 +155,43 @@ jobs:
         env:
           RUN_ID: ${{ inputs.run_id }}
           SERVICE_ID: ${{ inputs.service_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           destination="rtf-scores/${RUN_ID}/${SERVICE_ID}"
+          artifact_branch="inspection/${RUN_ID}-${SERVICE_ID}"
           cp results/rtf-service/service-result.json "${destination}/service-result.json"
           if [[ -f results/rtf-service/metrics.json ]]; then
             cp results/rtf-service/metrics.json "${destination}/metrics.json"
+          fi
+
+          # Keep generated measurements independent from the workflow's source
+          # branch. This also works when that branch is protected or read-only.
+          git fetch --no-tags origin main
+          if git ls-remote --exit-code --heads origin "${artifact_branch}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "${artifact_branch}:${artifact_branch}"
+            git checkout "${artifact_branch}"
+          else
+            git checkout --no-track -b "${artifact_branch}" origin/main
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- "${destination}"
           if git diff --cached --quiet; then
             echo 'No new RTF score content to commit.'
-            exit 0
+          else
+            git commit -m "chore: persist RTF score ${RUN_ID} ${SERVICE_ID}"
+            git push --set-upstream origin "${artifact_branch}"
           fi
-          git commit -m "chore: persist RTF score ${RUN_ID} ${SERVICE_ID}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          if ! gh pr view "${artifact_branch}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${artifact_branch}" \
+              --title "chore: persist RTF score ${RUN_ID} ${SERVICE_ID}" \
+              --body "Automated RTF service result persistence for run \`${RUN_ID}\` and service \`${SERVICE_ID}\`."
+          fi
 
       - name: Upload validated service result
         uses: actions/upload-artifact@v7
