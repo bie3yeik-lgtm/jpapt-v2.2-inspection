@@ -7,7 +7,7 @@ on:
         description: Verification target service
         required: true
         type: choice
-        options: [hf-inference-endpoint, hf-jobs, runpod-pod, runpod-serverless]
+        options: [hf-inference-endpoint, runpod-pod]
       gpu:
         description: GPU target (must be compatible with service_id)
         required: true
@@ -52,13 +52,13 @@ jobs:
         run: |
           set -euo pipefail
           case "$SERVICE_ID" in
-            hf-inference-endpoint|hf-jobs)
+            hf-inference-endpoint)
               [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN secret is required'; exit 1; }
               curl --fail --silent --show-error \
                 -H "Authorization: Bearer $HF_TOKEN" \
                 https://huggingface.co/api/whoami-v2 >/dev/null
               ;;
-            runpod-pod|runpod-serverless)
+            runpod-pod)
               [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
               curl --fail --silent --show-error \
                 -H "Authorization: Bearer $RUNPOD_TOKEN" \

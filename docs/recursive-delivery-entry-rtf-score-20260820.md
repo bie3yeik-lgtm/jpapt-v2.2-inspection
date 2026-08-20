@@ -257,3 +257,34 @@ git diff --check: PASS
 actionlint: NOT VERIFIED (command unavailable on this host)
 remote workflow execution and PR creation: NOT VERIFIED
 ```
+
+## 2026-08-20: Phase 1 GPU combination correction
+
+Actions run `32331959739` の選択値は `runpod-pod / t4 / batch-32` だったが、参照表の対象外
+だった。Phase 1 matrixからHF Jobsを除き、対象をHF Inference EndpointのT4/L4とRunPod
+ PodのA5000/L4/RTX 3090/RTX 4090の6組へ修正した。選択Workflowのserviceもこの2種類に
+限定した。
+
+検証:
+
+```text
+matrix JSON parse: PASS
+Phase 1 entry count: PASS (6)
+runpod-pod/t4 rejection: PASS (not in matrix)
+```
+
+## 2026-08-20: completed-run Artifact persistence
+
+Actions run `32331930386` はselection Artifactのuploadまで成功していたが、Artifactを
+`rtf-scores/`へ保存するWorkflowを呼び出していなかった。そのため、`workflow_run` の
+completedイベントでArtifactを回収し、`inspection/rtf-artifacts-<actions_run_id>`へcommitして
+`main`向けPRを作る独立Workflow `rtf-verification-artifact-persist.yml` を追加した。
+
+検証:
+
+```text
+source run conclusion: success
+selection artifact: present
+workflow YAML parse: NOT VERIFIED (local parser check pending)
+remote workflow execution: NOT VERIFIED
+```

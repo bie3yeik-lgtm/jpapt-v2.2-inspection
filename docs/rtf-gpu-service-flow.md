@@ -9,8 +9,8 @@
 RTF Verification Select
   service × GPU × model × dataset × decoder × batch
         │
-        ├─ HF Endpoint / HF Jobs ── HF_TOKENで認証
-        └─ RunPod Pod / Serverless ─ RUNPOD_TOKENで認証
+        ├─ HF Inference Endpoint ── HF_TOKENで認証
+        └─ RunPod Pod ───────────── RUNPOD_TOKENで認証
         │
         ▼
 provider側で実推論
@@ -48,7 +48,7 @@ Actionsはserviceに応じて対応するsecretだけを使用し、tokenの値�
 
 `RTF Verification Select`を`Run workflow`から起動し、次を指定する。
 
-- `service_id`: `hf-inference-endpoint` / `hf-jobs` / `runpod-pod` / `runpod-serverless`
+- `service_id`: `hf-inference-endpoint` / `runpod-pod`
 - `gpu`: T4 / L4 / A5000 / RTX 3090 / RTX 4090
 - `model_id`: ParakeetまたはKotoba Whisper
 - `dataset_id`: Common Voice / JSUT / ReazonSpeech
@@ -58,6 +58,15 @@ Actionsはserviceに応じて対応するsecretだけを使用し、tokenの値�
 
 workflowはPhase 1 matrixとの互換性、さらにserviceに対応するsecretの認証を確認する。
 選択artifactは`rtf-verification-selection-<run_id>`である。
+
+Phase 1の対象GPU組み合わせは、参照表に従い次の6組に限定する。
+
+```text
+HF Inference Endpoint: T4, L4
+RunPod Pod:            A5000, L4, RTX 3090, RTX 4090
+```
+
+したがって、HF Jobs、RunPod Serverless、RunPod PodのT4はPhase 1の対象外である。
 
 ## provider別の実推論
 
