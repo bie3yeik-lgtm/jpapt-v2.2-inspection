@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "SERVICE_ID": "hf-inference-endpoint",
+  "GPU": "t4",
+  "MODEL_ID": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+  "DATASET_ID": "japanese-asr/ja_asr.common_voice_8_0",
+  "DECODER": "tdt",
+  "BATCH_SIZE": "1",
+  "RUN_ID": "rtf-hf-inference-endpoint-t4-tdt-b1-r32332923675-83dc33c51d91e94d"
+}
