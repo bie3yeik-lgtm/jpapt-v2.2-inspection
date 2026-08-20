@@ -29,7 +29,7 @@ Workflow: **RTF Verification Select** (`rtf-verification-select.yml`)
 | `model_id` | Parakeet TDT/CTC, Kotoba Whisper |
 | `dataset_id` | Common Voice 8, JSUT Basic5000, ReazonSpeech test |
 | `decoder` | `tdt`, `ctc`, `whisper` |
-| `batch_size` | `1`, `8`, `32` |
+| `batch_size` | `1`, `2`, `4` |
 
 workflowは選択値をPhase 1 matrixと照合する。HF Jobsで存在しないGPUを選ぶなど、
 無効な組合せは外部実行前に失敗する。成功時は

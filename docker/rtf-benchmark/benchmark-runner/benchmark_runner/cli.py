@@ -21,7 +21,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset-id", required=True)
     p.add_argument("--dataset-revision", required=True)
     p.add_argument("--decoder", choices=("tdt", "ctc", "whisper"), required=True)
-    p.add_argument("--batch-size", type=int, choices=(1, 8, 32), required=True)
+    p.add_argument("--batch-size", type=int, choices=(1, 2, 4), required=True)
     p.add_argument("--precision", choices=("float32", "float16", "bfloat16"), required=True)
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")

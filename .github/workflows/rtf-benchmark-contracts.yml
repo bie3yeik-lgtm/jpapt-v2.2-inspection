@@ -159,8 +159,8 @@ jobs:
               raise SystemExit("RTF Benchmark Run must always resolve the latest GHCR image")
           if "inputs.batch_size" in benchmark_workflow or "description: Benchmark batch size" in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must not expose a batch-size input")
-          if "for batch_size in 1 8 32; do" not in benchmark_workflow:
-              raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
+          if "for batch_size in 1 2 4; do" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must execute all three OOM-safe batch sizes")
           if "latest GHCR package digest" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must wait for the latest GHCR package digest")
           if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:
@@ -219,8 +219,8 @@ jobs:
                   raise SystemExit("RunPod Pod entries must not use HF flavor names")
               if entry["provider"] != "cuda" or entry["environment"] != "linux":
                   raise SystemExit("Phase 1 matrix has an invalid provider boundary")
-              if entry["batch_sizes"] != [1, 8, 32]:
-                  raise SystemExit("Phase 1 batch sizes must be [1, 8, 32]")
+              if entry["batch_sizes"] != [1, 2, 4]:
+                  raise SystemExit("Phase 1 batch sizes must be [1, 2, 4]")
           print("RTF Phase 1 matrix contract: PASS")
           PY
 

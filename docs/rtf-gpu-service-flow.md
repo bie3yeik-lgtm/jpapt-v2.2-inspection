@@ -53,7 +53,7 @@ Actionsはserviceに応じて対応するsecretだけを使用し、tokenの値�
 - `model_id`: ParakeetまたはKotoba Whisper
 - `dataset_id`: Common Voice / JSUT / ReazonSpeech
 - `decoder`: TDT / CTC / Whisper
-- `batch_size`: 1 / 8 / 32
+- `batch_size`: 1 / 2 / 4
 - `run_id`: 入力不要。選択内容とGitHub Actionsのrun IDから自動生成
 
 workflowはPhase 1 matrixとの互換性、さらにserviceに対応するsecretの認証を確認する。

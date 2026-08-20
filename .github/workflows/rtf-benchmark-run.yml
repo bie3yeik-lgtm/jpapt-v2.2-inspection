@@ -158,7 +158,7 @@ jobs:
           esac
           mkdir -p results/batches
           successful_batches=0
-          for batch_size in 1 8 32; do
+          for batch_size in 1 2 4; do
             batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
             batch_dir="results/batches/batch-${batch_size}"
             mkdir -p "$batch_dir"
@@ -196,7 +196,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          for batch_size in 1 8 32; do
+          for batch_size in 1 2 4; do
             receipt_path="results/batches/batch-${batch_size}/result-receipt.json"
             if [[ ! -s "$receipt_path" ]]; then
               mkdir -p "$(dirname "$receipt_path")"
@@ -207,7 +207,7 @@ jobs:
                 > "$receipt_path"
             fi
           done
-          receipts="$(for batch_size in 1 8 32; do
+          receipts="$(for batch_size in 1 2 4; do
             jq --arg batch_size "$batch_size" \
               '. + {batch_size:($batch_size | tonumber)}' \
               "results/batches/batch-${batch_size}/result-receipt.json"
