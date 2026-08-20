@@ -77,6 +77,10 @@ The HF branch submits one Job. The RunPod branch creates one Pod with
 `sleep infinity`, executes the complete benchmark once, collects the result,
 and deletes the Pod in an EXIT trap, including failure paths.
 
+`RTF Resolver` writes the uploaded fixture repository and immutable commit SHA
+to `rtf-scores/benchmark-v1.fixture.json`. `RTF Benchmark Run` reads that
+pointer automatically when its fixture inputs are empty.
+
 `evaluation/manifests/rtf-benchmark-v1.json` is the Common Voice dataset
 revision lock. The resolved audio manifest and its SHA-256 are runtime inputs
 and must be returned with the metrics.

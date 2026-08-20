@@ -38,11 +38,13 @@ on:
         type: string
       fixture_repo_id:
         description: Hugging Face Dataset repository containing benchmark-v1.jsonl and WAV fixtures
-        required: true
+        required: false
+        default: ""
         type: string
       fixture_revision:
         description: Immutable fixture Dataset commit
-        required: true
+        required: false
+        default: ""
         type: string
       batch_size:
         description: Benchmark batch size
@@ -96,6 +98,16 @@ jobs:
           RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
           set -euo pipefail
+          if [[ -z "${RTF_FIXTURE_REPO_ID}" || -z "${RTF_FIXTURE_REVISION}" ]]; then
+            [[ -f rtf-scores/benchmark-v1.fixture.json ]] || {
+              echo 'fixture inputs are empty and rtf-scores/benchmark-v1.fixture.json is missing' >&2
+              exit 2
+            }
+            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark-v1.fixture.json)"
+            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark-v1.fixture.json)"
+          fi
+          echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
+          echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in
             hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
             *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;

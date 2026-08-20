@@ -196,6 +196,10 @@ jobs:
             '. + {fixture_repo_id:$repo,fixture_revision:$revision}' \
             rtf-scores/benchmark-v1.receipt.json > /tmp/receipt.json
           mv /tmp/receipt.json rtf-scores/benchmark-v1.receipt.json
+          jq -n --arg repo "$FIXTURE_REPO_ID" --arg revision "$fixture_revision" \
+            --arg profile "$INSPECTION_PROFILE" \
+            '{schema_version:1,fixture_repo_id:$repo,fixture_revision:$revision,inspection_profile:$profile}' \
+            > rtf-scores/benchmark-v1.fixture.json
 
       - name: Upload resolved audio and outputs
         uses: actions/upload-artifact@v7
@@ -205,6 +209,7 @@ jobs:
             rtf-scores/benchmark-v1.jsonl
             rtf-scores/benchmark-v1.receipt.json
             rtf-scores/benchmark-v1.jsonl.sha256
+            rtf-scores/benchmark-v1.fixture.json
           if-no-files-found: error
           retention-days: 30
 
@@ -218,7 +223,7 @@ jobs:
           git checkout --no-track -b "$branch" origin/main
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- rtf-scores/benchmark-v1.jsonl rtf-scores/benchmark-v1.receipt.json rtf-scores/benchmark-v1.jsonl.sha256
+          git add -- rtf-scores/benchmark-v1.jsonl rtf-scores/benchmark-v1.receipt.json rtf-scores/benchmark-v1.jsonl.sha256 rtf-scores/benchmark-v1.fixture.json
           git commit -m "Add resolved RTF benchmark manifest ${RUN_ID}"
           git push --set-upstream origin "$branch"
           gh pr create \
