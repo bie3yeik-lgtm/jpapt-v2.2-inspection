@@ -176,7 +176,7 @@ case "$PROVIDER" in
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --ports 22/tcp --wait --wait-timeout 10m --terminate-after "$terminate_after" \
+      --ports 22/tcp --wait --wait-timeout 30m --terminate-after "$terminate_after" \
       --output json 2>&1)"
     pod_create_status=$?
     set -e
