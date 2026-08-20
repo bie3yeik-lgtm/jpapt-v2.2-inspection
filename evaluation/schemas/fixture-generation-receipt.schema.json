@@ -22,11 +22,24 @@
     "hf_bucket": {"type": "string", "minLength": 3},
     "status": {
       "type": "string",
-      "enum": ["planned", "ready_for_dispatch", "dispatched", "blocked"]
+      "enum": ["planned", "ready_for_dispatch", "dispatched", "completed", "blocked"]
     },
     "dry_run": {"type": "boolean"},
     "execute": {"type": "boolean"},
     "bucket_run_id": {"type": ["string", "null"]},
-    "notes": {"type": ["string", "null"]}
+    "notes": {"type": ["string", "null"]},
+    "request_id": {"type": ["string", "null"], "minLength": 1},
+    "gateway_run_id": {"type": ["integer", "null"], "minimum": 1},
+    "evaluation_run_id": {"type": ["integer", "null"], "minimum": 1},
+    "evaluation_run_attempt": {"type": ["integer", "null"], "minimum": 1},
+    "receipt_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      ]
+    },
+    "result_uri": {"type": ["string", "null"], "minLength": 1},
+    "lifecycle_state": {"type": ["string", "null"]},
+    "evaluator_workflow": {"type": ["string", "null"], "minLength": 1}
   }
 }
