@@ -10,7 +10,7 @@ fi
 if [[ "$#" -eq 0 ]]; then
   : "${RTF_DATASET_ID:?RTF_DATASET_ID is required}"
   : "${RTF_DATASET_REVISION:?RTF_DATASET_REVISION is required}"
-  : "${RTF_DATASET_CONFIGURATION:=ja}"
+  : "${RTF_DATASET_CONFIGURATION:=default}"
   : "${RTF_DATASET_SPLIT:=test}"
   : "${RTF_DATASET_SEED:=rtf-benchmark-v1-common-voice-ja}"
   : "${RTF_DATASET_COUNT_MIN:=20}"

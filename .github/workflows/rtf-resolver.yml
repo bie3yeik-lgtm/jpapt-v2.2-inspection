@@ -75,8 +75,11 @@ jobs:
           password: ${{ github.token }}
 
       - name: Resolve fixed Common Voice manifest in Docker
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -euo pipefail
+          [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required for dataset resolution'; exit 1; }
           case "$INSPECTION_PROFILE" in
             'lough inspection') count_min=20; count_max=50; target_total=5400; max_duration=600 ;;
             'precise inspection') count_min=50; count_max=150; target_total=27000; max_duration=1800 ;;
@@ -87,13 +90,14 @@ jobs:
           docker pull "$IMAGE"
           docker run --rm \
             --entrypoint python \
+            -e HF_TOKEN \
             -e PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
             -v "$PWD/.ci/rtf-resolver:/resolver" \
             "$IMAGE" \
             -m benchmark_runner.resolve_dataset \
             --dataset-id japanese-asr/ja_asr.common_voice_8_0 \
             --revision "$DATASET_REVISION" \
-            --configuration ja --split test \
+            --configuration default --split test \
             --count-min "$count_min" --count-max "$count_max" \
             --target-total-sec "$target_total" --max-duration-sec "$max_duration" \
             --seed rtf-benchmark-v1-common-voice-ja \
