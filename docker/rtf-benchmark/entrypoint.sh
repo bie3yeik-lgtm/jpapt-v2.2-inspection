@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep large variable-length audio batches from being trapped in fragmented
+# CUDA segments. This does not hide a genuine OOM; it only improves reuse of
+# otherwise-free reserved segments. Respect an explicit provider override.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 # RunPod's `--docker-args` supplies arguments to the image ENTRYPOINT; it does
 # not replace ENTRYPOINT. The lifecycle wrapper uses `sleep infinity` to keep
 # the container alive until it can invoke this entrypoint over SSH. Handle
