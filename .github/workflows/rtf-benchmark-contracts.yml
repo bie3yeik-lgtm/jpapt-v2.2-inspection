@@ -10,6 +10,8 @@ on:
       - "python/src/parakeet_onnx/evaluation/**"
       - ".github/workflows/rtf-resolver.yml"
       - ".github/workflows/rtf-benchmark-run.yml"
+      - ".github/workflows/rtf-verification-select.yml"
+      - ".github/workflows/rtf-verification-artifact-persist.yml"
       - ".github/workflows/rtf-service-result.yml"
       - "scripts/run-benchmark.sh"
       - "scripts/ci/resolve-ghcr-package-digest.sh"
@@ -117,6 +119,27 @@ jobs:
               raise SystemExit("RunPod must invoke the image entrypoint explicitly")
           if "exec python benchmark.py" in script:
               raise SystemExit("RunPod must not bypass the image entrypoint")
+          benchmark_workflow = Path(".github/workflows/rtf-benchmark-run.yml").read_text()
+          if "inputs.batch_size" in benchmark_workflow or "description: Benchmark batch size" in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must not expose a batch-size input")
+          if "for batch_size in 1 8 32; do" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
+          if "max-parallel: 1" not in benchmark_workflow:
+              raise SystemExit("RTF result collection must remain sequential")
+          selection = Path(".github/workflows/rtf-verification-select.yml").read_text()
+          if "inputs.batch_size" in selection or "description: Batch size target" in selection:
+              raise SystemExit("RTF Verification Select must not expose a batch-size input")
+          if "BATCH_SIZES" not in selection:
+              raise SystemExit("RTF Verification Select must publish all batch sizes")
+          service_result = Path(".github/workflows/rtf-service-result.yml").read_text()
+          if 'tee "$destination/summary.md"' in service_result:
+              raise SystemExit("service summary must not be written before artifact branch checkout")
+          if 'tee .ci/rtf-service/summary.md' not in service_result:
+              raise SystemExit("service summary must use a checkout-independent temporary path")
+          if 'cp .ci/rtf-service/summary.md "${destination}/summary.md"' not in service_result:
+              raise SystemExit("persist step must copy the temporary service summary")
+          if "benchmark-summary.json" not in service_result:
+              raise SystemExit("service result must publish the requested benchmark summary")
           resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
           if "chown -R '$resolver_uid:$resolver_gid' /resolver" not in resolver:
               raise SystemExit("Docker resolver must restore host ownership")

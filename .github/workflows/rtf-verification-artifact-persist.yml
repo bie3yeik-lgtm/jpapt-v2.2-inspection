@@ -65,7 +65,7 @@ jobs:
             destination="rtf-scores/run_summary_history/${run_id}/${service_id}"
             mkdir -p "$destination"
             cp "$file" "$destination/selection.json"
-            jq -r '"## RTF verification selection\n\n- run_id: `\(.RUN_ID)`\n- service: `\(.SERVICE_ID)`\n- GPU: `\(.GPU)`\n- model: `\(.MODEL_ID)`\n- dataset: `\(.DATASET_ID)`\n- decoder: `\(.DECODER)`\n- batch size: `\(.BATCH_SIZE)`"' \
+            jq -r '"## RTF verification selection\n\n- run_id: `\(.RUN_ID)`\n- service: `\(.SERVICE_ID)`\n- GPU: `\(.GPU)`\n- model: `\(.MODEL_ID)`\n- dataset: `\(.DATASET_ID)`\n- decoder: `\(.DECODER)`\n- batch sizes: `\(.BATCH_SIZES | join(", "))`"' \
               "$file" > "$destination/summary.md"
           done
 

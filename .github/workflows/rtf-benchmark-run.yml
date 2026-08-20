@@ -31,12 +31,6 @@ on:
         required: true
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
         type: string
-      batch_size:
-        description: Benchmark batch size
-        required: true
-        default: "1"
-        type: choice
-        options: ["1", "8", "32"]
       inspection_profile:
         description: Fixture sizing profile; Phase 1 uses lough inspection
         required: true
@@ -54,14 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     outputs:
-      status: ${{ steps.receipt.outputs.status }}
-      job_id: ${{ steps.receipt.outputs.job_id }}
-      result_uri: ${{ steps.receipt.outputs.result_uri }}
-      result_sha256: ${{ steps.receipt.outputs.result_sha256 }}
-      metrics_uri: ${{ steps.receipt.outputs.metrics_uri }}
-      metrics_sha256: ${{ steps.receipt.outputs.metrics_sha256 }}
-      error_code: ${{ steps.receipt.outputs.error_code }}
-      error_message: ${{ steps.receipt.outputs.error_message }}
+      receipts: ${{ steps.receipts.outputs.receipts }}
     steps:
       - uses: actions/checkout@v7
       - name: Resolve immutable image and model revisions
@@ -120,12 +107,11 @@ jobs:
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
           runpodctl config --apiKey="$RUNPOD_TOKEN"
-      - name: Run all benchmark targets
+      - name: Run all benchmark batch sizes sequentially
         id: execute
         continue-on-error: true
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          RTF_RUN_ID: rtf-${{ inputs.provider }}-${{ github.run_id }}
           RTF_MODEL_ID: ${{ inputs.model_id }}
           RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
           RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
@@ -134,10 +120,8 @@ jobs:
           RTF_FIXTURE_REVISION: ''
           RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
           RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
-          RTF_LOCAL_RECEIPT: result-receipt.json
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ inputs.gpu }}
-          RTF_BATCH_SIZE: ${{ inputs.batch_size }}
           RTF_REPEAT: 3
           RTF_DATASET_CONFIGURATION: default
           RTF_DATASET_SPLIT: test
@@ -163,68 +147,77 @@ jobs:
             hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
             *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
           esac
-          ./scripts/run-benchmark.sh \
-            --provider '${{ inputs.provider }}' \
-            --image '${{ steps.resolve.outputs.image }}'
-      - name: Normalize provider receipt
-        id: receipt
+          mkdir -p results/batches
+          for batch_size in 1 8 32; do
+            batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
+            batch_dir="results/batches/batch-${batch_size}"
+            mkdir -p "$batch_dir"
+            export RTF_RUN_ID="$batch_run_id"
+            export RTF_BATCH_SIZE="$batch_size"
+            export RTF_LOCAL_OUTPUT="$batch_dir/metrics.json"
+            export RTF_LOCAL_RECEIPT="$batch_dir/result-receipt.json"
+            export RTF_HF_LOG="$batch_dir/hf-job.log"
+            set +e
+            ./scripts/run-benchmark.sh \
+              --provider '${{ inputs.provider }}' \
+              --image '${{ steps.resolve.outputs.image }}'
+            execute_status=$?
+            set -e
+            if [[ ! -s "$RTF_LOCAL_RECEIPT" ]]; then
+              jq -n \
+                --arg run_id "$batch_run_id" \
+                --arg error_message "provider execution did not produce a result receipt for batch ${batch_size}" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"PROVIDER_EXECUTION_FAILED",error_message:$error_message}' \
+                > "$RTF_LOCAL_RECEIPT"
+            fi
+            jq -e --arg run_id "$batch_run_id" '(.schema_version == 1) and (.run_id == $run_id)' "$RTF_LOCAL_RECEIPT" >/dev/null
+            if [[ "$execute_status" -ne 0 ]]; then
+              echo "batch ${batch_size} exited with status ${execute_status}; continuing remaining batches" >&2
+            fi
+          done
+      - name: Normalize provider receipts
+        id: receipts
         if: always()
-        env:
-          EXECUTE_OUTCOME: ${{ steps.execute.outcome }}
         run: |
           set -euo pipefail
-          if [[ -f result-receipt.json ]]; then
-            jq -e '(.schema_version == 1) and (.run_id | length > 0)' result-receipt.json >/dev/null
-          else
-            jq -n \
-              --arg run_id "rtf-${{ inputs.provider }}-${{ github.run_id }}" \
-              --arg status "blocked" \
-              --arg error_code "PROVIDER_EXECUTION_FAILED" \
-              --arg error_message "provider execution did not produce a result receipt" \
-              '{schema_version:1,run_id:$run_id,status:$status,job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message}' \
-              > result-receipt.json
-          fi
-          status="$(jq -r '.status // "blocked"' result-receipt.json)"
-          [[ "$EXECUTE_OUTCOME" == success && "$status" == completed ]] || status=blocked
-          {
-            echo "status=$status"
-            echo "job_id=$(jq -r '.job_id // empty' result-receipt.json)"
-            echo "result_uri=$(jq -r '.result_uri // empty' result-receipt.json)"
-            echo "result_sha256=$(jq -r '.result_sha256 // empty' result-receipt.json)"
-            echo "metrics_uri=$(jq -r '.metrics_uri // empty' result-receipt.json)"
-            echo "metrics_sha256=$(jq -r '.metrics_sha256 // empty' result-receipt.json)"
-            echo "error_code=$(jq -r '.error_code // empty' result-receipt.json)"
-            echo "error_message=$(jq -r '.error_message // empty' result-receipt.json | tr '\n' ' ')"
-          } >> "$GITHUB_OUTPUT"
+          receipts="$(for batch_size in 1 8 32; do
+            jq --arg batch_size "$batch_size" \
+              '. + {batch_size:($batch_size | tonumber)}' \
+              "results/batches/batch-${batch_size}/result-receipt.json"
+          done | jq -sc '.')"
+          echo "receipts=$receipts" >> "$GITHUB_OUTPUT"
       - name: Upload collected result
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: rtf-benchmark-${{ github.run_id }}
           path: |
-            metrics.json
-            result-receipt.json
-            hf-job.log
-          if-no-files-found: ignore
+            results/batches/
+            if-no-files-found: ignore
 
   collect:
     needs: benchmark
     if: always()
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        result: ${{ fromJSON(needs.benchmark.outputs.receipts) }}
     uses: ./.github/workflows/rtf-service-result.yml
     with:
-      run_id: rtf-${{ inputs.provider }}-${{ github.run_id }}
+      run_id: ${{ matrix.result.run_id }}
       service_id: ${{ inputs.provider == 'hf' && 'hf-jobs' || 'runpod-pod' }}
-      status: ${{ needs.benchmark.outputs.status }}
+      status: ${{ matrix.result.status }}
       provider: cuda
       environment: linux
       inspection_profile: ${{ inputs.inspection_profile == 'lough inspection' && 'lough' || 'precise' }}
       gpu: ${{ inputs.gpu }}
-      batch_size: ${{ inputs.batch_size }}
-      job_id: ${{ needs.benchmark.outputs.job_id }}
-      result_uri: ${{ needs.benchmark.outputs.result_uri }}
-      result_sha256: ${{ needs.benchmark.outputs.result_sha256 }}
-      metrics_uri: ${{ needs.benchmark.outputs.metrics_uri }}
-      metrics_sha256: ${{ needs.benchmark.outputs.metrics_sha256 }}
-      error_code: ${{ needs.benchmark.outputs.error_code }}
-      error_message: ${{ needs.benchmark.outputs.error_message }}
+      batch_size: ${{ matrix.result.batch_size }}
+      job_id: ${{ matrix.result.job_id || '' }}
+      result_uri: ${{ matrix.result.result_uri || '' }}
+      result_sha256: ${{ matrix.result.result_sha256 || '' }}
+      metrics_uri: ${{ matrix.result.metrics_uri || '' }}
+      metrics_sha256: ${{ matrix.result.metrics_sha256 || '' }}
+      error_code: ${{ matrix.result.error_code || '' }}
+      error_message: ${{ matrix.result.error_message || '' }}
     secrets: inherit
