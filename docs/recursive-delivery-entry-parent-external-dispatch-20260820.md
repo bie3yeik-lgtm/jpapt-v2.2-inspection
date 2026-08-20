@@ -42,6 +42,6 @@ remote dispatch / HF Jobs / completion: NOT RUN
 | 0 | PASS | gap 表、validate |
 | 1 | PASS | `ghcr-public-verify` workflow + contracts + script |
 | 4 | PASS | `upstream-contract-diff` Rust engine + workflow + contracts |
-| 2 | pending | `fixture-generation-and-inspection` |
+| 2 | PASS | `fixture-generation-and-inspection` schema + plan/execute scaffold |
 | 3 | pending | `windows-directml-provider-route` |
 | 5 | pending | handoff docs |

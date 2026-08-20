@@ -1,0 +1,111 @@
+name: Fixture Generation And Inspection
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: "Fixed source repository revision (40-hex SHA)"
+        required: true
+        type: string
+      hf_bucket:
+        description: "HF Bucket namespace/name for fixture evidence"
+        required: true
+        type: string
+      generation_id:
+        description: "Stable generation identity for this fixture run"
+        required: true
+        type: string
+      dry_run:
+        description: "Plan-only mode without Bucket mutation or HF Jobs"
+        required: false
+        default: true
+        type: boolean
+      execute:
+        description: "Reviewed execute request; still requires confirm_execute for dispatch"
+        required: false
+        default: false
+        type: boolean
+      confirm_execute:
+        description: "Explicitly confirm reviewed execute path"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: fixture-generation-${{ inputs.generation_id }}-${{ inputs.source_revision }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan fixture generation and inspection identities
+    if: ${{ !inputs.execute }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build plan-only receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/ci/build-fixture-generation-receipt.sh \
+            "${{ inputs.generation_id }}" \
+            "${{ inputs.source_revision }}" \
+            "${{ inputs.hf_bucket }}" \
+            .ci/fixture-generation/receipt.json \
+            "${{ inputs.dry_run }}" \
+            false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fixture-generation-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/fixture-generation
+          retention-days: 30
+          if-no-files-found: error
+
+  execute:
+    name: Reviewed execute path
+    if: ${{ inputs.execute }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require explicit execute confirmation
+        if: ${{ !inputs.confirm_execute }}
+        shell: bash
+        run: |
+          echo '::error::execute=true requires confirm_execute=true'
+          exit 1
+
+      - name: Build reviewed execute receipt
+        if: ${{ inputs.confirm_execute }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/ci/build-fixture-generation-receipt.sh \
+            "${{ inputs.generation_id }}" \
+            "${{ inputs.source_revision }}" \
+            "${{ inputs.hf_bucket }}" \
+            .ci/fixture-generation/receipt.json \
+            false \
+            true
+
+      - name: Dispatch guarded HF Jobs smoke only after reviewed receipt
+        if: ${{ inputs.confirm_execute && inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '::notice::HF Jobs dispatch remains a separate reviewed action; this workflow records generation/inspection identity only.'
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ inputs.confirm_execute }}
+        with:
+          name: fixture-generation-execute-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/fixture-generation
+          retention-days: 30
+          if-no-files-found: error
