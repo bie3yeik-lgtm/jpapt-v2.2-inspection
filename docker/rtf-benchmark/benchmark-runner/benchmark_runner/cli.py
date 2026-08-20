@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import math
@@ -50,6 +51,19 @@ def load_manifest(path: Path) -> tuple[list[dict[str, object]], str]:
     return samples, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def release_inference_temporaries(torch_module: object, device: object) -> None:
+    """Release transient inference objects without unloading the model.
+
+    The model must remain resident for the benchmark, but NeMo may retain
+    references to tensors created by a warm-up or a previous measurement.
+    Cleanup is deliberately outside the timed section so it cannot affect RTF.
+    """
+    gc.collect()
+    if getattr(device, "type", None) == "cuda":
+        torch_module.cuda.empty_cache()
+        torch_module.cuda.ipc_collect()
+
+
 def main() -> int:
     args = parser().parse_args()
     if args.repeat < 1:
@@ -90,20 +104,27 @@ def main() -> int:
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         with torch.inference_mode():
             with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
-                model.transcribe(
-                    paths[: min(len(paths), args.batch_size)],
-                    batch_size=args.batch_size,
+                warmup_hypotheses = model.transcribe(
+                    paths[:1],
+                    batch_size=1,
                 )
+            del warmup_hypotheses
+            release_inference_temporaries(torch, device)
             if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
                 torch.cuda.synchronize()
             timings = []
             hypotheses = []
-            for _ in range(args.repeat):
-                started = time.perf_counter()
-                hypotheses = model.transcribe(paths, batch_size=args.batch_size)
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                timings.append(time.perf_counter() - started)
+            with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
+                for _ in range(args.repeat):
+                    release_inference_temporaries(torch, device)
+                    started = time.perf_counter()
+                    hypotheses = model.transcribe(paths, batch_size=args.batch_size)
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    timings.append(time.perf_counter() - started)
+                    if _ + 1 < args.repeat:
+                        release_inference_temporaries(torch, device)
             elapsed = sum(timings) / len(timings)
         texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
         reference_text = " ".join(references).strip()
