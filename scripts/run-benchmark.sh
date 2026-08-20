@@ -88,7 +88,7 @@ case "$PROVIDER" in
     [[ -n "${HF_TOKEN:-}" ]] || { echo "HF_TOKEN is required for HF Jobs" >&2; exit 1; }
     hf_log="${RTF_HF_LOG:-hf-job.log}"
     set +e
-    hf jobs run --flavor "$HF_FLAVOR" "${hf_env[@]}" \
+    hf jobs run --name "$RTF_RUN_ID" --flavor "$HF_FLAVOR" "${hf_env[@]}" \
       --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" python benchmark.py 2>&1 | tee "$hf_log"
     hf_status=${PIPESTATUS[0]}
     set -e
