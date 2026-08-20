@@ -86,6 +86,13 @@ jobs:
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
           rg -n 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
+          python - <<'PY'
+          from pathlib import Path
+          entrypoint = Path("docker/rtf-benchmark/entrypoint.sh").read_text()
+          if '"$#" -eq 1 && "${1:-}" == "sleep infinity"' not in entrypoint:
+              raise SystemExit("ENTRYPOINT must accept RunPod's single-string docker args form")
+          print("RunPod docker-args arity contract: PASS")
+          PY
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
           rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
           if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
