@@ -59,7 +59,7 @@ Jobs may invoke the image as:
 ```bash
 hf jobs run --flavor a10g-small \
   ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<digest> \
-  python benchmark.py
+  /opt/rtf-benchmark/entrypoint.sh
 ```
 
 RunPod may start the same image without a command:

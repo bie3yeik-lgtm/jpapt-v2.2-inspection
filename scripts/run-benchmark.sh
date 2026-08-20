@@ -95,7 +95,7 @@ case "$PROVIDER" in
     hf_log="${RTF_HF_LOG:-hf-job.log}"
     set +e
     hf jobs run --name "$RTF_RUN_ID" --flavor "$HF_FLAVOR" "${hf_env[@]}" \
-      --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" python benchmark.py 2>&1 | tee "$hf_log"
+      --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" /opt/rtf-benchmark/entrypoint.sh 2>&1 | tee "$hf_log"
     hf_status=${PIPESTATUS[0]}
     set -e
     receipt_line="$(grep '^RTF_RESULT_RECEIPT=' "$hf_log" | tail -n 1 || true)"
