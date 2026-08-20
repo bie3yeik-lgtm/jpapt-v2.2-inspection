@@ -86,6 +86,7 @@ jobs:
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
+          rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
 
       - name: Validate Docker provider path contract
         run: |
