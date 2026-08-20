@@ -101,6 +101,18 @@ jobs:
               raise SystemExit("HF T4 must map to the T4 Jobs flavor")
           if 'l4) HF_FLAVOR="${HF_FLAVOR:-l4x1}"' not in script:
               raise SystemExit("HF L4 must map to the L4 Jobs flavor")
+          for gpu_id in (
+              'NVIDIA RTX A5000',
+              'NVIDIA L4',
+              'NVIDIA GeForce RTX 3090',
+              'NVIDIA GeForce RTX 4090',
+          ):
+              if gpu_id not in script:
+                  raise SystemExit(f"RunPod GPU ID mapping is missing: {gpu_id}")
+          if 'runpodctl ssh info' not in script:
+              raise SystemExit("RunPod must obtain SSH connection info")
+          if 'runpodctl exec' in script:
+              raise SystemExit("deprecated runpodctl exec must not be used")
           if "exec /opt/rtf-benchmark/entrypoint.sh" not in script:
               raise SystemExit("RunPod must invoke the image entrypoint explicitly")
           if "exec python benchmark.py" in script:
