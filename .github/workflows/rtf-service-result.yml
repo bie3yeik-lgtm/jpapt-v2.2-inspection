@@ -64,7 +64,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   collect:
@@ -118,11 +118,34 @@ jobs:
       - name: Write Actions summary
         shell: bash
         run: |
+          mkdir -p rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}
           {
             echo '## RTF service result'
             echo
             jq -r '"- run_id: `\(.run_id)`\n- service: `\(.service_id)`\n- status: `\(.status)`\n- provider: `\(.provider)`\n- environment: `\(.environment)`"' results/rtf-service/service-result.json
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Persist RTF score in repository
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          SERVICE_ID: ${{ inputs.service_id }}
+        run: |
+          set -euo pipefail
+          destination="rtf-scores/${RUN_ID}/${SERVICE_ID}"
+          cp results/rtf-service/service-result.json "${destination}/service-result.json"
+          if [[ -f results/rtf-service/metrics.json ]]; then
+            cp results/rtf-service/metrics.json "${destination}/metrics.json"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${destination}"
+          if git diff --cached --quiet; then
+            echo 'No new RTF score content to commit.'
+            exit 0
+          fi
+          git commit -m "chore: persist RTF score ${RUN_ID} ${SERVICE_ID}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload validated service result
         uses: actions/upload-artifact@v7

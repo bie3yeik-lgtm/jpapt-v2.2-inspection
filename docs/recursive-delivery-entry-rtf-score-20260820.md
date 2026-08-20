@@ -75,6 +75,9 @@ unit は fallback で隠して次へ進めず、`blocked` または `not verifie
 - `.github/workflows/rtf-verification-select.yml` を追加し、サービス、GPU、model、dataset、
   decoder、batch、run_idを一件ずつworkflow_dispatchで選択し、Phase 1 matrixに照合して
   実行対象selection artifactを保存する。無効な組合せは外部実行前に拒否する。
+- `rtf-service-result.yml` は取得したservice envelopeとmetricsを
+  `rtf-scores/<run_id>/<service_id>/`へ保存し、Actions botのcommitとして起動ブランチへ
+  pushする。Actions artifactにも同じ内容を保存する。
 - `dispatch-rtf-service-result.sh` を追加し、既存の bounded workflow dispatch helper を介して
   service-result collection workflow へ送る。
 - completed result に `metrics_path` がある場合、`asr-rtf-service validate` が実ファイルの
@@ -207,6 +210,7 @@ remote URI retrieval は未検証である。
 | bounded dispatch and artifact save | `dispatch-rtf-service-result.sh`, workflow | STATIC PASS |
 | remote metrics retrieval and validation | `metrics_uri`, SHA-256, metrics schema | CODE PASS; remote URI NOT VERIFIED |
 | individual target selection | `rtf-verification-select.yml` | CODE PASS; provider execution NOT VERIFIED |
+| repository score persistence | `rtf-scores/<run_id>/<service_id>/` | CODE PASS; real result NOT VERIFIED |
 | deterministic ranking | `rank_rtf_services` | CODE PASS; no completed real records |
 | HF Inference Endpoint measurement | external credential/endpoint | BLOCKED / NOT VERIFIED |
 | HF Jobs measurement | external token, candidate, fixed revisions | BLOCKED / NOT VERIFIED |

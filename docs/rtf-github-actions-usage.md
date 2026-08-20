@@ -87,6 +87,28 @@ GH_TOKEN="$GH_TOKEN" scripts/ci/dispatch-rtf-service-result.sh \
 - `rtf_scope=model`: モデル入力後の推論時間
 - `rtf_scope=service`: decode、resample、前処理、推論、後処理を含む時間
 
+## リポジトリへの保存先
+
+`RTF Service Result Collection`が正常に完了すると、Actionsは次の構造へ結果をcommitし、
+workflowを起動したブランチへpushする。
+
+```text
+rtf-scores/
+└── <run_id>/
+    └── <service_id>/
+        ├── service-result.json
+        ├── metrics.json       # metrics_uriを指定した場合
+        └── summary.md
+```
+
+`service-result.json`には外部GPUサービスの`job_id`、`result_uri`、provider、環境、
+SHA-256が保存される。`metrics.json`には実推論のRTF/RTFx、CER、VRAM、GPU utilization、
+料金など、providerが返した検証済みmetricsが保存される。外部result本体を取得できない
+場合でも、URIとhashをenvelopeに残す。
+
+workflowには`contents: write`権限が必要である。保存commitは
+`chore: persist RTF score <run_id> <service_id>`という形式で作成される。
+
 ランキングはcompletedかつ必要なmetricが存在するrecordだけを対象にする。GPU実行証拠、
 CER、VRAM、料金が欠けているrecordを、推測でPASSや最安として扱わない。
 
