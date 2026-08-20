@@ -97,6 +97,19 @@ if [[ -z "$(find "$STAGING" -mindepth 1 -print -quit)" ]]; then
     fail "Candidate directory is empty after sync: $STAGING"
 fi
 
+# `hf buckets sync` may preserve the collection prefix for legacy layouts
+# (for example ctc/candidate-NNNNNN). Normalize that transport-only prefix so
+# downstream package validation always sees the candidate contract at root.
+metadata_path="$(find "$STAGING" -mindepth 2 -type f -name metadata.json -print -quit)"
+if [[ ! -s "$STAGING/metadata.json" && -n "$metadata_path" ]]; then
+    nested_root="$(dirname "$metadata_path")"
+    shopt -s dotglob nullglob
+    for entry in "$nested_root"/*; do
+        mv "$entry" "$STAGING/"
+    done
+    shopt -u dotglob nullglob
+fi
+
 ONNX_COUNT="$(find "$STAGING" -type f -name '*.onnx' | wc -l | tr -d ' ')"
 [[ "$ONNX_COUNT" -gt 0 ]] || fail "Candidate contains no .onnx files: $CANDIDATE_ID"
 [[ -s "$STAGING/metadata.json" ]] || fail "Candidate contains no minimal metadata.json: $CANDIDATE_ID"
