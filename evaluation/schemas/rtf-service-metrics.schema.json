@@ -19,6 +19,7 @@
     "fixture_repo_id": {"type": "string", "const": "gawohok7/rtf-benchmark-fixtures"},
     "fixture_revision": {"type": "string", "minLength": 40, "maxLength": 40},
     "decoder": {"type": "string", "enum": ["tdt", "ctc", "whisper"]},
+    "precision": {"type": "string", "enum": ["float32", "float16", "bfloat16"]},
     "audio_duration_sec": {"type": "number", "exclusiveMinimum": 0},
     "processing_duration_sec": {"type": "number", "exclusiveMinimum": 0},
     "rtf": {"type": "number", "exclusiveMinimum": 0},
