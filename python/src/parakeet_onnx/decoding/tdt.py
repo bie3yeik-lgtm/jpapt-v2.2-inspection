@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Generic, TypeVar
+from typing import Callable, TypeVar
 
 import numpy as np
 
