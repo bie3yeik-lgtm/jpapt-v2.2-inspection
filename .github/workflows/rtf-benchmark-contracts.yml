@@ -122,10 +122,16 @@ jobs:
           if "exec python benchmark.py" in script:
               raise SystemExit("RunPod must not bypass the image entrypoint")
           benchmark_workflow = Path(".github/workflows/rtf-benchmark-run.yml").read_text()
+          if "inputs.image" in benchmark_workflow or "description: Optional image override" in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must always resolve the latest GHCR image")
           if "inputs.batch_size" in benchmark_workflow or "description: Benchmark batch size" in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must not expose a batch-size input")
           if "for batch_size in 1 8 32; do" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must execute all three batch sizes")
+          if "latest GHCR package digest" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must wait for the latest GHCR package digest")
+          if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
           if "max-parallel: 1" not in benchmark_workflow:
               raise SystemExit("RTF result collection must remain sequential")
           selection = Path(".github/workflows/rtf-verification-select.yml").read_text()
