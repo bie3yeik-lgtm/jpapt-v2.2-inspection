@@ -9,7 +9,7 @@ artifactとして保存する手順を定義する。ベンチマークの仕様
 ## 前提
 
 - 対象ブランチのworkflowがGitHubへpush済みであること
-- `run_id`を実行ごとに一意に決めること
+- `run_id`は選択内容とGitHub Actionsのrun IDからworkflowが自動生成する
 - 実測を行う場合は、固定dataset revision、materialized audio、固定benchmark image、
   providerの資格情報、GPU割当を別途準備すること
 - credentials、model、audio、metricsの大きな成果物をGitへcommitしないこと
@@ -30,11 +30,11 @@ Workflow: **RTF Verification Select** (`rtf-verification-select.yml`)
 | `dataset_id` | Common Voice 8, JSUT Basic5000, ReazonSpeech test |
 | `decoder` | `tdt`, `ctc`, `whisper` |
 | `batch_size` | `1`, `8`, `32` |
-| `run_id` | 空白を含まない一意なID |
 
 workflowは選択値をPhase 1 matrixと照合する。HF Jobsで存在しないGPUを選ぶなど、
 無効な組合せは外部実行前に失敗する。成功時は
-`rtf-verification-selection-<run_id>` artifactに`selection.json`が保存される。
+選択内容から生成された`run_id`を持つ`rtf-verification-selection-<run_id>` artifactに
+`selection.json`が保存される。
 
 ## 2. 実行結果を保存・検証する
 

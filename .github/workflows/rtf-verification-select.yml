@@ -33,10 +33,6 @@ on:
         required: true
         type: choice
         options: ["1", "8", "32"]
-      run_id:
-        description: Immutable run identity
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -74,6 +70,7 @@ jobs:
           esac
 
       - name: Validate selected target
+        id: select
         env:
           SERVICE_ID: ${{ inputs.service_id }}
           GPU: ${{ inputs.gpu }}
@@ -81,7 +78,7 @@ jobs:
           DATASET_ID: ${{ inputs.dataset_id }}
           DECODER: ${{ inputs.decoder }}
           BATCH_SIZE: ${{ inputs.batch_size }}
-          RUN_ID: ${{ inputs.run_id }}
+          ACTIONS_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -90,7 +87,7 @@ jobs:
           from pathlib import Path
 
           selected = {key: os.environ[key] for key in (
-              "SERVICE_ID", "GPU", "MODEL_ID", "DATASET_ID", "DECODER", "BATCH_SIZE", "RUN_ID"
+              "SERVICE_ID", "GPU", "MODEL_ID", "DATASET_ID", "DECODER", "BATCH_SIZE"
           )}
           matrix = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
           valid_gpu_service = any(
@@ -100,13 +97,32 @@ jobs:
               for entry in matrix["entries"]
           )
           if not valid_gpu_service:
-              raise SystemExit("selected service/GPU/batch is not in the approved Phase 1 matrix")
+              allowed = sorted({
+                  f"{entry['service_id']}/{entry['gpu']}/batch-{batch}"
+                  for entry in matrix["entries"]
+                  for batch in entry["batch_sizes"]
+                  if entry["service_id"] == selected["SERVICE_ID"]
+              })
+              detail = ", ".join(allowed) or "no GPU is approved for this service"
+              raise SystemExit(
+                  "selected service/GPU/batch is not in the approved Phase 1 matrix; "
+                  f"allowed for {selected['SERVICE_ID']}: {detail}"
+              )
           if selected["MODEL_ID"] not in matrix["models"]:
               raise SystemExit("selected model is not in the approved matrix")
           if selected["DECODER"] not in matrix["decoders"]:
               raise SystemExit("selected decoder is not in the approved matrix")
-          if not selected["RUN_ID"] or any(c.isspace() for c in selected["RUN_ID"]):
-              raise SystemExit("run_id must be non-empty and whitespace-free")
+          canonical = json.dumps(selected, sort_keys=True, separators=(",", ":"))
+          import hashlib
+
+          digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+          slug = "-".join(
+              value.lower().replace("/", "-").replace("_", "-").replace(".", "-")
+              for value in (selected["SERVICE_ID"], selected["GPU"], selected["DECODER"])
+          )
+          selected["RUN_ID"] = f"rtf-{slug}-b{selected['BATCH_SIZE']}-r{os.environ['ACTIONS_RUN_ID']}-{digest}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"run_id={selected['RUN_ID']}\n")
           output = Path("results/rtf-service")
           output.mkdir(parents=True, exist_ok=True)
           (output / "selection.json").write_text(
@@ -118,6 +134,6 @@ jobs:
       - name: Publish selected target
         uses: actions/upload-artifact@v7
         with:
-          name: rtf-verification-selection-${{ inputs.run_id }}
+          name: rtf-verification-selection-${{ steps.select.outputs.run_id }}
           path: results/rtf-service/selection.json
           if-no-files-found: error
