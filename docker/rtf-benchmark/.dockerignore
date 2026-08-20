@@ -1,0 +1,15 @@
+.git
+.cache
+.ci
+.venv
+__pycache__
+target
+results
+rtf-scores
+*.onnx
+*.nemo
+*.safetensors
+*.wav
+*.flac
+*.npy
+*.npz

@@ -66,6 +66,10 @@ HF Inference Endpoint: T4, L4
 RunPod Pod:            A5000, L4, RTX 3090, RTX 4090
 ```
 
+今回のRTF測定ではA100/H100を対象外とする。Workflowの選択肢とwrapperの
+provider/GPU validationでも受け付けない。比較対象を追加する場合は、別のPhaseと
+別の固定matrixを定義する。
+
 したがって、HF Jobs、RunPod Serverless、RunPod PodのT4はPhase 1の対象外である。
 
 ## provider別の実推論
@@ -108,9 +112,9 @@ RunPod Pod:            A5000, L4, RTX 3090, RTX 4090
 Actionsはmetricsを取得し、Rust validatorでSHA-256とschemaを検証する。成功すると次へ保存する。
 
 ```text
-rtf-scores/<run_id>/<service_id>/service-result.json
-rtf-scores/<run_id>/<service_id>/metrics.json
-rtf-scores/<run_id>/<service_id>/summary.md
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/service-result.json
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/metrics.json
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/summary.md
 ```
 
 Actions botが保存commitを作成し、artifactにも同じ結果を保存する。

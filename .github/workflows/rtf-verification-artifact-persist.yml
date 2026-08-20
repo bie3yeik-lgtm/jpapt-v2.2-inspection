@@ -62,7 +62,7 @@ jobs:
           for file in "${files[@]}"; do
             run_id="$(jq -er '.RUN_ID' "$file")"
             service_id="$(jq -er '.SERVICE_ID' "$file")"
-            destination="rtf-scores/${run_id}/${service_id}"
+            destination="rtf-scores/run_summary_history/${run_id}/${service_id}"
             mkdir -p "$destination"
             cp "$file" "$destination/selection.json"
             jq -r '"## RTF verification selection\n\n- run_id: `\(.RUN_ID)`\n- service: `\(.SERVICE_ID)`\n- GPU: `\(.GPU)`\n- model: `\(.MODEL_ID)`\n- dataset: `\(.DATASET_ID)`\n- decoder: `\(.DECODER)`\n- batch size: `\(.BATCH_SIZE)`"' \

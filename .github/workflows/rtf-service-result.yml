@@ -27,6 +27,19 @@ on:
         required: true
         type: choice
         options: [linux, windows, macos]
+      inspection_profile:
+        description: Result profile
+        required: true
+        type: choice
+        options: [lough, precise]
+      gpu:
+        description: Benchmark GPU
+        required: true
+        type: string
+      batch_size:
+        description: Benchmark batch size
+        required: true
+        type: string
       job_id:
         description: Remote provider job identity, if available
         required: false
@@ -143,22 +156,26 @@ jobs:
       - name: Write Actions summary
         shell: bash
         run: |
-          mkdir -p rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}
+          destination="rtf-scores/${{ inputs.inspection_profile }}/${{ inputs.service_id }}/${{ inputs.gpu }}/batch-${{ inputs.batch_size }}"
+          mkdir -p "$destination"
           {
             echo '## RTF service result'
             echo
             jq -r '"- run_id: `\(.run_id)`\n- service: `\(.service_id)`\n- status: `\(.status)`\n- provider: `\(.provider)`\n- environment: `\(.environment)`"' results/rtf-service/service-result.json
-          } | tee rtf-scores/${{ inputs.run_id }}/${{ inputs.service_id }}/summary.md >> "$GITHUB_STEP_SUMMARY"
+          } | tee "$destination/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Persist RTF score in repository
         shell: bash
         env:
           RUN_ID: ${{ inputs.run_id }}
           SERVICE_ID: ${{ inputs.service_id }}
+          INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
+          GPU: ${{ inputs.gpu }}
+          BATCH_SIZE: ${{ inputs.batch_size }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          destination="rtf-scores/${RUN_ID}/${SERVICE_ID}"
+          destination="rtf-scores/${INSPECTION_PROFILE}/${SERVICE_ID}/${GPU}/batch-${BATCH_SIZE}"
           artifact_branch="inspection/${RUN_ID}-${SERVICE_ID}"
           cp results/rtf-service/service-result.json "${destination}/service-result.json"
           if [[ -f results/rtf-service/metrics.json ]]; then

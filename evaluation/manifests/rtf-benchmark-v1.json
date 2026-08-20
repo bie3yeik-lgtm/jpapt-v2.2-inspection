@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "inspection_profile": "lough inspection",
+  "dataset_id": "japanese-asr/ja_asr.common_voice_8_0",
+  "dataset_revision": "bf8819e8d9a5feb51b0c718686bd20ea67a3c729",
+  "configuration": "ja",
+  "split": "test",
+  "selection_seed": "rtf-benchmark-v1-common-voice-ja",
+  "min_duration_sec": 30.0,
+  "max_duration_sec": 600.0,
+  "target_total_duration_sec_min": 3600.0,
+  "target_total_duration_sec_max": 7200.0,
+  "target_total_duration_sec": 5400.0,
+  "sample_count_min": 20,
+  "sample_count_max": 50,
+  "materialization_strategy": "deterministic-concatenation-of-common-voice-clips",
+  "materialization": "float32-mono-16000hz-finite-c-contiguous-wav",
+  "manifest_sha256": "resolved-after-materialization"
+}

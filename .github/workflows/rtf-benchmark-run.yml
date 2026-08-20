@@ -1,0 +1,124 @@
+name: RTF Benchmark Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Remote benchmark provider
+        required: true
+        type: choice
+        options: [hf, runpod]
+      image:
+        description: Immutable GHCR image digest
+        required: true
+        type: string
+      gpu:
+        description: Provider GPU name
+        required: true
+        type: choice
+        options: [t4, l4, a5000, rtx3090, rtx4090]
+      hf_flavor:
+        description: Hugging Face Jobs flavor
+        required: false
+        default: a10g-small
+        type: string
+      model_id:
+        description: Model repository ID
+        required: true
+        default: nvidia/parakeet-tdt_ctc-0.6b-ja
+        type: string
+      model_revision:
+        description: Immutable model revision
+        required: true
+        type: string
+      dataset_revision:
+        description: Immutable Common Voice revision
+        required: true
+        default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+        type: string
+      fixture_repo_id:
+        description: Hugging Face Dataset repository containing benchmark-v1.jsonl and WAV fixtures
+        required: false
+        default: ""
+        type: string
+      fixture_revision:
+        description: Immutable fixture Dataset commit
+        required: false
+        default: ""
+        type: string
+      batch_size:
+        description: Benchmark batch size
+        required: true
+        default: "1"
+        type: string
+      inspection_profile:
+        description: Fixture sizing profile; Phase 1 uses lough inspection
+        required: true
+        default: lough inspection
+        type: choice
+        options: [lough inspection]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install provider CLIs
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade huggingface_hub
+          if [[ '${{ inputs.provider }}' == 'runpod' ]]; then
+            curl -fsSL https://cli.runpod.net | sudo bash
+          fi
+      - name: Configure RunPod CLI
+        if: inputs.provider == 'runpod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+      - name: Run all benchmark targets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RTF_RUN_ID: rtf-${{ inputs.provider }}-${{ github.run_id }}
+          RTF_MODEL_ID: ${{ inputs.model_id }}
+          RTF_MODEL_REVISION: ${{ inputs.model_revision }}
+          RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
+          RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
+          RTF_FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
+          RTF_FIXTURE_REVISION: ${{ inputs.fixture_revision }}
+          RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
+          RTF_GPU: ${{ inputs.gpu }}
+          RTF_BATCH_SIZE: ${{ inputs.batch_size }}
+          HF_FLAVOR: ${{ inputs.hf_flavor }}
+          RUNPOD_GPU_ID: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RTF_FIXTURE_REPO_ID}" || -z "${RTF_FIXTURE_REVISION}" ]]; then
+            [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
+              echo 'fixture inputs are empty and rtf-scores/benchmark/benchmark-v1.fixture.json is missing' >&2
+              exit 2
+            }
+            export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+            export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          fi
+          echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
+          echo "Using fixture revision: $RTF_FIXTURE_REVISION"
+          case '${{ inputs.provider }}:${{ inputs.gpu }}' in
+            hf:t4|hf:l4|runpod:a5000|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
+            *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
+          esac
+          ./scripts/run-benchmark.sh \
+            --provider '${{ inputs.provider }}' \
+            --image '${{ inputs.image }}'
+      - name: Upload collected result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtf-benchmark-${{ github.run_id }}
+          path: metrics.json
+          if-no-files-found: ignore
