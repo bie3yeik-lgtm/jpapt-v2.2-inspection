@@ -80,10 +80,10 @@ fn compare_command(mut args: impl Iterator<Item = String>) -> Result<(), String>
     validate_source_repository(&source_repository)?;
 
     let report = build_report(&repo_root, &source_repository, &baseline, &head)?;
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     fs::write(
         &output,
