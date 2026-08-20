@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "SERVICE_ID": "runpod-pod",
+  "GPU": "a5000",
+  "MODEL_ID": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+  "DATASET_ID": "japanese-asr/ja_asr.common_voice_8_0",
+  "DECODER": "tdt",
+  "BATCH_SIZE": "32",
+  "RUN_ID": "rtf-runpod-pod-a5000-tdt-b32-r32332665446-f45c2a09b45d08da"
+}
