@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "rtf-hf-32367692260-b8",
+  "service_id": "hf-jobs",
+  "status": "blocked",
+  "provider": "cuda",
+  "environment": "linux",
+  "job_id": "6a86f059c81709766c80286b",
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "BENCHMARK_INFERENCE_FAILED",
+  "error_message": "EncDecHybridRNNTCTCModel.transcribe() got an unexpected keyword argument 'paths2audio_files'"
+}
