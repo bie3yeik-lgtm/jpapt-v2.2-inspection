@@ -123,6 +123,7 @@ jobs:
           import hashlib
           import json
           import os
+          import shutil
           from pathlib import Path
 
           manifest = Path('.ci/rtf-resolver/output/benchmark-v1.jsonl')
@@ -188,8 +189,16 @@ jobs:
           records = []
           for line in source.read_text().splitlines():
               record = json.loads(line)
-              name = Path(record['audio_path']).name
-              Path(record['audio_path']).replace(fixture / 'audio' / name)
+              container_path = Path(record['audio_path'])
+              try:
+                  relative_path = container_path.relative_to('/resolver')
+              except ValueError:
+                  relative_path = container_path
+              host_path = Path('.ci/rtf-resolver') / relative_path
+              if not host_path.is_file():
+                  raise SystemExit(f'fixture audio is not materialized on the host: {host_path}')
+              name = container_path.name
+              shutil.copy2(host_path, fixture / 'audio' / name)
               record['audio_path'] = f'audio/{name}'
               records.append(record)
           (fixture / 'benchmark-v1.jsonl').write_text(
@@ -205,6 +214,12 @@ jobs:
           )
           Path('.ci/rtf-resolver/output/fixture-revision').write_text(commit.oid)
           source.write_text((fixture / 'benchmark-v1.jsonl').read_text())
+          canonical_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+          Path('rtf-scores/benchmark/benchmark-v1.jsonl.sha256').write_text(canonical_sha + '  benchmark-v1.jsonl\n')
+          receipt_path = Path('rtf-scores/benchmark/benchmark-v1.receipt.json')
+          receipt = json.loads(receipt_path.read_text())
+          receipt['manifest_sha256'] = canonical_sha
+          receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
           PY
 
           fixture_revision="$(cat .ci/rtf-resolver/output/fixture-revision)"

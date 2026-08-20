@@ -211,6 +211,12 @@ jobs:
             --runtime-variant "${ASR_RUNTIME_VARIANT}" \
             --contract-out .ci/candidate-contract.json \
             --github-output "${GITHUB_OUTPUT}"
+
+      - name: Verify strict candidate execution contract
+        id: candidate-verify
+        shell: bash
+        run: |
+          set -euo pipefail
           [[ "$CANDIDATE_ID" == "${{ steps.candidate.outputs.candidate_id }}" ]] || {
             echo "::error::resolved candidate does not match materialized candidate identity"
             exit 1

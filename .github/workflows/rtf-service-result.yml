@@ -111,6 +111,7 @@ jobs:
       - name: Verify provider credential
         env:
           SERVICE_ID: ${{ inputs.service_id }}
+          STATUS: ${{ inputs.status }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
         run: |
@@ -128,6 +129,9 @@ jobs:
                 -H 'Content-Type: application/json' \
                 --data '{"query":"query { myself { id } }"}' \
                 https://api.runpod.io/graphql >/dev/null
+              [[ "$STATUS" != completed || -n "$HF_TOKEN" ]] || {
+                echo 'HF_TOKEN is required to fetch and persist completed RunPod metrics'; exit 1;
+              }
               ;;
             *) echo "unsupported service_id: $SERVICE_ID"; exit 1 ;;
           esac
@@ -152,8 +156,12 @@ jobs:
           set -euo pipefail
           mkdir -p results/rtf-service
           if [[ "$STATUS" == completed ]]; then
-            [[ "$JOB_ID" != "" && "$METRICS_URI" != "" && "$METRICS_SHA256" != "" ]] || {
-              echo 'completed result requires job_id, metrics_uri, and metrics_sha256' >&2
+            [[ "$JOB_ID" != "" && "$RESULT_URI" != "" && "$RESULT_SHA256" != "" && "$METRICS_URI" != "" && "$METRICS_SHA256" != "" ]] || {
+              echo 'completed result requires job_id, result_uri, result_sha256, metrics_uri, and metrics_sha256' >&2
+              exit 2
+            }
+            [[ "$RESULT_URI" == "$METRICS_URI" && "$RESULT_SHA256" == "$METRICS_SHA256" ]] || {
+              echo 'result and metrics identity must match for the benchmark publisher' >&2
               exit 2
             }
             [[ "$METRICS_URI" =~ ^https://huggingface\.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/[0-9a-f]{40}/results/.+/metrics\.json$ ]] || {
@@ -166,6 +174,19 @@ jobs:
             curl --fail --location --proto '=https' --tlsv1.2 \
               -H "Authorization: Bearer $HF_TOKEN" "$METRICS_URI" \
               -o results/rtf-service/metrics.json
+            jq -e \
+              --arg run_id "$RUN_ID" \
+              --arg service_id "$SERVICE_ID" \
+              --arg provider "$PROVIDER" \
+              --arg environment "$ENVIRONMENT" \
+              --arg gpu "${{ inputs.gpu }}" \
+              --arg batch_size "${{ inputs.batch_size }}" \
+              --arg profile "${{ inputs.inspection_profile }}" \
+              '(.run_id == $run_id) and (.service_id == $service_id) and (.provider == $provider) and (.environment == $environment) and (.gpu == $gpu) and (.batch_size == ($batch_size | tonumber)) and (.inspection_profile == $profile)' \
+              results/rtf-service/metrics.json >/dev/null || {
+                echo 'metrics identity does not match service collection inputs' >&2
+                exit 2
+              }
           fi
           jq -n \
             --arg run_id "$RUN_ID" \

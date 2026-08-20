@@ -8,6 +8,16 @@ on:
       - "rust/crates/asr-eval/**"
       - "rust/crates/asr-metrics/**"
       - "python/src/parakeet_onnx/evaluation/**"
+      - ".github/workflows/rtf-resolver.yml"
+      - ".github/workflows/rtf-benchmark-run.yml"
+      - ".github/workflows/rtf-service-result.yml"
+      - "scripts/run-benchmark.sh"
+      - "scripts/ci/dispatch-rtf-service-result.sh"
+      - "scripts/ci/build-rtf-benchmark-record.py"
+      - "docker/rtf-benchmark/**"
+      - "evaluation/schemas/rtf-service-*.json"
+      - "evaluation/schemas/rtf-benchmark-record.schema.json"
+      - "rust/crates/asr-contracts/tests/rtf_service.rs"
       - ".github/workflows/rtf-benchmark-contracts.yml"
   workflow_dispatch:
 
@@ -64,6 +74,14 @@ jobs:
           python -m json.tool evaluation/schemas/benchmark.schema.json >/dev/null
           python -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
           python -m json.tool evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
+          python -m json.tool evaluation/schemas/rtf-benchmark-record.schema.json >/dev/null
+
+      - name: Validate RTF orchestration syntax
+        run: |
+          bash -n scripts/run-benchmark.sh
+          bash -n scripts/ci/dispatch-rtf-service-result.sh
+          bash -n docker/rtf-benchmark/entrypoint.sh
+          python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
 
       - name: Validate Phase 1 service matrix
         run: |

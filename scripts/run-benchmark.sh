@@ -42,6 +42,18 @@ fi
 : "${RTF_PRECISION:=float16}"
 : "${RTF_DECODER:=tdt}"
 : "${RTF_SERVICE_ID:=${PROVIDER}-job}"
+: "${RTF_INSPECTION_PROFILE:=lough inspection}"
+: "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE// inspection/}}"
+: "${RTF_DATASET_CONFIGURATION:=default}"
+: "${RTF_DATASET_SPLIT:=test}"
+: "${RTF_DATASET_SEED:=rtf-benchmark-v1-common-voice-ja}"
+: "${RTF_DATASET_COUNT_MIN:=20}"
+: "${RTF_DATASET_COUNT_MAX:=50}"
+: "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
+: "${RTF_DATASET_MAX_DURATION_SEC:=600}"
+: "${RTF_REPEAT:=3}"
+: "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
+: "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${HF_FLAVOR:=a10g-small}"
 : "${RUNPOD_GPU_ID:=${RTF_GPU}}"
 
@@ -64,7 +76,14 @@ case "$PROVIDER" in
       -e "RTF_RESULT_REPO_ID=$RTF_RESULT_REPO_ID" -e "RTF_RESULT_PATH=$RTF_RESULT_PATH"
       -e "RTF_IMAGE_DIGEST=$RTF_IMAGE_DIGEST"
       -e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE" -e "RTF_PRECISION=$RTF_PRECISION"
-      -e "RTF_DECODER=$RTF_DECODER" -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
+      -e "RTF_DECODER=$RTF_DECODER" -e "RTF_REPEAT=$RTF_REPEAT"
+      -e "RTF_INSPECTION_PROFILE=$RTF_INSPECTION_PROFILE" -e "RTF_PROFILE_ID=$RTF_PROFILE_ID"
+      -e "RTF_DATASET_CONFIGURATION=$RTF_DATASET_CONFIGURATION" -e "RTF_DATASET_SPLIT=$RTF_DATASET_SPLIT"
+      -e "RTF_DATASET_SEED=$RTF_DATASET_SEED" -e "RTF_DATASET_COUNT_MIN=$RTF_DATASET_COUNT_MIN"
+      -e "RTF_DATASET_COUNT_MAX=$RTF_DATASET_COUNT_MAX" -e "RTF_DATASET_TARGET_TOTAL_SEC=$RTF_DATASET_TARGET_TOTAL_SEC"
+      -e "RTF_DATASET_MAX_DURATION_SEC=$RTF_DATASET_MAX_DURATION_SEC" -e "RTF_FIXTURE_FILENAME=$RTF_FIXTURE_FILENAME"
+      -e "RTF_FIXTURE_MANIFEST_SHA256=$RTF_FIXTURE_MANIFEST_SHA256"
+      -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
     )
     [[ -n "${HF_TOKEN:-}" ]] || { echo "HF_TOKEN is required for HF Jobs" >&2; exit 1; }
     hf_log="${RTF_HF_LOG:-hf-job.log}"
@@ -100,11 +119,16 @@ case "$PROVIDER" in
       --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg hf_token "${HF_TOKEN:-}" \
       --arg result_repo "$RTF_RESULT_REPO_ID" --arg result_path "$RTF_RESULT_PATH" \
       --arg image_digest "$RTF_IMAGE_DIGEST" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      --arg profile "$RTF_INSPECTION_PROFILE" --arg profile_id "$RTF_PROFILE_ID" \
+      --arg config "$RTF_DATASET_CONFIGURATION" --arg split "$RTF_DATASET_SPLIT" --arg seed "$RTF_DATASET_SEED" \
+      --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
+      --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
+      --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' --wait --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
-    runpodctl exec "$pod_id" -- python benchmark.py
+    runpodctl exec "$pod_id" -- sh -c "export RTF_JOB_ID='$pod_id'; exec python benchmark.py"
     runpodctl exec "$pod_id" -- cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
     runpodctl exec "$pod_id" -- cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     ;;

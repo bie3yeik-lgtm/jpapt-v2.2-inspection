@@ -42,6 +42,9 @@ fn accepts_metrics_with_nullable_telemetry() {
         "dataset_revision": "dataset-revision-1",
         "manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "inspection_profile": "lough",
+        "fixture_repo_id": "gawohok7/rtf-benchmark-fixtures",
+        "fixture_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "decoder": "tdt",
         "audio_duration_sec": 10.0,
         "processing_duration_sec": 2.0,
@@ -96,7 +99,7 @@ fn rejects_metrics_with_zero_audio_duration() {
 fn completed_benchmark_record_requires_execution_proof_and_metrics() {
     let mut value = json!({
         "schema_version": 1, "run_id": "run-1", "phase": "phase1", "service_id": "runpod-pod", "gpu": "a5000", "model_id": "model", "decoder": "tdt",
-        "dataset_manifest_id": "manifest-1", "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dataset_revision": "revision-1", "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dataset_manifest_id": "manifest-1", "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dataset_revision": "revision-1", "fixture_repo_id": "gawohok7/rtf-benchmark-fixtures", "fixture_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "batch_size": 8, "repeat": 3, "precision": "float16", "status": "completed", "provider_execution_proof": false, "audio_duration_sec": 10.0, "processing_duration_sec": 1.0, "rtf": 0.1, "rtfx": 10.0, "rtf_scope": "service",
         "cer": 0.1, "wer": 0.2, "peak_vram_mb": 1000, "gpu_utilization_percent": 90, "gpu_price_per_hour": 0.27, "cost_per_audio_hour": 0.027, "metrics_uri": "hf://metrics/run-1.json", "metrics_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     });

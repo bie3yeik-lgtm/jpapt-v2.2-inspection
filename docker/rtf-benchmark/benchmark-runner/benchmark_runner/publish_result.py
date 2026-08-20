@@ -22,6 +22,9 @@ def main() -> int:
         raise RuntimeError(f"metrics output does not exist: {output}")
 
     run_id = _required("RTF_RUN_ID")
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    if payload.get("run_id") != run_id:
+        raise RuntimeError("metrics run_id does not match RTF_RUN_ID")
     payload_status = payload.get("status", "blocked")
     if payload_status != "completed":
         receipt: dict[str, Any] = {
@@ -47,7 +50,6 @@ def main() -> int:
     if Path(path_in_repo).is_absolute() or ".." in Path(path_in_repo).parts:
         raise RuntimeError("RTF_RESULT_PATH must be a repository-relative path")
 
-    payload = json.loads(output.read_text(encoding="utf-8"))
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
     api = HfApi(token=_required("HF_TOKEN"))
     commit = api.upload_file(

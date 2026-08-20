@@ -20,6 +20,9 @@ def main() -> int:
         raise SystemExit("only completed results can become benchmark records")
     if service_result.get("metrics_sha256") != hashlib.sha256(args.metrics.read_bytes()).hexdigest():
         raise SystemExit("metrics SHA-256 mismatch")
+    for field in ("run_id", "service_id", "gpu"):
+        if service_result.get(field) not in (None, metrics.get(field)):
+            raise SystemExit(f"service result {field} does not match metrics")
     record = {
         "schema_version": 1,
         "run_id": metrics["run_id"],
@@ -31,6 +34,8 @@ def main() -> int:
         "dataset_manifest_id": "benchmark-v1",
         "dataset_manifest_sha256": metrics["manifest_sha256"],
         "dataset_revision": metrics["dataset_revision"],
+        "fixture_repo_id": metrics["fixture_repo_id"],
+        "fixture_revision": metrics["fixture_revision"],
         "image_digest": metrics["image_digest"],
         "batch_size": metrics["batch_size"],
         "repeat": metrics["repeat"],

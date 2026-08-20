@@ -68,13 +68,17 @@ GitHub CLIの認証済み環境で、次のwrapperを使用できる。
 GH_TOKEN="$GH_TOKEN" scripts/ci/dispatch-rtf-service-result.sh \
   OWNER/REPOSITORY \
   run-20260820-hf-l4-b1 \
-  hf-jobs completed cuda linux \
+  hf-jobs completed cuda linux lough l4 1 \
   job-123 \
   https://example.invalid/result.json \
   RESULT_SHA256 \
   METRICS_SHA256 \
   https://example.invalid/metrics.json
 ```
+
+引数の順序は`repository run_id service_id status provider environment inspection_profile
+gpu batch_size job_id result_uri result_sha256 metrics_sha256 metrics_uri error_code error_message`である。
+`completed`ではresultとmetricsのURI・SHA-256を同一のimmutable payloadとして指定する。
 
 このwrapperは既存のbounded dispatch helperを使用する。実際のprovider jobを起動する
 ものではないため、provider側の実行とmetrics公開を先に完了させる。
@@ -103,7 +107,7 @@ workflowを起動したブランチが保護されていても結果をリポジ
 
 ```text
 rtf-scores/
-└── <run_id>/
+└── <lough|precise>/
     └── <service_id>/
         ├── service-result.json
         ├── metrics.json       # metrics_uriを指定した場合

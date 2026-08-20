@@ -45,12 +45,14 @@ jobs:
           concurrency = text[concurrency_start:concurrency_end]
           expected = '\nconcurrency:\n  group: hf-central-sequence\n  cancel-in-progress: false\n'
           assert concurrency == expected, concurrency
-          assert '${{' not in concurrency
+          assert 'inputs.' not in concurrency
+          assert 'github.' not in concurrency
           assert 'inputs.hf_bucket' not in concurrency
 
           # The raw dispatch input is still passed into the job where the
           # canonical allocator validates it; only the lock key is input-free.
-          assert 'HF_BUCKET: ${{ inputs.hf_bucket }}' in text
+          assert 'HF_BUCKET:' in text
+          assert 'inputs.hf_bucket' in text
           assert 'HF_ALLOCATOR_INTERNAL: "1"' in text
           assert 'bash scripts/hf/hf-allocate-id.sh' in text
           assert 'actions/upload-artifact@v7' in text
