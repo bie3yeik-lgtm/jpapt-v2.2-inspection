@@ -1,0 +1,161 @@
+name: RTF Resolver
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Immutable GHCR benchmark image digest
+        required: true
+        type: string
+      dataset_revision:
+        description: Common Voice dataset commit
+        required: true
+        default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+        type: string
+      count_min:
+        description: Minimum composite sample count
+        required: true
+        default: "20"
+        type: string
+      count_max:
+        description: Maximum composite sample count
+        required: true
+        default: "50"
+        type: string
+      target_total_sec:
+        description: Target total audio duration
+        required: true
+        default: "5400"
+        type: string
+
+permissions:
+  contents: write
+  packages: read
+  pull-requests: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      IMAGE: ${{ inputs.image }}
+      DATASET_REVISION: ${{ inputs.dataset_revision }}
+      COUNT_MIN: ${{ inputs.count_min }}
+      COUNT_MAX: ${{ inputs.count_max }}
+      TARGET_TOTAL_SEC: ${{ inputs.target_total_sec }}
+      RUN_ID: rtf-resolver-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate immutable image input
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo 'image must be a digest-pinned GHCR reference' >&2
+            exit 2
+          }
+
+      - name: Login to GHCR for package pull
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve fixed Common Voice manifest in Docker
+        run: |
+          set -euo pipefail
+          rm -rf .ci/rtf-resolver
+          mkdir -p .ci/rtf-resolver/audio .ci/rtf-resolver/output
+          docker pull "$IMAGE"
+          docker run --rm \
+            --entrypoint python \
+            -e PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
+            -v "$PWD/.ci/rtf-resolver:/resolver" \
+            "$IMAGE" \
+            -m benchmark_runner.resolve_dataset \
+            --dataset-id japanese-asr/ja_asr.common_voice_8_0 \
+            --revision "$DATASET_REVISION" \
+            --configuration ja --split test \
+            --count-min "$COUNT_MIN" --count-max "$COUNT_MAX" \
+            --target-total-sec "$TARGET_TOTAL_SEC" \
+            --seed rtf-benchmark-v1-common-voice-ja \
+            --output-dir /resolver/audio \
+            --manifest /resolver/output/benchmark-v1.jsonl
+
+      - name: Write resolver receipt and repository manifest
+        run: |
+          set -euo pipefail
+          manifest=.ci/rtf-resolver/output/benchmark-v1.jsonl
+          sha256sum "$manifest" > .ci/rtf-resolver/output/benchmark-v1.jsonl.sha256
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = Path('.ci/rtf-resolver/output/benchmark-v1.jsonl')
+          records = [json.loads(line) for line in manifest.read_text().splitlines() if line]
+          total = sum(float(record['audio_duration_sec']) for record in records)
+          if not 20 <= len(records) <= 50:
+              raise SystemExit(f'invalid sample count: {len(records)}')
+          if total < 5400:
+              raise SystemExit(f'invalid total duration: {total}')
+          if any(not 30 <= float(record['audio_duration_sec']) <= 600 for record in records):
+              raise SystemExit('sample duration outside 30..600 seconds')
+          receipt = {
+              'schema_version': 1,
+              'run_id': os.environ['RUN_ID'],
+              'image': os.environ['IMAGE'],
+              'dataset_id': 'japanese-asr/ja_asr.common_voice_8_0',
+              'dataset_revision': os.environ['DATASET_REVISION'],
+              'manifest_sha256': hashlib.sha256(manifest.read_bytes()).hexdigest(),
+              'sample_count': len(records),
+              'total_audio_duration_sec': total,
+              'audio_contract': 'float32-mono-16000hz-finite-c-contiguous-wav',
+          }
+          Path('.ci/rtf-resolver/output/receipt.json').write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + '\n'
+          )
+          Path('.ci/rtf-resolver/output/benchmark-v1.jsonl').replace(
+              Path('rtf-scores/benchmark-v1.jsonl')
+          )
+          Path('.ci/rtf-resolver/output/receipt.json').replace(
+              Path('rtf-scores/benchmark-v1.receipt.json')
+          )
+          Path('.ci/rtf-resolver/output/benchmark-v1.jsonl.sha256').replace(
+              Path('rtf-scores/benchmark-v1.jsonl.sha256')
+          )
+          PY
+
+      - name: Upload resolved audio and outputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtf-resolver-${{ github.run_id }}
+          path: |
+            .ci/rtf-resolver/audio
+            rtf-scores/benchmark-v1.jsonl
+            rtf-scores/benchmark-v1.receipt.json
+            rtf-scores/benchmark-v1.jsonl.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit manifest and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="inspection/rtf-resolver-${RUN_ID}"
+          git fetch --no-tags origin main
+          git checkout --no-track -b "$branch" origin/main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- rtf-scores/benchmark-v1.jsonl rtf-scores/benchmark-v1.receipt.json rtf-scores/benchmark-v1.jsonl.sha256
+          git commit -m "Add resolved RTF benchmark manifest ${RUN_ID}"
+          git push --set-upstream origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --draft \
+            --title "Add resolved RTF benchmark manifest ${RUN_ID}" \
+            --body "Resolver output for ${IMAGE}. Audio WAV files are preserved in the GitHub Artifact rtf-resolver-${{ github.run_id }}; Git contains only the lightweight manifest, receipt, and SHA-256."
