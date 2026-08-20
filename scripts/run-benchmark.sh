@@ -26,6 +26,16 @@ done
 : "${RTF_DATASET_REVISION:?RTF_DATASET_REVISION is required}"
 : "${RTF_FIXTURE_REPO_ID:?RTF_FIXTURE_REPO_ID is required}"
 : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required}"
+: "${RTF_RESULT_REPO_ID:=gawohok7/rtf-benchmark-fixtures}"
+: "${RTF_RESULT_PATH:=results/${RTF_RUN_ID}/metrics.json}"
+: "${RTF_IMAGE_DIGEST:=${IMAGE##*@}}"
+if [[ "$RTF_IMAGE_DIGEST" == *@* ]]; then
+  RTF_IMAGE_DIGEST="${RTF_IMAGE_DIGEST##*@}"
+fi
+[[ "$RTF_IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || {
+  echo "RTF_IMAGE_DIGEST must be sha256-pinned" >&2
+  exit 2
+}
 : "${RTF_GPU:?RTF_GPU is required}"
 : "${RTF_OUTPUT:=/output/metrics.json}"
 : "${RTF_BATCH_SIZE:=1}"
@@ -51,12 +61,25 @@ case "$PROVIDER" in
       -e "RTF_MODEL_REVISION=$RTF_MODEL_REVISION" -e "RTF_DATASET_ID=$RTF_DATASET_ID"
       -e "RTF_DATASET_REVISION=$RTF_DATASET_REVISION" -e "RTF_GPU=$RTF_GPU"
       -e "RTF_FIXTURE_REPO_ID=$RTF_FIXTURE_REPO_ID" -e "RTF_FIXTURE_REVISION=$RTF_FIXTURE_REVISION"
+      -e "RTF_RESULT_REPO_ID=$RTF_RESULT_REPO_ID" -e "RTF_RESULT_PATH=$RTF_RESULT_PATH"
+      -e "RTF_IMAGE_DIGEST=$RTF_IMAGE_DIGEST"
       -e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE" -e "RTF_PRECISION=$RTF_PRECISION"
       -e "RTF_DECODER=$RTF_DECODER" -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
     )
-    hf_secrets=()
-    [[ -n "${HF_TOKEN:-}" ]] && hf_secrets=(--secrets HF_TOKEN)
-    hf jobs run --flavor "$HF_FLAVOR" "${hf_env[@]}" "${hf_secrets[@]}" "$IMAGE" python benchmark.py
+    [[ -n "${HF_TOKEN:-}" ]] || { echo "HF_TOKEN is required for HF Jobs" >&2; exit 1; }
+    hf_log="${RTF_HF_LOG:-hf-job.log}"
+    set +e
+    hf jobs run --flavor "$HF_FLAVOR" "${hf_env[@]}" \
+      --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" python benchmark.py 2>&1 | tee "$hf_log"
+    hf_status=${PIPESTATUS[0]}
+    set -e
+    receipt_line="$(grep '^RTF_RESULT_RECEIPT=' "$hf_log" | tail -n 1 || true)"
+    [[ -n "$receipt_line" ]] || {
+      echo 'HF Job did not emit RTF_RESULT_RECEIPT' >&2
+      exit "$hf_status"
+    }
+    printf '%s\n' "${receipt_line#RTF_RESULT_RECEIPT=}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    [[ "$hf_status" -eq 0 ]] || exit "$hf_status"
     ;;
   runpod)
     command -v runpodctl >/dev/null || { echo "runpodctl is required" >&2; exit 1; }
@@ -75,11 +98,14 @@ case "$PROVIDER" in
       --arg batch "$RTF_BATCH_SIZE" --arg precision "$RTF_PRECISION" \
       --arg decoder "$RTF_DECODER" --arg fixture_repo "$RTF_FIXTURE_REPO_ID" \
       --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg hf_token "${HF_TOKEN:-}" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      --arg result_repo "$RTF_RESULT_REPO_ID" --arg result_path "$RTF_RESULT_PATH" \
+      --arg image_digest "$RTF_IMAGE_DIGEST" \
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' --wait --output json)"
     pod_id="$(jq -er '.id // .podId // .pod_id' <<<"$pod_json")"
     runpodctl exec "$pod_id" -- python benchmark.py
     runpodctl exec "$pod_id" -- cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
+    runpodctl exec "$pod_id" -- cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     ;;
 esac

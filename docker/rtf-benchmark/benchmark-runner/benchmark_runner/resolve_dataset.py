@@ -41,6 +41,9 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, object]] = []
+    if args.count_min < 1 or args.count_max < args.count_min:
+        raise ValueError("invalid sample count bounds")
+    chunk_target_sec = max(30.0, min(args.max_duration_sec, args.target_total_sec / args.count_min))
     pending_audio: list[object] = []
     pending_text: list[str] = []
     pending_duration = 0.0
@@ -75,12 +78,16 @@ def main() -> int:
         duration = len(array) / 16_000
         if duration <= 0:
             continue
-        if pending_duration >= 30.0 and pending_duration + duration > args.max_duration_sec:
+        if pending_duration >= 30.0 and pending_duration + duration > chunk_target_sec:
             flush()
         pending_audio.append(array)
         pending_text.append(str(row.get("sentence", "")))
         pending_duration += duration
-        if pending_duration >= 30.0 and sum(r["audio_duration_sec"] for r in records) + pending_duration >= args.target_total_sec:
+        if (
+            pending_duration >= 30.0
+            and len(records) >= args.count_min - 1
+            and sum(r["audio_duration_sec"] for r in records) + pending_duration >= args.target_total_sec
+        ):
             flush()
             break
     flush()

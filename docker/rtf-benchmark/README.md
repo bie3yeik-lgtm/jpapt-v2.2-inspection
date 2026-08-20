@@ -29,6 +29,13 @@ docker build \
 `HF_TOKEN` and `RUNPOD_TOKEN` are supplied only by provider Workflow
 environments. They must never be copied into this image or its output.
 
+When `RTF_RESULT_REPO_ID` is set, the entrypoint uploads the completed
+`RTF_OUTPUT` to the revision-pinned Hugging Face Dataset repository under
+`RTF_RESULT_PATH` and prints a machine-readable `RTF_RESULT_RECEIPT` line.
+The current canonical result repository is
+`gawohok7/rtf-benchmark-fixtures`; the upload uses the runtime `HF_TOKEN`
+secret and never stores it in the image.
+
 Example invocation:
 
 ```bash

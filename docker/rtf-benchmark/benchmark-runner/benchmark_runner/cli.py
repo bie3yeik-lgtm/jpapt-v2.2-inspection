@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -102,9 +103,11 @@ def main() -> int:
         "precision": args.precision,
         "repeat": args.repeat,
         "provider": args.provider,
+        "environment": "linux",
         "service_id": args.service_id,
         "gpu": args.gpu,
-        "sample_count": len(samples),
+        "dtype": args.precision,
+        "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
         "manifest_sha256": manifest_sha256,
         "audio_duration_sec": audio_duration,
         "processing_duration_sec": processing_duration,
@@ -112,7 +115,6 @@ def main() -> int:
         "rtfx": audio_duration / processing_duration,
         "rtf_scope": "model",
         "cer": jiwer.cer(reference_text, hypothesis_text) if reference_text else None,
-        "predictions": texts,
         "peak_vram_bytes": torch.cuda.max_memory_allocated() if device.type == "cuda" else None,
         "gpu_utilization_pct": None,
         "gpu_price_per_hour": None,
@@ -134,8 +136,11 @@ def main() -> int:
             "precision": args.precision,
             "repeat": args.repeat,
             "provider": args.provider,
+            "environment": "linux",
             "service_id": args.service_id,
             "gpu": args.gpu,
+            "dtype": args.precision,
+            "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
             "sample_count": len(samples),
             "manifest_sha256": manifest_sha256,
         }

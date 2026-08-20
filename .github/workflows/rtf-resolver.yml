@@ -4,32 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: Immutable GHCR benchmark image digest
-        required: true
+        description: Optional immutable image override; blank resolves latest GHCR package digest
+        required: false
+        default: ""
         type: string
       dataset_revision:
         description: Common Voice dataset commit
         required: true
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
         type: string
-      count_min:
-        description: Minimum composite sample count
-        required: true
-        default: "20"
-        type: string
-      count_max:
-        description: Maximum composite sample count
-        required: true
-        default: "50"
-        type: string
-      target_total_sec:
-        description: Target total audio duration
-        required: true
-        default: "5400"
-        type: string
       fixture_repo_id:
         description: Hugging Face Dataset repo to publish the fixed fixture
         required: true
+        default: gawohok7/rtf-benchmark-fixtures
         type: string
       inspection_profile:
         description: Fixture sizing profile
@@ -48,24 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      IMAGE: ${{ inputs.image }}
+      IMAGE_INPUT: ${{ inputs.image }}
       DATASET_REVISION: ${{ inputs.dataset_revision }}
-      COUNT_MIN: ${{ inputs.count_min }}
-      COUNT_MAX: ${{ inputs.count_max }}
-      TARGET_TOTAL_SEC: ${{ inputs.target_total_sec }}
       FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
       INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
       RUN_ID: rtf-resolver-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Validate immutable image input
-        run: |
-          set -euo pipefail
-          [[ "$IMAGE" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
-            echo 'image must be a digest-pinned GHCR reference' >&2
-            exit 2
-          }
 
       - name: Login to GHCR for package pull
         uses: docker/login-action@v3
@@ -73,6 +49,39 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+
+      - name: Resolve latest RTF benchmark image digest
+        id: image
+        env:
+          IMAGE_INPUT: ${{ inputs.image }}
+          IMAGE_TAG: ghcr.io/bie3yeik-lgtm/jpapt-v2.2-inspection/parakeet-rtf-benchmark:latest
+        run: |
+          set -euo pipefail
+          if [[ -n "$IMAGE_INPUT" ]]; then
+            image="$IMAGE_INPUT"
+          else
+            digest="$(docker buildx imagetools inspect "$IMAGE_TAG" | awk '/^Digest:/ {print $2; exit}')"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "unable to resolve latest GHCR image digest: $digest" >&2
+              exit 2
+            }
+            image="${IMAGE_TAG%:latest}@$digest"
+          fi
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "image must be a digest-pinned GHCR reference: $image" >&2
+            exit 2
+          }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "Resolved benchmark image: $image"
+
+      - name: Validate fixture repository input
+        run: |
+          set -euo pipefail
+          [[ "$FIXTURE_REPO_ID" == gawohok7/rtf-benchmark-fixtures ]] || {
+            echo 'fixture_repo_id must be gawohok7/rtf-benchmark-fixtures' >&2
+            exit 2
+          }
 
       - name: Resolve fixed Common Voice manifest in Docker
         env:
@@ -121,17 +130,19 @@ jobs:
           total = sum(float(record['audio_duration_sec']) for record in records)
           profile = os.environ['INSPECTION_PROFILE']
           if profile == 'lough inspection':
-              count_min, count_max, total_min, duration_max = 20, 50, 3600, 600
+              count_min, count_max, total_min, total_max, duration_max = 20, 50, 3600, 7200, 600
           elif profile == 'precise inspection':
-              count_min, count_max, total_min, duration_max = 50, 150, 18000, 1800
+              count_min, count_max, total_min, total_max, duration_max = 50, 150, 18000, 36000, 1800
           else:
               raise SystemExit(f'unknown profile: {profile}')
           if not count_min <= len(records) <= count_max:
               raise SystemExit(f'invalid sample count: {len(records)}')
           if total < total_min:
               raise SystemExit(f'invalid total duration: {total}')
+          if total > total_max:
+              raise SystemExit(f'invalid total duration: {total}')
           if any(not 30 <= float(record['audio_duration_sec']) <= duration_max for record in records):
-              raise SystemExit('sample duration outside 30..600 seconds')
+              raise SystemExit(f'sample duration outside 30..{duration_max} seconds')
           receipt = {
               'schema_version': 1,
               'run_id': os.environ['RUN_ID'],
@@ -236,4 +247,4 @@ jobs:
             --head "$branch" \
             --draft \
             --title "Add resolved RTF benchmark manifest ${RUN_ID}" \
-            --body "Resolver output for ${IMAGE}. Audio WAV files are preserved in the GitHub Artifact rtf-resolver-${{ github.run_id }}; Git contains only the lightweight manifest, receipt, and SHA-256."
+            --body "Resolver output for ${IMAGE}. The fixed audio fixture is stored in the revision-pinned Hugging Face Dataset; Git contains only the lightweight manifest, fixture pointer, receipt, and SHA-256."

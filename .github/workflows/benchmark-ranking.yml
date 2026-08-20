@@ -28,7 +28,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t records < <(find "rtf-scores/${PHASE}" -mindepth 3 -type f -name '*.json' ! -name 'summary.json' ! -name 'matrix.json' | sort)
+          mapfile -t records < <(find "rtf-scores/${PHASE}" -mindepth 3 -type f -name 'benchmark-record.json' | sort)
           [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
           mkdir -p rtf-scores
           cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- rtf-scores/ranking.json "${records[@]}"
