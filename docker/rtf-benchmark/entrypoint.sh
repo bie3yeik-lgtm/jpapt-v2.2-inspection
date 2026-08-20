@@ -6,6 +6,11 @@ set -euo pipefail
 if [[ "${1:-}" == "python" && "${2:-}" == "benchmark.py" ]]; then
   shift 2
 fi
+if [[ "${1:-}" == "--batch-size" ]]; then
+  [[ "${2:-}" =~ ^(1|8|32)$ ]] || { echo "--batch-size must be one of 1, 8, or 32" >&2; exit 2; }
+  export RTF_BATCH_SIZE="$2"
+  shift 2
+fi
 
 if [[ "$#" -eq 0 ]]; then
   : "${RTF_DATASET_ID:?RTF_DATASET_ID is required}"

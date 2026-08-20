@@ -89,7 +89,7 @@ case "$PROVIDER" in
       -e "RTF_FIXTURE_REPO_ID=$RTF_FIXTURE_REPO_ID" -e "RTF_FIXTURE_REVISION=$RTF_FIXTURE_REVISION"
       -e "RTF_RESULT_REPO_ID=$RTF_RESULT_REPO_ID" -e "RTF_RESULT_PATH=$RTF_RESULT_PATH"
       -e "RTF_IMAGE_DIGEST=$RTF_IMAGE_DIGEST"
-      -e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE" -e "RTF_PRECISION=$RTF_PRECISION"
+      -e "RTF_PRECISION=$RTF_PRECISION"
       -e "RTF_DECODER=$RTF_DECODER" -e "RTF_REPEAT=$RTF_REPEAT"
       -e "RTF_INSPECTION_PROFILE=$RTF_INSPECTION_PROFILE" -e "RTF_PROFILE_ID=$RTF_PROFILE_ID"
       -e "RTF_DATASET_CONFIGURATION=$RTF_DATASET_CONFIGURATION" -e "RTF_DATASET_SPLIT=$RTF_DATASET_SPLIT"
@@ -103,7 +103,8 @@ case "$PROVIDER" in
     hf_log="${RTF_HF_LOG:-hf-job.log}"
     set +e
     hf jobs run --name "$RTF_RUN_ID" --flavor "$HF_FLAVOR" "${hf_env[@]}" \
-      --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" /opt/rtf-benchmark/entrypoint.sh 2>&1 | tee "$hf_log"
+      --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" /opt/rtf-benchmark/entrypoint.sh \
+      --batch-size "$RTF_BATCH_SIZE" 2>&1 | tee "$hf_log"
     hf_status=${PIPESTATUS[0]}
     set -e
     receipt_line="$(grep '^RTF_RESULT_RECEIPT=' "$hf_log" | tail -n 1 || true)"
