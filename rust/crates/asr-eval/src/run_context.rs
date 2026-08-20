@@ -86,6 +86,7 @@ pub struct RevisionSnapshot {
     pub reference: ReferenceRevisionSnapshot,
     pub evaluation_schema: EvaluationSchemaRevisionSnapshot,
     pub datasets: DatasetsRevisionSnapshot,
+    pub provenance: ProvenanceRevisionSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +136,16 @@ pub struct EvaluationSchemaRevisionSnapshot {
 pub struct DatasetsRevisionSnapshot {
     pub document_sha256: String,
     pub entries: Vec<DatasetRevisionEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProvenanceRevisionSnapshot {
+    pub document_sha256: String,
+    pub manifest_sha256: String,
+    pub status: String,
+    pub automation_consumption: bool,
+    pub target_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +212,22 @@ impl RevisionSnapshot {
             "revisions.datasets.document_sha256",
             &self.datasets.document_sha256,
         )?;
+        validate_sha256(
+            "revisions.provenance.document_sha256",
+            &self.provenance.document_sha256,
+        )?;
+        validate_sha256(
+            "revisions.provenance.manifest_sha256",
+            &self.provenance.manifest_sha256,
+        )?;
+        if self.provenance.status != "complete"
+            || !self.provenance.automation_consumption
+            || self.provenance.target_id != "parakeet-tdt_ctc-0.6b-ja"
+        {
+            return Err(EvalError::InvalidInput(
+                "run-context revisions.provenance must be complete, automation-enabled, and target the canonical Parakeet target".to_owned(),
+            ));
+        }
 
         let mut ids = BTreeSet::new();
         for (index, entry) in self.datasets.entries.iter().enumerate() {

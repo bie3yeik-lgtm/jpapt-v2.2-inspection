@@ -61,10 +61,15 @@ fn run() -> Result<(), String> {
         .ok_or_else(|| "artifacts.primary.size_bytes must be a positive integer".to_owned())?;
 
     let host_os = host_os_id();
-    let revisions = revision_snapshot(profile_set, catalog_id, catalog_sha256)?;
+    let revisions = revision_snapshot(profile_set, catalog_id, catalog_sha256, artifact_sha256)?;
+    let provenance = revisions
+        .pointer("/provenance")
+        .cloned()
+        .ok_or_else(|| "provider probe revision snapshot is missing provenance".to_owned())?;
     let git_commit = git_commit()?;
     let config_identity = "strict-provider-probe-v1";
     let model_id = "synthetic-strict-provider-ctc";
+    let enable_mem_pattern = provider != "directml";
 
     let context = json!({
         "schema_version": 2,
@@ -123,7 +128,7 @@ fn run() -> Result<(), String> {
                     "session": {
                         "graph_optimization_level": "all",
                         "execution_mode": "sequential",
-                        "enable_mem_pattern": true
+                        "enable_mem_pattern": enable_mem_pattern
                     },
                     "validation": {
                         "allow_cpu_fallback": false,
@@ -146,7 +151,13 @@ fn run() -> Result<(), String> {
         },
         "metadata": {
             "candidate": contract,
-            "purpose": "strict non-CPU execution-provider readiness probe"
+            "purpose": "strict non-CPU execution-provider readiness probe",
+            "provenance": {
+                "manifest_sha256": provenance["manifest_sha256"].clone(),
+                "status": "complete",
+                "automation_consumption": true,
+                "target_id": "parakeet-tdt_ctc-0.6b-ja"
+            }
         }
     });
 
@@ -258,6 +269,7 @@ fn revision_snapshot(
     profile_set: &str,
     catalog_id: &str,
     catalog_sha256: &str,
+    artifact_sha256: &str,
 ) -> Result<Value, String> {
     let runtime_document = json!({
         "schema_version": 1,
@@ -286,6 +298,46 @@ fn revision_snapshot(
     let evaluation_hash = canonical_sha256(&evaluation_document)?;
     let datasets_hash = canonical_sha256(&datasets_document)?;
     let runtime_hash = canonical_sha256(&runtime_document)?;
+    let provenance_document = json!({
+        "schema_version": 1,
+        "status": "complete",
+        "automation_consumption": true,
+        "target_id": "parakeet-tdt_ctc-0.6b-ja",
+        "upstream": {
+            "repo_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+            "revision": "provider-probe-synthetic-v1"
+        },
+        "development_repo": {
+            "repo_id": "generated/provider-probe",
+            "revision": "synthetic-v1"
+        },
+        "assets": [{
+            "path": "generated/provider-probe/model.onnx",
+            "kind": "onnx",
+            "sha256": artifact_sha256,
+            "origin": {
+                "repo_id": "generated/provider-probe",
+                "revision": "synthetic-v1",
+                "path": "generated/provider-probe/model.onnx"
+            },
+            "license": "generated-test-artifact",
+            "attribution": "Synthetic provider probe fixture",
+            "transformation": {
+                "kind": "generated",
+                "tool": "e2e-provider-ctc.py",
+                "version": "synthetic-v1",
+                "input_sha256": null,
+                "output_sha256": artifact_sha256
+            },
+            "candidate": {
+                "path": "model.onnx",
+                "sha256": artifact_sha256,
+                "role": "primary"
+            }
+        }],
+        "blockers": []
+    });
+    let provenance_document_hash = canonical_sha256(&provenance_document)?;
     let mut bundle = Sha256::new();
     for hash in [
         &reference_hash,
@@ -322,6 +374,13 @@ fn revision_snapshot(
         "datasets": {
             "document_sha256": datasets_hash,
             "entries": []
+        },
+        "provenance": {
+            "document_sha256": provenance_document_hash,
+            "manifest_sha256": provenance_document_hash,
+            "status": "complete",
+            "automation_consumption": true,
+            "target_id": "parakeet-tdt_ctc-0.6b-ja"
         }
     }))
 }
