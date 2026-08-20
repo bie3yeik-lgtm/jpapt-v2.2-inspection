@@ -8,10 +8,6 @@ on:
         required: true
         type: choice
         options: [hf, runpod]
-      image:
-        description: Optional image override; blank resolves the newest GHCR package digest
-        required: false
-        type: string
       gpu:
         description: Provider GPU name
         required: true
@@ -56,27 +52,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          IMAGE_INPUT: ${{ inputs.image }}
           MODEL_ID: ${{ inputs.model_id }}
         run: |
           set -euo pipefail
-          image_input="${IMAGE_INPUT:-}"
-          if [[ -n "$image_input" ]]; then
-            image="$image_input"
-          else
-            image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark"
-            for attempt in {1..20}; do
-              if image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$image_name" "$GITHUB_SHA" 2>/dev/null)"; then
-                break
-              fi
-              [[ "$attempt" -lt 20 ]] || {
-                echo "GHCR image tag ${GITHUB_SHA} was not published within the retry window" >&2
-                exit 1
-              }
-              echo "Waiting for GHCR image tag ${GITHUB_SHA} (attempt ${attempt}/20)"
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark"
+          for attempt in {1..20}; do
+            if image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$image_name" 2>/dev/null)"; then
+              break
+            fi
+            [[ "$attempt" -lt 20 ]] || {
+              echo 'latest GHCR package digest was not available within the retry window' >&2
+              exit 1
+            }
+            {
+              echo "Waiting for latest GHCR package digest (attempt ${attempt}/20)"
               sleep 15
-            done
-          fi
+            }
+          done
           [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
             echo 'resolved image must be an immutable GHCR digest reference' >&2
             exit 2

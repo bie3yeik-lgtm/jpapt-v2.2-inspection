@@ -123,6 +123,7 @@ jobs:
           load: false
           tags: |
             ${{ matrix.image }}:${{ github.sha }}
+            ${{ github.event_name != 'pull_request' && format('{0}:latest', matrix.image) || format('{0}:pr-{1}', matrix.image, github.sha) }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
