@@ -127,7 +127,7 @@ jobs:
               raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
           if "--docker-args 'sleep infinity'" not in script:
               raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
-          if '--wait --wait-timeout 10m --terminate-after "$terminate_after"' not in script:
+          if '--ports 22/tcp --wait --wait-timeout 10m --terminate-after "$terminate_after"' not in script:
               raise SystemExit("RunPod Pod creation must wait for SSH readiness")
           if "date -u -d '+4 hours'" not in script or "date -u -v+4H" not in script:
               raise SystemExit("RunPod termination safety deadline must be an absolute UTC DateTime")
