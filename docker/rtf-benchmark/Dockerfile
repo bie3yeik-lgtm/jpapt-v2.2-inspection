@@ -28,7 +28,8 @@ RUN python -m pip install --no-cache-dir -r /tmp/rtf-requirements.lock
 COPY docker/rtf-benchmark/benchmark-runner /opt/rtf-benchmark/benchmark-runner
 COPY docker/rtf-benchmark/entrypoint.sh /opt/rtf-benchmark/entrypoint.sh
 RUN chmod +x /opt/rtf-benchmark/entrypoint.sh \
-    && python -m py_compile /opt/rtf-benchmark/benchmark-runner/*.py
+    && find /opt/rtf-benchmark/benchmark-runner -type f -name '*.py' -print0 \
+      | xargs -0 -r python -m py_compile
 
 ENV PYTHONPATH=/opt/rtf-benchmark/benchmark-runner
 ENTRYPOINT ["/opt/rtf-benchmark/entrypoint.sh"]
