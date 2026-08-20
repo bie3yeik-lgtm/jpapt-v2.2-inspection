@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: Immutable GHCR benchmark image digest
-        required: true
+        description: Optional immutable image override; blank resolves latest GHCR package digest
+        required: false
+        default: ""
         type: string
       dataset_revision:
         description: Common Voice dataset commit
@@ -15,6 +16,7 @@ on:
       fixture_repo_id:
         description: Hugging Face Dataset repo to publish the fixed fixture
         required: true
+        default: gawohok7/rtf-benchmark-fixtures
         type: string
       inspection_profile:
         description: Fixture sizing profile
@@ -33,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      IMAGE: ${{ inputs.image }}
+      IMAGE_INPUT: ${{ inputs.image }}
       DATASET_REVISION: ${{ inputs.dataset_revision }}
       FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
       INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
@@ -41,20 +43,45 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Validate immutable image input
-        run: |
-          set -euo pipefail
-          [[ "$IMAGE" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
-            echo 'image must be a digest-pinned GHCR reference' >&2
-            exit 2
-          }
-
       - name: Login to GHCR for package pull
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+
+      - name: Resolve latest RTF benchmark image digest
+        id: image
+        env:
+          IMAGE_INPUT: ${{ inputs.image }}
+          IMAGE_TAG: ghcr.io/bie3yeik-lgtm/jpapt-v2.2-inspection/parakeet-rtf-benchmark:latest
+        run: |
+          set -euo pipefail
+          if [[ -n "$IMAGE_INPUT" ]]; then
+            image="$IMAGE_INPUT"
+          else
+            digest="$(docker buildx imagetools inspect "$IMAGE_TAG" | awk '/^Digest:/ {print $2; exit}')"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "unable to resolve latest GHCR image digest: $digest" >&2
+              exit 2
+            }
+            image="${IMAGE_TAG%:latest}@$digest"
+          fi
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "image must be a digest-pinned GHCR reference: $image" >&2
+            exit 2
+          }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "Resolved benchmark image: $image"
+
+      - name: Validate fixture repository input
+        run: |
+          set -euo pipefail
+          [[ "$FIXTURE_REPO_ID" == gawohok7/rtf-benchmark-fixtures ]] || {
+            echo 'fixture_repo_id must be gawohok7/rtf-benchmark-fixtures' >&2
+            exit 2
+          }
 
       - name: Resolve fixed Common Voice manifest in Docker
         env:

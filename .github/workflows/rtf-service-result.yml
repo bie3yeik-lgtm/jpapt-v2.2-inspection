@@ -1,6 +1,26 @@
 name: RTF Service Result Collection
 
 on:
+  workflow_call:
+    inputs:
+      run_id: {required: true, type: string}
+      service_id: {required: true, type: string}
+      status: {required: true, type: string}
+      provider: {required: true, type: string}
+      environment: {required: true, type: string}
+      inspection_profile: {required: true, type: string}
+      gpu: {required: true, type: string}
+      batch_size: {required: true, type: string}
+      job_id: {required: false, type: string, default: ""}
+      result_uri: {required: false, type: string, default: ""}
+      result_sha256: {required: false, type: string, default: ""}
+      metrics_sha256: {required: false, type: string, default: ""}
+      metrics_uri: {required: false, type: string, default: ""}
+      error_code: {required: false, type: string, default: ""}
+      error_message: {required: false, type: string, default: ""}
+    secrets:
+      HF_TOKEN: {required: false}
+      RUNPOD_TOKEN: {required: false}
   workflow_dispatch:
     inputs:
       run_id:
@@ -127,11 +147,24 @@ jobs:
           METRICS_URI: ${{ inputs.metrics_uri }}
           ERROR_CODE: ${{ inputs.error_code }}
           ERROR_MESSAGE: ${{ inputs.error_message }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p results/rtf-service
+          if [[ "$STATUS" == completed ]]; then
+            [[ "$JOB_ID" != "" && "$METRICS_URI" != "" && "$METRICS_SHA256" != "" ]] || {
+              echo 'completed result requires job_id, metrics_uri, and metrics_sha256' >&2
+              exit 2
+            }
+            [[ "$METRICS_URI" =~ ^https://huggingface\.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/[0-9a-f]{40}/results/.+/metrics\.json$ ]] || {
+              echo 'metrics_uri is not an immutable fixture-repository URI' >&2
+              exit 2
+            }
+            [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required to fetch completed metrics'; exit 1; }
+          fi
           if [[ -n "$METRICS_URI" ]]; then
-            curl --fail --location --proto '=https' --tlsv1.2 "$METRICS_URI" \
+            curl --fail --location --proto '=https' --tlsv1.2 \
+              -H "Authorization: Bearer $HF_TOKEN" "$METRICS_URI" \
               -o results/rtf-service/metrics.json
           fi
           jq -n \
@@ -152,6 +185,17 @@ jobs:
 
       - name: Validate service result envelope
         run: cargo run --quiet --locked -p asr-contracts --bin asr-rtf-service -- validate results/rtf-service/service-result.json
+
+      - name: Validate and build benchmark record
+        if: inputs.status == 'completed'
+        run: |
+          set -euo pipefail
+          python scripts/ci/build-rtf-benchmark-record.py \
+            --metrics results/rtf-service/metrics.json \
+            --service-result results/rtf-service/service-result.json \
+            --profile '${{ inputs.inspection_profile }}' \
+            --output results/rtf-service/benchmark-record.json
+          python -m json.tool results/rtf-service/benchmark-record.json >/dev/null
 
       - name: Write Actions summary
         shell: bash
@@ -191,6 +235,9 @@ jobs:
           cp results/rtf-service/service-result.json "${destination}/service-result.json"
           if [[ -f results/rtf-service/metrics.json ]]; then
             cp results/rtf-service/metrics.json "${destination}/metrics.json"
+          fi
+          if [[ -f results/rtf-service/benchmark-record.json ]]; then
+            cp results/rtf-service/benchmark-record.json "${destination}/benchmark-record.json"
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

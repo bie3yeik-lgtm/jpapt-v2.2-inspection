@@ -39,7 +39,7 @@ on:
       fixture_repo_id:
         description: Hugging Face Dataset repository containing benchmark-v1.jsonl and WAV fixtures
         required: false
-        default: ""
+        default: gawohok7/rtf-benchmark-fixtures
         type: string
       fixture_revision:
         description: Immutable fixture Dataset commit
@@ -59,12 +59,23 @@ on:
         options: [lough inspection]
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  packages: read
 
 jobs:
-  run:
+  benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      status: ${{ steps.receipt.outputs.status }}
+      job_id: ${{ steps.receipt.outputs.job_id }}
+      result_uri: ${{ steps.receipt.outputs.result_uri }}
+      result_sha256: ${{ steps.receipt.outputs.result_sha256 }}
+      metrics_uri: ${{ steps.receipt.outputs.metrics_uri }}
+      metrics_sha256: ${{ steps.receipt.outputs.metrics_sha256 }}
+      error_code: ${{ steps.receipt.outputs.error_code }}
+      error_message: ${{ steps.receipt.outputs.error_message }}
     steps:
       - uses: actions/checkout@v7
       - name: Install provider CLIs
@@ -82,6 +93,8 @@ jobs:
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
           runpodctl config --apiKey="$RUNPOD_TOKEN"
       - name: Run all benchmark targets
+        id: execute
+        continue-on-error: true
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           RTF_RUN_ID: rtf-${{ inputs.provider }}-${{ github.run_id }}
@@ -91,6 +104,9 @@ jobs:
           RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
           RTF_FIXTURE_REPO_ID: ${{ inputs.fixture_repo_id }}
           RTF_FIXTURE_REVISION: ${{ inputs.fixture_revision }}
+          RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
+          RTF_IMAGE_DIGEST: ${{ inputs.image }}
+          RTF_LOCAL_RECEIPT: result-receipt.json
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ inputs.gpu }}
           RTF_BATCH_SIZE: ${{ inputs.batch_size }}
@@ -115,10 +131,65 @@ jobs:
           ./scripts/run-benchmark.sh \
             --provider '${{ inputs.provider }}' \
             --image '${{ inputs.image }}'
+      - name: Normalize provider receipt
+        id: receipt
+        if: always()
+        env:
+          EXECUTE_OUTCOME: ${{ steps.execute.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ -f result-receipt.json ]]; then
+            jq -e '(.schema_version == 1) and (.run_id | length > 0)' result-receipt.json >/dev/null
+          else
+            jq -n \
+              --arg run_id "rtf-${{ inputs.provider }}-${{ github.run_id }}" \
+              --arg status "blocked" \
+              --arg error_code "PROVIDER_EXECUTION_FAILED" \
+              --arg error_message "provider execution did not produce a result receipt" \
+              '{schema_version:1,run_id:$run_id,status:$status,job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message}' \
+              > result-receipt.json
+          fi
+          status="$(jq -r '.status // "blocked"' result-receipt.json)"
+          [[ "$EXECUTE_OUTCOME" == success && "$status" == completed ]] || status=blocked
+          {
+            echo "status=$status"
+            echo "job_id=$(jq -r '.job_id // empty' result-receipt.json)"
+            echo "result_uri=$(jq -r '.result_uri // empty' result-receipt.json)"
+            echo "result_sha256=$(jq -r '.result_sha256 // empty' result-receipt.json)"
+            echo "metrics_uri=$(jq -r '.metrics_uri // empty' result-receipt.json)"
+            echo "metrics_sha256=$(jq -r '.metrics_sha256 // empty' result-receipt.json)"
+            echo "error_code=$(jq -r '.error_code // empty' result-receipt.json)"
+            echo "error_message=$(jq -r '.error_message // empty' result-receipt.json | tr '\n' ' ')"
+          } >> "$GITHUB_OUTPUT"
       - name: Upload collected result
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: rtf-benchmark-${{ github.run_id }}
-          path: metrics.json
+          path: |
+            metrics.json
+            result-receipt.json
+            hf-job.log
           if-no-files-found: ignore
+
+  collect:
+    needs: benchmark
+    if: always()
+    uses: ./.github/workflows/rtf-service-result.yml
+    with:
+      run_id: rtf-${{ inputs.provider }}-${{ github.run_id }}
+      service_id: ${{ inputs.provider == 'hf' && 'hf-jobs' || 'runpod-pod' }}
+      status: ${{ needs.benchmark.outputs.status }}
+      provider: cuda
+      environment: linux
+      inspection_profile: ${{ inputs.inspection_profile == 'lough inspection' && 'lough' || 'precise' }}
+      gpu: ${{ inputs.gpu }}
+      batch_size: ${{ inputs.batch_size }}
+      job_id: ${{ needs.benchmark.outputs.job_id }}
+      result_uri: ${{ needs.benchmark.outputs.result_uri }}
+      result_sha256: ${{ needs.benchmark.outputs.result_sha256 }}
+      metrics_uri: ${{ needs.benchmark.outputs.metrics_uri }}
+      metrics_sha256: ${{ needs.benchmark.outputs.metrics_sha256 }}
+      error_code: ${{ needs.benchmark.outputs.error_code }}
+      error_message: ${{ needs.benchmark.outputs.error_message }}
+    secrets: inherit

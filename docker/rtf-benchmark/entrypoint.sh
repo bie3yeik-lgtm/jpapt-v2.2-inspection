@@ -59,4 +59,17 @@ if [[ "$#" -eq 0 ]]; then
     --service-id "$RTF_SERVICE_ID" --gpu "$RTF_GPU"
 fi
 
-exec python -m benchmark_runner "$@"
+set +e
+python -m benchmark_runner "$@"
+runner_status=$?
+set -e
+
+publish_status=0
+if [[ -f "${RTF_OUTPUT:-/output/metrics.json}" ]]; then
+  python -m benchmark_runner.publish_result || publish_status=$?
+fi
+
+if [[ "$runner_status" -ne 0 ]]; then
+  exit "$runner_status"
+fi
+exit "$publish_status"

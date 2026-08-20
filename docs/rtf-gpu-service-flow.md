@@ -17,8 +17,8 @@ provider側で実推論
   共通benchmark image + 固定manifest
         │
         ▼
-metrics.jsonをHTTPS URIへ公開
-  result_uri / result_sha256 / metrics_uri / metrics_sha256
+  metrics.jsonをgawohok7/rtf-benchmark-fixturesへ公開
+  immutable HTTPS URI / result SHA-256 / metrics SHA-256 / job ID
         │
         ▼
 RTF Service Result Collection
@@ -102,18 +102,23 @@ provider/GPU validationでも受け付けない。比較対象を追加する場
 
 ## 結果を回収する
 
-`RTF Service Result Collection`を起動し、selectionと同じ`run_id`・`service_id`を指定する。
+`RTF Benchmark Run`はprovider receiptから`job_id`、`metrics_uri`、各SHA-256を自動取得し、
+`RTF Service Result Collection`へreusable workflowとして渡す。手動起動時は従来どおり
+同じ項目を指定できる。
 `completed`の場合は次を必須にする。
 
 - `job_id`
 - `result_uri` / `result_sha256`
 - `metrics_uri` / `metrics_sha256`
 
-Actionsはmetricsを取得し、Rust validatorでSHA-256とschemaを検証する。成功すると次へ保存する。
+Actionsは`gawohok7/rtf-benchmark-fixtures`のimmutable revision URIからmetricsを取得し、
+Rust validatorでSHA-256とschemaを検証する。成功すると`benchmark-record.json`を生成し、
+次へ保存する。
 
 ```text
 rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/service-result.json
 rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/metrics.json
+rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/benchmark-record.json
 rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/summary.md
 ```
 
