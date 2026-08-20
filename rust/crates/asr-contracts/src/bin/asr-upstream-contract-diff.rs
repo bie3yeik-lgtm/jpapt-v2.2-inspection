@@ -80,10 +80,10 @@ fn compare_command(mut args: impl Iterator<Item = String>) -> Result<(), String>
     validate_source_repository(&source_repository)?;
 
     let report = build_report(&repo_root, &source_repository, &baseline, &head)?;
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     fs::write(
         &output,
@@ -138,9 +138,7 @@ fn is_contract_path(path: &str) -> bool {
 
 fn validate_sha(sha: &str) -> Result<(), String> {
     if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(format!(
-            "revision must be a lowercase 40-hex SHA: {sha}"
-        ));
+        return Err(format!("revision must be a lowercase 40-hex SHA: {sha}"));
     }
     if sha.chars().any(|c| c.is_ascii_uppercase()) {
         return Err(format!("revision must use lowercase hex: {sha}"));
@@ -191,10 +189,7 @@ fn git_diff_names(repo_root: &Path, baseline: &str, head: &str) -> Result<Vec<St
         .collect())
 }
 
-fn required_value(
-    args: &mut impl Iterator<Item = String>,
-    flag: &str,
-) -> Result<String, String> {
+fn required_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
     args.next()
         .ok_or_else(|| format!("{flag} requires a value"))
 }
@@ -219,24 +214,30 @@ mod tests {
     use std::{fs, path::Path};
 
     fn init_repo(root: &Path) {
-        assert!(Command::new("git")
-            .arg("init")
-            .current_dir(root)
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .args(["config", "user.email", "test@example.com"])
-            .current_dir(root)
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .args(["config", "user.name", "test"])
-            .current_dir(root)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.email", "test@example.com"])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.name", "test"])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     fn commit_all(root: &Path, message: &str) -> String {
@@ -245,12 +246,14 @@ mod tests {
             .current_dir(root)
             .status()
             .unwrap();
-        assert!(Command::new("git")
-            .args(["commit", "-m", message])
-            .current_dir(root)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", message])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success()
+        );
         String::from_utf8(
             Command::new("git")
                 .args(["rev-parse", "HEAD"])
@@ -267,7 +270,9 @@ mod tests {
     #[test]
     fn classifies_contract_paths() {
         assert!(is_contract_path("config/models/foo.toml"));
-        assert!(is_contract_path("evaluation/schemas/run-context.schema.json"));
+        assert!(is_contract_path(
+            "evaluation/schemas/run-context.schema.json"
+        ));
         assert!(!is_contract_path("python/src/foo.py"));
     }
 
@@ -291,7 +296,10 @@ mod tests {
         .unwrap();
         assert_eq!(report.summary.total_changed_files, 2);
         assert_eq!(report.summary.contract_changed_files, 1);
-        assert_eq!(report.contract_changed_files, vec!["config/a.toml".to_owned()]);
+        assert_eq!(
+            report.contract_changed_files,
+            vec!["config/a.toml".to_owned()]
+        );
     }
 
     #[test]
