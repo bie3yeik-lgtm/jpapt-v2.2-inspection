@@ -27,6 +27,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
     p.add_argument("--service-id", choices=("hf-inference-endpoint", "runpod-pod"), required=True)
     p.add_argument("--gpu", required=True)
+    p.add_argument("--profile", choices=("lough", "precise"), required=True)
+    p.add_argument("--fixture-repo-id", required=True)
+    p.add_argument("--fixture-revision", required=True)
     return p
 
 
@@ -51,7 +54,8 @@ def main() -> int:
     args = parser().parse_args()
     if args.repeat < 1:
         raise SystemExit("--repeat must be positive")
-    samples, manifest_sha256 = load_manifest(args.manifest)
+    samples, local_manifest_sha256 = load_manifest(args.manifest)
+    manifest_sha256 = os.environ.get("RTF_FIXTURE_MANIFEST_SHA256", local_manifest_sha256)
     try:
         import torch
         from nemo.collections.asr.models import ASRModel
@@ -80,11 +84,15 @@ def main() -> int:
                 model.transcribe(paths2audio_files=paths[: min(len(paths), args.batch_size)], batch_size=args.batch_size)
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            started = time.perf_counter()
-            hypotheses = model.transcribe(paths2audio_files=paths, batch_size=args.batch_size)
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            elapsed = time.perf_counter() - started
+            timings = []
+            hypotheses = []
+            for _ in range(args.repeat):
+                started = time.perf_counter()
+                hypotheses = model.transcribe(paths2audio_files=paths, batch_size=args.batch_size)
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                timings.append(time.perf_counter() - started)
+            elapsed = sum(timings) / len(timings)
         texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
         reference_text = " ".join(references).strip()
         hypothesis_text = " ".join(texts).strip()
@@ -108,6 +116,9 @@ def main() -> int:
         "gpu": args.gpu,
         "dtype": args.precision,
         "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
+        "inspection_profile": args.profile,
+        "fixture_repo_id": args.fixture_repo_id,
+        "fixture_revision": args.fixture_revision,
         "manifest_sha256": manifest_sha256,
         "audio_duration_sec": audio_duration,
         "processing_duration_sec": processing_duration,
@@ -141,6 +152,9 @@ def main() -> int:
             "gpu": args.gpu,
             "dtype": args.precision,
             "image_digest": os.environ.get("RTF_IMAGE_DIGEST", ""),
+            "inspection_profile": args.profile,
+            "fixture_repo_id": args.fixture_repo_id,
+            "fixture_revision": args.fixture_revision,
             "sample_count": len(samples),
             "manifest_sha256": manifest_sha256,
         }

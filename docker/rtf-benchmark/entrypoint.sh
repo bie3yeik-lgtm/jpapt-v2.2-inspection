@@ -33,13 +33,21 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_PROVIDER:=cuda}"
   : "${RTF_SERVICE_ID:?RTF_SERVICE_ID is required}"
   : "${RTF_GPU:?RTF_GPU is required}"
+  : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
+  : "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE// inspection/}}"
   if [[ -n "$RTF_FIXTURE_REPO_ID" ]]; then
     : "${HF_TOKEN:?HF_TOKEN is required when RTF_FIXTURE_REPO_ID is set}"
     : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required when RTF_FIXTURE_REPO_ID is set}"
-    python -m benchmark_runner.load_fixture \
+    fixture_args=(
+      python -m benchmark_runner.load_fixture \
       --repo-id "$RTF_FIXTURE_REPO_ID" --revision "$RTF_FIXTURE_REVISION" \
       --filename "$RTF_FIXTURE_FILENAME" --output-manifest "$RTF_MANIFEST" \
       --audio-dir /workspace/benchmark-audio
+    )
+    if [[ -n "$RTF_FIXTURE_MANIFEST_SHA256" ]]; then
+      fixture_args+=(--expected-manifest-sha256 "$RTF_FIXTURE_MANIFEST_SHA256")
+    fi
+    "${fixture_args[@]}"
   elif [[ ! -f "$RTF_MANIFEST" ]]; then
     python -m benchmark_runner.resolve_dataset \
       --dataset-id "$RTF_DATASET_ID" --revision "$RTF_DATASET_REVISION" \
@@ -56,7 +64,9 @@ if [[ "$#" -eq 0 ]]; then
     --dataset-revision "$RTF_DATASET_REVISION" --decoder "$RTF_DECODER" \
     --batch-size "$RTF_BATCH_SIZE" --precision "$RTF_PRECISION" \
     --repeat "$RTF_REPEAT" --provider "$RTF_PROVIDER" \
-    --service-id "$RTF_SERVICE_ID" --gpu "$RTF_GPU"
+    --service-id "$RTF_SERVICE_ID" --gpu "$RTF_GPU" \
+    --profile "$RTF_PROFILE_ID" --fixture-repo-id "$RTF_FIXTURE_REPO_ID" \
+    --fixture-revision "$RTF_FIXTURE_REVISION"
 fi
 
 set +e

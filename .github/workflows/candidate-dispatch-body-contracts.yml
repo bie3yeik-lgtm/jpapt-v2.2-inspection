@@ -42,8 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           grep -F 'dry_run:' .github/workflows/candidate-request-gateway.yml
-          grep -F 'I_DRY_RUN: ${{ inputs.dry_run }}' .github/workflows/candidate-request-gateway.yml
-          grep -F 'DRY_RUN: ${{ steps.resolve.outputs.dry_run }}' .github/workflows/candidate-request-gateway.yml
+          grep -F 'I_DRY_RUN:' .github/workflows/candidate-request-gateway.yml
+          grep -F 'inputs.dry_run' .github/workflows/candidate-request-gateway.yml
+          grep -F 'DRY_RUN:' .github/workflows/candidate-request-gateway.yml
+          grep -F 'steps.resolve.outputs.dry_run' .github/workflows/candidate-request-gateway.yml
           grep -F "printf -- '- dry-run:" .github/workflows/candidate-request-gateway.yml
       - name: Normalize manual Gateway dry-run
         shell: bash

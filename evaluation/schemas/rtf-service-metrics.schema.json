@@ -4,7 +4,7 @@
   "title": "RTF service benchmark metrics",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "status", "model_id", "model_revision", "dataset_id", "dataset_revision", "manifest_sha256", "image_digest", "decoder", "audio_duration_sec", "processing_duration_sec", "rtf", "rtfx", "rtf_scope", "provider", "environment", "service_id", "gpu", "dtype", "batch_size", "repeat", "cer", "peak_vram_bytes", "gpu_utilization_pct", "gpu_price_per_hour", "cost_per_audio_hour"],
+  "required": ["schema_version", "run_id", "status", "model_id", "model_revision", "dataset_id", "dataset_revision", "manifest_sha256", "image_digest", "inspection_profile", "fixture_repo_id", "fixture_revision", "decoder", "audio_duration_sec", "processing_duration_sec", "rtf", "rtfx", "rtf_scope", "provider", "environment", "service_id", "gpu", "dtype", "batch_size", "repeat", "cer", "peak_vram_bytes", "gpu_utilization_pct", "gpu_price_per_hour", "cost_per_audio_hour"],
   "properties": {
     "schema_version": {"type": "integer", "const": 1},
     "run_id": {"type": "string", "minLength": 1},
@@ -15,6 +15,9 @@
     "dataset_revision": {"type": "string", "minLength": 1},
     "manifest_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
     "image_digest": {"type": "string", "minLength": 8},
+    "inspection_profile": {"type": "string", "enum": ["lough", "precise"]},
+    "fixture_repo_id": {"type": "string", "const": "gawohok7/rtf-benchmark-fixtures"},
+    "fixture_revision": {"type": "string", "minLength": 40, "maxLength": 40},
     "decoder": {"type": "string", "enum": ["tdt", "ctc", "whisper"]},
     "audio_duration_sec": {"type": "number", "exclusiveMinimum": 0},
     "processing_duration_sec": {"type": "number", "exclusiveMinimum": 0},

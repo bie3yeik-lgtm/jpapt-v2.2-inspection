@@ -110,6 +110,16 @@ jobs:
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ inputs.gpu }}
           RTF_BATCH_SIZE: ${{ inputs.batch_size }}
+          RTF_REPEAT: 3
+          RTF_DATASET_CONFIGURATION: default
+          RTF_DATASET_SPLIT: test
+          RTF_DATASET_SEED: rtf-benchmark-v1-common-voice-ja
+          RTF_DATASET_COUNT_MIN: 20
+          RTF_DATASET_COUNT_MAX: 50
+          RTF_DATASET_TARGET_TOTAL_SEC: 5400
+          RTF_DATASET_MAX_DURATION_SEC: 600
+          RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
+          RTF_FIXTURE_MANIFEST_SHA256: ''
           HF_FLAVOR: ${{ inputs.hf_flavor }}
           RUNPOD_GPU_ID: ${{ inputs.gpu }}
         run: |
@@ -122,6 +132,7 @@ jobs:
             export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
             export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           fi
+          export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in
