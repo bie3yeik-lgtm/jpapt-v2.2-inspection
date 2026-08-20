@@ -119,7 +119,6 @@ jobs:
           }
       - name: Run all benchmark batch sizes sequentially
         id: execute
-        continue-on-error: true
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           RTF_MODEL_ID: ${{ inputs.model_id }}
@@ -158,6 +157,7 @@ jobs:
             *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
           esac
           mkdir -p results/batches
+          successful_batches=0
           for batch_size in 1 8 32; do
             batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
             batch_dir="results/batches/batch-${batch_size}"
@@ -183,8 +183,14 @@ jobs:
             jq -e --arg run_id "$batch_run_id" '(.schema_version == 1) and (.run_id == $run_id)' "$RTF_LOCAL_RECEIPT" >/dev/null
             if [[ "$execute_status" -ne 0 ]]; then
               echo "batch ${batch_size} exited with status ${execute_status}; continuing remaining batches" >&2
+            elif jq -e '.status == "completed"' "$RTF_LOCAL_RECEIPT" >/dev/null; then
+              successful_batches=$((successful_batches + 1))
             fi
           done
+          if [[ "$successful_batches" -eq 0 ]]; then
+            echo 'all benchmark batches failed; marking the benchmark job as FAILURE' >&2
+            exit 1
+          fi
       - name: Normalize provider receipts
         id: receipts
         if: always()

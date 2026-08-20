@@ -5,7 +5,11 @@ set -euo pipefail
 # not replace ENTRYPOINT. The lifecycle wrapper uses `sleep infinity` to keep
 # the container alive until it can invoke this entrypoint over SSH. Handle
 # that control command before translating benchmark arguments.
-if [[ "${1:-}" == "sleep" && "${2:-}" == "infinity" && "$#" -eq 2 ]]; then
+if {
+  [[ "$#" -eq 2 && "${1:-}" == "sleep" && "${2:-}" == "infinity" ]]
+} || {
+  [[ "$#" -eq 1 && "${1:-}" == "sleep infinity" ]]
+}; then
   exec sleep infinity
 fi
 
