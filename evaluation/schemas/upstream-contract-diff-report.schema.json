@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/upstream-contract-diff-report.schema.json",
+  "title": "Upstream contract diff report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_repository",
+    "baseline_revision",
+    "public_revision",
+    "changed_files",
+    "contract_changed_files",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "source_repository": {"type": "string", "minLength": 3},
+    "baseline_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "public_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "contract_changed_files": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_changed_files", "contract_changed_files"],
+      "properties": {
+        "total_changed_files": {"type": "integer", "minimum": 0},
+        "contract_changed_files": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

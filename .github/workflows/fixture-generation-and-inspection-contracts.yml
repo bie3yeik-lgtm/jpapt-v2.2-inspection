@@ -1,0 +1,65 @@
+name: Fixture Generation And Inspection Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fixture-generation-and-inspection.yml
+      - .github/workflows/fixture-generation-and-inspection-contracts.yml
+      - scripts/ci/build-fixture-generation-receipt.sh
+      - evaluation/schemas/fixture-generation-receipt.schema.json
+      - python/tests/unit/test_fixture_generation_receipt_schema.py
+  pull_request:
+    paths:
+      - .github/workflows/fixture-generation-and-inspection.yml
+      - .github/workflows/fixture-generation-and-inspection-contracts.yml
+      - scripts/ci/build-fixture-generation-receipt.sh
+      - evaluation/schemas/fixture-generation-receipt.schema.json
+      - python/tests/unit/test_fixture_generation_receipt_schema.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Validate fixture generation receipt and dispatch contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Python test dependencies
+        run: python -m pip install --disable-pip-version-check jsonschema pytest
+
+      - name: Validate helper, schema, and dispatch registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/build-fixture-generation-receipt.sh
+          pytest -q python/tests/unit/test_fixture_generation_receipt_schema.py
+          cargo run --quiet --locked -p asr-contracts --bin asr-workflow-dispatch -- describe fixture-generation-and-inspection
+
+      - name: Accept plan-only receipt without execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(printf 'f%.0s' {1..40})"
+          bash scripts/ci/build-fixture-generation-receipt.sh \
+            gen-001 "$sha" gawohok7/example-bucket /tmp/fixture-plan.json true false
+          jq -e '.status == "planned" and .execute == false and .generation_id != .inspection_id' \
+            /tmp/fixture-plan.json >/dev/null
+
+      - name: Reject execute with dry_run true
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(printf 'a%.0s' {1..40})"
+          if bash scripts/ci/build-fixture-generation-receipt.sh \
+            gen-002 "$sha" gawohok7/example-bucket /tmp/fixture-bad.json true true; then
+            echo 'execute=true with dry_run=true unexpectedly accepted' >&2
+            exit 1
+          fi

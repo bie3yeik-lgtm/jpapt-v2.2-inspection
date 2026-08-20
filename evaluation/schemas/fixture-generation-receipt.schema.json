@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/fixture-generation-receipt.schema.json",
+  "title": "Fixture generation and inspection receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generation_id",
+    "inspection_id",
+    "source_revision",
+    "hf_bucket",
+    "status",
+    "dry_run",
+    "execute"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "generation_id": {"type": "string", "minLength": 1},
+    "inspection_id": {"type": "string", "minLength": 1},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "hf_bucket": {"type": "string", "minLength": 3},
+    "status": {
+      "type": "string",
+      "enum": ["planned", "ready_for_dispatch", "blocked"]
+    },
+    "dry_run": {"type": "boolean"},
+    "execute": {"type": "boolean"},
+    "bucket_run_id": {"type": ["string", "null"]},
+    "notes": {"type": ["string", "null"]}
+  }
+}

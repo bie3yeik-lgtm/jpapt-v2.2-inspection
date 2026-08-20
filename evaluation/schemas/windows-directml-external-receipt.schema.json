@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/windows-directml-external-receipt.schema.json",
+  "title": "Windows DirectML external provider receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_repository",
+    "source_revision",
+    "hf_bucket",
+    "candidate_id",
+    "provider_id",
+    "runner_os",
+    "validation_mode",
+    "status",
+    "dry_run",
+    "execute",
+    "linux_hf_jobs_smoke_equivalent"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "source_repository": {"type": "string", "minLength": 3},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "hf_bucket": {"type": "string", "minLength": 3},
+    "candidate_id": {"type": "string", "pattern": "^candidate-[0-9]{6}$"},
+    "provider_id": {"type": "string", "const": "directml"},
+    "runner_os": {"type": "string", "const": "windows"},
+    "validation_mode": {"type": "string", "enum": ["smoke", "parity"]},
+    "status": {"type": "string", "enum": ["planned", "ready_for_execution", "blocked"]},
+    "dry_run": {"type": "boolean"},
+    "execute": {"type": "boolean"},
+    "linux_hf_jobs_smoke_equivalent": {"type": "boolean", "const": false},
+    "hf_target": {"type": ["string", "null"]},
+    "notes": {"type": ["string", "null"]}
+  }
+}

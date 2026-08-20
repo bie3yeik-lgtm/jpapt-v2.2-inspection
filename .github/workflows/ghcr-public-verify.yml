@@ -1,0 +1,60 @@
+name: GHCR Public Verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Digest-pinned OCI reference (ghcr.io/.../...@sha256:...)"
+        required: true
+        type: string
+      require_public:
+        description: "Fail when anonymous registry access is denied"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-public-verify-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify anonymous GHCR namespace access
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify image without registry credentials
+        id: verify
+        shell: bash
+        env:
+          GHCR_REQUIRE_PUBLIC: ${{ inputs.require_public }}
+          GHCR_VERIFY_OUTPUT_DIR: .ci/ghcr-public-verify
+        run: |
+          set -euo pipefail
+          bash scripts/ci/ghcr-public-verify.sh "${{ inputs.image }}"
+
+      - name: Summarize verify receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq . .ci/ghcr-public-verify/receipt.json
+          {
+            echo "### GHCR public verify"
+            echo "- image: \`${{ inputs.image }}\`"
+            echo "- digest: \`${{ steps.verify.outputs.digest }}\`"
+            echo "- credentials_used: \`${{ steps.verify.outputs.credentials_used }}\`"
+            echo "- anonymous_pull_namespace: \`${{ steps.verify.outputs.anonymous_pull_namespace }}\`"
+            echo "- verification_method: \`${{ steps.verify.outputs.verification_method }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghcr-public-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci/ghcr-public-verify
+          retention-days: 30
+          if-no-files-found: error

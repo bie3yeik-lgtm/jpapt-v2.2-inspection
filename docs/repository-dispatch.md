@@ -175,6 +175,8 @@ mise run actions-list
 
 This avoids docs becoming stale when workflows are added or renamed.
 
+Parent-repository external dispatch workflows (`ghcr-public-verify`, `upstream-contract-diff`, `fixture-generation-and-inspection`, `windows-directml-provider-route`) are documented in [`parent-external-dispatch-workflows-20260820.md`](./parent-external-dispatch-workflows-20260820.md).
+
 ## Security model
 
 The router has only:

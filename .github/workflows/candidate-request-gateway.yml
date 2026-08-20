@@ -94,6 +94,7 @@ jobs:
   plan:
     name: Resolve and estimate request
     runs-on: ubuntu-latest
+    environment: Private-Secrets
     permissions:
       contents: read
       actions: read
@@ -339,6 +340,7 @@ jobs:
     needs: plan
     if: ${{ always() && needs.plan.result == 'failure' }}
     runs-on: ubuntu-latest
+    environment: Private-Secrets
     permissions:
       contents: read
     steps:
@@ -392,7 +394,7 @@ jobs:
         shell: bash
         env:
           RECEIPT_REPOSITORY: ${{ steps.rejection.outputs.receipt_repository }}
-          RECEIPT_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          RECEIPT_TOKEN: ${{ secrets.JPAPT_ACK_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -401,7 +403,7 @@ jobs:
             token="$GITHUB_TOKEN"
           fi
           [[ -n "$token" ]] || {
-            echo "::error::SOURCE_REPO_TOKEN is required to deliver rejection to $RECEIPT_REPOSITORY"
+            echo "::error::JPAPT_ACK_TOKEN is required to deliver rejection to $RECEIPT_REPOSITORY"
             exit 1
           }
           GH_TOKEN="$token" bash scripts/ci/repository-dispatch-with-retry.sh \
