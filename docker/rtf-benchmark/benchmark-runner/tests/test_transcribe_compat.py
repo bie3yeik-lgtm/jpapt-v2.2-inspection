@@ -22,6 +22,31 @@ class _Torch:
         self.cuda = _Cuda()
 
 
+class _DataLoader:
+    last_kwargs: dict[str, object] | None = None
+
+    def __init__(self, **kwargs: object) -> None:
+        type(self).last_kwargs = kwargs
+        self.num_workers = int(kwargs["num_workers"])
+        self.pin_memory = bool(kwargs["pin_memory"])
+        self._persistent_workers = bool(kwargs["persistent_workers"])
+        self._prefetch_factor = kwargs["prefetch_factor"]
+
+    @property
+    def persistent_workers(self) -> bool:
+        return self._persistent_workers
+
+    @property
+    def prefetch_factor(self) -> object:
+        return self._prefetch_factor
+
+
+class _TorchWithDataLoader(_Torch):
+    class utils:
+        class data:
+            DataLoader = _DataLoader
+
+
 class _Device:
     type = "cuda"
 
@@ -98,6 +123,31 @@ class _ModelWithTypedOverrideConfig:
     def transcribe(self, paths: list[str], *, override_config: _TranscribeConfig) -> list[str]:
         self.config = override_config
         self._setup_transcribe_dataloader({"paths2audio_files": paths})
+        return ["ok"]
+
+
+class _ModelWithHardCodedDataLoader:
+    def __init__(self, loader_type: type[_DataLoader]) -> None:
+        self.loader_type = loader_type
+        self.loader: _DataLoader | None = None
+
+    @classmethod
+    def get_transcribe_config(cls) -> _TranscribeConfig:
+        return _TranscribeConfig()
+
+    def _setup_transcribe_dataloader(self, config: dict[str, object]) -> _DataLoader:
+        del config
+        self.loader = self.loader_type(
+            num_workers=8,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
+        return self.loader
+
+    def transcribe(self, paths: list[str], *, override_config: _TranscribeConfig) -> list[str]:
+        del paths, override_config
+        self._setup_transcribe_dataloader({})
         return ["ok"]
 
 
@@ -180,6 +230,27 @@ class TranscribeCompatTests(unittest.TestCase):
         self.assertFalse(model.loader.pin_memory)
         self.assertFalse(model.loader.persistent_workers)
         self.assertIsNone(model.loader.prefetch_factor)
+
+    def test_hard_coded_dataloader_is_constrained_before_initialization(self) -> None:
+        model = _ModelWithHardCodedDataLoader(_DataLoader)
+        torch = _TorchWithDataLoader()
+
+        result = transcribe(
+            model,
+            ["sample.wav"],
+            batch_size=1,
+            torch_module=torch,
+            device=type("CpuDevice", (), {"type": "cpu"})(),
+        )
+
+        self.assertEqual(result, ["ok"])
+        assert _DataLoader.last_kwargs is not None
+        self.assertEqual(_DataLoader.last_kwargs, {
+            "num_workers": 0,
+            "pin_memory": False,
+            "persistent_workers": False,
+            "prefetch_factor": None,
+        })
 
 
 if __name__ == "__main__":

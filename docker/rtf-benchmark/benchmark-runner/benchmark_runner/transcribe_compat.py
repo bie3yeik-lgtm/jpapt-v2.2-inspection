@@ -45,7 +45,32 @@ def _set_config_value(config: Any, name: str, value: Any) -> bool:
     return False
 
 
-def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
+def _patch_dataloader_constructor(torch_module: Any) -> tuple[Any, Any] | None:
+    """Constrain PyTorch DataLoader kwargs before NeMo constructs it."""
+
+    data = getattr(getattr(torch_module, "utils", None), "data", None)
+    loader_type = getattr(data, "DataLoader", None)
+    original_init = getattr(loader_type, "__init__", None)
+    if loader_type is None or original_init is None:
+        return None
+
+    def constrained_init(instance: Any, *args: Any, **kwargs: Any) -> Any:
+        effective_kwargs = dict(kwargs)
+        effective_kwargs.update(
+            {
+                "num_workers": 0,
+                "pin_memory": False,
+                "persistent_workers": False,
+                "prefetch_factor": None,
+            }
+        )
+        return original_init(instance, *args, **effective_kwargs)
+
+    setattr(loader_type, "__init__", constrained_init)
+    return loader_type, original_init
+
+
+def _patch_loader_factory(model: Any, torch_module: Any) -> tuple[Any, Any, Any]:
     """Force loader policy even on NeMo versions that hard-code pin_memory.
 
     Several NeMo ASR implementations build the temporary transcription loader
@@ -59,8 +84,9 @@ def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
 
     original = getattr(model, "_setup_transcribe_dataloader", None)
     if original is None:
-        return None, None
+        return None, None, None
     had_instance_attribute = "_setup_transcribe_dataloader" in vars(model)
+    dataloader_patch = _patch_dataloader_constructor(torch_module)
 
     def constrained(config: Any) -> Any:
         effective_config = dict(config)
@@ -72,10 +98,15 @@ def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
         return loader
 
     setattr(model, "_setup_transcribe_dataloader", constrained)
-    return original, had_instance_attribute
+    return original, had_instance_attribute, dataloader_patch
 
 
-def _restore_loader_factory(model: Any, original: Any, had_instance_attribute: Any) -> None:
+def _restore_loader_factory(
+    model: Any, original: Any, had_instance_attribute: Any, dataloader_patch: Any
+) -> None:
+    if dataloader_patch is not None:
+        loader_type, original_init = dataloader_patch
+        setattr(loader_type, "__init__", original_init)
     if original is None:
         return
     if had_instance_attribute:
@@ -122,7 +153,9 @@ def transcribe(
     configure_cuda_diagnostics(torch_module)
     function = model.transcribe
     kwargs: dict[str, Any] = {"batch_size": batch_size}
-    original_loader, had_instance_attribute = _patch_loader_factory(model)
+    original_loader, had_instance_attribute, dataloader_patch = _patch_loader_factory(
+        model, torch_module
+    )
     try:
         override_config = _build_safe_override_config(model, batch_size)
         if override_config is not None and _supports_keyword(function, "override_config"):
@@ -140,7 +173,9 @@ def transcribe(
         )
         result = function(list(paths), **kwargs)
     finally:
-        _restore_loader_factory(model, original_loader, had_instance_attribute)
+        _restore_loader_factory(
+            model, original_loader, had_instance_attribute, dataloader_patch
+        )
     if getattr(device, "type", None) == "cuda":
         torch_module.cuda.synchronize()
     return result
