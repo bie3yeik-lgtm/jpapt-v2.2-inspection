@@ -28,7 +28,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
     p.add_argument("--service-id", choices=("hf-jobs", "hf-inference-endpoint", "runpod-pod"), required=True)
     p.add_argument("--gpu", required=True)
-    p.add_argument("--profile", choices=("lough", "precise"), required=True)
+    p.add_argument("--profile", choices=("smoke", "pref", "probe"), required=True)
     p.add_argument("--fixture-repo-id", required=True)
     p.add_argument("--fixture-revision", required=True)
     return p

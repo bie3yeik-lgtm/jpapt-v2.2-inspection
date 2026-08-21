@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--count-max", type=int, default=50)
     parser.add_argument("--target-total-sec", type=float, default=5400.0)
     parser.add_argument("--max-duration-sec", type=float, default=600.0)
+    parser.add_argument("--require-long-sample-sec", type=float, default=0.0)
     parser.add_argument("--seed", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -44,6 +45,7 @@ def main() -> int:
     if args.count_min < 1 or args.count_max < args.count_min:
         raise ValueError("invalid sample count bounds")
     chunk_target_sec = max(30.0, min(args.max_duration_sec, args.target_total_sec / args.count_min))
+    first_chunk_target_sec = max(chunk_target_sec, args.require_long_sample_sec)
     pending_audio: list[object] = []
     pending_text: list[str] = []
     pending_duration = 0.0
@@ -80,7 +82,8 @@ def main() -> int:
         duration = len(array) / 16_000
         if duration <= 0:
             continue
-        if pending_duration >= 30.0 and pending_duration + duration > chunk_target_sec:
+        current_target_sec = first_chunk_target_sec if not records else chunk_target_sec
+        if pending_duration >= 30.0 and pending_duration + duration > current_target_sec:
             flush()
         pending_audio.append(array)
         pending_text.append(str(row.get("sentence", "")))
@@ -98,6 +101,12 @@ def main() -> int:
         raise RuntimeError(f"materialized {len(records)} samples; required {args.count_min}..{args.count_max}")
     if total_duration < args.target_total_sec:
         raise RuntimeError(f"materialized {total_duration:.2f}s; required {args.target_total_sec:.2f}s")
+    if args.require_long_sample_sec > 0 and not any(
+        float(record["audio_duration_sec"]) >= args.require_long_sample_sec for record in records
+    ):
+        raise RuntimeError(
+            f"no sample reached required long duration {args.require_long_sample_sec:.2f}s"
+        )
     args.manifest.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
     return 0
 

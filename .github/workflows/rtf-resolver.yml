@@ -21,9 +21,9 @@ on:
       inspection_profile:
         description: Fixture sizing profile
         required: true
-        default: lough inspection
+        default: smoke
         type: choice
-        options: [lough inspection, precise inspection]
+        options: [smoke, pref, probe]
 
 permissions:
   contents: write
@@ -86,10 +86,13 @@ jobs:
           set -euo pipefail
           [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required for dataset resolution'; exit 1; }
           case "$INSPECTION_PROFILE" in
-            'lough inspection') count_min=20; count_max=50; target_total=5400; max_duration=600 ;;
-            'precise inspection') count_min=50; count_max=150; target_total=27000; max_duration=1800 ;;
+            'smoke') count_min=20; count_max=50; target_total=5400; max_duration=600 ;;
+            'pref') count_min=50; count_max=150; target_total=27000; max_duration=1800 ;;
+            'probe') count_min=100; count_max=300; target_total=72000; max_duration=7200 ;;
             *) echo 'unknown inspection profile' >&2; exit 2 ;;
           esac
+          long_sample=0
+          [[ "$INSPECTION_PROFILE" == probe ]] && long_sample=3600
           rm -rf .ci/rtf-resolver
           mkdir -p .ci/rtf-resolver/audio .ci/rtf-resolver/output
           docker pull "$IMAGE"
@@ -109,6 +112,7 @@ jobs:
                 --configuration default --split test \\
                 --count-min '$count_min' --count-max '$count_max' \\
                 --target-total-sec '$target_total' --max-duration-sec '$max_duration' \\
+                --require-long-sample-sec '$long_sample' \\
                 --seed rtf-benchmark-v1-common-voice-ja \\
                 --output-dir /resolver/audio \\
                 --manifest /resolver/output/benchmark-v1.jsonl
@@ -134,10 +138,12 @@ jobs:
           records = [json.loads(line) for line in manifest.read_text().splitlines() if line]
           total = sum(float(record['audio_duration_sec']) for record in records)
           profile = os.environ['INSPECTION_PROFILE']
-          if profile == 'lough inspection':
+          if profile == 'smoke':
               count_min, count_max, total_min, total_max, duration_max = 20, 50, 3600, 7200, 600
-          elif profile == 'precise inspection':
+          elif profile == 'pref':
               count_min, count_max, total_min, total_max, duration_max = 50, 150, 18000, 36000, 1800
+          elif profile == 'probe':
+              count_min, count_max, total_min, total_max, duration_max = 100, 300, 72000, 180000, 7200
           else:
               raise SystemExit(f'unknown profile: {profile}')
           if not count_min <= len(records) <= count_max:
@@ -148,6 +154,12 @@ jobs:
               raise SystemExit(f'invalid total duration: {total}')
           if any(not 30 <= float(record['audio_duration_sec']) <= duration_max for record in records):
               raise SystemExit(f'sample duration outside 30..{duration_max} seconds')
+          if profile == 'probe':
+              durations = [float(record['audio_duration_sec']) for record in records]
+              if not any(duration >= 3600 for duration in durations):
+                  raise SystemExit('probe requires at least one sample of one hour or longer')
+              if not any(duration < 3600 for duration in durations):
+                  raise SystemExit('probe requires at least one sample shorter than one hour')
           receipt = {
               'schema_version': 1,
               'run_id': os.environ['RUN_ID'],

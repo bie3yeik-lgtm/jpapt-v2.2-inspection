@@ -22,9 +22,11 @@ rtf-scores/
 ├── run_summary_history/       # 選択・回収履歴。ランキング入力ではない
 ├── benchmark/                 # 固定入力manifestとfixture pointer
 │   └── benchmark-v1.jsonl
-├── lough/                     # 今回のPhase 1
+├── smoke/                     # 今回のPhase 1
 │   └── <service>/<gpu>/batch-<n>/
-└── precise/                    # 将来の長時間検査
+├── pref/                      # 比較候補の優先実行
+│   └── <service>/<gpu>/batch-<n>/
+└── probe/                     # 20〜50時間の大規模probe
     └── <service>/<gpu>/batch-<n>/
 ```
 

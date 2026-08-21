@@ -24,6 +24,11 @@
 16. [parakeet-provenance-and-routing-responsibility.md](./parakeet-provenance-and-routing-responsibility.md) — Parakeet asset provenance、candidate transfer、親リポジトリとのrouting責務分離
 17. [recursive-delivery-entry-20260820.md](./recursive-delivery-entry-20260820.md) — #134 provenance実装のUnit入口・受入条件・blocker
 18. [parakeet-provenance-remaining-work-and-parent-contract-20260820.md](./parakeet-provenance-remaining-work-and-parent-contract-20260820.md) — 残作業、受領payload、親リポジトリとの契約、完了判定
+19. [recursive-delivery-entry-rtf-benchmark-completion-20260821.md](./recursive-delivery-entry-rtf-benchmark-completion-20260821.md) — RTF Benchmark完成branchの目的、工程、blocker
+20. [rtf-benchmark-flow-and-actions-contract-20260821.md](./rtf-benchmark-flow-and-actions-contract-20260821.md) — GHCR、Resolver、provider、record、rank、Actionsの一連の契約
+21. [rtf-profile-and-probe-contract-20260821.md](./rtf-profile-and-probe-contract-20260821.md) — `smoke` / `pref` / `probe` の現行profileとprobe規模契約
+22. [rtf-smoke-matrix-ranking-objective-20260821.md](./rtf-smoke-matrix-ranking-objective-20260821.md) — 0〜100 users向け全組み合わせsmoke、上位3位ランキング、後続API/モデル改善試験
+23. [rtf-benchmark-operational-flow-20260821.md](./rtf-benchmark-operational-flow-20260821.md) — GHCR、Resolver、HF/RunPod smoke、result/metrics回収、ranking PRの現行実行順序
 19. [parent-external-dispatch-workflows-20260820.md](./parent-external-dispatch-workflows-20260820.md) — 親 `repository_dispatch` 向け workflow 実装ブランチの目的、#134/#154/#160 対応、実装 backlog
 20. [recursive-delivery-entry-parent-external-dispatch-20260820.md](./recursive-delivery-entry-parent-external-dispatch-20260820.md) — 上記ブランチの recursive delivery 着手入口
 21. [parent-repository-external-dispatch-config-handoff-20260820.md](./parent-repository-external-dispatch-config-handoff-20260820.md) — 公開正本 merge 後に親 repo で行う route config 更新 handoff

@@ -11,7 +11,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--metrics", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--profile", choices=("lough", "precise"), required=True)
+    parser.add_argument("--profile", choices=("smoke", "pref", "probe"), required=True)
     parser.add_argument("--service-result", type=Path, required=True)
     args = parser.parse_args()
     metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
@@ -26,7 +26,7 @@ def main() -> int:
     record = {
         "schema_version": 1,
         "run_id": metrics["run_id"],
-        "phase": "phase1" if args.profile == "lough" else "full",
+        "phase": {"smoke": "phase1", "pref": "pref", "probe": "probe"}[args.profile],
         "service_id": metrics["service_id"],
         "gpu": metrics["gpu"],
         "model_id": metrics["model_id"],
