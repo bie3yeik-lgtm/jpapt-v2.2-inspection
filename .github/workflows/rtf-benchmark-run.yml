@@ -28,11 +28,11 @@ on:
         default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
         type: string
       inspection_profile:
-        description: Fixture sizing profile; Phase 1 uses lough inspection
+        description: Fixture sizing profile; Phase 1 uses smoke
         required: true
-        default: lough inspection
+        default: smoke
         type: choice
-        options: [lough inspection]
+        options: [smoke]
 
 permissions:
   contents: write
@@ -237,7 +237,7 @@ jobs:
       status: ${{ matrix.result.status }}
       provider: cuda
       environment: linux
-      inspection_profile: ${{ inputs.inspection_profile == 'lough inspection' && 'lough' || 'precise' }}
+      inspection_profile: ${{ inputs.inspection_profile }}
       gpu: ${{ inputs.gpu }}
       batch_size: ${{ matrix.result.batch_size }}
       job_id: ${{ matrix.result.job_id || '' }}

@@ -3863,3 +3863,84 @@ api-backup.example.com
 
 [1]: https://developer.adobe.com/premiere-pro/uxp/resources/recipes/network/?utm_source=chatgpt.com "Network Operations"
 [2]: https://developer.adobe.com/premiere-pro/uxp/plugins/concepts/manifest/?utm_source=chatgpt.com "Plugin manifest"
+# Current benchmark objective (2026-08-21)
+
+現在の最優先目的は、0〜100 users規模のサービス開始判断に必要な最小実測を完成させる
+ことである。大規模probeや本番負荷試験を先に成立させることは目的にしない。
+
+## 実行対象
+
+この文書の「最終的に作るべき表」に現れる全ての**有効な組み合わせ**について、同一の
+固定fixtureを用いて `batch=1/8/32` のsmoke測定を行う。
+
+組み合わせの軸は次のとおりである。
+
+```text
+service / GPU
+model
+decoder（modelと互換なもの）
+dataset
+precision
+batch = 1, 8, 32
+```
+
+modelとdecoderの非互換な組み合わせは「未実行の成功」として補完せず、matrixから明示的に
+除外する。現行の候補軸を全て採用する場合、次の有効な組み合わせを期待する。
+
+```text
+6 service/GPU × 3 valid model/decoder pairs × 3 datasets × 3 batch sizes
+= 162 benchmark records
+```
+
+同一組み合わせのrepeatはrecord内部の計測条件として管理し、matrixの別軸にはしない。
+上記件数は現在のモデル、decoder、dataset候補に基づく目標値であり、実際のmatrix生成時に
+source-controlled manifestと整合しているかを検証する。
+
+## smokeとユーザー規模の意味
+
+この段階のsmokeは、0〜100 users相当の初期サービス判断に使う比較実測である。ユーザー数を
+模擬した負荷生成、queue飽和、autoscaling、bootstrap URLの本番可用性を証明するものではない。
+
+各recordには少なくとも次を保存する。
+
+- RTF / RTFx（batch=1はlatency、batch=8/32はthroughputの比較材料）
+- service RTFとmodel RTFのscope
+- CER、VRAM、GPU、provider、precision、decoder
+- GPU単価と `$/audio-hour`
+- model/dataset/fixture/image revisionとSHA-256
+- provider job identity、result/metrics URI、SHA-256
+
+OOM、provider障害、timeout、metrics欠落は成功recordに変換せず、batch単位のblocked/not_verified
+として保存する。全組み合わせの受領が揃わない状態でランキングを完成扱いにしない。
+
+## 最終成果
+
+`docs/Calculare-RTF-Score.md` の「最後にランキングを自動生成」に従い、schema・identity・
+provider execution proof・cost情報を満たすcompleted recordだけを対象に、総合上位3位の表を
+Actionsで自動生成する。ランキング表には順位だけでなく、service、GPU、model、decoder、
+dataset、batch、RTF、CER、`$/audio-hour`を残し、同率時のsort keyもRust contractで固定する。
+
+上位3位が確定した後に、選択された最適サービスを根拠として次の実働試験へ進む。
+
+```text
+RTF smoke matrix complete
+  -> accepted top-3 ranking
+  -> selected service evidence
+  -> bootstrap URL API distribution trial
+  -> model improvement implementation trial
+```
+
+bootstrap URLによるAPI配布、実モデル改善の実働試験、0〜100 usersを超える負荷・可用性評価は、
+このsmokeランキングの後続scopeであり、ランキングの代替受入条件ではない。
+
+## 現在の実装との差分
+
+- `evaluation/manifests/rtf-phase1-matrix.json`は6 service/GPUと`1/8/32`を定義している。
+- `RTF Benchmark Run`は一回のprovider実行で`1/8/32`を順次処理する。
+- しかし、現行workflowの入力・fixtureは全dataset、全valid model/decoder pairの直積を一括生成・
+  回収する契約としては未完成である。
+- `benchmark-ranking.yml`は現在profile単位のrecord収集とranking生成を行うが、全期待cellの
+  欠落検出と上位3位の明示的な出力契約は、次の実装作業で完成させる。
+
+したがって、現段階の受入判定は「smoke matrixを全cell実測し、completed recordだけでtop-3を
+再生成できること」とする。外部HF Jobs / RunPodの実行結果がない限り、最適サービスは未確定である。

@@ -9,7 +9,7 @@ service_id="${3:?service_id is required}"
 status="${4:?status is required}"
 provider="${5:?provider is required}"
 environment="${6:?environment is required}"
-inspection_profile="${7:?inspection_profile is required (lough|precise)}"
+inspection_profile="${7:?inspection_profile is required (smoke|pref|probe)}"
 gpu="${8:?gpu is required}"
 batch_size="${9:?batch_size is required}"
 job_id="${10:-}"
@@ -37,7 +37,7 @@ case "$environment" in
   *) echo "ERROR: unsupported environment: $environment" >&2; exit 2 ;;
 esac
 case "$inspection_profile" in
-  lough|precise) ;;
+  smoke|pref|probe) ;;
   *) echo "ERROR: unsupported inspection_profile: $inspection_profile" >&2; exit 2 ;;
 esac
 [[ "$batch_size" =~ ^(1|8|32)$ ]] || { echo "ERROR: unsupported batch_size: $batch_size" >&2; exit 2; }

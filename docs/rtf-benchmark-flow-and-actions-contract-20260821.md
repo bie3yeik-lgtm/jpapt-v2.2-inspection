@@ -58,7 +58,7 @@ Resolverは次を固定する。
 - dataset revision: workflow inputのimmutable commit
 - configuration/split: `default` / `test`
 - deterministic seed: `rtf-benchmark-v1-common-voice-ja`
-- inspection profile: `lough inspection`または`precise inspection`
+- inspection profile: `smoke`、`pref`、または`probe`
 - audio contract: float32, mono, 16000 Hz, finite, C-contiguous, materialized file
 - manifest SHA-256、dataset revision、fixture repository revision、image digest
 
@@ -147,7 +147,7 @@ run_id
 
 Authority: `.github/workflows/benchmark-ranking.yml`.
 
-workflowはmanual dispatchの`phase=lough|precise`を受け、`rtf-scores/<phase>/`から`benchmark-record.json`をsorted globで収集する。recordが0件ならBLOCKEDとして終了する。
+workflowはmanual dispatchの`phase=smoke|pref|probe`を受け、`rtf-scores/<phase>/`から`benchmark-record.json`をsorted globで収集する。recordが0件ならBLOCKEDとして終了する。
 
 完成時の処理順は次のとおり。
 

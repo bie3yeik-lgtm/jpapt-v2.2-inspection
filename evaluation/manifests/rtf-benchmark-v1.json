@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inspection_profile": "lough inspection",
+  "inspection_profile": "smoke",
   "dataset_id": "japanese-asr/ja_asr.common_voice_8_0",
   "dataset_revision": "bf8819e8d9a5feb51b0c718686bd20ea67a3c729",
   "configuration": "default",

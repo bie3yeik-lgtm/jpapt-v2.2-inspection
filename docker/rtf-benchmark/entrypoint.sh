@@ -38,7 +38,7 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_DATASET_COUNT_MIN:=20}"
   : "${RTF_DATASET_COUNT_MAX:=50}"
   : "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
-  : "${RTF_INSPECTION_PROFILE:=lough inspection}"
+  : "${RTF_INSPECTION_PROFILE:=smoke}"
   : "${RTF_DATASET_MAX_DURATION_SEC:=600}"
   : "${RTF_MANIFEST:=/workspace/benchmark-v1.jsonl}"
   : "${RTF_FIXTURE_REPO_ID:=}"
@@ -56,7 +56,7 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_SERVICE_ID:?RTF_SERVICE_ID is required}"
   : "${RTF_GPU:?RTF_GPU is required}"
   : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
-  : "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE// inspection/}}"
+  : "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE}}"
   if [[ -n "$RTF_FIXTURE_REPO_ID" ]]; then
     : "${HF_TOKEN:?HF_TOKEN is required when RTF_FIXTURE_REPO_ID is set}"
     : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required when RTF_FIXTURE_REPO_ID is set}"

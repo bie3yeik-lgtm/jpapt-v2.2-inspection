@@ -42,7 +42,7 @@ fn accepts_metrics_with_nullable_telemetry() {
         "dataset_revision": "dataset-revision-1",
         "manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "inspection_profile": "lough",
+        "inspection_profile": "smoke",
         "fixture_repo_id": "gawohok7/rtf-benchmark-fixtures",
         "fixture_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "decoder": "tdt",

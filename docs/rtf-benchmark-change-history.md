@@ -26,7 +26,7 @@ Canonical benchmarkの入力は、次のrevision固定値を用いる。
 - Model revision: `44edb27eea9317daf89333e75eb830db4b1cc298`
 - Dataset: `japanese-asr/ja_asr.common_voice_8_0`
 - Fixture repository: `gawohok7/rtf-benchmark-fixtures`
-- Inspection profile: `lough`
+- Inspection profile: `smoke`
 - Phase 1 GPU対象: T4、L4、A5000、RTX 3090、RTX 4090
 - A100/H100: Phase 1対象外
 
@@ -49,7 +49,7 @@ rtf-scores/
   benchmark/
     benchmark-v1.fixture.json
     benchmark-v1.receipt.json
-  lough/
+  smoke/
     {service}/{gpu}/
       batch-1/metrics.json
       batch-8/metrics.json
@@ -74,7 +74,7 @@ rtf-scores/
 - fixture manifest SHA-256
 - fixture repository commit SHA
 
-`lough inspection`の目標は、1サンプル30秒〜10分、20〜50本、総音声時間約1〜2時間である。現在のPhase 1では総時間の設定値を約1.5時間相当としている。
+`smoke`の目標は、1サンプル30秒〜10分、20〜50本、総音声時間約1〜2時間である。現在のPhase 1では総時間の設定値を約1.5時間相当としている。
 
 ### 3.2 Resolver結果の自動引き渡し
 
@@ -285,5 +285,5 @@ Mac上の静的検証成功は、HF Jobs/RunPodの実GPU完走を意味しない
 4. RTF Benchmark RunでproviderとGPUを選択する。
 5. workflowがbatch `1/8/32`を順番に実行する。
 6. HF Dataset上のmetrics URIとreceiptを確認する。
-7. RTF Service Result Collectionが`rtf-scores/lough/{service}/{gpu}/batch-{n}/metrics.json`へ保存したPRを確認する。
+7. RTF Service Result Collectionが`rtf-scores/smoke/{service}/{gpu}/batch-{n}/metrics.json`へ保存したPRを確認する。
 8. OOMの場合は成功扱いにせず、OOM発生位置とメモリ統計を記録する。

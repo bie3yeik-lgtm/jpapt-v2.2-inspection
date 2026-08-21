@@ -68,7 +68,7 @@ GitHub CLIの認証済み環境で、次のwrapperを使用できる。
 GH_TOKEN="$GH_TOKEN" scripts/ci/dispatch-rtf-service-result.sh \
   OWNER/REPOSITORY \
   run-20260820-hf-l4-b1 \
-  hf-jobs completed cuda linux lough l4 1 \
+  hf-jobs completed cuda linux smoke l4 1 \
   job-123 \
   https://example.invalid/result.json \
   RESULT_SHA256 \
@@ -107,7 +107,7 @@ workflowを起動したブランチが保護されていても結果をリポジ
 
 ```text
 rtf-scores/
-└── <lough|precise>/
+└── <smoke|pref|probe>/
     └── <service_id>/
         ├── service-result.json
         ├── metrics.json       # metrics_uriを指定した場合

@@ -116,10 +116,10 @@ Rust validatorでSHA-256とschemaを検証する。成功すると`benchmark-rec
 次へ保存する。
 
 ```text
-rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/service-result.json
-rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/metrics.json
-rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/benchmark-record.json
-rtf-scores/<lough|precise>/<service_id>/<gpu>/batch-<batch>/summary.md
+rtf-scores/<smoke|pref|probe>/<service_id>/<gpu>/batch-<batch>/service-result.json
+rtf-scores/<smoke|pref|probe>/<service_id>/<gpu>/batch-<batch>/metrics.json
+rtf-scores/<smoke|pref|probe>/<service_id>/<gpu>/batch-<batch>/benchmark-record.json
+rtf-scores/<smoke|pref|probe>/<service_id>/<gpu>/batch-<batch>/summary.md
 ```
 
 Actions botが保存commitを作成し、artifactにも同じ結果を保存する。

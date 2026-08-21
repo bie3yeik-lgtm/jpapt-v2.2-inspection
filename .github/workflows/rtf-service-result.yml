@@ -51,7 +51,7 @@ on:
         description: Result profile
         required: true
         type: choice
-        options: [lough, precise]
+        options: [smoke, pref, probe]
       gpu:
         description: Benchmark GPU
         required: true
