@@ -55,13 +55,46 @@ class _ModelWithoutLoaderControls:
         return ["ok"]
 
 
+class _TranscribeConfig:
+    def __init__(self) -> None:
+        self.batch_size = 4
+        self.num_workers = 8
+        self.use_lhotse = True
+        self.pin_memory = True
+
+
+class _Loader:
+    def __init__(self) -> None:
+        self.num_workers = 8
+        self.pin_memory = True
+        self.persistent_workers = True
+        self.prefetch_factor = 2
+
+
+class _ModelWithTypedOverrideConfig:
+    def __init__(self) -> None:
+        self.config: _TranscribeConfig | None = None
+        self.loader: _Loader | None = None
+
+    @classmethod
+    def get_transcribe_config(cls) -> _TranscribeConfig:
+        return _TranscribeConfig()
+
+    def _setup_transcribe_dataloader(self, config: dict[str, object]) -> _Loader:
+        self.loader = _Loader()
+        return self.loader
+
+    def transcribe(self, paths: list[str], *, override_config: _TranscribeConfig) -> list[str]:
+        self.config = override_config
+        self._setup_transcribe_dataloader({"paths2audio_files": paths})
+        return ["ok"]
+
+
 class TranscribeCompatTests(unittest.TestCase):
     def tearDown(self) -> None:
-        os.environ.pop("RTF_NUM_WORKERS", None)
         os.environ.pop("RTF_CUDA_DIAGNOSTICS", None)
 
     def test_disables_workers_and_pinned_memory_when_supported(self) -> None:
-        os.environ["RTF_NUM_WORKERS"] = "0"
         model = _ModelWithLoaderControls()
         torch = _Torch()
 
@@ -112,6 +145,30 @@ class TranscribeCompatTests(unittest.TestCase):
 
         self.assertGreaterEqual(torch.cuda.sync_count, 2)
         self.assertEqual(os.environ["CUDA_LAUNCH_BLOCKING"], "1")
+
+    def test_typed_override_and_loader_policy_are_enforced(self) -> None:
+        model = _ModelWithTypedOverrideConfig()
+        torch = _Torch()
+
+        result = transcribe(
+            model,
+            ["sample.wav"],
+            batch_size=32,
+            torch_module=torch,
+            device=_Device(),
+        )
+
+        self.assertEqual(result, ["ok"])
+        assert model.config is not None
+        self.assertEqual(model.config.batch_size, 32)
+        self.assertEqual(model.config.num_workers, 0)
+        self.assertFalse(model.config.use_lhotse)
+        self.assertFalse(model.config.pin_memory)
+        assert model.loader is not None
+        self.assertEqual(model.loader.num_workers, 0)
+        self.assertFalse(model.loader.pin_memory)
+        self.assertFalse(model.loader.persistent_workers)
+        self.assertIsNone(model.loader.prefetch_factor)
 
 
 if __name__ == "__main__":

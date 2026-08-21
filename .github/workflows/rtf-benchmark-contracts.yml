@@ -174,6 +174,12 @@ jobs:
               raise SystemExit("RTF Benchmark Run must execute all three OOM-safe batch sizes")
           if "latest GHCR package digest" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must wait for the latest GHCR package digest")
+          if "timeout-minutes: 360" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must allow the sequential three-batch provider window")
+          if "Verify resolved image contains the RTF loader safety policy" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must verify the resolved image contains the provider fix")
+          if "RTF_NUM_WORKERS" in benchmark_workflow or "RTF_NUM_WORKERS" in script:
+              raise SystemExit("RTF worker count must be fixed in the image policy, not passed dynamically")
           if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:
               raise SystemExit("RunPod CLI configuration must initialize its config file")
           if 'runpodctl doctor --output json' not in benchmark_workflow:
