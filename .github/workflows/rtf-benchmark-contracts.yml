@@ -9,16 +9,19 @@ on:
       - "rust/crates/asr-metrics/**"
       - "python/src/parakeet_onnx/evaluation/**"
       - ".github/workflows/rtf-resolver.yml"
+      - ".github/workflows/ghcr-build-publish.yml"
       - ".github/workflows/rtf-benchmark-run.yml"
       - ".github/workflows/rtf-verification-select.yml"
       - ".github/workflows/rtf-verification-artifact-persist.yml"
       - ".github/workflows/rtf-service-result.yml"
       - "scripts/run-benchmark.sh"
+      - "scripts/ci/test-rtf-provider-adapters.sh"
       - "scripts/ci/resolve-ghcr-package-digest.sh"
       - "scripts/ci/dispatch-rtf-service-result.sh"
       - "scripts/ci/build-rtf-benchmark-record.py"
       - "docker/rtf-benchmark/**"
       - "evaluation/schemas/rtf-service-*.json"
+      - "evaluation/schemas/rtf-provider-content.schema.json"
       - "evaluation/schemas/rtf-benchmark-record.schema.json"
       - "rust/crates/asr-contracts/tests/rtf_service.rs"
       - ".github/workflows/rtf-benchmark-contracts.yml"
@@ -77,6 +80,7 @@ jobs:
           python -m json.tool evaluation/schemas/benchmark.schema.json >/dev/null
           python -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
           python -m json.tool evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
+          python -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
           python -m json.tool evaluation/schemas/rtf-benchmark-record.schema.json >/dev/null
 
       - name: Validate RTF orchestration syntax
@@ -94,6 +98,7 @@ jobs:
           print("RunPod docker-args arity contract: PASS")
           PY
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
+          rg -n 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
           rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
           if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
             echo 'NeMo transcribe must use positional audio paths' >&2
@@ -108,6 +113,12 @@ jobs:
           script = Path("scripts/run-benchmark.sh").read_text()
           if 'hf jobs run --name "$RTF_RUN_ID"' not in script:
               raise SystemExit("HF Jobs must use a bounded explicit job name")
+          if 'RTF_CONTENT_OUTPUT=$RTF_CONTENT_OUTPUT' not in script:
+              raise SystemExit("HF Jobs must receive the content probe output path")
+          if 'RTF_CONTENT_PROBE=' not in script:
+              raise SystemExit("HF Jobs must collect the content probe line")
+          if 'provider content gate failed' not in Path("docker/rtf-benchmark/entrypoint.sh").read_text():
+              raise SystemExit("provider content gate must block full metrics")
           if '"$IMAGE" /opt/rtf-benchmark/entrypoint.sh \\\n      --batch-size "$RTF_BATCH_SIZE"' not in script:
               raise SystemExit("HF Jobs must pass batch size as an entrypoint argument")
           if '-e "RTF_BATCH_SIZE=$RTF_BATCH_SIZE"' in script:
@@ -196,6 +207,71 @@ jobs:
               raise SystemExit("Docker resolver must use a cleanup-capable shell")
           print("Docker provider path contract: PASS")
           PY
+
+      - name: Validate GHCR to RTF Resolver chaining contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          build = Path(".github/workflows/ghcr-build-publish.yml").read_text()
+          resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
+          if "name: rtf-image" not in build:
+              raise SystemExit("GHCR workflow must resolve the RTF image after build")
+          if "ghcr-build-parakeet-rtf-benchmark" not in build:
+              raise SystemExit("GHCR workflow must consume the canonical RTF build artifact")
+          if "needs: build" not in build:
+              raise SystemExit("RTF image identity must depend on the completed build matrix")
+          if "published == true and .role == \"rtf-benchmark\"" not in build:
+              raise SystemExit("RTF chain must reject unpublished or wrong-role build artifacts")
+          if "uses: ./.github/workflows/rtf-resolver.yml" not in build:
+              raise SystemExit("GHCR workflow must call the reusable RTF Resolver")
+          if "workflow_call:" not in resolver:
+              raise SystemExit("RTF Resolver must expose a reusable workflow entrypoint")
+          if "image: ${{ needs.rtf-image.outputs.image }}" not in build:
+              raise SystemExit("RTF Resolver must receive the exact published image reference")
+          print("GHCR -> RTF Resolver chain: PASS")
+          PY
+
+      - name: Validate Rust ranking workflow contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/benchmark-ranking.yml").read_text()
+          ranker = Path("rust/crates/asr-contracts/src/bin/asr-rtf-rank.rs").read_text()
+          module = Path("rust/crates/asr-contracts/src/rtf_rank.rs").read_text()
+          if 'cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank' not in workflow:
+              raise SystemExit("ranking workflow must call the Rust ranker")
+          if '--phase "$rank_phase"' not in workflow:
+              raise SystemExit("ranking workflow must bind lough/precise to Rust phase")
+          if '--diagnostics rtf-scores/ranking-exclusions.json' not in workflow:
+              raise SystemExit("ranking workflow must persist ranking exclusions")
+          if 'no accepted completed benchmark records are available for ranking' not in module:
+              raise SystemExit("Rust ranker must reject an empty accepted set")
+          if 'identity does not match the ranking set' not in module:
+              raise SystemExit("Rust ranker must reject mixed accepted identities")
+          if 'fn usage()' not in ranker:
+              raise SystemExit("Rust ranker CLI contract is missing")
+          print("Rust ranking workflow contract: PASS")
+          PY
+
+      - name: Run local HF Jobs and RunPod adapter mocks
+        run: bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
+
+      - name: Validate RTF cost guard contract
+        run: |
+          set -euo pipefail
+          guarded="$(cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+            --provider hf --gpu t4 --batch-size 1 --repeat 3 --sample-count 50 \
+            --target-total-sec 5400 --max-duration-sec 600 --mode guarded)"
+          echo "$guarded" | jq -e '.early_stop_on_failure == true and .remote_timeout == "2h"' >/dev/null
+          if cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+            --provider runpod --gpu a5000 --batch-size 8 --repeat 3 --sample-count 50 \
+            --target-total-sec 5400 --max-duration-sec 600 --mode full-matrix; then
+            echo 'full-matrix must require explicit approval' >&2
+            exit 1
+          fi
+          echo "RTF cost guard contract: PASS"
 
       - name: Validate Phase 1 service matrix
         run: |

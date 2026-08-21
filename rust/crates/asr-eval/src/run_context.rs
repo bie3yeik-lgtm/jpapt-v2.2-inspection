@@ -339,11 +339,7 @@ impl RunContextV2 {
             &self.environment_id,
             &["linux", "windows", "macos"],
         )?;
-        require_one_of(
-            "provider_id",
-            &self.provider_id,
-            &["cpu", "cuda", "directml", "coreml"],
-        )?;
+        require_one_of("provider_id", &self.provider_id, &["cpu", "cuda", "coreml"])?;
         require_one_of(
             "evaluation_id",
             &self.evaluation_id,

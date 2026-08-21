@@ -3,6 +3,7 @@
 ARG NEMO_IMAGE=nvcr.io/nvidia/nemo-speech:26.07.00
 FROM ${NEMO_IMAGE}
 
+ARG NEMO_IMAGE
 ARG SOURCE_REVISION=unknown
 ARG RUNNER_VERSION=rtf-benchmark-v1
 

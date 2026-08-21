@@ -1,6 +1,28 @@
 name: RTF Resolver
 
 on:
+  workflow_call:
+    inputs:
+      image:
+        description: Immutable GHCR image reference supplied by GHCR Build and Publish
+        required: false
+        default: ""
+        type: string
+      dataset_revision:
+        description: Common Voice dataset commit
+        required: true
+        type: string
+      fixture_repo_id:
+        description: Hugging Face Dataset repo to publish the fixed fixture
+        required: true
+        type: string
+      inspection_profile:
+        description: Fixture sizing profile
+        required: true
+        type: string
+    secrets:
+      HF_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       image:

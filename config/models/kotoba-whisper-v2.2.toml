@@ -108,14 +108,13 @@ required_checkpoints = [
 supported_providers = [
     "cpu",
     "cuda",
-    "directml",
     "coreml",
 ]
 reference_provider = "cpu"
 
 [execution.platforms]
 linux = ["cpu", "cuda"]
-windows = ["cpu", "cuda", "directml"]
+windows = ["cpu", "cuda"]
 macos = ["cpu", "coreml"]
 
 [evaluation.reference]
@@ -125,7 +124,6 @@ implementation = "transformers"
 mlx = false
 native_coreml_conversion = false
 coreml_execution_provider = true
-directml_execution_provider = true
 cuda_execution_provider = true
 
 [rust]

@@ -3,7 +3,6 @@ from __future__ import annotations
 _PROVIDER_NAMES = {
     "cpu": "CPUExecutionProvider",
     "cuda": "CUDAExecutionProvider",
-    "directml": "DmlExecutionProvider",
     "coreml": "CoreMLExecutionProvider",
 }
 

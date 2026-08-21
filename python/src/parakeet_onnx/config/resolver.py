@@ -162,7 +162,6 @@ class ConfigResolver:
                 One of:
                     cpu
                     cuda
-                    directml
                     coreml
 
             evaluation:

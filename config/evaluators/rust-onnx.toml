@@ -7,7 +7,7 @@ backend = "onnxruntime"
 
 [capabilities]
 supported_decoders = ["ctc"]
-supported_providers = ["cpu", "cuda", "directml", "coreml"]
+supported_providers = ["cpu", "cuda", "coreml"]
 supported_artifact_contracts = [
   "ctc-single-graph-v0",
   "ctc-single-graph-v1",

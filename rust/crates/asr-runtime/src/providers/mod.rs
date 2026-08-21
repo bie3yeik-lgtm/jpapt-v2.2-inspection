@@ -1,7 +1,6 @@
 mod coreml;
 mod cpu;
 mod cuda;
-mod directml;
 
 use std::{fmt, str::FromStr};
 
@@ -13,7 +12,6 @@ use crate::{Result, RuntimeError};
 pub enum ProviderKind {
     Cpu,
     Cuda,
-    DirectMl,
     CoreMl,
 }
 
@@ -22,7 +20,6 @@ impl ProviderKind {
         match self {
             Self::Cpu => "CPUExecutionProvider",
             Self::Cuda => "CUDAExecutionProvider",
-            Self::DirectMl => "DmlExecutionProvider",
             Self::CoreMl => "CoreMLExecutionProvider",
         }
     }
@@ -31,7 +28,6 @@ impl ProviderKind {
         match self {
             Self::Cpu => true,
             Self::Cuda => cfg!(feature = "cuda"),
-            Self::DirectMl => cfg!(feature = "directml"),
             Self::CoreMl => cfg!(feature = "coreml"),
         }
     }
@@ -45,7 +41,6 @@ impl fmt::Display for ProviderKind {
             match self {
                 Self::Cpu => "cpu",
                 Self::Cuda => "cuda",
-                Self::DirectMl => "directml",
                 Self::CoreMl => "coreml",
             }
         )
@@ -59,7 +54,6 @@ impl FromStr for ProviderKind {
         match value.to_ascii_lowercase().as_str() {
             "cpu" => Ok(Self::Cpu),
             "cuda" => Ok(Self::Cuda),
-            "directml" => Ok(Self::DirectMl),
             "coreml" => Ok(Self::CoreMl),
             _ => Err(RuntimeError::UnsupportedContract(format!(
                 "unknown provider {value}"
@@ -75,7 +69,6 @@ pub fn configure(builder: SessionBuilder, provider: ProviderKind) -> Result<Sess
     match provider {
         ProviderKind::Cpu => cpu::configure(builder),
         ProviderKind::Cuda => cuda::configure(builder),
-        ProviderKind::DirectMl => directml::configure(builder),
         ProviderKind::CoreMl => coreml::configure(builder),
     }
 }

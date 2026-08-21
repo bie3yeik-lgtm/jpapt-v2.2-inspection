@@ -29,7 +29,7 @@ case "$status" in
   *) echo "ERROR: unsupported status: $status" >&2; exit 2 ;;
 esac
 case "$provider" in
-  cpu|cuda|directml|coreml) ;;
+  cpu|cuda|coreml) ;;
   *) echo "ERROR: unsupported provider: $provider" >&2; exit 2 ;;
 esac
 case "$environment" in
