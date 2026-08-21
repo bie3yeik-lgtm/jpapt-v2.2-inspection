@@ -50,9 +50,11 @@ def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
 
     Several NeMo ASR implementations build the temporary transcription loader
     with ``pin_memory=True`` regardless of the public transcribe arguments.
-    The loader is created before iteration, so constraining its effective
-    attributes here is safe and keeps the compatibility boundary local to the
-    provider image.
+    The policy is therefore supplied before construction and the resulting
+    loader is only inspected.  PyTorch does not allow all DataLoader
+    attributes (notably ``persistent_workers``) to be changed after
+    initialization, so post-construction mutation would make the provider
+    fail before the first sample is read.
     """
 
     original = getattr(model, "_setup_transcribe_dataloader", None)
@@ -65,14 +67,6 @@ def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
         effective_config["num_workers"] = 0
         effective_config["pin_memory"] = False
         loader = original(effective_config)
-        for name, value in (
-            ("num_workers", 0),
-            ("pin_memory", False),
-            ("persistent_workers", False),
-            ("prefetch_factor", None),
-        ):
-            if hasattr(loader, name):
-                setattr(loader, name, value)
         if getattr(loader, "num_workers", 0) != 0 or getattr(loader, "pin_memory", False):
             raise RuntimeError("NeMo transcription DataLoader policy was not applied")
         return loader
