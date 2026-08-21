@@ -53,5 +53,5 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: asr-rtf-rank <output.json> [--phase <phase1|full>] [--diagnostics <excluded.json>] <record.json>...".to_owned()
+    "usage: asr-rtf-rank <output.json> [--phase <phase1|pref|probe>] [--diagnostics <excluded.json>] <record.json>...".to_owned()
 }

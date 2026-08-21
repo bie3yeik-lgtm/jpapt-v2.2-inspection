@@ -241,5 +241,5 @@ jobs:
       image: ${{ needs.rtf-image.outputs.image }}
       dataset_revision: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
       fixture_repo_id: gawohok7/rtf-benchmark-fixtures
-      inspection_profile: lough inspection
+      inspection_profile: smoke
     secrets: inherit

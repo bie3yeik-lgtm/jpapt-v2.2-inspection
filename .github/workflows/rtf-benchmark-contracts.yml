@@ -243,7 +243,9 @@ jobs:
           if 'cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank' not in workflow:
               raise SystemExit("ranking workflow must call the Rust ranker")
           if '--phase "$rank_phase"' not in workflow:
-              raise SystemExit("ranking workflow must bind lough/precise to Rust phase")
+              raise SystemExit("ranking workflow must bind inspection profiles to Rust phase")
+          if 'lough' in workflow or 'precise' in workflow:
+              raise SystemExit("ranking workflow must not use retired inspection profile names")
           if '--diagnostics rtf-scores/ranking-exclusions.json' not in workflow:
               raise SystemExit("ranking workflow must persist ranking exclusions")
           if 'no accepted completed benchmark records are available for ranking' not in module:

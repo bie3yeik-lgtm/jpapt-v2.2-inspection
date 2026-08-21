@@ -5,6 +5,10 @@ set -euo pipefail
 # CUDA segments. This does not hide a genuine OOM; it only improves reuse of
 # otherwise-free reserved segments. Respect an explicit provider override.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+if [[ "${RTF_CUDA_DIAGNOSTICS:-0}" == 1 || "${RTF_CUDA_DIAGNOSTICS:-}" == true ]]; then
+  export CUDA_LAUNCH_BLOCKING="${CUDA_LAUNCH_BLOCKING:-1}"
+  export TORCH_SHOW_CPP_STACKTRACES="${TORCH_SHOW_CPP_STACKTRACES:-1}"
+fi
 
 # RunPod's `--docker-args` supplies arguments to the image ENTRYPOINT; it does
 # not replace ENTRYPOINT. The lifecycle wrapper uses `sleep infinity` to keep
@@ -116,10 +120,13 @@ if [[ "$content_gate" -eq 1 ]]; then
   fi
 fi
 
+error_log="${RTF_ERROR_LOG:-/tmp/rtf-benchmark-error.log}"
+rm -f "$error_log"
 set +e
-python -m benchmark_runner "$@"
+python -m benchmark_runner "$@" 2> "$error_log"
 runner_status=$?
 set -e
+cat "$error_log" >&2 || true
 
 publish_status=0
 if [[ -f "${RTF_OUTPUT:-/output/metrics.json}" ]]; then
@@ -127,6 +134,19 @@ if [[ -f "${RTF_OUTPUT:-/output/metrics.json}" ]]; then
 fi
 
 if [[ "$runner_status" -ne 0 ]]; then
+  if [[ ! -s "${RTF_OUTPUT:-/output/metrics.json}" && ! -s "${RTF_RECEIPT:-/output/result-receipt.json}" ]]; then
+    if grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$error_log"; then
+      export RTF_FAILURE_CODE="PROVIDER_CUDA_ILLEGAL_ACCESS"
+      export RTF_FAILURE_MESSAGE="benchmark process terminated with a CUDA illegal memory access"
+    elif grep -Eqi 'out of memory|CUDA OOM|cuda out of memory' "$error_log"; then
+      export RTF_FAILURE_CODE="PROVIDER_CUDA_OOM"
+      export RTF_FAILURE_MESSAGE="benchmark process terminated with CUDA out of memory"
+    else
+      export RTF_FAILURE_CODE="${RTF_FAILURE_CODE:-BENCHMARK_INFERENCE_FAILED}"
+      export RTF_FAILURE_MESSAGE="${RTF_FAILURE_MESSAGE:-benchmark process exited without producing metrics}"
+    fi
+    python -m benchmark_runner.publish_result || publish_status=$?
+  fi
   exit "$runner_status"
 fi
 exit "$publish_status"

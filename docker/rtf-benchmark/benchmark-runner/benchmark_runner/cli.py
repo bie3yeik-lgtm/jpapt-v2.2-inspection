@@ -11,6 +11,8 @@ from pathlib import Path
 
 import jiwer
 
+from benchmark_runner.transcribe_compat import transcribe
+
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="benchmark-runner")
@@ -104,9 +106,12 @@ def main() -> int:
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         with torch.inference_mode():
             with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
-                warmup_hypotheses = model.transcribe(
+                warmup_hypotheses = transcribe(
+                    model,
                     paths[:1],
                     batch_size=1,
+                    torch_module=torch,
+                    device=device,
                 )
             del warmup_hypotheses
             release_inference_temporaries(torch, device)
@@ -119,9 +124,13 @@ def main() -> int:
                 for _ in range(args.repeat):
                     release_inference_temporaries(torch, device)
                     started = time.perf_counter()
-                    hypotheses = model.transcribe(paths, batch_size=args.batch_size)
-                    if device.type == "cuda":
-                        torch.cuda.synchronize()
+                    hypotheses = transcribe(
+                        model,
+                        paths,
+                        batch_size=args.batch_size,
+                        torch_module=torch,
+                        device=device,
+                    )
                     timings.append(time.perf_counter() - started)
                     if _ + 1 < args.repeat:
                         release_inference_temporaries(torch, device)

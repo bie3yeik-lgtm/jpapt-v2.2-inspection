@@ -16,10 +16,33 @@ def _required(name: str) -> str:
     return value
 
 
+def _write_receipt(receipt: dict[str, Any]) -> None:
+    receipt_path = Path(os.environ.get("RTF_RECEIPT", "/output/result-receipt.json"))
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print("RTF_RESULT_RECEIPT=" + json.dumps(receipt, sort_keys=True), flush=True)
+
+
 def main() -> int:
     output = Path(os.environ.get("RTF_OUTPUT", "/output/metrics.json"))
     if not output.is_file():
-        raise RuntimeError(f"metrics output does not exist: {output}")
+        run_id = _required("RTF_RUN_ID")
+        receipt = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "status": "blocked",
+            "job_id": os.environ.get("JOB_ID") or os.environ.get("RTF_JOB_ID") or None,
+            "result_uri": None,
+            "result_sha256": None,
+            "metrics_uri": None,
+            "metrics_sha256": None,
+            "error_code": os.environ.get("RTF_FAILURE_CODE", "BENCHMARK_INFERENCE_FAILED"),
+            "error_message": os.environ.get(
+                "RTF_FAILURE_MESSAGE", f"metrics output does not exist: {output}"
+            ),
+        }
+        _write_receipt(receipt)
+        return 0
 
     run_id = _required("RTF_RUN_ID")
     payload = json.loads(output.read_text(encoding="utf-8"))
@@ -39,10 +62,7 @@ def main() -> int:
             "error_code": payload.get("error_code", "BENCHMARK_INFERENCE_FAILED"),
             "error_message": payload.get("error_message", "benchmark did not complete"),
         }
-        receipt_path = Path(os.environ.get("RTF_RECEIPT", "/output/result-receipt.json"))
-        receipt_path.parent.mkdir(parents=True, exist_ok=True)
-        receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print("RTF_RESULT_RECEIPT=" + json.dumps(receipt, sort_keys=True), flush=True)
+        _write_receipt(receipt)
         return 0
 
     repo_id = _required("RTF_RESULT_REPO_ID")
@@ -74,10 +94,7 @@ def main() -> int:
         "result_revision": revision,
         "result_path": path_in_repo,
     }
-    receipt_path = Path(os.environ.get("RTF_RECEIPT", "/output/result-receipt.json"))
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print("RTF_RESULT_RECEIPT=" + json.dumps(receipt, sort_keys=True), flush=True)
+    _write_receipt(receipt)
     return 0
 
 
