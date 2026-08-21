@@ -30,6 +30,84 @@ def _supports_keyword(function: Any, name: str) -> bool:
     )
 
 
+def _set_config_value(config: Any, name: str, value: Any) -> bool:
+    """Set a field on a NeMo transcription config when that field exists."""
+
+    if hasattr(config, name):
+        setattr(config, name, value)
+        return True
+    try:
+        if name in config:
+            config[name] = value
+            return True
+    except (TypeError, KeyError):
+        pass
+    return False
+
+
+def _patch_loader_factory(model: Any) -> tuple[Any, Any]:
+    """Force loader policy even on NeMo versions that hard-code pin_memory.
+
+    Several NeMo ASR implementations build the temporary transcription loader
+    with ``pin_memory=True`` regardless of the public transcribe arguments.
+    The loader is created before iteration, so constraining its effective
+    attributes here is safe and keeps the compatibility boundary local to the
+    provider image.
+    """
+
+    original = getattr(model, "_setup_transcribe_dataloader", None)
+    if original is None:
+        return None, None
+    had_instance_attribute = "_setup_transcribe_dataloader" in vars(model)
+
+    def constrained(config: Any) -> Any:
+        effective_config = dict(config)
+        effective_config["num_workers"] = 0
+        effective_config["pin_memory"] = False
+        loader = original(effective_config)
+        for name, value in (
+            ("num_workers", 0),
+            ("pin_memory", False),
+            ("persistent_workers", False),
+            ("prefetch_factor", None),
+        ):
+            if hasattr(loader, name):
+                setattr(loader, name, value)
+        if getattr(loader, "num_workers", 0) != 0 or getattr(loader, "pin_memory", False):
+            raise RuntimeError("NeMo transcription DataLoader policy was not applied")
+        return loader
+
+    setattr(model, "_setup_transcribe_dataloader", constrained)
+    return original, had_instance_attribute
+
+
+def _restore_loader_factory(model: Any, original: Any, had_instance_attribute: Any) -> None:
+    if original is None:
+        return
+    if had_instance_attribute:
+        setattr(model, "_setup_transcribe_dataloader", original)
+    else:
+        delattr(model, "_setup_transcribe_dataloader")
+
+
+def _build_safe_override_config(model: Any, batch_size: int) -> Any:
+    """Build the typed NeMo override config for the provider safety policy."""
+
+    factory = getattr(model, "get_transcribe_config", None)
+    if not callable(factory):
+        return None
+    config = factory()
+    _set_config_value(config, "batch_size", batch_size)
+    if not _set_config_value(config, "num_workers", 0):
+        return None
+    # Lhotse is useful for training-scale pipelines but is not required for
+    # this materialized benchmark manifest. Prefer the plain ASR dataloader;
+    # it avoids the provider image's Lhotse worker/pinned-memory defaults.
+    _set_config_value(config, "use_lhotse", False)
+    _set_config_value(config, "pin_memory", False)
+    return config
+
+
 def transcribe(
     model: Any,
     paths: Sequence[str],
@@ -50,11 +128,25 @@ def transcribe(
     configure_cuda_diagnostics(torch_module)
     function = model.transcribe
     kwargs: dict[str, Any] = {"batch_size": batch_size}
-    if _supports_keyword(function, "num_workers"):
-        kwargs["num_workers"] = int(os.environ.get("RTF_NUM_WORKERS", "0"))
-    if _supports_keyword(function, "pin_memory"):
-        kwargs["pin_memory"] = False
-    result = function(list(paths), **kwargs)
+    original_loader, had_instance_attribute = _patch_loader_factory(model)
+    try:
+        override_config = _build_safe_override_config(model, batch_size)
+        if override_config is not None and _supports_keyword(function, "override_config"):
+            kwargs = {"override_config": override_config}
+        else:
+            if _supports_keyword(function, "num_workers"):
+                kwargs["num_workers"] = 0
+            if _supports_keyword(function, "pin_memory"):
+                kwargs["pin_memory"] = False
+            if _supports_keyword(function, "use_lhotse"):
+                kwargs["use_lhotse"] = False
+        print(
+            'RTF_DATALOADER_POLICY={"num_workers":0,"pin_memory":false,"use_lhotse":false}',
+            flush=True,
+        )
+        result = function(list(paths), **kwargs)
+    finally:
+        _restore_loader_factory(model, original_loader, had_instance_attribute)
     if getattr(device, "type", None) == "cuda":
         torch_module.cuda.synchronize()
     return result

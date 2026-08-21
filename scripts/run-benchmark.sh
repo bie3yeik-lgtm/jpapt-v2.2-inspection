@@ -102,7 +102,6 @@ case "$PROVIDER" in
       -e "RTF_DATASET_MAX_DURATION_SEC=$RTF_DATASET_MAX_DURATION_SEC" -e "RTF_FIXTURE_FILENAME=$RTF_FIXTURE_FILENAME"
       -e "RTF_FIXTURE_MANIFEST_SHA256=$RTF_FIXTURE_MANIFEST_SHA256"
       -e "RTF_CUDA_DIAGNOSTICS=${RTF_CUDA_DIAGNOSTICS:-0}"
-      -e "RTF_NUM_WORKERS=${RTF_NUM_WORKERS:-0}"
       -e "RTF_ERROR_LOG=/output/benchmark-error.log"
       -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
     )
@@ -211,9 +210,9 @@ case "$PROVIDER" in
       --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
       --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
-      --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" --arg num_workers "${RTF_NUM_WORKERS:-0}" \
+      --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" \
       --arg error_log "/output/benchmark-error.log" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_NUM_WORKERS:$num_workers,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \

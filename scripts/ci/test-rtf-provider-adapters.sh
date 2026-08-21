@@ -71,7 +71,8 @@ static_checks() {
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
   ! grep -F 'lough inspection' scripts/run-benchmark.sh .github/workflows/ghcr-build-publish.yml .github/workflows/rtf-benchmark-run.yml >/dev/null
-  grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
+  ! grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }

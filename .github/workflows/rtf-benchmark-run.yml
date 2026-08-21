@@ -53,7 +53,10 @@ permissions:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # Three provider batches may each spend up to two hours downloading the
+    # digest-pinned image/model/fixture and running inference. 180 minutes
+    # could cancel a valid sequential full-matrix run mid-collection.
+    timeout-minutes: 360
     outputs:
       receipts: ${{ steps.receipts.outputs.receipts }}
     steps:
@@ -99,6 +102,25 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Resolved image: $image"
           echo "Resolved model revision: $model_revision"
+      - name: Verify resolved image contains the RTF loader safety policy
+        env:
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
+          docker pull "$IMAGE" >/dev/null
+          docker run --rm --entrypoint python "$IMAGE" -c '
+          from pathlib import Path
+          path = Path("/opt/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py")
+          source = path.read_text(encoding="utf-8")
+          required = ("RTF_DATALOADER_POLICY=", "num_workers", "pin_memory", "use_lhotse")
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f"RTF image is missing loader safety policy: {missing}")
+          print("RTF image loader safety policy: present")
+          '
       - name: Restore provider package cache
         uses: actions/cache@v6
         with:
