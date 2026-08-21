@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 RuntimeImplementation = Literal["python", "rust"]
 BackendName = Literal["onnxruntime", "nemo", "transformers"]
-ProviderId = Literal["cpu", "cuda", "directml", "coreml"]
+ProviderId = Literal["cpu", "cuda", "coreml"]
 DecoderId = Literal["ctc", "tdt", "whisper_autoregressive"]
 EvaluationSuite = Literal["smoke", "parity", "coreml-parity", "full"]
 SampleStatus = Literal["success", "failed", "skipped"]

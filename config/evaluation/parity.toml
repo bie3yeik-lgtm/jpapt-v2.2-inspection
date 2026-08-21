@@ -3,7 +3,7 @@
 # Cross-runtime / cross-provider parity configuration.
 #
 # Purpose:
-# - Validate CPU vs CUDA/CoreML/DirectML output consistency.
+# - Validate CPU vs CUDA/CoreML output consistency.
 # - Validate Python vs Rust evaluator consistency.
 # - Detect numerical drift before full evaluation.
 #
@@ -191,7 +191,7 @@ compare_tokens = true
 compare_metrics = true
 compare_intermediate_tensors = true
 
-# Same-host CPU comparison is useful for CoreML and DirectML diagnostics.
+# Same-host CPU comparison is useful for CoreML diagnostics.
 prefer_same_host_reference = true
 
 # Locked external/reference outputs still remain the canonical quality

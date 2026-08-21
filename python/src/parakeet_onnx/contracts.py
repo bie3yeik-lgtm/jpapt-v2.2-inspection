@@ -11,7 +11,7 @@ RUN_CONTEXT_SCHEMA_VERSION = 2
 GENERATED_CANDIDATE_SCHEMA_VERSION = 1
 
 _ENVIRONMENTS = frozenset({"linux", "windows", "macos"})
-_PROVIDERS = frozenset({"cpu", "cuda", "directml", "coreml"})
+_PROVIDERS = frozenset({"cpu", "cuda", "coreml"})
 _EVALUATIONS = frozenset({"smoke", "parity", "coreml-parity", "full"})
 _IMPLEMENTATIONS = frozenset({"python", "rust"})
 _BACKENDS = frozenset({"onnxruntime"})

@@ -84,7 +84,6 @@ def selected_job_name(executor: str, environment: str) -> str:
         "linux-cpu": "GitHub / Linux CPU",
         "linux-cuda": "GitHub / Linux CUDA",
         "macos-coreml": "GitHub / macOS CoreML",
-        "windows-directml": "GitHub / Windows DirectML",
     }[environment]
 
 
@@ -310,7 +309,7 @@ def main() -> int:
     parser.add_argument("--executor", choices=["github", "hf_jobs"], required=True)
     parser.add_argument(
         "--environment",
-        choices=["linux-cpu", "linux-cuda", "macos-coreml", "windows-directml"],
+        choices=["linux-cpu", "linux-cuda", "macos-coreml"],
         required=True,
     )
     parser.add_argument("--source-repository", default=os.environ.get("SOURCE_REPOSITORY", ""))

@@ -1,4 +1,6 @@
-use asr_contracts::{validate_rtf_benchmark_record, validate_rtf_service_metrics, validate_rtf_service_result};
+use asr_contracts::{
+    validate_rtf_benchmark_record, validate_rtf_service_metrics, validate_rtf_service_result,
+};
 use serde_json::json;
 
 #[test]

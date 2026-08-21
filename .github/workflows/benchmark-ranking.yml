@@ -30,8 +30,15 @@ jobs:
           set -euo pipefail
           mapfile -t records < <(find "rtf-scores/${PHASE}" -mindepth 3 -type f -name 'benchmark-record.json' | sort)
           [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
+          rank_phase="phase1"
+          [[ "$PHASE" == precise ]] && rank_phase="full"
+          branch="inspection/rtf-benchmark-ranking-${PHASE}"
+          git fetch --no-tags origin main
+          git checkout --no-track -B "$branch" origin/main
           mkdir -p rtf-scores
-          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- rtf-scores/ranking.json "${records[@]}"
+          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- \
+            rtf-scores/ranking.json --phase "$rank_phase" \
+            --diagnostics rtf-scores/ranking-exclusions.json "${records[@]}"
           jq -r '.records[] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-rows
           {
             echo '# RTF benchmark ranking'
@@ -40,9 +47,6 @@ jobs:
             echo '|---|---|---:|---:|---:|---:|'
             cat /tmp/ranking-rows
           } > rtf-scores/ranking.md
-          branch="inspection/rtf-benchmark-ranking-${PHASE}"
-          git fetch --no-tags origin main
-          git checkout --no-track -B "$branch" origin/main
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- rtf-scores/ranking.json rtf-scores/ranking.md

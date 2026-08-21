@@ -51,7 +51,7 @@ mise run actions-list
 | `cpu-full-eval.yml` | manual | Python Linux CPU full evaluation→HF run/benchmark |
 | `cross-platform-parity.yml` | manual | Python evaluatorのOS/provider parity |
 | `rust-eval.yml` | manual | canonical Rust CTC evaluator matrix |
-| `provider-strict-probes.yml` | manual /限定branch push | DirectML/CoreML strict readiness evidence |
+| `provider-strict-probes.yml` | manual /限定branch push | CoreML strict readiness evidence |
 | `public-model-e2e.yml` | manual /限定branch push | public model/dataset reference E2E |
 | `hf-central-allocator.yml` | manual / workflow dispatch | candidate/experiment/config中央採番 |
 | `rust-release.yml` | `v*` tag / manual | Rust binary build + GitHub Release |
@@ -191,7 +191,6 @@ Rust workspaceの標準CIです。
 | lane | runner | feature |
 |---|---|---|
 | Linux CPU | `ubuntu-latest` | `cpu` |
-| Windows DirectML | `windows-latest` | `cpu,directml` |
 | macOS CoreML | `macos-15` | `cpu,coreml` |
 
 各laneで:
@@ -412,7 +411,7 @@ Matrix:
 ```text
 Linux CPU
 Windows CPU
-Windows DirectML
+Windows provider routes
 macOS CPU
 macOS CoreML
 ```
@@ -421,9 +420,8 @@ PythonはONNX graph inspectionとHF dataset materialization境界に限定され
 
 ## 16. `provider-strict-probes.yml`
 
-DirectML/CoreMLについて「featureがcompileする」だけでなくstrict provider readinessを分類します。
+CoreMLについて「featureがcompileする」だけでなくstrict provider readinessを分類します。DirectMLはretiredでありprobe対象外です。
 
-- Windows: DirectML
 - macOS: CoreML
 - synthetic provider probe fixture
 - Rust provider-specific run context
@@ -468,7 +466,7 @@ prefixはcollectionからRustで導出し、allocation catalog/prefix-key JSON�
 | artifact | runner | provider feature |
 |---|---|---|
 | Linux x86_64 | Ubuntu | CPU |
-| Windows x86_64 | Windows | CPU + DirectML |
+| Windows x86_64 | Windows | CPU |
 | macOS arm64 | macOS | CPU + CoreML |
 
 生成物と`SHA256SUMS`をGitHub Releaseへ公開します。
@@ -486,7 +484,7 @@ prefixはcollectionからRustで導出し、allocation catalog/prefix-key JSON�
 | Linux CPU production full | `cpu-full-eval.yml` |
 | Python OS/provider parity | `cross-platform-parity.yml` |
 | Rust CTC runtime matrix | `rust-eval.yml` |
-| DirectML/CoreML strict proof | `provider-strict-probes.yml` |
+| CoreML strict proof | `provider-strict-probes.yml` |
 | public model reference E2E | `public-model-e2e.yml` |
 | Rust binary release | `rust-release.yml` |
 | 外部システムから任意workflow実行 | `repository-dispatch.yml` / `jpapt.workflow` |

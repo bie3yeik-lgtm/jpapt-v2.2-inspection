@@ -6,9 +6,7 @@
 # - Validate that the same ONNX candidate runs correctly on native Windows.
 # - Compare Windows CPUExecutionProvider results with canonical references.
 #
-# DirectML may be supported by the application/runtime in the future,
-# but the standard GitHub-hosted Windows runner must not be treated as
-# an authoritative DirectML GPU benchmark environment.
+# DirectML is retired and is not an execution route for this environment.
 
 schema_version = 1
 
@@ -97,7 +95,7 @@ self_hosted = false
 # Keep the GitHub-hosted Windows job focused on parity/smoke evaluation.
 allow_full_evaluation = false
 
-# DirectML performance must not be inferred from this standard runner.
+# Windows performance evidence is limited to the explicitly supported CPU/CUDA routes.
 authoritative_gpu_benchmark = false
 
 [windows]

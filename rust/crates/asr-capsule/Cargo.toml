@@ -9,7 +9,6 @@ publish = false
 default = []
 cpu = []
 cuda = []
-directml = []
 coreml = []
 
 [dependencies]

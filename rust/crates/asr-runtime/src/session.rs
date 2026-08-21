@@ -314,18 +314,8 @@ fn validate_provider_session_constraints(
     provider: ProviderKind,
     tuning: &SessionTuning,
 ) -> Result<()> {
-    if provider == ProviderKind::DirectMl {
-        if tuning.parallel_execution {
-            return Err(RuntimeError::ProviderConfiguration(
-                "DirectML requires sequential ORT execution mode".into(),
-            ));
-        }
-        if tuning.memory_pattern {
-            return Err(RuntimeError::ProviderConfiguration(
-                "DirectML requires ORT memory pattern optimization to be disabled".into(),
-            ));
-        }
-    }
+    let _ = provider;
+    let _ = tuning;
     Ok(())
 }
 

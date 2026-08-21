@@ -33,6 +33,12 @@ on:
         default: lough inspection
         type: choice
         options: [lough inspection]
+      cost_mode:
+        description: Guarded stops after a failed batch; full-matrix is explicitly more expensive
+        required: true
+        default: guarded
+        type: choice
+        options: [guarded, full-matrix]
 
 permissions:
   contents: write
@@ -101,6 +107,7 @@ jobs:
           if [[ '${{ inputs.provider }}' == 'runpod' ]]; then
             curl -fsSL https://cli.runpod.net | sudo bash
           fi
+      - uses: dtolnay/rust-toolchain@stable
       - name: Configure RunPod CLI
         if: inputs.provider == 'runpod'
         env:
@@ -117,7 +124,22 @@ jobs:
             echo 'RunPod CLI doctor did not report a healthy configuration' >&2
             exit 1
           }
-      - name: Run all benchmark batch sizes sequentially
+      - name: Validate Rust cost policy before provider execution
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          cost_args=(
+            --provider '${{ inputs.provider }}' --gpu '${{ inputs.gpu }}'
+            --batch-size 1 --repeat 3 --sample-count 50
+            --target-total-sec 5400 --max-duration-sec 600
+            --mode '${{ inputs.cost_mode }}'
+          )
+          if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
+            cost_args+=(--allow-expensive-matrix)
+          fi
+          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+            "${cost_args[@]}" | tee .ci/rtf-cost-policy.json
+      - name: Run cost-guarded benchmark batch sizes sequentially
         id: execute
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -150,6 +172,9 @@ jobs:
           export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          export RTF_IMAGE_DIGEST="${RTF_IMAGE_DIGEST##*@}"
+          export RTF_HF_TIMEOUT=2h
+          export RTF_RUNPOD_MAX_HOURS=2
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in
@@ -158,13 +183,29 @@ jobs:
           esac
           mkdir -p results/batches
           successful_batches=0
+          cost_guard_failed=0
           for batch_size in 1 8 32; do
             batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
             batch_dir="results/batches/batch-${batch_size}"
             mkdir -p "$batch_dir"
+            if [[ '${{ inputs.cost_mode }}' == guarded && "$cost_guard_failed" -eq 1 ]]; then
+              jq -n \
+                --arg run_id "$batch_run_id" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"COST_GUARD_SKIPPED",error_message:"skipped after an earlier batch failed; use full-matrix for explicit diagnostic expansion"}' \
+                > "$batch_dir/result-receipt.json"
+              jq -n \
+                --arg run_id "$batch_run_id" --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+                --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" --arg image_digest "$RTF_IMAGE_DIGEST" \
+                --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+                --arg gpu "$RTF_GPU" --arg inspection_profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$batch_size" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"COST_GUARD_SKIPPED",error_message:"provider execution was not attempted",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",batch_size:($batch_size|tonumber),repeat:3,provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,inspection_profile:(if $inspection_profile == "lough inspection" then "lough" else "precise" end),fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,image_digest:$image_digest,sample_index:0,audio_path:"",reference_text:"",content_available:false}' \
+                > "$batch_dir/content.json"
+              continue
+            fi
             export RTF_RUN_ID="$batch_run_id"
             export RTF_BATCH_SIZE="$batch_size"
             export RTF_LOCAL_OUTPUT="$batch_dir/metrics.json"
+            export RTF_LOCAL_CONTENT="$batch_dir/content.json"
             export RTF_LOCAL_RECEIPT="$batch_dir/result-receipt.json"
             export RTF_HF_LOG="$batch_dir/hf-job.log"
             set +e
@@ -180,7 +221,22 @@ jobs:
                 '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"PROVIDER_EXECUTION_FAILED",error_message:$error_message}' \
                 > "$RTF_LOCAL_RECEIPT"
             fi
+            if [[ ! -s "$RTF_LOCAL_CONTENT" ]]; then
+              jq -n \
+                --arg run_id "$batch_run_id" \
+                --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+                --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+                --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+                --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+                --arg gpu "$RTF_GPU" --arg inspection_profile "$RTF_INSPECTION_PROFILE" \
+                --arg error_message "provider content gate did not produce content evidence for batch ${batch_size}" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,image_digest:$image_digest,inspection_profile:(if $inspection_profile == "lough inspection" then "lough" else "precise" end),fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,sample_index:0,audio_path:"",reference_text:"",content_available:false,error_code:"PROVIDER_CONTENT_MISSING",error_message:$error_message}' \
+                > "$batch_dir/content.json"
+            fi
             jq -e --arg run_id "$batch_run_id" '(.schema_version == 1) and (.run_id == $run_id)' "$RTF_LOCAL_RECEIPT" >/dev/null
+            if [[ "$execute_status" -ne 0 ]] || ! jq -e '.status == "completed"' "$RTF_LOCAL_RECEIPT" >/dev/null 2>&1; then
+              cost_guard_failed=1
+            fi
             if [[ "$execute_status" -ne 0 ]]; then
               echo "batch ${batch_size} exited with status ${execute_status}; continuing remaining batches" >&2
             elif jq -e '.status == "completed"' "$RTF_LOCAL_RECEIPT" >/dev/null; then

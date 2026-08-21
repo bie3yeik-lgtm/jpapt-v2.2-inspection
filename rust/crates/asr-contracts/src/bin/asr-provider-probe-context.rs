@@ -69,7 +69,7 @@ fn run() -> Result<(), String> {
     let git_commit = git_commit()?;
     let config_identity = "strict-provider-probe-v1";
     let model_id = "synthetic-strict-provider-ctc";
-    let enable_mem_pattern = provider != "directml";
+    let enable_mem_pattern = true;
 
     let context = json!({
         "schema_version": 2,
@@ -173,7 +173,7 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "usage: asr-provider-probe-context --contract <candidate-contract.json> --provider <cpu|cuda|directml|coreml> --output <run-context.json>"
+    "usage: asr-provider-probe-context --contract <candidate-contract.json> --provider <cpu|cuda|coreml> --output <run-context.json>"
 }
 
 fn take_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
@@ -211,7 +211,6 @@ fn provider_ort_name(provider: &str) -> Result<&'static str, String> {
     match provider {
         "cpu" => Ok("CPUExecutionProvider"),
         "cuda" => Ok("CUDAExecutionProvider"),
-        "directml" => Ok("DmlExecutionProvider"),
         "coreml" => Ok("CoreMLExecutionProvider"),
         other => Err(format!("unsupported provider {other:?}")),
     }

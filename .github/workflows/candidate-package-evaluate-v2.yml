@@ -503,42 +503,6 @@ jobs:
           path: results/candidate-package
           retention-days: 14
 
-  github-windows-directml:
-    name: GitHub / Windows DirectML
-    needs: [resolve, build]
-    if: ${{ needs.resolve.outputs.executor == 'github' && needs.resolve.outputs.environment == 'windows-directml' }}
-    runs-on: windows-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install native runtime
-        run: python -m pip install --upgrade "huggingface_hub>=1.0,<2" onnx numpy onnxruntime-directml
-      - name: Evaluate
-        shell: bash
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_BUCKET: ${{ needs.resolve.outputs.hf_bucket }}
-          CANDIDATE_ID: ${{ needs.build.outputs.candidate_id }}
-          SUITE: ${{ needs.resolve.outputs.suite }}
-          PROVIDER: DmlExecutionProvider
-          ENVIRONMENT: windows-directml
-          DATASET_SOURCE: ${{ needs.resolve.outputs.dataset_source }}
-          DATASET_ID: ${{ needs.resolve.outputs.dataset_id }}
-          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.source_repository }}
-        run: bash scripts/ci/run-candidate-package-evaluation.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: candidate-package-${{ needs.build.outputs.candidate_id }}-windows-directml-${{ needs.resolve.outputs.suite }}
-          path: results/candidate-package
-          retention-days: 14
-
   hf-jobs:
     name: Hugging Face Jobs
     needs: [resolve, build]
@@ -656,7 +620,6 @@ jobs:
       - github-linux-cpu
       - github-linux-cuda
       - github-macos-coreml
-      - github-windows-directml
       - hf-jobs
     if: ${{ always() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
@@ -693,7 +656,6 @@ jobs:
           CPU_RESULT: ${{ needs.github-linux-cpu.result }}
           CUDA_RESULT: ${{ needs.github-linux-cuda.result }}
           COREML_RESULT: ${{ needs.github-macos-coreml.result }}
-          DIRECTML_RESULT: ${{ needs.github-windows-directml.result }}
           HF_JOBS_RESULT: ${{ needs.hf-jobs.result }}
         run: >-
           cargo run --quiet --locked -p asr-contracts --bin asr-candidate-protocol-build --

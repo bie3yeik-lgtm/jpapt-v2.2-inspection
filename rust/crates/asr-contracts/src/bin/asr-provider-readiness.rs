@@ -43,15 +43,8 @@ fn run() -> Result<(), String> {
                 true,
             )
         }
-        "directml" => (
-            classify_directml(metrics.as_ref(), &step_outcome, &exit_code),
-            "directml-readiness.json",
-            false,
-        ),
         other => {
-            return Err(format!(
-                "unsupported provider {other:?}; expected coreml or directml"
-            ));
+            return Err(format!("unsupported provider {other:?}; expected coreml"));
         }
     };
 
@@ -80,7 +73,7 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "usage: asr-provider-readiness --provider <coreml|directml> --root <probe-dir> --step-outcome <outcome> [--exit-code <code>]"
+    "usage: asr-provider-readiness --provider <coreml> --root <probe-dir> --step-outcome <outcome> [--exit-code <code>]"
 }
 
 fn take_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
@@ -155,31 +148,6 @@ fn classify_coreml(
     result
 }
 
-fn classify_directml(metrics: Option<&Value>, step_outcome: &str, exit_code: &str) -> Value {
-    let provider = metrics_provider(metrics);
-    let execution_proven = provider
-        .and_then(|value| value.get("execution_proven"))
-        .and_then(Value::as_bool)
-        == Some(true);
-
-    let mut result = json!({
-        "provider": "directml",
-        "runner": "windows-latest",
-        "strict_provider_mode": true,
-        "cpu_fallback_allowed": false,
-        "step_outcome": step_outcome,
-        "exit_code": exit_code,
-        "execution_proven": execution_proven
-    });
-    if let Some(provider) = provider {
-        result
-            .as_object_mut()
-            .expect("result is an object")
-            .insert("telemetry".to_owned(), Value::Object(provider.clone()));
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,13 +177,5 @@ mod tests {
             result["classification"],
             "strict_rejected_cpu_assigned_nodes"
         );
-    }
-
-    #[test]
-    fn directml_records_execution_proof_without_inventing_classification() {
-        let metrics = json!({"provider": {"execution_proven": true}});
-        let result = classify_directml(Some(&metrics), "success", "0");
-        assert_eq!(result["execution_proven"], true);
-        assert!(result.get("classification").is_none());
     }
 }

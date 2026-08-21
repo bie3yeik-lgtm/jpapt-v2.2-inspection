@@ -48,7 +48,13 @@ ghcr.io/<owner>/<package>@sha256:<digest>
 
 必要なidentityはimage reference、digest、Dockerfile/context、source repo、role、Git commitであり、tokenやcandidate payloadをimage layerへ入れてはならない。
 
-## 3. RTF Resolver contract
+## 3. GHCR publish to RTF Resolver chain
+
+`.github/workflows/ghcr-build-publish.yml`のmain push/manual実行では、全Docker build matrix完了後にcanonical `parakeet-rtf-benchmark` build provenance artifactを取得し、`published=true`、`role=rtf-benchmark`、digest-pinned referenceを検証する。そのexact image referenceをreusable `.github/workflows/rtf-resolver.yml`へ渡してResolverを連続実行する。
+
+PR buildではGHCR publishを行わないため、RTF Resolverは連続実行しない。Resolverのmanual実行ではimage inputを空にして最新digest解決を選択できるが、GHCR chainでは必ずbuild jobが発行したdigestを使用する。
+
+## 4. RTF Resolver contract
 
 Authority: `.github/workflows/rtf-resolver.yml`, `docker/rtf-benchmark/benchmark-runner/benchmark_runner/resolve_dataset.py`.
 
@@ -73,7 +79,7 @@ rtf-scores/benchmark/benchmark-v1.fixture.json
 
 fixture upload成功はbenchmark実行成功ではない。fixture revisionとmanifest SHAが次のrunへ入力されることを確認する。
 
-## 4. Provider execution contract
+## 5. Provider execution contract
 
 Authority: `.github/workflows/rtf-benchmark-run.yml`, `scripts/run-benchmark.sh`, `rtf-service-result.yml`.
 
@@ -100,6 +106,10 @@ error_code / error_message
 `completed`ではjob identity、result、metrics、SHAが全て必要である。CPU fallback、provider registration、job submissionだけではGPU execution proofにならない。
 
 DirectMLは2026-08-20付でretiredであり、新規workflow、dispatch、receipt、HF Jobs、Bucket completion claimのactive routeに含めない。既存artifactはhistorical audit onlyとする。
+
+DirectMLのactive workflow、provider strict probe、Windows candidate evaluation、runtime provider feature、provider configurationは削除済みである。旧receipt/protocol fieldおよび監査文書に残る名称は、過去artifactの識別用であり、実行routeを表さない。
+
+実runの結果は[RTF Benchmark GitHub Actions実run証拠](./rtf-benchmark-action-run-evidence-20260821.md)に固定する。
 
 ## 5. Result-to-record contract
 
@@ -128,6 +138,10 @@ CLI:
 ```text
 asr-rtf-rank <output.json> <record.json>...
 ```
+
+ranking workflowでは`--phase phase1|full`を指定し、Rustがrecord間identity、重複、
+accepted recordの有無を検証する。除外されたblocked/未計測recordの理由は
+`rtf-scores/ranking-exclusions.json`へ保存する。
 
 処理は各入力recordをRust schema validatorで検証し、completedかつprovider execution proof、CER、costが揃ったrecordだけを採用する。sort keyは次の順で固定する。
 

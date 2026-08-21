@@ -187,3 +187,59 @@ jobs:
           path: .ci/ghcr/build.json
           retention-days: 14
           if-no-files-found: error
+
+  rtf-image:
+    name: Resolve published RTF image identity
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - name: Download RTF image build provenance
+        uses: actions/download-artifact@v7
+        with:
+          name: ghcr-build-parakeet-rtf-benchmark
+          path: .ci/ghcr
+
+      - name: Validate and export the exact published digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_json="$(find .ci/ghcr -type f -name build.json -print -quit)"
+          [[ -n "$build_json" && -s "$build_json" ]] || {
+            echo 'RTF GHCR build provenance artifact is missing' >&2
+            exit 1
+          }
+          jq -e '.published == true and .role == "rtf-benchmark"' "$build_json" >/dev/null || {
+            echo 'RTF GHCR build was not published as the expected benchmark role' >&2
+            exit 2
+          }
+          image="$(jq -er '.reference' "$build_json")"
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "invalid published RTF image reference: $image" >&2
+            exit 2
+          }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Using exact RTF image: $image"
+
+  rtf-resolver:
+    name: Resolve RTF fixture after GHCR publish
+    needs: rtf-image
+    if: needs.rtf-image.result == 'success'
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
+    uses: ./.github/workflows/rtf-resolver.yml
+    with:
+      image: ${{ needs.rtf-image.outputs.image }}
+      dataset_revision: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+      fixture_repo_id: gawohok7/rtf-benchmark-fixtures
+      inspection_profile: lough inspection
+    secrets: inherit

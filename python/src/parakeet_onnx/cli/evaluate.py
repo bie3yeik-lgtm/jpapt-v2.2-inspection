@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="parakeet-onnx-evaluate",
         description="Evaluate a minimal candidate through the strict typed execution contract.",
     )
-    parser.add_argument("--provider", required=True, choices=("cpu", "cuda", "directml", "coreml"))
+    parser.add_argument("--provider", required=True, choices=("cpu", "cuda", "coreml"))
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--runtime-variant")
     parser.add_argument("--candidate-id")

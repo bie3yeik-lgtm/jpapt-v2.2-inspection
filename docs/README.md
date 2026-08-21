@@ -26,6 +26,8 @@
 18. [parakeet-provenance-remaining-work-and-parent-contract-20260820.md](./parakeet-provenance-remaining-work-and-parent-contract-20260820.md) — 残作業、受領payload、親リポジトリとの契約、完了判定
 19. [recursive-delivery-entry-rtf-benchmark-completion-20260821.md](./recursive-delivery-entry-rtf-benchmark-completion-20260821.md) — RTF Benchmark完成branchの目的、工程、blocker
 20. [rtf-benchmark-flow-and-actions-contract-20260821.md](./rtf-benchmark-flow-and-actions-contract-20260821.md) — GHCR、Resolver、provider、record、rank、Actionsの一連の契約
+21. [rtf-benchmark-action-run-evidence-20260821.md](./rtf-benchmark-action-run-evidence-20260821.md) — GitHub Actions実run結果とRTF Benchmark未達事項
+22. [rtf-provider-service-investigation-20260821.md](./rtf-provider-service-investigation-20260821.md) — HF Jobs / RunPodの実run失敗境界とprovider adapter調査
 19. [parent-external-dispatch-workflows-20260820.md](./parent-external-dispatch-workflows-20260820.md) — 親 `repository_dispatch` 向け workflow 実装ブランチの目的、#134/#154/#160 対応、実装 backlog
 20. [recursive-delivery-entry-parent-external-dispatch-20260820.md](./recursive-delivery-entry-parent-external-dispatch-20260820.md) — 上記ブランチの recursive delivery 着手入口
 21. [parent-repository-external-dispatch-config-handoff-20260820.md](./parent-repository-external-dispatch-config-handoff-20260820.md) — 公開正本 merge 後に親 repo で行う route config 更新 handoff
@@ -132,6 +134,22 @@ mise run actions-list
 ```
 
 詳細は [github-actions.md](./github-actions.md)、[github-actions-ux.md](./github-actions-ux.md)、[repository-dispatch.md](./repository-dispatch.md)、[ghcr-ci.md](./ghcr-ci.md) を参照してください。
+
+RTF provider content gateの詳細は [rtf-provider-content-first-gate-20260821.md](./rtf-provider-content-first-gate-20260821.md) を参照してください。
+
+`asr-rtf-rank`とHF/RunPod result/metrics受領契約の正本は [asr-rtf-rank-provider-result-contract-20260821.md](./asr-rtf-rank-provider-result-contract-20260821.md) です。
+
+GHCR build/publish完了後のRTF Resolver連続実行契約は [rtf-benchmark-flow-and-actions-contract-20260821.md](./rtf-benchmark-flow-and-actions-contract-20260821.md) の「GHCR publish to RTF Resolver chain」を正本とします。
+
+ローカルでのDockerfile・HF Jobs・RunPod adapter検証は [rtf-local-provider-adapter-test.md](./rtf-local-provider-adapter-test.md) を参照してください。
+
+RTF providerのローカル検証成果、外部証拠境界、次のrecursive unitsは [recursive-delivery-prep-rtf-provider-local-verification-20260821.md](./recursive-delivery-prep-rtf-provider-local-verification-20260821.md) を参照してください。
+
+Rust契約・ログ分類とPython provider/Docker実行の責務分離、VSDD実装順は [rtf-rust-contract-python-provider-implementation-plan-20260821.md](./rtf-rust-contract-python-provider-implementation-plan-20260821.md) を参照してください。
+
+HF/RunPodの実行前cost guard、guarded/full-matrix、timeout、cleanup方針も同資料を正本とします。
+
+これまでのRTF障害、再発防止条件、Dockerfile/GHCR、空値、OOM、provider仕様、VSDD受入条件を統合した計画参考資料は [rtf-complete-reliability-and-cost-planning-reference-20260821.md](./rtf-complete-reliability-and-cost-planning-reference-20260821.md) です。
 
 ## 変更時の原則
 

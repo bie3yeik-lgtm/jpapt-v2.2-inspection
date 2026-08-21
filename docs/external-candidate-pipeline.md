@@ -81,7 +81,7 @@ Important inputs:
 | `dataset_id` | empty | HF dataset repository for `custom`, or override for `repository`. |
 | `suite` | `smoke` | `smoke`, `parity`, or `probe` for GitHub execution. **HF Jobs accepts only `smoke`.** |
 | `executor` | `github` | `github` or `hf_jobs`. `hf_jobs` is intentionally smoke-only. |
-| `environment` | `linux-cpu` | `linux-cpu`, `linux-cuda`, `macos-coreml`, `windows-directml`. HF Jobs accepts only the two Linux environments. |
+| `environment` | `linux-cpu` | `linux-cpu`, `linux-cuda`, `macos-coreml`. DirectML is retired and rejected. |
 | `hf_flavor` | `cpu-basic` | HF Jobs hardware flavor; availability is checked with `hf jobs hardware` immediately before job creation. |
 | `hf_jobs_image` | empty | Optional immutable image override. When set for HF Jobs it must use `@sha256:<64 hex>` and must resolve anonymously. |
 | `dry_run` | false | Resolve routing and print a coarse time estimate without candidate download/build/evaluation. |
@@ -101,7 +101,6 @@ The image is runtime-specific:
 | `linux-cpu` | `onnxruntime` | `CPUExecutionProvider` |
 | `linux-cuda` | `onnxruntime-gpu` | `CUDAExecutionProvider` |
 | `macos-coreml` | `onnxruntime` | `CoreMLExecutionProvider` |
-| `windows-directml` | `onnxruntime-directml` | `DmlExecutionProvider` |
 
 BuildKit uses GitHub Actions cache with `type=gha`, scoped by package **and runtime environment**. A CUDA image therefore does not reuse a CPU image layer scope as if they represented the same runtime.
 
@@ -138,18 +137,18 @@ If the requested provider is absent from `onnxruntime.get_available_providers()`
 
 and exits non-zero. The report also records platform information, ONNX Runtime version, requested provider, available providers, and active providers for every session.
 
-This rule is important for CoreML, DirectML and CUDA validation: a successful CPU inference is not evidence that the requested provider works.
+This rule is important for CoreML and CUDA validation: a successful CPU inference is not evidence that the requested provider works.
 
 ## GitHub runner behavior
 
 - `linux-cpu` uses `ubuntu-latest`.
 - `macos-coreml` uses `macos-14` and evaluates the same candidate natively.
-- `windows-directml` uses `windows-latest` with `onnxruntime-directml` and evaluates natively.
+DirectML requests are rejected before dispatch and have no native evaluation path.
 - `linux-cuda` with `executor=github` requires a self-hosted runner carrying labels `self-hosted`, `linux`, `x64`, `gpu` and a Docker/NVIDIA runtime capable of `docker run --gpus all`.
 
 `ubuntu-latest` is deliberately not treated as CUDA-capable. If no suitable self-hosted GPU runner exists, the guarded HF Jobs smoke route can validate the Linux CUDA package remotely.
 
-Hosted macOS and Windows runners cannot execute the Linux OCI package as a native CoreML/DirectML environment, so those paths fetch the identical candidate and run the strict evaluator natively. The GHCR package remains provenance for the candidate/runtime build, while provider evidence is produced by the target OS.
+Hosted macOS runners cannot execute the Linux OCI package as a native CoreML environment, so that path fetches the identical candidate and runs the strict evaluator natively. The GHCR package remains provenance for the candidate/runtime build, while provider evidence is produced by the target OS.
 
 ## HF Jobs smoke behavior
 

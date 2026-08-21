@@ -1,5 +1,7 @@
 mod error;
 pub mod provenance;
+pub mod rtf_cost;
+pub mod rtf_rank;
 mod schema;
 
 use std::collections::BTreeSet;
@@ -104,13 +106,19 @@ pub fn validate_rtf_benchmark_record(value: &Value) -> Result<()> {
         .and_then(Value::as_bool)
         .ok_or_else(|| ContractError::validation("provider_execution_proof must be boolean"))?;
     if status == "completed" && !execution_proven {
-        return Err(ContractError::validation("completed benchmark record requires provider execution proof"));
+        return Err(ContractError::validation(
+            "completed benchmark record requires provider execution proof",
+        ));
     }
     if status == "completed"
         && (value.pointer("/cer").is_some_and(Value::is_null)
-            || value.pointer("/gpu_price_per_hour").is_some_and(Value::is_null))
+            || value
+                .pointer("/gpu_price_per_hour")
+                .is_some_and(Value::is_null))
     {
-        return Err(ContractError::validation("completed benchmark record requires CER and GPU price"));
+        return Err(ContractError::validation(
+            "completed benchmark record requires CER and GPU price",
+        ));
     }
     Ok(())
 }
