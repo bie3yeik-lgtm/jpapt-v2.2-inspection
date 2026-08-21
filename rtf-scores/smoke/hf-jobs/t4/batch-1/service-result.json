@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32457129494-b1",
+  "run_id": "rtf-hf-32465293708-b1",
   "service_id": "hf-jobs",
   "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a87fa28c81709766c80354f",
+  "job_id": "6a88130ac81709766c80369b",
   "result_uri": null,
   "result_sha256": null,
   "metrics_uri": null,
   "metrics_path": null,
   "metrics_sha256": null,
-  "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "HF Job did not emit RTF_RESULT_RECEIPT"
+  "error_code": "BENCHMARK_INFERENCE_FAILED",
+  "error_message": "CUDA error: an illegal memory access was encountered\nSearch for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n\nException raised from replay at /pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:268 (most recent call first):\nC++ CapturedTraceback:\n#4 std::_Function_handler<std::shared_ptr<c10::LazyValue<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const> (), c10::SetStackTraceFetcher(std::function<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > ()>)::{lambda()#1}>::_M_invoke(std::_Any_data const&) from Logging.cpp:0\n#5 c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) from ??:0\n#6 c10::AcceleratorError::AcceleratorError(c10::SourceLocation, int, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) from :0\n#7 c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, unsigned int, bool) from ??:0\n#8 at::cuda::CUDAGraph::replay() from ??:0\n#9 torch::detail::wrap_pybind_function_impl_<void (at::cuda::CUDAGraph::*)(), 0ul, true>(void (at::cuda::CUDAGraph::*&&)(), std::integer_sequence<unsigned long, 0ul>, std::integral_constant<bool, true>)::{lambda(at::cuda::CUDAGraph&)#1}::operator()(at::cuda::CUDAGraph&) const from :0\n#10 pybind11::cpp_function::initialize<torch::detail::wrap_pybind_function_impl_<void (at::cuda::CUDAGraph::*)(), 0ul, true>(void (at::cuda::CUDAGraph::*&&)(), std::integer_sequence<unsigned long, 0ul>, std::integral_constant<bool, true>)::{lambda(at::cuda::CUDAGraph&)#1}, void, at::cuda::CUDAGraph&, pybind11::name, pybind11::is_method, pybind11::sibling>(void (at::cuda::CUDAGraph::*&&)(), void (*)(at::cuda::CUDAGraph&), pybind11::name const&, pybind11::is_method const&, pybind11::sibling const&)::{lambda(pybind11::detail::function_call&)#1}::_FUN(pybind11::detail::function_call&) from :0\n#11 pybind11::cpp_function::dispatcher(_object*, _object*, _object*) from :0\n#12 cfunction_call from ??:0\n#13 _PyEval_EvalFrameDefault from ??:0\n#14 _PyObject_Call_Prepend from ??:0\n#15 slot_tp_call from ??:0\n#16 _PyEval_EvalFrameDefault.warm from ??:0\n#17 method_vectorcall.llvm.10362965574131577162 from ??:0\n#18 _PyEval_EvalFrameDefault from ??:0\n#19 method_vectorcall.llvm.10362965574131577162 from ??:0\n#20 object_vacall.llvm.4239284753844526573 from ??:0\n#21 PyObject_CallFunctionObjArgs from ??:0\n#22 WraptBoundFunctionWrapper_call from /project/src/wrapt/_wrappers.c:3745\n#23 _PyEval_EvalFrameDefault from ??:0\n#24 _PyObject_Call_Prepend from ??:0\n#25 slot_tp_call from ??:0\n#26 _PyEval_EvalFrameDefault.warm from ??:0\n#27 method_vectorcall.llvm.10362965574131577162 from ??:0\n#28 _PyEval_EvalFrameDefault from ??:0\n#29 PyEval_EvalCode from ??:0\n#30 builtin_exec from ??:0\n#31 cfunction_vectorcall_FASTCALL_KEYWORDS.llvm.5932654989982391144 from ??:0\n#32 _PyEval_EvalFrameDefault from ??:0\n#33 pymain_run_module from ??:0\n#34 Py_RunMain from ??:0\n#35 pymain_main.llvm.4360704852277135573 from ??:0\n#36 main from ??:0\n#37 __libc_init_first from ??:0\n#38 __libc_start_main from ??:0\n#39 _start from ??:0\n"
 }
