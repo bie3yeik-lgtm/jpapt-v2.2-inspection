@@ -70,6 +70,9 @@ static_checks() {
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
+  ! grep -F 'lough inspection' scripts/run-benchmark.sh .github/workflows/ghcr-build-publish.yml .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
+  grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }
 
@@ -80,6 +83,10 @@ write_fake_cli() {
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == jobs && "${2:-}" == run ]]; then
+  if [[ "${RTF_FAKE_FAILURE:-0}" == 1 ]]; then
+    echo 'CUDA error: an illegal memory access was encountered' >&2
+    exit 134
+  fi
   echo 'RTF_CONTENT_PROBE={"schema_version":1,"run_id":"local-hf-test","status":"completed","content_available":true,"hypothesis_text":"mock"}'
   echo 'RTF_RESULT_RECEIPT={"schema_version":1,"run_id":"local-hf-test","status":"completed","job_id":"hf-mock-job","result_uri":"https://example.invalid/result","result_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","metrics_uri":"https://example.invalid/result","metrics_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
   exit 0
@@ -155,7 +162,7 @@ mock_case() {
   export RTF_PRECISION=float16
   export RTF_DECODER=tdt
   export RTF_REPEAT=1
-  export RTF_INSPECTION_PROFILE="lough inspection"
+  export RTF_INSPECTION_PROFILE="smoke"
   export HF_TOKEN=local-mock-token
   export RTF_LOCAL_CONTENT="$case_dir/content.json"
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
@@ -172,10 +179,36 @@ mock_case() {
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod ;;
-    hf|runpod) mock_case "$PROVIDER" ;;
+    all) mock_case hf; mock_case runpod; failure_receipt_check ;;
+    hf) mock_case hf; failure_receipt_check ;;
+    runpod) mock_case runpod ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
+}
+
+failure_receipt_check() {
+  local fake_root case_dir status
+  fake_root="$(mktemp -d)"
+  case_dir="$fake_root/result"
+  mkdir -p "$case_dir"
+  write_fake_cli "$fake_root/bin"
+  export PATH="$fake_root/bin:$PATH"
+  export RTF_FAKE_FAILURE=1
+  export RTF_RUN_ID="local-hf-failure-test" RTF_GPU=t4 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
+  export RTF_LOCAL_CONTENT="$case_dir/content.json"
+  export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
+  export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
+  export RTF_HF_LOG="$case_dir/hf-job.log"
+  set +e
+  ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/example/rtf@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" >/dev/null 2>&1
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "HF failure mock unexpectedly succeeded"
+  jq -e '.status == "blocked" and .error_code == "PROVIDER_CUDA_ILLEGAL_ACCESS" and .run_id == "local-hf-failure-test"' \
+    "$case_dir/result-receipt.json" >/dev/null || fail "CUDA failure receipt was not classified"
+  unset RTF_FAKE_FAILURE
+  rm -rf "$fake_root"
+  pass "HF CUDA illegal access produces a typed failure receipt"
 }
 
 docker_checks() {

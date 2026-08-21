@@ -31,7 +31,7 @@ jobs:
           mapfile -t records < <(find "rtf-scores/${PHASE}" -mindepth 3 -type f -name 'benchmark-record.json' | sort)
           [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
           rank_phase="phase1"
-          [[ "$PHASE" == precise ]] && rank_phase="full"
+          [[ "$PHASE" == pref || "$PHASE" == probe ]] && rank_phase="$PHASE"
           branch="inspection/rtf-benchmark-ranking-${PHASE}"
           git fetch --no-tags origin main
           git checkout --no-track -B "$branch" origin/main

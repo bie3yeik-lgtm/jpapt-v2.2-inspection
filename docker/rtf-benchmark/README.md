@@ -84,6 +84,12 @@ RunPod automation uses `runpodctl ssh info` and SSH after the Pod becomes
 reachable; the deprecated `runpodctl exec` command is not used.
 Missing runtime variables fail closed; credentials are not image defaults.
 
+The runner defaults to `RTF_NUM_WORKERS=0` and disables pinned memory when the
+installed NeMo `transcribe()` API exposes those controls. This is part of the
+CUDA stability boundary for variable-length fixture samples. Set
+`RTF_CUDA_DIAGNOSTICS=1` only for a diagnostic run; it enables synchronous CUDA
+errors and C++ stack traces and must not be used as a normal performance result.
+
 GitHub Actions and local automation should use the lifecycle wrapper:
 
 ```bash

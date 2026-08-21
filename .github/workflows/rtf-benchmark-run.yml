@@ -39,6 +39,11 @@ on:
         default: guarded
         type: choice
         options: [guarded, full-matrix]
+      cuda_diagnostics:
+        description: Enable synchronous CUDA diagnostics for provider failure investigation
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -163,6 +168,7 @@ jobs:
           RTF_DATASET_MAX_DURATION_SEC: 600
           RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
           RTF_FIXTURE_MANIFEST_SHA256: ''
+          RTF_CUDA_DIAGNOSTICS: ${{ inputs.cuda_diagnostics && '1' || '0' }}
         run: |
           set -euo pipefail
           [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || {
@@ -198,7 +204,7 @@ jobs:
                 --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" --arg image_digest "$RTF_IMAGE_DIGEST" \
                 --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
                 --arg gpu "$RTF_GPU" --arg inspection_profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$batch_size" \
-                '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"COST_GUARD_SKIPPED",error_message:"provider execution was not attempted",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",batch_size:($batch_size|tonumber),repeat:3,provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,inspection_profile:(if $inspection_profile == "lough inspection" then "lough" else "precise" end),fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,image_digest:$image_digest,sample_index:0,audio_path:"",reference_text:"",content_available:false}' \
+                '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"COST_GUARD_SKIPPED",error_message:"provider execution was not attempted",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",batch_size:($batch_size|tonumber),repeat:3,provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,inspection_profile:$inspection_profile,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,image_digest:$image_digest,sample_index:0,audio_path:"",reference_text:"",content_available:false}' \
                 > "$batch_dir/content.json"
               continue
             fi
@@ -230,7 +236,7 @@ jobs:
                 --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
                 --arg gpu "$RTF_GPU" --arg inspection_profile "$RTF_INSPECTION_PROFILE" \
                 --arg error_message "provider content gate did not produce content evidence for batch ${batch_size}" \
-                '{schema_version:1,run_id:$run_id,status:"blocked",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,image_digest:$image_digest,inspection_profile:(if $inspection_profile == "lough inspection" then "lough" else "precise" end),fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,sample_index:0,audio_path:"",reference_text:"",content_available:false,error_code:"PROVIDER_CONTENT_MISSING",error_message:$error_message}' \
+                '{schema_version:1,run_id:$run_id,status:"blocked",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,image_digest:$image_digest,inspection_profile:$inspection_profile,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,sample_index:0,audio_path:"",reference_text:"",content_available:false,error_code:"PROVIDER_CONTENT_MISSING",error_message:$error_message}' \
                 > "$batch_dir/content.json"
             fi
             jq -e --arg run_id "$batch_run_id" '(.schema_version == 1) and (.run_id == $run_id)' "$RTF_LOCAL_RECEIPT" >/dev/null

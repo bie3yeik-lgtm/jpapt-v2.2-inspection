@@ -101,6 +101,9 @@ case "$PROVIDER" in
       -e "RTF_DATASET_COUNT_MAX=$RTF_DATASET_COUNT_MAX" -e "RTF_DATASET_TARGET_TOTAL_SEC=$RTF_DATASET_TARGET_TOTAL_SEC"
       -e "RTF_DATASET_MAX_DURATION_SEC=$RTF_DATASET_MAX_DURATION_SEC" -e "RTF_FIXTURE_FILENAME=$RTF_FIXTURE_FILENAME"
       -e "RTF_FIXTURE_MANIFEST_SHA256=$RTF_FIXTURE_MANIFEST_SHA256"
+      -e "RTF_CUDA_DIAGNOSTICS=${RTF_CUDA_DIAGNOSTICS:-0}"
+      -e "RTF_NUM_WORKERS=${RTF_NUM_WORKERS:-0}"
+      -e "RTF_ERROR_LOG=/output/benchmark-error.log"
       -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
     )
     [[ -n "${HF_TOKEN:-}" ]] || { echo "HF_TOKEN is required for HF Jobs" >&2; exit 1; }
@@ -117,10 +120,32 @@ case "$PROVIDER" in
     if [[ -n "$content_line" ]]; then
       printf '%s\n' "${content_line#RTF_CONTENT_PROBE=}" > "${RTF_LOCAL_CONTENT:-content.json}"
     fi
-    [[ -n "$receipt_line" ]] || {
-      echo 'HF Job did not emit RTF_RESULT_RECEIPT' >&2
-      exit "$hf_status"
-    }
+    if [[ -z "$receipt_line" ]]; then
+      job_id="$(grep -Eo 'Job [0-9a-f]{24}' "$hf_log" | tail -n 1 | awk '{print $2}' || true)"
+      failure_code="PROVIDER_EXECUTION_FAILED"
+      failure_message="HF Job did not emit RTF_RESULT_RECEIPT"
+      if grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$hf_log"; then
+        failure_code="PROVIDER_CUDA_ILLEGAL_ACCESS"
+        failure_message="HF Job terminated with a CUDA illegal memory access"
+      elif grep -Eqi 'out of memory|CUDA OOM|cuda out of memory' "$hf_log"; then
+        failure_code="PROVIDER_CUDA_OOM"
+        failure_message="HF Job terminated with CUDA out of memory"
+      fi
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg job_id "$job_id" --arg error_code "$failure_code" \
+        --arg error_message "$failure_message" --arg model_id "$RTF_MODEL_ID" \
+        --arg model_revision "$RTF_MODEL_REVISION" --arg dataset_id "$RTF_DATASET_ID" \
+        --arg dataset_revision "$RTF_DATASET_REVISION" --arg image_digest "$RTF_IMAGE_DIGEST" \
+        --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" --arg fixture_revision "$RTF_FIXTURE_REVISION" \
+        --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" --arg gpu "$RTF_GPU" \
+        --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:($job_id | if length == 0 then null else . end),result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"hf-jobs",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+      echo "HF Job failure receipt: $failure_code" >&2
+      [[ "$hf_status" -ne 0 ]] && exit "$hf_status"
+      exit 1
+    fi
     printf '%s\n' "${receipt_line#RTF_RESULT_RECEIPT=}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     [[ "$hf_status" -eq 0 ]] || exit "$hf_status"
     ;;
@@ -186,7 +211,9 @@ case "$PROVIDER" in
       --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
       --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" --arg num_workers "${RTF_NUM_WORKERS:-0}" \
+      --arg error_log "/output/benchmark-error.log" \
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_NUM_WORKERS:$num_workers,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
@@ -220,6 +247,18 @@ case "$PROVIDER" in
     runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
     runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}" || true
     runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
+    if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg error_message "RunPod execution did not produce a result receipt" \
+        --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+        --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+        --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+        --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"PROVIDER_EXECUTION_FAILED",error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    fi
     [[ "$remote_status" -eq 0 ]] || exit "$remote_status"
     # Delete this Pod as soon as its metrics and receipt have been copied.
     # The EXIT trap remains as a failure-path safety net.

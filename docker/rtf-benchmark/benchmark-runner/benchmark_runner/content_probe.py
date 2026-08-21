@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from benchmark_runner.transcribe_compat import transcribe
+
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="benchmark-content-probe")
@@ -96,7 +98,13 @@ def main() -> int:
         model = ASRModel.restore_from(restore_path=str(nemo_files[0]), map_location=device)
         model = model.to(device).eval()
         with torch.inference_mode():
-            hypotheses = model.transcribe([str(sample["audio_path"])], batch_size=1)
+            hypotheses = transcribe(
+                model,
+                [str(sample["audio_path"])],
+                batch_size=1,
+                torch_module=torch,
+                device=device,
+            )
         item = hypotheses[0]
         text = str(item.text if hasattr(item, "text") else item)
         base.update({
