@@ -64,11 +64,19 @@ class _TranscribeConfig:
 
 
 class _Loader:
-    def __init__(self) -> None:
-        self.num_workers = 8
-        self.pin_memory = True
-        self.persistent_workers = True
-        self.prefetch_factor = 2
+    def __init__(self, *, num_workers: int = 0, pin_memory: bool = False) -> None:
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self._persistent_workers = False
+        self._prefetch_factor = None
+
+    @property
+    def persistent_workers(self) -> bool:
+        return self._persistent_workers
+
+    @property
+    def prefetch_factor(self) -> None:
+        return self._prefetch_factor
 
 
 class _ModelWithTypedOverrideConfig:
@@ -81,7 +89,10 @@ class _ModelWithTypedOverrideConfig:
         return _TranscribeConfig()
 
     def _setup_transcribe_dataloader(self, config: dict[str, object]) -> _Loader:
-        self.loader = _Loader()
+        self.loader = _Loader(
+            num_workers=int(config["num_workers"]),
+            pin_memory=bool(config["pin_memory"]),
+        )
         return self.loader
 
     def transcribe(self, paths: list[str], *, override_config: _TranscribeConfig) -> list[str]:
