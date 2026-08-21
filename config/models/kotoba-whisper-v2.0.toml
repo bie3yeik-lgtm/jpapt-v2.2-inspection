@@ -161,7 +161,6 @@ requires_cache_management = true
 supported_providers = [
     "cpu",
     "cuda",
-    "directml",
     "coreml",
 ]
 
@@ -176,7 +175,6 @@ linux = [
 windows = [
     "cpu",
     "cuda",
-    "directml",
 ]
 
 macos = [
@@ -192,7 +190,6 @@ mlx = false
 native_coreml_conversion = false
 
 coreml_execution_provider = true
-directml_execution_provider = true
 cuda_execution_provider = true
 
 [rust]

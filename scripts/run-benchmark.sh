@@ -38,6 +38,7 @@ fi
 }
 : "${RTF_GPU:?RTF_GPU is required}"
 : "${RTF_OUTPUT:=/output/metrics.json}"
+: "${RTF_CONTENT_OUTPUT:=/output/content.json}"
 : "${RTF_BATCH_SIZE:=1}"
 : "${RTF_PRECISION:=float16}"
 : "${RTF_DECODER:=tdt}"
@@ -52,6 +53,8 @@ fi
 : "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
 : "${RTF_DATASET_MAX_DURATION_SEC:=600}"
 : "${RTF_REPEAT:=3}"
+: "${RTF_HF_TIMEOUT:=2h}"
+: "${RTF_RUNPOD_MAX_HOURS:=2}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 if [[ "$PROVIDER" == hf ]]; then
@@ -84,6 +87,7 @@ case "$PROVIDER" in
     hf_env=(
       -e "RTF_RUN_ID=$RTF_RUN_ID" -e "RTF_MANIFEST=$RTF_MANIFEST"
       -e "RTF_OUTPUT=$RTF_OUTPUT" -e "RTF_MODEL_ID=$RTF_MODEL_ID"
+      -e "RTF_CONTENT_OUTPUT=$RTF_CONTENT_OUTPUT"
       -e "RTF_MODEL_REVISION=$RTF_MODEL_REVISION" -e "RTF_DATASET_ID=$RTF_DATASET_ID"
       -e "RTF_DATASET_REVISION=$RTF_DATASET_REVISION" -e "RTF_GPU=$RTF_GPU"
       -e "RTF_FIXTURE_REPO_ID=$RTF_FIXTURE_REPO_ID" -e "RTF_FIXTURE_REVISION=$RTF_FIXTURE_REVISION"
@@ -103,11 +107,16 @@ case "$PROVIDER" in
     hf_log="${RTF_HF_LOG:-hf-job.log}"
     set +e
     hf jobs run --name "$RTF_RUN_ID" --flavor "$HF_FLAVOR" "${hf_env[@]}" \
+      --timeout "$RTF_HF_TIMEOUT" \
       --secrets "HF_TOKEN=$HF_TOKEN" "$IMAGE" /opt/rtf-benchmark/entrypoint.sh \
       --batch-size "$RTF_BATCH_SIZE" 2>&1 | tee "$hf_log"
     hf_status=${PIPESTATUS[0]}
     set -e
     receipt_line="$(grep '^RTF_RESULT_RECEIPT=' "$hf_log" | tail -n 1 || true)"
+    content_line="$(grep '^RTF_CONTENT_PROBE=' "$hf_log" | tail -n 1 || true)"
+    if [[ -n "$content_line" ]]; then
+      printf '%s\n' "${content_line#RTF_CONTENT_PROBE=}" > "${RTF_LOCAL_CONTENT:-content.json}"
+    fi
     [[ -n "$receipt_line" ]] || {
       echo 'HF Job did not emit RTF_RESULT_RECEIPT' >&2
       exit "$hf_status"
@@ -148,10 +157,14 @@ case "$PROVIDER" in
       fi
     }
     trap cleanup_runpod EXIT
-    terminate_after="$(date -u -d '+4 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+    [[ "$RTF_RUNPOD_MAX_HOURS" =~ ^[1-6]$ ]] || {
+      echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 6' >&2
+      exit 2
+    }
+    terminate_after="$(date -u -d "+${RTF_RUNPOD_MAX_HOURS} hours" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
     if [[ -z "$terminate_after" ]]; then
       # BSD date (for local macOS execution) uses a different flag shape.
-      terminate_after="$(date -u -v+4H '+%Y-%m-%dT%H:%M:%SZ')"
+      terminate_after="$(date -u -v+${RTF_RUNPOD_MAX_HOURS}H '+%Y-%m-%dT%H:%M:%SZ')"
     fi
     [[ "$terminate_after" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
       echo "failed to generate RunPod termination deadline: $terminate_after" >&2
@@ -160,6 +173,7 @@ case "$PROVIDER" in
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
+      --arg content_output "$RTF_CONTENT_OUTPUT" \
       --arg model_revision "$RTF_MODEL_REVISION" --arg dataset_id "$RTF_DATASET_ID" \
       --arg dataset_revision "$RTF_DATASET_REVISION" --arg gpu "$RTF_GPU" \
       --arg batch "$RTF_BATCH_SIZE" --arg precision "$RTF_PRECISION" \
@@ -172,7 +186,7 @@ case "$PROVIDER" in
       --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
       --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
       --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
@@ -199,9 +213,14 @@ case "$PROVIDER" in
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
+    set +e
     runpod_ssh sh -c "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
-    runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"
-    runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    remote_status=$?
+    set -e
+    runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
+    runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}" || true
+    runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
+    [[ "$remote_status" -eq 0 ]] || exit "$remote_status"
     # Delete this Pod as soon as its metrics and receipt have been copied.
     # The EXIT trap remains as a failure-path safety net.
     delete_pod

@@ -29,8 +29,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            provider: directml
           - os: macos-14
             provider: coreml
     runs-on: ${{ matrix.os }}
@@ -114,82 +112,6 @@ jobs:
         if: always()
         with:
           name: coreml-strict-provider-probe
-          path: .ci/provider-probe
-          if-no-files-found: ignore
-          retention-days: 7
-
-  directml-readiness:
-    name: DirectML strict readiness probe
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install uv
-        run: python -m pip install --disable-pip-version-check uv
-      - name: Sync minimal authoritative environment
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv lock --check
-          uv sync --locked --extra onnx
-      - name: Materialize synthetic CTC provider probe
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run python scripts/ci/e2e-provider-ctc.py --output .ci/provider-probe
-          uv run python scripts/ci/resolve-candidate-artifacts.py \
-            --candidate-dir .ci/provider-probe/candidate \
-            --runtime-variant ctc \
-            --contract-out .ci/provider-probe/candidate-contract.json
-          cargo run --quiet --locked -p asr-contracts --bin asr-provider-probe-context -- \
-            --contract .ci/provider-probe/candidate-contract.json \
-            --provider directml \
-            --output .ci/provider-probe/run-context.json
-      - name: Build DirectML evaluator
-        shell: bash
-        run: cargo build --locked --release -p asr-eval --no-default-features --features directml
-      - name: Measure DirectML strict readiness
-        id: dml
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          target/release/asr-eval.exe evaluate \
-            --provider directml \
-            --candidate-contract .ci/provider-probe/candidate-contract.json \
-            --run-context .ci/provider-probe/run-context.json \
-            --resolved-manifest .ci/provider-probe/resolved-manifest.json \
-            --output .ci/provider-probe/results \
-            > .ci/provider-probe/directml.stdout.txt \
-            2> .ci/provider-probe/directml.stderr.txt
-          status=$?
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          exit "$status"
-      - name: Record truthful DirectML readiness result
-        if: always()
-        shell: bash
-        env:
-          DML_OUTCOME: ${{ steps.dml.outcome }}
-          DML_EXIT_CODE: ${{ steps.dml.outputs.exit_code }}
-        run: |
-          set -euo pipefail
-          ARGS=(
-            --provider directml
-            --root .ci/provider-probe
-            --step-outcome "${DML_OUTCOME:-unknown}"
-          )
-          if [[ -n "${DML_EXIT_CODE:-}" ]]; then
-            ARGS+=(--exit-code "${DML_EXIT_CODE}")
-          fi
-          cargo run --quiet --locked -p asr-contracts --bin asr-provider-readiness -- "${ARGS[@]}"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: directml-strict-readiness-probe
           path: .ci/provider-probe
           if-no-files-found: ignore
           retention-days: 7

@@ -1,5 +1,10 @@
 # Execution Providers
 
+DirectML is retired. It is not an active provider, configuration, runtime
+feature, strict probe, candidate evaluation, or acceptance route. The
+DirectML sections below are retained only as historical audit notes and must
+not be used to schedule work.
+
 ## 1. 共通原則
 
 Execution Providerの評価では次の状態を分離します。
@@ -24,7 +29,6 @@ assignment_proven
 |---|---|---|---|---|
 | CPU | Linux/Windows/macOS | 3 OS | 不要 | CPU Full / Cross Platform / Rust Eval |
 | CUDA | Linux | 標準Rust CI matrix外 | 現行専用probeなし | config/runtime capabilityとして保持 |
-| DirectML | Windows | `windows-directml` | Provider Strict Probes | Rust Eval |
 | CoreML | macOS | `macos-coreml` | Provider Strict Probes | Cross Platform / Rust Eval |
 
 `rust-ci.yml` はcompile/check/clippy/unit validationです。real accelerator proofは `provider-strict-probes.yml` や実評価で行います。
@@ -62,7 +66,7 @@ CUDAではregistrationだけでなくdynamic library/runtime compatibilityを確
 
 現行standard Rust CI matrixにはCUDA jobはありません。CUDA対応を変更した場合は、Linux GPUを備えた実環境で別途execution proofが必要です。
 
-## 5. DirectML
+## 5. DirectML (historical audit only)
 
 DirectMLのhard session constraints:
 

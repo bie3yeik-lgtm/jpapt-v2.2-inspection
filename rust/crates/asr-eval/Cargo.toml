@@ -9,7 +9,6 @@ publish = false
 default = ["cpu"]
 cpu = ["asr-runtime/cpu", "asr-capsule/cpu"]
 cuda = ["asr-runtime/cuda", "asr-capsule/cuda"]
-directml = ["asr-runtime/directml", "asr-capsule/directml"]
 coreml = ["asr-runtime/coreml", "asr-capsule/coreml"]
 
 [dependencies]

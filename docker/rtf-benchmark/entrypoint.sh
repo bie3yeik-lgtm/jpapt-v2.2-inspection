@@ -29,7 +29,9 @@ if [[ "${1:-}" == "--batch-size" ]]; then
   shift 2
 fi
 
+content_gate=0
 if [[ "$#" -eq 0 ]]; then
+  content_gate=1
   : "${RTF_DATASET_ID:?RTF_DATASET_ID is required}"
   : "${RTF_DATASET_REVISION:?RTF_DATASET_REVISION is required}"
   : "${RTF_DATASET_CONFIGURATION:=default}"
@@ -45,6 +47,7 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_FIXTURE_REVISION:=}"
   : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
   : "${RTF_OUTPUT:=/output/metrics.json}"
+  : "${RTF_CONTENT_OUTPUT:=/output/content.json}"
   : "${RTF_RUN_ID:?RTF_RUN_ID is required}"
   : "${RTF_MODEL_ID:?RTF_MODEL_ID is required}"
   : "${RTF_MODEL_REVISION:?RTF_MODEL_REVISION is required}"
@@ -89,6 +92,28 @@ if [[ "$#" -eq 0 ]]; then
     --service-id "$RTF_SERVICE_ID" --gpu "$RTF_GPU" \
     --profile "$RTF_PROFILE_ID" --fixture-repo-id "$RTF_FIXTURE_REPO_ID" \
     --fixture-revision "$RTF_FIXTURE_REVISION"
+fi
+
+# Content is the first provider acceptance gate. A provider run must return
+# one real hypothesis from the pinned fixture before it is allowed to spend
+# resources on full-batch timing or publish metrics.
+if [[ "$content_gate" -eq 1 ]]; then
+  set +e
+  python -m benchmark_runner.content_probe \
+    --manifest "$RTF_MANIFEST" --output "$RTF_CONTENT_OUTPUT" \
+    --run-id "$RTF_RUN_ID" --model-id "$RTF_MODEL_ID" \
+    --model-revision "$RTF_MODEL_REVISION" --dataset-id "$RTF_DATASET_ID" \
+    --dataset-revision "$RTF_DATASET_REVISION" --decoder "$RTF_DECODER" \
+    --precision "$RTF_PRECISION" --provider "$RTF_PROVIDER" \
+    --service-id "$RTF_SERVICE_ID" --gpu "$RTF_GPU" \
+    --profile "$RTF_PROFILE_ID" --fixture-repo-id "$RTF_FIXTURE_REPO_ID" \
+    --fixture-revision "$RTF_FIXTURE_REVISION"
+  content_status=$?
+  set -e
+  if [[ "$content_status" -ne 0 ]]; then
+    echo 'provider content gate failed; full metrics execution is blocked' >&2
+    exit "$content_status"
+  fi
 fi
 
 set +e

@@ -369,7 +369,7 @@ benchmark documentは軽量indexであり、full runの代替ではありませ�
 
 strict provider modeで確認したいのは「providerを登録できた」ではなく、CPU fallbackなしで対象provider executionが成立したかです。
 
-DirectML/CoreMLについては `provider-strict-probes.yml` がsynthetic CTC fixtureを使ってreadiness evidenceを生成します。
+CoreMLについては `provider-strict-probes.yml` がsynthetic CTC fixtureを使ってreadiness evidenceを生成します。DirectMLはretiredでprobe対象外です。
 
 provider state:
 
@@ -443,7 +443,6 @@ Actions -> `Rust Cross Platform Evaluation`
 
 - Linux CPU
 - Windows CPU
-- Windows DirectML
 - macOS CPU
 - macOS CoreML
 - strict provider / optimization levelをinputで制御

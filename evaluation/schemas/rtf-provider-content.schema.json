@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parakeet-onnx.local/schemas/rtf-provider-content.schema.json",
+  "title": "RTF provider content probe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "status", "model_id", "model_revision", "dataset_id", "dataset_revision", "decoder", "precision", "provider", "environment", "service_id", "gpu", "image_digest", "inspection_profile", "fixture_repo_id", "fixture_revision", "manifest_sha256", "sample_index", "audio_path", "reference_text", "content_available"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["completed", "blocked"]},
+    "model_id": {"type": "string", "minLength": 1},
+    "model_revision": {"type": "string", "minLength": 40, "maxLength": 40},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "dataset_revision": {"type": "string", "minLength": 1},
+    "decoder": {"type": "string", "enum": ["tdt", "ctc", "whisper"]},
+    "precision": {"type": "string", "enum": ["float32", "float16", "bfloat16"]},
+    "provider": {"type": "string", "enum": ["cpu", "cuda"]},
+    "environment": {"type": "string", "const": "linux"},
+    "service_id": {"type": "string", "enum": ["hf-jobs", "runpod-pod"]},
+    "gpu": {"type": "string", "minLength": 1},
+    "image_digest": {"type": "string", "pattern": "^sha256:[A-Fa-f0-9]{64}$"},
+    "inspection_profile": {"type": "string", "enum": ["lough", "precise"]},
+    "fixture_repo_id": {"type": "string", "const": "gawohok7/rtf-benchmark-fixtures"},
+    "fixture_revision": {"type": "string", "minLength": 40, "maxLength": 40},
+    "manifest_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "sample_index": {"type": "integer", "const": 0},
+    "audio_path": {"type": "string", "minLength": 1},
+    "reference_text": {"type": "string"},
+    "hypothesis_text": {"type": "string"},
+    "content_available": {"type": "boolean"},
+    "error_code": {"type": "string"},
+    "error_message": {"type": "string"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "completed"}}}, "then": {"required": ["hypothesis_text"], "properties": {"content_available": {"const": true}}}},
+    {"if": {"properties": {"status": {"const": "blocked"}}}, "then": {"required": ["error_code", "error_message"], "properties": {"content_available": {"const": false}}}}
+  ]
+}
