@@ -103,7 +103,7 @@ jobs:
           bash -n scripts/ci/resolve-ghcr-package-digest.sh
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
-          rg -n 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
+          grep -En 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
           python - <<'PY'
           from pathlib import Path
           entrypoint = Path("docker/rtf-benchmark/entrypoint.sh").read_text()
@@ -112,9 +112,9 @@ jobs:
           print("RunPod docker-args arity contract: PASS")
           PY
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
-          rg -n 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
-          rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
-          if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
+          grep -REn 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
+          grep -En 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
+          if grep -En 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
             echo 'NeMo transcribe must use positional audio paths' >&2
             exit 1
           fi
