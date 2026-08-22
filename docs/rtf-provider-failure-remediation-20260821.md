@@ -196,3 +196,19 @@ adapterは次の追加gateを設けた。
 - probeは`RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS`（既定10秒）でboundedにする。
 
 この状態をfake CLIで再現したmockはPASSした。前回実runの証拠はPod作成・list runningまでで、metrics/resultは未成立である。SSH probe修正版がPR checksを通過するまでRunPodを再作成しない。
+
+## 2026-08-23 SSH probe 修正版のRunPod実測
+
+対象run: [32605824921](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32605824921)
+
+SSH probeを含むcommit `2f0892a`でRunPod L4 guarded batch 1を再試験した。Podは`runtimeStatus=running`へ遷移したが、同一Podへの実SSH probeはexit code 255で、SSH endpointはまだ接続可能ではなかった。adapterはremote entrypointを起動せず、追加GPU処理を行わないままrunをcancelした。
+
+```text
+pod runtimeStatus: running
+ssh probe: exit 255
+batch 1: no content / no metrics / no result receipt
+batch 8, 32: COST_GUARD_SKIPPED
+cleanup: Pod list is empty after cancellation
+```
+
+このrunはRunPodのPod lifecycleとSSH readinessが別であることを確認した。実metrics未取得のため、RunPod laneは未成立のまま扱う。再試験する場合は同じPodを再利用せず、SSH port readinessのprovider側遅延またはimage/SSH service起動条件を別途解消してから、guarded batch 1を一度だけ実行する。
