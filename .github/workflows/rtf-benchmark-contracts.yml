@@ -161,7 +161,11 @@ jobs:
               raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
           if '--ports 22/tcp --wait --wait-timeout 30m --terminate-after "$terminate_after"' not in script:
               raise SystemExit("RunPod Pod creation must wait for SSH readiness")
-          if "date -u -d '+4 hours'" not in script or "date -u -v+4H" not in script:
+          if (
+              'RTF_RUNPOD_MAX_HOURS' not in script
+              or 'date -u -d "+${RTF_RUNPOD_MAX_HOURS} hours"' not in script
+              or 'date -u -v+${RTF_RUNPOD_MAX_HOURS}H' not in script
+          ):
               raise SystemExit("RunPod termination safety deadline must be an absolute UTC DateTime")
           if 'trap cleanup_runpod EXIT' not in script:
               raise SystemExit("RunPod must retain a deletion safety trap")
