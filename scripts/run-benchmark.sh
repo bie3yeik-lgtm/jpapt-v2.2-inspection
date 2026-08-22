@@ -189,7 +189,15 @@ case "$PROVIDER" in
         delete_named_pods
       fi
     }
+    # GitHub cancellation can signal the shell while `pod create` is still
+    # waiting for the provider. Handle signals explicitly; an EXIT-only trap
+    # is not sufficient to prevent a rented Pod from surviving cancellation.
+    cleanup_on_signal() {
+      cleanup_runpod
+      exit 143
+    }
     trap cleanup_runpod EXIT
+    trap cleanup_on_signal INT TERM HUP
     [[ "$RTF_RUNPOD_MAX_HOURS" =~ ^[1-6]$ ]] || {
       echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 6' >&2
       exit 2
@@ -246,6 +254,10 @@ case "$PROVIDER" in
     create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-runpod-create.XXXXXX")"
     create_started="$(date +%s)"
     pod_create_timed_out=0
+    # Treat the request as potentially accepted until the response is parsed.
+    # This makes signal cleanup search for a Pod by its unique run ID even if
+    # runpodctl is terminated before returning the Pod ID.
+    pod_create_failed=1
     set +e
     runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
@@ -302,6 +314,7 @@ case "$PROVIDER" in
       echo 'RunPod pod create did not return a pod id' >&2
       exit 1
     fi
+    pod_create_failed=0
     readiness_deadline=$(( $(date +%s) + RTF_RUNPOD_WAIT_TIMEOUT_MINUTES * 60 ))
     pod_ready=0
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do

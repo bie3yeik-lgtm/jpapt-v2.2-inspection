@@ -102,4 +102,5 @@ identity、content probe、metrics、result SHA、provider evidenceが別途必�
 
 `rtf-benchmark-contracts.yml`は高速な`--mode mock`を実行する。これによりGitHub Actions自身が
 外部providerへ到達できない場合でも、adapterのCLI引数・回収経路・Dockerfile契約をPR時に
-検証できる。
+検証できる。mockにはRunPod createの無出力ハングを時間短縮して再現し、
+`RUNPOD_POD_CREATE_TIMEOUT` receiptを確認するケースも含む。

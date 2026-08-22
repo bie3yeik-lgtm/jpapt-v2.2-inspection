@@ -179,6 +179,8 @@ jobs:
               raise SystemExit("RunPod termination must support BSD date for local verification")
           if 'trap cleanup_runpod EXIT' not in script:
               raise SystemExit("RunPod must retain a deletion safety trap")
+          if 'trap cleanup_on_signal INT TERM HUP' not in script:
+              raise SystemExit("RunPod must clean up on workflow cancellation signals")
           if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
               raise SystemExit("RunPod create failures must clean up Pods by unique name")
           if 'pod_create_failed=1' not in script:
