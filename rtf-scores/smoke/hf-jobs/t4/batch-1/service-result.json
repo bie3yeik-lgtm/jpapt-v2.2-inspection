@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32457129494-b1",
+  "run_id": "rtf-hf-32593711141-b1",
   "service_id": "hf-jobs",
   "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a87fa28c81709766c80354f",
+  "job_id": "6a89f9577c5c7dd3792351f3",
   "result_uri": null,
   "result_sha256": null,
   "metrics_uri": null,
   "metrics_path": null,
   "metrics_sha256": null,
-  "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "HF Job did not emit RTF_RESULT_RECEIPT"
+  "error_code": "BENCHMARK_INFERENCE_FAILED",
+  "error_message": "CUDA error: an illegal memory access was encountered\nSearch for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
 }
