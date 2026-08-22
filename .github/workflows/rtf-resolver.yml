@@ -292,6 +292,12 @@ jobs:
           set -euo pipefail
           branch="inspection/rtf-resolver-${RUN_ID}"
           git fetch --no-tags origin main
+          # The resolver writes receipt/manifest files into the checkout before
+          # opening its delivery branch. Reset the runner checkout explicitly
+          # so those generated files are committed on the new branch rather
+          # than preventing the branch switch with a dirty-worktree error.
+          git reset --hard origin/main
+          git clean -fd
           git checkout --no-track -b "$branch" origin/main
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
