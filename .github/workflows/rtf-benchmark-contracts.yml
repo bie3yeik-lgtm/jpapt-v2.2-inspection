@@ -239,7 +239,7 @@ jobs:
 
           build = Path(".github/workflows/ghcr-build-publish.yml").read_text()
           resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
-          if "name: rtf-image" not in build:
+          if "name: Resolve published RTF image identity" not in build:
               raise SystemExit("GHCR workflow must resolve the RTF image after build")
           if "ghcr-build-parakeet-rtf-benchmark" not in build:
               raise SystemExit("GHCR workflow must consume the canonical RTF build artifact")
