@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "rtf-runpod-32603917931-b1",
+  "service_id": "runpod-pod",
+  "status": "blocked",
+  "provider": "cuda",
+  "environment": "linux",
+  "job_id": "wqqtyh1vqhczy5",
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "RUNPOD_READINESS_TIMEOUT",
+  "error_message": "RunPod Pod did not become SSH-ready within 20 minutes"
+}
