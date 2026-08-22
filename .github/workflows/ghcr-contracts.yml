@@ -98,8 +98,8 @@ jobs:
 
           workflow = Path('.github/workflows/ghcr-build-publish.yml').read_text()
           required = [
-              # GitHub evaluates `${{ ... }}` before this Python snippet runs,
-              # so assert stable syntax rather than an empty expression value.
+              # GitHub evaluates expression placeholders before this Python
+              # snippet runs, so assert stable syntax rather than an empty value.
               'type=gha,scope=',
               'type=registry,ref=',
               ':buildcache',
