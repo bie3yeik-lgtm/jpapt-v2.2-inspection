@@ -96,7 +96,9 @@ RunPodではPod ID、Pod state、container state、SSH reachabilityを別々に�
 ```
 
 private GHCR imageを使う場合は`--registry-auth-id`を明示する。
-`--terminate-after`はISO timestampではなく、RunPod仕様のduration（例: `5h`）を使う。
+実際にActionsで使用したrunpodctl v2.11.0では`--terminate-after`がGraphQL
+`DateTime`として検証されるため、durationではなくUTC timestamp（例:
+`2026-08-23T12:00:00Z`）を渡す。`--wait-timeout`はCLIのreadiness durationである。
 SSH失敗やPod早期終了の場合は、削除前にPod inspect、create response、container state、
 last logsをActions artifactへ保存する。
 

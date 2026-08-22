@@ -190,10 +190,20 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES must be a positive integer' >&2
       exit 2
     }
-    # RunPod's --terminate-after contract is a duration, not an ISO timestamp.
-    terminate_after="${RTF_RUNPOD_MAX_HOURS}h"
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
-    echo "RunPod pod readiness timeout: $runpod_wait_timeout; termination guard: $terminate_after" >&2
+    # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
+    # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
+    # duration because it is a CLI readiness wait.
+    terminate_after="$(date -u -d "+${RTF_RUNPOD_MAX_HOURS} hours" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+    if [[ -z "$terminate_after" ]]; then
+      # BSD date (for local macOS execution) uses a different flag shape.
+      terminate_after="$(date -u -v+${RTF_RUNPOD_MAX_HOURS}H '+%Y-%m-%dT%H:%M:%SZ')"
+    fi
+    [[ "$terminate_after" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+      echo "failed to generate RunPod termination deadline: $terminate_after" >&2
+      exit 2
+    }
+    echo "RunPod pod readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \

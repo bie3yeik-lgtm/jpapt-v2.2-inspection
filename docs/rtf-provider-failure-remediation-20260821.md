@@ -127,6 +127,6 @@ Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doc
 
 ## RunPod引数契約の修正
 
-上記の未成立runを再試験する前に、`scripts/run-benchmark.sh`のRunPod引数を公式CLIの契約へ合わせた。`--terminate-after`へローカルで計算したISO UTC timestampを渡す方式を廃止し、providerが解釈するduration（既定`2h`）を渡す。Podのreadiness待ちは既定20分の`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`として分離し、イメージpull・Pod起動・SSH準備の時間を含めて調整可能にした。既存の作成失敗時の名前検索、EXIT時delete、metrics/receipt回収後の即時deleteは維持する。
+上記の未成立runを再試験する前に、`scripts/run-benchmark.sh`のRunPod引数を実CLIの契約へ合わせる。再試験では`--terminate-after`へ`2h`を渡したところ、runpodctl v2.11.0がGraphQL `DateTime`として検証し、Pod作成前に拒否した。このため、実装は既定2時間後のUTC timestampを渡す方式へ戻す。Podのreadiness待ちは既定20分の`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`として分離し、イメージpull・Pod起動・SSH準備の時間を含めて調整可能にした。既存の作成失敗時の名前検索、EXIT時delete、metrics/receipt回収後の即時deleteは維持する。
 
 この変更はRepository Secretの利用方式を変更しない。GitHub Actionsでは`HF_TOKEN: ${{ secrets.HF_TOKEN }}`および`RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}`をworkflow stepのenvへ注入し、`run-benchmark.sh`へ渡す。ローカル`.env`やtoken値をActionsへコピーしない。次のRunPod guarded試験はこの引数修正を含むimageで一度だけ行い、Pod create、SSH接続、remote content probe、receipt、metrics URI/SHAを個別に確認する。
