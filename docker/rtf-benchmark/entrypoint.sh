@@ -19,6 +19,17 @@ if {
 } || {
   [[ "$#" -eq 1 && "${1:-}" == "sleep infinity" ]]
 }; then
+  # RunPod's lifecycle command keeps the container alive before the benchmark
+  # is invoked over SSH. The NeMo base image does not provide an SSH daemon,
+  # so start the package-installed daemon here and generate host keys at
+  # runtime rather than baking private host keys into the image layer.
+  command -v sshd >/dev/null 2>&1 || {
+    echo 'RunPod keepalive requires openssh-server in the benchmark image' >&2
+    exit 1
+  }
+  mkdir -p /run/sshd
+  ssh-keygen -A >/dev/null 2>&1 || true
+  /usr/sbin/sshd
   exec sleep infinity
 fi
 

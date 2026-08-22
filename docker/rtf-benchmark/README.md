@@ -81,7 +81,9 @@ runpodctl pod create --name parakeet-bench \
 
 The entrypoint converts both forms to the same `benchmark_runner` invocation.
 RunPod automation uses `runpodctl ssh info` and SSH after the Pod becomes
-reachable; the deprecated `runpodctl exec` command is not used.
+reachable; the image installs `openssh-server` and starts `sshd` only for the
+RunPod `sleep infinity` keepalive path. The deprecated `runpodctl exec` command
+is not used.
 Missing runtime variables fail closed; credentials are not image defaults.
 
 The runner enforces `num_workers=0`, `pin_memory=false`, and

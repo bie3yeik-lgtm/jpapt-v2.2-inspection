@@ -212,3 +212,9 @@ cleanup: Pod list is empty after cancellation
 ```
 
 このrunはRunPodのPod lifecycleとSSH readinessが別であることを確認した。実metrics未取得のため、RunPod laneは未成立のまま扱う。再試験する場合は同じPodを再利用せず、SSH port readinessのprovider側遅延またはimage/SSH service起動条件を別途解消してから、guarded batch 1を一度だけ実行する。
+
+## RunPod imageのSSH daemon不足
+
+SSH probeが255となる実行を受け、RTF imageを確認したところ、NeMo base imageを含め`openssh-server`がインストールされていなかった。`--docker-args 'sleep infinity'`はentrypointのkeepalive分岐を実行するだけで、SSH daemonを自動提供しないため、port 22を公開してもSSH接続は成立しない。
+
+修正として、RTF imageへ`openssh-server`を追加し、entrypointの`sleep infinity`分岐で`ssh-keygen -A`と`/usr/sbin/sshd`をruntime起動する。host keyはimage layerへ焼き込まず、private keyをimageへ含めない。`sshd`が存在しない場合はkeepaliveをfail closedにする。次のRunPod試験はこのimageをGHCRへpublishし、発行されたdigestを使ってguarded batch 1を一度だけ実行する。

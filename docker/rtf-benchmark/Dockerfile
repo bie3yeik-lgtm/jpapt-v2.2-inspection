@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CH
 WORKDIR /workspace
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 ca-certificates curl jq \
+    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 ca-certificates curl jq openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/rtf-benchmark/requirements.lock /tmp/rtf-requirements.lock
