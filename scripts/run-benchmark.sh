@@ -236,6 +236,23 @@ case "$PROVIDER" in
     if [[ "$pod_create_status" -ne 0 || -z "$pod_id" ]]; then
       pod_create_failed=1
       printf '%s\n' "$pod_json" >&2
+      failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
+      if grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
+        failure_code="RUNPOD_NO_INSTANCE_AVAILABLE"
+      elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then
+        failure_code="RUNPOD_TERMINATE_AFTER_INVALID"
+      fi
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg error_code "$failure_code" \
+        --arg error_message "RunPod Pod creation failed before remote execution: $pod_json" \
+        --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+        --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+        --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+        --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       [[ "$pod_create_status" -ne 0 ]] && exit "$pod_create_status"
       echo 'RunPod pod create did not return a pod id' >&2
       exit 1
