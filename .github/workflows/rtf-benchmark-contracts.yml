@@ -171,6 +171,10 @@ jobs:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
           if 'phase=pod_create' not in script:
               raise SystemExit("RunPod Pod creation must emit bounded progress")
+          if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
+              raise SystemExit("RunPod Pod creation must discover rented Pods by name")
+          if 'pod_create_discovered=1' not in script:
+              raise SystemExit("RunPod Pod creation must release a blocked CLI after API discovery")
           if 'RUNPOD_POD_CREATE_TIMEOUT' not in script:
               raise SystemExit("RunPod Pod creation timeout must be typed")
           if 'RTF_RUNPOD_POLL_SECONDS' not in script:

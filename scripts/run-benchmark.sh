@@ -254,6 +254,7 @@ case "$PROVIDER" in
     create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-runpod-create.XXXXXX")"
     create_started="$(date +%s)"
     pod_create_timed_out=0
+    pod_create_discovered=0
     # Treat the request as potentially accepted until the response is parsed.
     # This makes signal cleanup search for a Pod by its unique run ID even if
     # runpodctl is terminated before returning the Pod ID.
@@ -266,6 +267,18 @@ case "$PROVIDER" in
     pod_create_pid=$!
     pod_create_status=124
     while kill -0 "$pod_create_pid" 2>/dev/null; do
+      # Some runpodctl versions keep the create request open until a later
+      # lifecycle event even after the API has rented the named Pod. Discover
+      # the exact Pod independently so container/readiness polling can begin.
+      discovered_pod_id="$(runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>/dev/null \
+        | jq -er '.[] | (.id // .podId // .pod_id) // empty' 2>/dev/null | head -n 1 || true)"
+      if [[ -n "$discovered_pod_id" ]]; then
+        pod_id="$discovered_pod_id"
+        pod_create_discovered=1
+        echo "RunPod phase=pod_create discovered pod_id=$pod_id from named Pod list" >&2
+        kill "$pod_create_pid" 2>/dev/null || true
+        break
+      fi
       create_elapsed=$(( $(date +%s) - create_started ))
       echo "RunPod phase=pod_create elapsed=${create_elapsed}s timeout=${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m" >&2
       if (( create_elapsed >= RTF_RUNPOD_CREATE_TIMEOUT_MINUTES * 60 )); then
@@ -275,14 +288,19 @@ case "$PROVIDER" in
       fi
       sleep "$RTF_RUNPOD_POLL_SECONDS"
     done
-    if [[ "$pod_create_timed_out" -eq 1 ]]; then
+    if [[ "$pod_create_discovered" -eq 1 ]]; then
+      wait "$pod_create_pid" 2>/dev/null || true
+      pod_create_status=0
+      pod_json="{\"id\":\"$pod_id\"}"
+    elif [[ "$pod_create_timed_out" -eq 1 ]]; then
       wait "$pod_create_pid" 2>/dev/null || true
       pod_create_status=124
+      pod_json="$(<"$create_log")"
     else
       wait "$pod_create_pid"
       pod_create_status=$?
+      pod_json="$(<"$create_log")"
     fi
-    pod_json="$(<"$create_log")"
     rm -f "$create_log"
     set -e
     # `jq -e` prints JSON null before returning failure for an error response;
