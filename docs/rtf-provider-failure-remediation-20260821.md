@@ -160,3 +160,26 @@ There are no longer any instances available with the requested specifications.
 対象run: [32598836142](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32598836142)
 
 L4ではRepository Secret、doctor、cost policy、digest-pinned image、Pod create開始まで進んだ。`pod create --wait`を除去した版をまだ含まない実行だったため、readiness中にreceiptを取得できず、8分経過時点でActionsをcancelした。Actionsログでは`runpodctl`が孤児プロセスとして終了し、content/metricsは未取得である。この結果を受け、現ブランチではcreate即時応答後の`pod get` pollingへ変更し、次回はreadiness timeout・pod state・cleanupを分離して検証する。
+
+## 2026-08-23 RunPod CLI状態フィールド差分の実測
+
+対象run: [32603917931](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32603917931)
+
+修正版commit `5ee6ab9`でRunPod L4、`smoke`、`guarded`、batch 1から一度だけ再試験した。GHCR digest検証、RunPod CLI doctor、cost policy、Pod createは通過し、Pod `wqqtyh1vqhczy5`はAPIのlist応答で次の状態を示した。
+
+```text
+runtimeStatus: running
+desiredStatus: RUNNING
+runtimeStatusReason: null
+```
+
+しかしworkflowは`RUNPOD_READINESS_TIMEOUT`で停止し、content probe、metrics、result receiptは生成されなかった。原因はadapterが`runpodctl pod get`の`desiredStatus=RUNNING`かつ`runtime != null`だけをreadiness根拠にしていたことだった。実CLIの`pod list`では`runtimeStatus=RUNNING`が取得できるため、listとgetのJSON契約差分を吸収できていなかった。
+
+この結果を受け、readiness pollingは次を行うよう修正した。
+
+- `pod get`と、同一run IDの`pod list`を同時にpollする。
+- `runtimeStatus`／`runtime_status`の`running`をreadinessとして扱う。
+- `desiredStatus`／`desired_status`の`EXITED`・`TERMINATED`を終了として扱う。
+- `sshCommand`／`ssh_command`の両方を受け入れる。
+
+fake CLIでは、実測と同じくget側を`runtime=null`、list側を`runtimeStatus=RUNNING`にしたケースを追加し、static/mock検証はPASSした。実runのPodはworkflow cleanup後に一覧から消え、課金Podは残っていない。修正後のRunPod metrics取得は未成立であり、次の再試験はこのreadiness修正版がPR checksを通過した後に一度だけ行う。

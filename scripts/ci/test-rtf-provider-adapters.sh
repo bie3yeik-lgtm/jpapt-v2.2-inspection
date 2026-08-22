@@ -112,13 +112,20 @@ set -euo pipefail
     fi
     printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
   pod:get)
-    if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 ]]; then
+    if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 || "${RTF_FAKE_RUNPOD_GET_NOT_READY:-0}" == 1 ]]; then
       printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null}' ;
     else
       printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{}}' ;
     fi ;;
   pod:delete) : ;;
-  pod:list) printf '%s\n' '[]' ;;
+  pod:list)
+    if [[ "${RTF_FAKE_RUNPOD_LIST_READY:-0}" == 1 && \
+          "${RTF_FAKE_RUNPOD_FAILURE:-0}" != 1 && \
+          "${RTF_FAKE_RUNPOD_HANG:-0}" != 1 ]]; then
+      printf '%s\n' '[{"id":"runpod-mock-pod","runtimeStatus":"RUNNING"}]'
+    else
+      printf '%s\n' '[]'
+    fi ;;
   ssh:info) printf '%s\n' '{"ssh_command":"ssh mock@runpod"}' ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
@@ -175,6 +182,10 @@ mock_case() {
     export RTF_GPU=t4
   else
     export RTF_GPU=a5000
+    # Exercise the current runpodctl list response, which reports
+    # runtimeStatus rather than the pod-get runtime object.
+    export RTF_FAKE_RUNPOD_LIST_READY=1
+    export RTF_FAKE_RUNPOD_GET_NOT_READY=1
   fi
   export RTF_BATCH_SIZE=1
   export RTF_PRECISION=float16
@@ -199,12 +210,14 @@ mock_case() {
     [[ "$status" -ne 0 ]] || fail "RunPod no-instance mock unexpectedly succeeded"
     jq -e '.status == "blocked" and .error_code == "RUNPOD_NO_INSTANCE_AVAILABLE" and .run_id == $run_id' \
       --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod no-instance receipt was not classified"
+    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY
     rm -rf "$fake_root"
     pass "RunPod no-instance failure produces a typed receipt"
     return
   fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
+  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY
   rm -rf "$fake_root"
 }
 

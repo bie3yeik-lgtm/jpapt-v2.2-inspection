@@ -337,13 +337,26 @@ case "$PROVIDER" in
     pod_ready=0
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
       pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1 || true)"
-      pod_state_summary="$(jq -c '{id:(.id // .podId // .pod_id),desiredStatus,runtimeAvailable:(.runtime != null),lastStatusChange}' <<<"$pod_state_json" 2>/dev/null || true)"
+      # The CLI's `pod get` and `pod list` responses are not schema-identical.
+      # In particular, current list responses expose runtimeStatus while some
+      # get responses expose desiredStatus/runtime. Poll both representations
+      # for the exact Pod ID instead of treating a valid running Pod as absent.
+      pod_list_state_json="$(runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>&1 || true)"
+      pod_state_summary="$(jq -c --arg pod_id "$pod_id" \
+        '{get:{id:(.id // .podId // .pod_id),desiredStatus:(.desiredStatus // .desired_status),runtimeAvailable:(.runtime != null),lastStatusChange},pod_id:$pod_id}' \
+        <<<"$pod_state_json" 2>/dev/null || true)"
+      pod_list_summary="$(jq -c --arg pod_id "$pod_id" \
+        '[.[] | select((.id // .podId // .pod_id) == $pod_id) | {id:(.id // .podId // .pod_id),runtimeStatus:(.runtimeStatus // .runtime_status),desiredStatus:(.desiredStatus // .desired_status)}] | first // {}' \
+        <<<"$pod_list_state_json" 2>/dev/null || true)"
       [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
-      if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1; then
+      [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
+      if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
+        jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
         pod_ready=1
         break
       fi
-      if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"$pod_state_json" >/dev/null 2>&1; then
+      if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"$pod_state_json" >/dev/null 2>&1 || \
+        jq -e '((.desiredStatus // "") | ascii_upcase) == "EXITED" or ((.desiredStatus // "") | ascii_upcase) == "TERMINATED"' <<<"$pod_list_summary" >/dev/null 2>&1; then
         break
       fi
       sleep "$RTF_RUNPOD_POLL_SECONDS"
