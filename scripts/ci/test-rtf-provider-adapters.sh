@@ -105,6 +105,12 @@ case "${1:-}:${2:-}" in
       exit 1
     fi
     printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
+  pod:get)
+    if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 ]]; then
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null}' ;
+    else
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{}}' ;
+    fi ;;
   pod:delete) : ;;
   pod:list) printf '%s\n' '[]' ;;
   ssh:info) printf '%s\n' '{"sshCommand":"ssh mock@runpod"}' ;;
@@ -174,6 +180,7 @@ mock_case() {
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  export RTF_RUNPOD_POLL_SECONDS=1
   set +e
   if [[ "$provider" == hf ]]; then
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null

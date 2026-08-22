@@ -125,6 +125,8 @@ Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doc
 
 一方、A5000 Podのbatch 1作成・接続・推論は約8分経過してもresult receiptを出力しなかったため、課金継続を避けてActionsをキャンセルした。collectにはbatch 1/8/32すべて`BENCHMARK_SETUP_FAILED`として保存され、RunPodの実GPU metricsやcontent probeは未取得である。RunPodの成功や失敗を推測せず、次回はPod create/SSH/image pullの個別時刻とremote receiptを取得できる観測を追加してから再試験する。
 
+この観測改善として、Pod createの`--wait`を廃止し、create応答後の`runpodctl pod get` readiness pollingへ移行した。これによりPod ID取得、runtime準備、SSH接続の境界を分離し、Actionsキャンセル時に単一の長時間`runpodctl`呼出しを残さない。readiness timeoutやPod早期終了はtyped receiptとして保存する。
+
 ## RunPod引数契約の修正
 
 上記の未成立runを再試験する前に、`scripts/run-benchmark.sh`のRunPod引数を実CLIの契約へ合わせる。再試験では`--terminate-after`へ`2h`を渡したところ、runpodctl v2.11.0がGraphQL `DateTime`として検証し、Pod作成前に拒否した。このため、実装は既定2時間後のUTC timestampを渡す方式へ戻す。Podのreadiness待ちは既定20分の`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`として分離し、イメージpull・Pod起動・SSH準備の時間を含めて調整可能にした。既存の作成失敗時の名前検索、EXIT時delete、metrics/receipt回収後の即時deleteは維持する。
@@ -142,3 +144,9 @@ There are no longer any instances available with the requested specifications.
 ```
 
 したがって今回もremote content probe、metrics、result receiptは未取得であり、A5000のprovider容量不足によるblockedである。Pod作成応答は`RUNPOD_NO_INSTANCE_AVAILABLE`、`RUNPOD_TERMINATE_AFTER_INVALID`、`PROVIDER_RUNPOD_POD_CREATE_FAILED`へ分類したtyped receiptとして保存し、`BENCHMARK_SETUP_FAILED`へ情報を潰さない。別GPUまたは別時刻でのRunPod再試験が必要だが、同じA5000条件の無目的な再試行は行わない。
+
+## RunPod L4 readiness polling 再試験
+
+対象run: [32598836142](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32598836142)
+
+L4ではRepository Secret、doctor、cost policy、digest-pinned image、Pod create開始まで進んだ。`pod create --wait`を除去した版をまだ含まない実行だったため、readiness中にreceiptを取得できず、8分経過時点でActionsをcancelした。Actionsログでは`runpodctl`が孤児プロセスとして終了し、content/metricsは未取得である。この結果を受け、現ブランチではcreate即時応答後の`pod get` pollingへ変更し、次回はreadiness timeout・pod state・cleanupを分離して検証する。

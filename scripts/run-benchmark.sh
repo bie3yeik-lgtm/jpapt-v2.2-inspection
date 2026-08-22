@@ -56,6 +56,7 @@ fi
 : "${RTF_HF_TIMEOUT:=2h}"
 : "${RTF_RUNPOD_MAX_HOURS:=2}"
 : "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
+: "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 if [[ "$PROVIDER" == hf ]]; then
@@ -190,6 +191,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_POLL_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_POLL_SECONDS must be a positive integer' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -226,7 +231,7 @@ case "$PROVIDER" in
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --ports 22/tcp --wait --wait-timeout "$runpod_wait_timeout" --terminate-after "$terminate_after" \
+      --ports 22/tcp --terminate-after "$terminate_after" \
       --output json 2>&1)"
     pod_create_status=$?
     set -e
@@ -244,7 +249,7 @@ case "$PROVIDER" in
       fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
-        --arg run_id "$RTF_RUN_ID" --arg error_code "$failure_code" \
+        --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
         --arg error_message "RunPod Pod creation failed before remote execution: $pod_json" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
@@ -255,6 +260,39 @@ case "$PROVIDER" in
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       [[ "$pod_create_status" -ne 0 ]] && exit "$pod_create_status"
       echo 'RunPod pod create did not return a pod id' >&2
+      exit 1
+    fi
+    readiness_deadline=$(( $(date +%s) + RTF_RUNPOD_WAIT_TIMEOUT_MINUTES * 60 ))
+    pod_ready=0
+    while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
+      pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1 || true)"
+      pod_state_summary="$(jq -c '{id:(.id // .podId // .pod_id),desiredStatus,runtimeAvailable:(.runtime != null),lastStatusChange}' <<<"$pod_state_json" 2>/dev/null || true)"
+      [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
+      if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1; then
+        pod_ready=1
+        break
+      fi
+      if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"$pod_state_json" >/dev/null 2>&1; then
+        break
+      fi
+      sleep "$RTF_RUNPOD_POLL_SECONDS"
+    done
+    if [[ "$pod_ready" -ne 1 ]]; then
+      failure_code="RUNPOD_READINESS_TIMEOUT"
+      if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"${pod_state_json:-}" >/dev/null 2>&1; then
+        failure_code="RUNPOD_POD_EXITED_BEFORE_READINESS"
+      fi
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg error_code "$failure_code" \
+        --arg error_message "RunPod Pod did not become SSH-ready within ${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES} minutes" \
+        --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+        --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+        --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+        --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:$job_id,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       exit 1
     fi
     ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '.sshCommand')"
