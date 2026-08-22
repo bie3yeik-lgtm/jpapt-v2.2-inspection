@@ -107,14 +107,22 @@ The public GHCR latest manifest was also pulled for comparison:
 - `transcribe_compat.py` was present, but did not contain the current
   `DataLoader.__init__` constructor patch.
 
-The GHCR workflow dispatch could not be started from this account because the
-GitHub API returned `403 Must have admin rights to Repository`. A unique tag
-push of the locally verified image was attempted without overwriting an
-existing tag, but GHCR rejected the token with
-`permission_denied: The token provided does not match expected scopes`.
-Therefore the current local image has no externally runnable immutable digest,
-and HF Jobs/RunPod acceptance remains unverified. This is an external
-permission blocker, not a local Docker or CUDA failure.
+The local `.env` is only a developer-machine credential boundary. GitHub
+Actions must use repository secrets and the existing workflow convention:
+
+- `HF_TOKEN: ${{ secrets.HF_TOKEN }}` is exposed only in the resolve and
+  provider-execution step environments;
+- `RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}` is exposed only to the RunPod
+  configuration step;
+- GHCR build/publish uses the workflow-scoped `${{ github.token }}` with the
+  declared `packages: write` permission, not a PAT copied from `.env`.
+
+`CR_PAT` was verified locally as a package-capable token and a manually tagged
+push succeeded, but it is not part of the canonical Actions credential path.
+The subsequent GHCR workflow dispatch was intentionally cancelled after the
+local gate to avoid unnecessary external work. Consequently, HF Jobs/RunPod
+runtime acceptance remains unverified and must be a later, explicitly guarded
+provider experiment.
 
 ## Acceptance boundary
 

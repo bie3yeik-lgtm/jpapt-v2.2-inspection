@@ -57,13 +57,27 @@ jobs:
           entries = []
           for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
               value = json.loads(line)
-              required = {"dataset_id", "count", "seed"}
-              if set(value) - required - {"min_duration_sec", "max_duration_sec"}:
+              required = {
+                  "inspection_profile",
+                  "dataset_id",
+                  "count_min",
+                  "count_max",
+                  "target_total_duration_sec",
+                  "seed",
+              }
+              optional = {"min_duration_sec", "max_duration_sec"}
+              if set(value) - required - optional:
                   raise SystemExit(f"line {line_number}: unknown field")
               if set(value) & required != required:
                   raise SystemExit(f"line {line_number}: missing required field")
-              if not isinstance(value["count"], int) or value["count"] <= 0:
-                  raise SystemExit(f"line {line_number}: count must be positive")
+              if value["inspection_profile"] != "smoke":
+                  raise SystemExit(f"line {line_number}: profile must be smoke")
+              if not isinstance(value["count_min"], int) or value["count_min"] <= 0:
+                  raise SystemExit(f"line {line_number}: count_min must be positive")
+              if not isinstance(value["count_max"], int) or value["count_max"] < value["count_min"]:
+                  raise SystemExit(f"line {line_number}: count_max must be >= count_min")
+              if value["target_total_duration_sec"] <= 0:
+                  raise SystemExit(f"line {line_number}: target duration must be positive")
               if not value["seed"]:
                   raise SystemExit(f"line {line_number}: seed must not be empty")
               if value.get("min_duration_sec", 0) < 0:

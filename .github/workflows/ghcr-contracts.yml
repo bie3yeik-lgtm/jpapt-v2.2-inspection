@@ -98,9 +98,13 @@ jobs:
 
           workflow = Path('.github/workflows/ghcr-build-publish.yml').read_text()
           required = [
-              'type=gha,scope=${{ matrix.package }},version=2',
-              'type=registry,ref=${{ matrix.image }}:buildcache',
-              'mode=max,scope=${{ matrix.package }},version=2,ignore-error=true',
+              # GitHub evaluates `${{ ... }}` before this Python snippet runs,
+              # so assert stable syntax rather than an empty expression value.
+              'type=gha,scope=',
+              'type=registry,ref=',
+              ':buildcache',
+              'mode=max,scope=',
+              'version=2,ignore-error=true',
               "github.event_name != 'pull_request'",
               'image-manifest=true',
               'oci-mediatypes=true',
