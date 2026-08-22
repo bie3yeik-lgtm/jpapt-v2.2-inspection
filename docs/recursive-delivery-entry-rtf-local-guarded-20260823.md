@@ -96,6 +96,26 @@ expected: the resolver/fixture canonical hash is computed before materializing
 local paths, and `RTF_FIXTURE_MANIFEST_SHA256` binds that canonical identity in
 the provider receipt.
 
+## External image boundary
+
+The public GHCR latest manifest was also pulled for comparison:
+
+- reference digest:
+  `sha256:bb22a03d9530a0ac3aace6290071f3e88932f277e8350988490b616d6193eaa0`
+- image label revision: `326ce619ca8b6a0bd96af376cdec1b9d336ecafd`
+- image label runner version: `rtf-benchmark-v1`
+- `transcribe_compat.py` was present, but did not contain the current
+  `DataLoader.__init__` constructor patch.
+
+The GHCR workflow dispatch could not be started from this account because the
+GitHub API returned `403 Must have admin rights to Repository`. A unique tag
+push of the locally verified image was attempted without overwriting an
+existing tag, but GHCR rejected the token with
+`permission_denied: The token provided does not match expected scopes`.
+Therefore the current local image has no externally runnable immutable digest,
+and HF Jobs/RunPod acceptance remains unverified. This is an external
+permission blocker, not a local Docker or CUDA failure.
+
 ## Acceptance boundary
 
 The local guarded gate is not accepted until all of the following are observed
