@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "rtf-runpod-32605284539-b1",
+  "service_id": "runpod-pod",
+  "status": "blocked",
+  "provider": "cuda",
+  "environment": "linux",
+  "job_id": null,
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "PROVIDER_EXECUTION_FAILED",
+  "error_message": "RunPod execution did not produce a result receipt"
+}
