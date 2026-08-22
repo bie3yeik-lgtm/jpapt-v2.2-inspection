@@ -58,12 +58,52 @@ Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使う�
 - `RTF_IMAGE_DIGEST`が未設定の場合、preflightは警告で終了するが、provider launchは
   digest固定を要求して停止する。
 
+## 2026-08-23 `.env`追加後の不足項目監査
+
+`.env`のキー名だけを確認した結果、現在は`HF_TOKEN`、`RUNPOD_API`、
+`CR_PAT`、`GITHUB_PAT_TOKEN`、`GITHUB_CLASSIC_TOKEN`が存在する。値はログ、文書、
+Gitへ出力しない。
+
+`HF_TOKEN`と`RUNPOD_API`だけで十分なのは、providerを作成しない`static`／`mock`段階
+である。実Job／Podを作成しないdry-runでは、これらのtoken自体も不要であり、fake CLI
+による契約確認だけを行う。`CR_PAT`もActionsの正本ではなく、ローカルでprivate GHCR
+imageをpullするときだけ必要になる。
+
+実provider投入前、または実imageを使うローカル境界試験には、次の値が別途必要である。
+
+| 区分 | 必須入力 | 用途 |
+|---|---|---|
+| image identity | `RTF_IMAGE_DIGEST` | `ghcr.io/...@sha256:<64 hex>`の実行環境固定 |
+| model identity | `RTF_MODEL_ID`, `RTF_MODEL_REVISION` | modelと40桁revisionの固定 |
+| dataset identity | `RTF_DATASET_ID`, `RTF_DATASET_REVISION` | datasetと40桁revisionの固定 |
+| fixture identity | `RTF_FIXTURE_REPO_ID`, `RTF_FIXTURE_REVISION`, `RTF_FIXTURE_MANIFEST_SHA256` | Resolverが発行したJSONLとmanifest SHAの固定 |
+| run identity | `RTF_RUN_ID`, `RTF_GPU` | provider job/pod名とPhase 1 matrixの選択 |
+| local image access | `GHCR_USERNAME`相当のlogin名、`CR_PAT`、Docker login済み状態 | private GHCRをpullする場合のみ |
+
+`RTF_MANIFEST`はfixture repositoryから取得する実行では通常不要で、ローカルに既に
+materializeしたJSONLを使う場合だけ指定する。`RTF_BATCH_SIZE`、`RTF_PRECISION`、
+`RTF_DECODER`、dataset profile、RunPodのtimeout等は既定値があるが、再現性を重視する
+受入試験では明示指定する。
+
+なお、`rtf-local-preflight.sh`は安全のため`.env`を親シェルへexportしない。preflightの
+PASS後に別コマンドで`run-benchmark.sh`を呼ぶ場合は、値がそのプロセスへ渡っていることを
+確認する必要がある。`.env`をshellとして直接`source`する運用は、任意コマンド実行を
+許すため採用しない。必要なら、既存preflightと同じ単純な`KEY=value` parserを共有する
+専用wrapperを追加する。
+
+監査時点の無課金確認結果は、WSL上で`hf 1.27.0`、`runpodctl 2.9.0-c094cac`、
+`jq 1.8.1`を検出し、`bash scripts/ci/rtf-local-preflight.sh --provider all`はPASSした。
+ただし`RTF_IMAGE_DIGEST`未設定のため、これはprovider launch可能の証明ではない。
+
 ```bash
 # Dockerfile、schema、entrypoint、adapterの静的検証だけ
 bash scripts/ci/test-rtf-provider-adapters.sh --mode static
 
 # HF Jobs/RunPodのCLI hand-offをfake CLIで検証（外部リソースなし）
 bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
+
+# 実provider投入前の入力完全性だけを、外部APIなしで確認
+bash scripts/ci/rtf-local-preflight.sh --provider all --require-launch-inputs
 
 # Dockerfileを実際にlocal imageへbuild（時間がかかるため通常のチェックからは除外）
 # 必要な受入段階で明示的に実行する
