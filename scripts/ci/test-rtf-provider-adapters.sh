@@ -99,7 +99,12 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}:${2:-}" in
-  pod:create) printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
+  pod:create)
+    if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 ]]; then
+      printf '%s\n' '{"error":"failed to create pod: graphql error: There are no longer any instances available with the requested specifications."}'
+      exit 1
+    fi
+    printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
   pod:delete) : ;;
   pod:list) printf '%s\n' '[]' ;;
   ssh:info) printf '%s\n' '{"sshCommand":"ssh mock@runpod"}' ;;
@@ -169,20 +174,32 @@ mock_case() {
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  set +e
   if [[ "$provider" == hf ]]; then
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null
   else
     ./scripts/run-benchmark.sh --provider runpod --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null
   fi
+  local status=$?
+  set -e
+  if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 && "$provider" == runpod ]]; then
+    [[ "$status" -ne 0 ]] || fail "RunPod no-instance mock unexpectedly succeeded"
+    jq -e '.status == "blocked" and .error_code == "RUNPOD_NO_INSTANCE_AVAILABLE" and .run_id == $run_id' \
+      --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod no-instance receipt was not classified"
+    rm -rf "$fake_root"
+    pass "RunPod no-instance failure produces a typed receipt"
+    return
+  fi
+  [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
   rm -rf "$fake_root"
 }
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod; failure_receipt_check ;;
+    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; failure_receipt_check ;;
     hf) mock_case hf; failure_receipt_check ;;
-    runpod) mock_case runpod ;;
+    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
 }

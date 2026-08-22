@@ -141,4 +141,4 @@ Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doc
 There are no longer any instances available with the requested specifications.
 ```
 
-したがって今回もremote content probe、metrics、result receiptは未取得であり、A5000のprovider容量不足によるblockedである。次の実装ではPod作成応答を`RUNPOD_NO_INSTANCE_AVAILABLE`、`RUNPOD_TERMINATE_AFTER_INVALID`、`PROVIDER_RUNPOD_POD_CREATE_FAILED`へ分類したtyped receiptを保存し、`BENCHMARK_SETUP_FAILED`へ情報を潰さない。別GPUまたは別時刻でのRunPod再試験が必要だが、同じA5000条件の無目的な再試行は行わない。
+したがって今回もremote content probe、metrics、result receiptは未取得であり、A5000のprovider容量不足によるblockedである。Pod作成応答は`RUNPOD_NO_INSTANCE_AVAILABLE`、`RUNPOD_TERMINATE_AFTER_INVALID`、`PROVIDER_RUNPOD_POD_CREATE_FAILED`へ分類したtyped receiptとして保存し、`BENCHMARK_SETUP_FAILED`へ情報を潰さない。別GPUまたは別時刻でのRunPod再試験が必要だが、同じA5000条件の無目的な再試行は行わない。
