@@ -275,6 +275,24 @@ jobs:
             echo 'all benchmark batches failed; marking the benchmark job as FAILURE' >&2
             exit 1
           fi
+      - name: Cleanup RunPod Pods after benchmark
+        if: always() && inputs.provider == 'runpod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required for RunPod cleanup'; exit 1; }
+          for batch_size in 1 8 32; do
+            run_id="rtf-runpod-${{ github.run_id }}-b${batch_size}"
+            candidate_ids="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null \
+              | jq -r '.[] | (.id // .podId // .pod_id)' 2>/dev/null || true)"
+            while IFS= read -r candidate_id; do
+              [[ -n "$candidate_id" ]] || continue
+              echo "Deleting RunPod cleanup candidate $candidate_id for $run_id"
+              runpodctl pod delete "$candidate_id" >/dev/null || \
+                echo "::error::failed to delete RunPod cleanup candidate $candidate_id"
+            done <<< "$candidate_ids"
+          done
       - name: Normalize provider receipts
         id: receipts
         if: always()

@@ -218,6 +218,12 @@ jobs:
               raise SystemExit("RunPod CLI configuration must require a healthy doctor result")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
+          if "Cleanup RunPod Pods after benchmark" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must clean up RunPod Pods after cancellation")
+          if "if: always() && inputs.provider == 'runpod'" not in benchmark_workflow:
+              raise SystemExit("RunPod cleanup must run after blocked or canceled execution")
+          if 'runpodctl pod list --all --name "$run_id"' not in benchmark_workflow:
+              raise SystemExit("RunPod cleanup must find Pods by unique batch run id")
           if 'successful_batches=0' not in benchmark_workflow or "all benchmark batches failed; marking the benchmark job as FAILURE" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must fail when every batch is blocked")
           if "max-parallel: 1" not in benchmark_workflow:

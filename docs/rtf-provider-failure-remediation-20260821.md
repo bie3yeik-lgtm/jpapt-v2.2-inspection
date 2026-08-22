@@ -133,6 +133,8 @@ readiness pollingへ移行しても、`runpodctl pod create`自体がproviderの
 
 createプロセスを停止した場合でも、API側で要求が受理されていた可能性があるため、固有の`RTF_RUN_ID`でPod一覧を再検索し、孤児Podを削除する。`EXIT`だけではGitHub cancellation時のcleanupを保証できないため、`INT/TERM/HUP`を明示的に捕捉する。したがって、RunPodの再試験はこの上限・進捗・signal cleanupを含むimage/checkoutで一度だけ行い、create timeoutは推論失敗や容量不足と混同しない。
 
+さらにworkflowにも`if: always() && inputs.provider == 'runpod'`のcleanup stepを設け、batch 1/8/32のrun IDを再検索して削除する。adapterのsignal trapがGitHub cancellationで実行されない場合も、job後段のcleanupで課金Podを回収する。
+
 ローカルfake CLIでは、createを無出力ハングさせた状態を時間短縮して再現し、`RUNPOD_POD_CREATE_TIMEOUT`、exit status 124、receipt identity、外部resourceなしのcleanup経路を確認済みである。実RunPodではキャンセル後にrun IDのPodが稼働中で残る事象を検出し、Podを削除した。この事象を受け、signal cleanupとcreate前からの孤児Pod検索を追加した。これはRunPod APIの実availabilityやSSH到達性を証明するものではなく、adapterの停止契約に限定した証拠である。
 
 ## RunPod引数契約の修正
