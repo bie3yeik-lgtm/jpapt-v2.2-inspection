@@ -66,6 +66,33 @@ def release_inference_temporaries(torch_module: object, device: object) -> None:
         torch_module.cuda.ipc_collect()
 
 
+def load_model(asr_model: object, snapshot_download: object, torch_module: object,
+               *, model_id: str, model_revision: str, device: object,
+               token: str | None) -> object:
+    """Restore one isolated NeMo model instance for one timed repeat.
+
+    NeMo's temporary transcription state is not guaranteed to be reusable
+    after a CUDA inference. Reusing the same instance for warmup, measurement,
+    and repeat runs caused T4 illegal-memory-access failures. The snapshot is
+    cached, so restoring a fresh instance is safer than retrying a poisoned
+    CUDA context or paying for another provider job.
+    """
+
+    model_dir = Path(snapshot_download(
+        repo_id=model_id,
+        revision=model_revision,
+        token=token,
+        allow_patterns=["*.nemo", "*.json", "*.yaml"],
+    ))
+    nemo_files = sorted(model_dir.glob("*.nemo"))
+    if not nemo_files:
+        raise RuntimeError(f"no .nemo model was found in pinned snapshot: {model_dir}")
+    return asr_model.restore_from(
+        restore_path=str(nemo_files[0]),
+        map_location=device,
+    ).to(device).eval()
+
+
 def main() -> int:
     args = parser().parse_args()
     if args.repeat < 1:
@@ -80,48 +107,35 @@ def main() -> int:
         if args.provider == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA provider requested but torch.cuda.is_available() is false")
         device = torch.device("cuda" if args.provider == "cuda" else "cpu")
-        if args.precision == "float16":
-            autocast = torch.float16
-        elif args.precision == "bfloat16":
-            autocast = torch.bfloat16
-        else:
-            autocast = None
-
-        model_dir = Path(snapshot_download(
-            repo_id=args.model_id,
-            revision=args.model_revision,
-            token=os.environ.get("HF_TOKEN"),
-            allow_patterns=["*.nemo", "*.json", "*.yaml"],
-        ))
-        nemo_files = sorted(model_dir.glob("*.nemo"))
-        if not nemo_files:
-            raise RuntimeError(f"no .nemo model was found in pinned snapshot: {model_dir}")
-        model = ASRModel.restore_from(
-            restore_path=str(nemo_files[0]),
-            map_location=device,
-        )
-        model = model.to(device).eval()
+        # The content probe intentionally runs without autocast. Keep the
+        # benchmark on the same conservative provider path unless an explicit
+        # diagnostic/compatibility experiment opts in.
+        autocast = None
+        if os.environ.get("RTF_ENABLE_AUTOCAST", "0").lower() in {"1", "true"}:
+            if args.precision == "float16":
+                autocast = torch.float16
+            elif args.precision == "bfloat16":
+                autocast = torch.bfloat16
         paths = [str(sample["audio_path"]) for sample in samples]
         references = [str(sample.get("text", "")) for sample in samples]
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         with torch.inference_mode():
-            with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
-                warmup_hypotheses = transcribe(
-                    model,
-                    paths[:1],
-                    batch_size=1,
-                    torch_module=torch,
-                    device=device,
-                )
-            del warmup_hypotheses
-            release_inference_temporaries(torch, device)
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
                 torch.cuda.synchronize()
             timings = []
             hypotheses = []
-            with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
-                for _ in range(args.repeat):
+            for _ in range(args.repeat):
+                model = load_model(
+                    ASRModel,
+                    snapshot_download,
+                    torch,
+                    model_id=args.model_id,
+                    model_revision=args.model_revision,
+                    device=device,
+                    token=os.environ.get("HF_TOKEN"),
+                )
+                with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
                     release_inference_temporaries(torch, device)
                     started = time.perf_counter()
                     hypotheses = transcribe(
@@ -132,8 +146,8 @@ def main() -> int:
                         device=device,
                     )
                     timings.append(time.perf_counter() - started)
-                    if _ + 1 < args.repeat:
-                        release_inference_temporaries(torch, device)
+                del model
+                release_inference_temporaries(torch, device)
             elapsed = sum(timings) / len(timings)
         texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
         del hypotheses

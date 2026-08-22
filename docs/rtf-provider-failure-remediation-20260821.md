@@ -70,3 +70,28 @@ External evidence:
 T4のbatch 8/32が物理的にOOMとなる場合、これはreceipt保証修正とは別のGPU容量制約で
 あり、成功結果として扱わない。全batch完走には別GPUまたは明示的なmatrix policy変更が
 必要である。
+
+## 2026-08-23 Repository Secret 経由の再検証
+
+対象run: [32593711141](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32593711141)
+
+このrunはローカル`.env`をActionsへ渡さず、Repository Secretの`HF_TOKEN`をworkflowの`${{ secrets.HF_TOKEN }}`から`hf jobs run --secrets`へ伝達した。GHCR imageは次のimmutable digestで解決された。
+
+```text
+image_digest: sha256:9e697d44c6f969d50bd4c7cd3728a0806d7584be3d1525539b344c1c63ebaf08
+model_revision: 44edb27eea9317daf89333e75eb830db4b1cc298
+dataset_revision: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+fixture_revision: 8d2c866ee315bdbed468b2e92e4587d85b6a5cc8
+manifest_sha256: 9c47976f6101ebca1fc2575d46fde80d9a33dbc14b1e1f6dc2ca9aeb57a87694
+```
+
+HF Job `6a89f9577c5c7dd3792351f3`では、fixture JSONLと21音声の取得、モデル復元、content probe（`content_available=true`）まで成功した。その後、batch 1の全件推論開始時に`BENCHMARK_INFERENCE_FAILED` / CUDA illegal memory accessが発生し、metricsは生成されなかった。guarded cost policyによりbatch 8/32は`COST_GUARD_SKIPPED`となり、追加GPU費用を発生させず停止した。
+
+ログ上、content probeは単独の`transcribe`呼出しで成功する一方、benchmark本体は同一NeMoモデルをwarmup・全件計測・repeatで再利用し、さらに本体だけautocastを有効にしていた。この実測差を原因候補として、次の修正を実装した。
+
+- 本体の暗黙autocastを既定で無効化し、`RTF_ENABLE_AUTOCAST=1`の明示実験時だけ有効化する。
+- warmupを廃止する。
+- 各repeatでfixture済みsnapshotからNeMoモデルを再restoreし、推論後に破棄する。snapshot自体はHFキャッシュを使うため、再ダウンロードではない。
+- GHCR cache exportは`mode=min`へ下げ、image push完了後に2.7GB級のbuild graph exportでworkflowが停滞しないようにする。
+
+この修正後のHF/RunPod実GPU受入れは未確認であり、次の安全な単位は新digestを発行したうえで、同じHF T4 guarded batch 1を一度だけ再実行することである。

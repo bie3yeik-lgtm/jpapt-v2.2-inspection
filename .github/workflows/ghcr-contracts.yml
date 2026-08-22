@@ -103,7 +103,7 @@ jobs:
               'type=gha,scope=',
               'type=registry,ref=',
               ':buildcache',
-              'mode=max,scope=',
+              'mode=min,scope=',
               'version=2,ignore-error=true',
               "github.event_name != 'pull_request'",
               'image-manifest=true',

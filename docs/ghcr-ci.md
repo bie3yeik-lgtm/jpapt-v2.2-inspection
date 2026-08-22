@@ -183,8 +183,8 @@ cache-from:
   GHCR registry cache: <image>:buildcache
 
 cache-to:
-  GitHub Actions cache, mode=max, version 2
-  GHCR registry cache, mode=max, non-PR events only
+  GitHub Actions cache, mode=min, version 2
+  GHCR registry cache, mode=min, non-PR events only
 ```
 
 The GitHub Actions cache is the primary PR cache target and is exported on a
