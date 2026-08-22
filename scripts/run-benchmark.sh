@@ -61,6 +61,7 @@ fi
 : "${RTF_REPEAT:=3}"
 : "${RTF_HF_TIMEOUT:=2h}"
 : "${RTF_RUNPOD_MAX_HOURS:=2}"
+: "${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
@@ -193,6 +194,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 6' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_CREATE_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES must be a positive integer' >&2
+      exit 2
+    }
     [[ "$RTF_RUNPOD_WAIT_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
       echo 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES must be a positive integer' >&2
       exit 2
@@ -214,7 +219,7 @@ case "$PROVIDER" in
       echo "failed to generate RunPod termination deadline: $terminate_after" >&2
       exit 2
     }
-    echo "RunPod pod readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
+    echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
@@ -234,12 +239,39 @@ case "$PROVIDER" in
       --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" \
       --arg error_log "/output/benchmark-error.log" \
       '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+    # `runpodctl pod create` can block while the provider schedules a Pod or
+    # pulls the image, without emitting output. Keep that phase bounded and
+    # observable; the EXIT trap also removes an orphan Pod found by name if
+    # the client is killed after the provider accepted the request.
+    create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-runpod-create.XXXXXX")"
+    create_started="$(date +%s)"
+    pod_create_timed_out=0
     set +e
-    pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
+    runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
       --ports 22/tcp --terminate-after "$terminate_after" \
-      --output json 2>&1)"
-    pod_create_status=$?
+      --output json >"$create_log" 2>&1 &
+    pod_create_pid=$!
+    pod_create_status=124
+    while kill -0 "$pod_create_pid" 2>/dev/null; do
+      create_elapsed=$(( $(date +%s) - create_started ))
+      echo "RunPod phase=pod_create elapsed=${create_elapsed}s timeout=${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m" >&2
+      if (( create_elapsed >= RTF_RUNPOD_CREATE_TIMEOUT_MINUTES * 60 )); then
+        pod_create_timed_out=1
+        kill "$pod_create_pid" 2>/dev/null || true
+        break
+      fi
+      sleep "$RTF_RUNPOD_POLL_SECONDS"
+    done
+    if [[ "$pod_create_timed_out" -eq 1 ]]; then
+      wait "$pod_create_pid" 2>/dev/null || true
+      pod_create_status=124
+    else
+      wait "$pod_create_pid"
+      pod_create_status=$?
+    fi
+    pod_json="$(<"$create_log")"
+    rm -f "$create_log"
     set -e
     # `jq -e` prints JSON null before returning failure for an error response;
     # use `// empty` so the literal string "null" can never reach pod delete.
@@ -248,7 +280,9 @@ case "$PROVIDER" in
       pod_create_failed=1
       printf '%s\n' "$pod_json" >&2
       failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
-      if grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
+      if [[ "$pod_create_timed_out" -eq 1 ]]; then
+        failure_code="RUNPOD_POD_CREATE_TIMEOUT"
+      elif grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
         failure_code="RUNPOD_NO_INSTANCE_AVAILABLE"
       elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then
         failure_code="RUNPOD_TERMINATE_AFTER_INVALID"
@@ -262,7 +296,7 @@ case "$PROVIDER" in
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
         --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
         --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
-        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:($job_id | if length == 0 then null else . end),result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       [[ "$pod_create_status" -ne 0 ]] && exit "$pod_create_status"
       echo 'RunPod pod create did not return a pod id' >&2
@@ -290,7 +324,7 @@ case "$PROVIDER" in
       fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
-        --arg run_id "$RTF_RUN_ID" --arg error_code "$failure_code" \
+        --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
         --arg error_message "RunPod Pod did not become SSH-ready within ${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES} minutes" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \

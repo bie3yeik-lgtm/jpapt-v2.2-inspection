@@ -26,6 +26,28 @@ bash -lc 'cd /mnt/k/workspace/jpapt-v2.2-inspection && bash scripts/ci/rtf-local
 
 Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使うことを推奨します。
 
+## ローカル`.env`の不足項目チェック
+
+現在の`.env`に`HF_TOKEN`と`RUNPOD_API`があれば、mockによる無課金のadapter検証は実行できます。
+ただし、実providerを起動するdry-run相当の事前検証（外部APIへ接続するがPod/Jobを作らない
+確認を含む）と、実provider起動には次の境界があります。
+
+| 項目 | 必須段階 | 用途 | 現在の扱い |
+|---|---|---|---|
+| `HF_TOKEN` | HF live | HF Job作成とprivate Hub参照 | `.env`に追加済み。値は表示・commitしない |
+| `RUNPOD_TOKEN` | RunPod live | runpodctl API/SSH key同期 | Actionsの正本名。`RUNPOD_API`はローカルaliasとして補完 |
+| `RUNPOD_API` | ローカル互換 | `RUNPOD_TOKEN`未設定時の入力alias | 追加済み。canonical名への移行を推奨 |
+| `RTF_IMAGE_DIGEST` | live launch | GHCR imageのimmutable digest | 未設定ならpreflightは警告、launchは停止 |
+| model/dataset/fixture revision | live launch | 再現可能なidentity固定 | `.env.example`のplaceholderを実値へ置換 |
+| `RTF_FIXTURE_MANIFEST_SHA256` | live launch | fixtureとrunの一致検証 | 未設定なら既存workflowの解決結果を使う場合を除き停止 |
+| `hf`, `runpodctl`, `jq` | static/mock/live wrapper | CLIとJSON回収 | WSL login shellで確認済み |
+| Docker/driver/GPU | docker/live execution | image buildまたは実推論 | static/mockでは不要。外部実験前に別途確認 |
+
+したがって、現時点で追加の秘密値は不要です。実providerを安全に起動する前に必要なのは、
+`RUNPOD_API`を`RUNPOD_TOKEN`へ整理すること、`RTF_IMAGE_DIGEST`とrevision群を実値で埋めること、
+およびWSLのCLI存在・versionを確認することです。`.env`は`.gitignore`対象であり、GitHub Actions
+へは渡さず、ActionsではRepository Secret（`HF_TOKEN`/`RUNPOD_TOKEN`）を使用します。
+
 現環境の注意点:
 
 - このWindows workspaceでは、WSL login shellに`hf`、`runpodctl`、`jq`が存在する。
@@ -48,7 +70,7 @@ bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
 bash scripts/ci/test-rtf-provider-adapters.sh --mode docker \
   --image parakeet-rtf-benchmark:local
 
-# 実providerを明示的に起動する場合のみ
+# 実providerを明示的に起動する場合のみ（dry-runではなく外部状態・課金が発生）
 RTF_IMAGE_DIGEST=sha256:<digest> \
 HF_TOKEN=... \
 bash scripts/ci/test-rtf-provider-adapters.sh \

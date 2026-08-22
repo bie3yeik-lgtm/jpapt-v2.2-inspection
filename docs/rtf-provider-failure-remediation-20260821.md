@@ -127,6 +127,12 @@ Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doc
 
 この観測改善として、Pod createの`--wait`を廃止し、create応答後の`runpodctl pod get` readiness pollingへ移行した。これによりPod ID取得、runtime準備、SSH接続の境界を分離し、Actionsキャンセル時に単一の長時間`runpodctl`呼出しを残さない。readiness timeoutやPod早期終了はtyped receiptとして保存する。
 
+## RunPod Pod create の無出力ブロック対策
+
+readiness pollingへ移行しても、`runpodctl pod create`自体がproviderのスケジューリングやimage pull待ちで応答しない場合は、Pod IDを取得する前にActionsが長時間拘束される。この境界を別の実行フェーズとして扱い、`RTF_RUNPOD_CREATE_TIMEOUT_MINUTES`（既定20分）で上限を設ける。create中は`phase=pod_create`と経過秒を定期出力し、上限超過を`RUNPOD_POD_CREATE_TIMEOUT`のblocked receiptへ変換する。
+
+createプロセスを停止した場合でも、API側で要求が受理されていた可能性があるため、固有の`RTF_RUN_ID`でPod一覧を再検索し、孤児Podを削除する。したがって、RunPodの再試験はこの上限・進捗・cleanupを含むimage/checkoutで一度だけ行い、create timeoutは推論失敗や容量不足と混同しない。
+
 ## RunPod引数契約の修正
 
 上記の未成立runを再試験する前に、`scripts/run-benchmark.sh`のRunPod引数を実CLIの契約へ合わせる。再試験では`--terminate-after`へ`2h`を渡したところ、runpodctl v2.11.0がGraphQL `DateTime`として検証し、Pod作成前に拒否した。このため、実装は既定2時間後のUTC timestampを渡す方式へ戻す。Podのreadiness待ちは既定20分の`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`として分離し、イメージpull・Pod起動・SSH準備の時間を含めて調整可能にした。既存の作成失敗時の名前検索、EXIT時delete、metrics/receipt回収後の即時deleteは維持する。

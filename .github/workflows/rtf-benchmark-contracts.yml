@@ -167,6 +167,12 @@ jobs:
               raise SystemExit("RunPod termination safety guard must use an absolute UTC DateTime")
           if 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod readiness timeout must be configurable")
+          if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
+              raise SystemExit("RunPod Pod creation timeout must be configurable")
+          if 'phase=pod_create' not in script:
+              raise SystemExit("RunPod Pod creation must emit bounded progress")
+          if 'RUNPOD_POD_CREATE_TIMEOUT' not in script:
+              raise SystemExit("RunPod Pod creation timeout must be typed")
           if 'RTF_RUNPOD_POLL_SECONDS' not in script:
               raise SystemExit("RunPod readiness polling interval must be configurable")
           if 'date -u -v+${RTF_RUNPOD_MAX_HOURS}H' not in script:
