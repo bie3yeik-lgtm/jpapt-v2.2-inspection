@@ -116,3 +116,11 @@ metrics_sha256: 75ece9fc786fcc2afb8649057bde4a75e6f3f95f7234980c3d69ba9976ea0fe2
 batch 8ではcontent probeは成功したが、本測定でT4の14.74 GiB中2.70 GiB freeの状態から2.71 GiB確保に失敗し、typed `BENCHMARK_INFERENCE_FAILED` / CUDA OOM receiptとなった。cost guardはbatch 32を`COST_GUARD_SKIPPED`として起動せず、追加費用を抑えた。これはbatch 1の再利用起因illegal accessとは別の、T4における長尺8件同時処理の容量制約である。
 
 したがって現時点の受入れは、HF Secret境界、GHCR immutable image、fixture取得、content probe、batch 1 metrics/recordをcompleted、T4 batch 8/32を未成立として扱う。batch 8/32を成立させるには、別GPU lane、fixtureの長さ/バッチ契約見直し、または実効batchを変えないことを保証した長さ制御が必要であり、単純なOOM retryは行わない。
+
+## RunPod guarded 実行境界
+
+対象run: [32596969809](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32596969809)
+
+Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doctor`は`healthy=true`、API key・API connectivity・SSH key同期の全てがpassした。したがってSecret権限とCLI設定は受入れ済みである。
+
+一方、A5000 Podのbatch 1作成・接続・推論は約8分経過してもresult receiptを出力しなかったため、課金継続を避けてActionsをキャンセルした。collectにはbatch 1/8/32すべて`BENCHMARK_SETUP_FAILED`として保存され、RunPodの実GPU metricsやcontent probeは未取得である。RunPodの成功や失敗を推測せず、次回はPod create/SSH/image pullの個別時刻とremote receiptを取得できる観測を追加してから再試験する。
