@@ -64,6 +64,7 @@ fi
 : "${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
+: "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 if [[ "$PROVIDER" == hf ]]; then
@@ -214,6 +215,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_POLL_SECONDS must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS must be a positive integer' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -348,12 +353,30 @@ case "$PROVIDER" in
       pod_list_summary="$(jq -c --arg pod_id "$pod_id" \
         '[.[] | select((.id // .podId // .pod_id) == $pod_id) | {id:(.id // .podId // .pod_id),runtimeStatus:(.runtimeStatus // .runtime_status),desiredStatus:(.desiredStatus // .desired_status)}] | first // {}' \
         <<<"$pod_list_state_json" 2>/dev/null || true)"
+      ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1 || true)"
+      ssh_probe_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
       [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
-        pod_ready=1
-        break
+        # RUNNING only means the Pod lifecycle reached running. Require an
+        # actual SSH handshake before invoking the benchmark entrypoint;
+        # otherwise the provider may still be publishing the SSH port.
+        ssh_ready=0
+        if [[ -n "$ssh_probe_command" ]] && \
+          timeout --signal=TERM "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS}s" \
+            bash -c "$ssh_probe_command true" >/dev/null 2>&1; then
+          ssh_ready=1
+        fi
+        ssh_command_present=false
+        ssh_ready_text=false
+        [[ -n "$ssh_probe_command" ]] && ssh_command_present=true
+        [[ "$ssh_ready" -eq 1 ]] && ssh_ready_text=true
+        echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text" >&2
+        if [[ "$ssh_ready" -eq 1 ]]; then
+          pod_ready=1
+          break
+        fi
       fi
       if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.desiredStatus // "") | ascii_upcase) == "EXITED" or ((.desiredStatus // "") | ascii_upcase) == "TERMINATED"' <<<"$pod_list_summary" >/dev/null 2>&1; then

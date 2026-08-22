@@ -133,6 +133,9 @@ EOF
   cat > "$fake_bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${RTF_FAKE_RUNPOD_SSH_NOT_READY:-0}" == 1 && " $* " == *' true '* ]]; then
+  exit 255
+fi
 case " $* " in
   *' /output/content.json '*)
     printf '%s\n' '{"schema_version":1,"run_id":"local-runpod-test","status":"completed","content_available":true,"hypothesis_text":"mock"}' ;;
@@ -186,6 +189,7 @@ mock_case() {
     # runtimeStatus rather than the pod-get runtime object.
     export RTF_FAKE_RUNPOD_LIST_READY=1
     export RTF_FAKE_RUNPOD_GET_NOT_READY=1
+    export RTF_FAKE_RUNPOD_SSH_NOT_READY=0
   fi
   export RTF_BATCH_SIZE=1
   export RTF_PRECISION=float16
@@ -210,14 +214,14 @@ mock_case() {
     [[ "$status" -ne 0 ]] || fail "RunPod no-instance mock unexpectedly succeeded"
     jq -e '.status == "blocked" and .error_code == "RUNPOD_NO_INSTANCE_AVAILABLE" and .run_id == $run_id' \
       --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod no-instance receipt was not classified"
-    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY
+    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY
     rm -rf "$fake_root"
     pass "RunPod no-instance failure produces a typed receipt"
     return
   fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
-  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY
+  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY
   rm -rf "$fake_root"
 }
 

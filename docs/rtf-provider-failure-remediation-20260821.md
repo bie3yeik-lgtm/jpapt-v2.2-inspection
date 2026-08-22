@@ -183,3 +183,16 @@ runtimeStatusReason: null
 - `sshCommand`／`ssh_command`の両方を受け入れる。
 
 fake CLIでは、実測と同じくget側を`runtime=null`、list側を`runtimeStatus=RUNNING`にしたケースを追加し、static/mock検証はPASSした。実runのPodはworkflow cleanup後に一覧から消え、課金Podは残っていない。修正後のRunPod metrics取得は未成立であり、次の再試験はこのreadiness修正版がPR checksを通過した後に一度だけ行う。
+
+## 2026-08-23 RunPod SSH port readiness の実測
+
+`runtimeStatus=running`をreadinessとみなした次のrunでは、SSH接続が直後に`Connection refused`となった。これはPod lifecycleのrunningと、SSH server／port forwardingの受入れ可能状態が別であることを示す。したがって`runtimeStatus`だけではremote entrypointを開始してはならない。
+
+adapterは次の追加gateを設けた。
+
+- `runpodctl ssh info`から`sshCommand`／`ssh_command`を取得する。
+- Pod lifecycleがrunningになった後、実SSH probeを行う。
+- probeが成功するまでentrypointを実行しない。
+- probeは`RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS`（既定10秒）でboundedにする。
+
+この状態をfake CLIで再現したmockはPASSした。前回実runの証拠はPod作成・list runningまでで、metrics/resultは未成立である。SSH probe修正版がPR checksを通過するまでRunPodを再作成しない。
