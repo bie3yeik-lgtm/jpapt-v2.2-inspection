@@ -302,6 +302,10 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- rtf-scores/benchmark
+          if git diff --cached --quiet; then
+            echo 'Resolved manifest and receipt already match origin/main; no delivery PR is required.'
+            exit 0
+          fi
           git commit -m "Add resolved RTF benchmark manifest ${RUN_ID}"
           git push --set-upstream origin "$branch"
           gh pr create \
