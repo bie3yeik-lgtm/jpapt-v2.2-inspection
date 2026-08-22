@@ -20,6 +20,7 @@
 | RTF Resolver | [32409407486](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32409407486) | success | Resolver単体は成功 |
 | RTF Benchmark Run | [32409761260](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32409761260) | success | workflow jobはsuccessだが、collectされたbatch 1/8/32は全て`blocked` / `PROVIDER_EXECUTION_FAILED` |
 | RTF Benchmark Run | [32593711141](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32593711141) | failure | Repository Secret経由のHF T4。fixture/model/image解決とcontent probeは成功したが、batch 1全件推論で`BENCHMARK_INFERENCE_FAILED` / CUDA illegal memory access。guarded policyにより8/32は未実行 |
+| RTF Benchmark Run | [32595956141](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32595956141) | success | 修正後のHF T4。batch 1はmetrics/receipt/benchmark recordまでcompleted。batch 8はtyped CUDA OOM、batch 32はcost guard停止。Actionはblocked collectionを正常化してsuccess |
 | GHCR Environment Evaluation | [32409358954](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32409358954) | failure | CPU evaluationがrun-contextを生成せず、GHCR evidenceはartifact内に留まった |
 | RTF Benchmark Contracts | [32414623783](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32414623783) | failure | `evaluation/manifests/rtf-phase1.jsonl` 1行目でunknown field。workflowの想定schemaと実manifestが不一致 |
 

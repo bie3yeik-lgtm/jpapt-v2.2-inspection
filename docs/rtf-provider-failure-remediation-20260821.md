@@ -95,3 +95,24 @@ HF Job `6a89f9577c5c7dd3792351f3`では、fixture JSONLと21音声の取得、�
 - GHCR cache exportは`mode=min`へ下げ、image push完了後に2.7GB級のbuild graph exportでworkflowが停滞しないようにする。
 
 この修正後のHF/RunPod実GPU受入れは未確認であり、次の安全な単位は新digestを発行したうえで、同じHF T4 guarded batch 1を一度だけ再実行することである。
+
+## 修正後のHF T4 guarded 実測
+
+対象run: [32595956141](https://github.com/bie3yeik-lgtm/jpapt-v2.2-inspection/actions/runs/32595956141)
+
+新image digest `sha256:102087d0a70b2244865800604423e3089c0f872f81f98572faafbe2c914946bc`でRepository Secret経由のHF Jobを実行した。batch 1はcontent probe、全件推論、3 repeat、metrics upload、Rust benchmark record生成まで完了した。
+
+```text
+job_id: 6a8a03597c5c7dd3792352ca5
+status: completed
+batch_size: 1
+rtfx: 95.26352914118695
+rtf: 0.010497196660832634
+processing_duration_sec: 56.71408616399998
+peak_vram_bytes: 5606215680
+metrics_sha256: 75ece9fc786fcc2afb8649057bde4a75e6f3f95f7234980c3d69ba9976ea0fe2
+```
+
+batch 8ではcontent probeは成功したが、本測定でT4の14.74 GiB中2.70 GiB freeの状態から2.71 GiB確保に失敗し、typed `BENCHMARK_INFERENCE_FAILED` / CUDA OOM receiptとなった。cost guardはbatch 32を`COST_GUARD_SKIPPED`として起動せず、追加費用を抑えた。これはbatch 1の再利用起因illegal accessとは別の、T4における長尺8件同時処理の容量制約である。
+
+したがって現時点の受入れは、HF Secret境界、GHCR immutable image、fixture取得、content probe、batch 1 metrics/recordをcompleted、T4 batch 8/32を未成立として扱う。batch 8/32を成立させるには、別GPU lane、fixtureの長さ/バッチ契約見直し、または実効batchを変えないことを保証した長さ制御が必要であり、単純なOOM retryは行わない。
