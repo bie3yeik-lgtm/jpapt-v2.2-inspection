@@ -57,13 +57,27 @@ jobs:
           entries = []
           for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
               value = json.loads(line)
-              required = {"dataset_id", "count", "seed"}
-              if set(value) - required - {"min_duration_sec", "max_duration_sec"}:
+              required = {
+                  "inspection_profile",
+                  "dataset_id",
+                  "count_min",
+                  "count_max",
+                  "target_total_duration_sec",
+                  "seed",
+              }
+              optional = {"min_duration_sec", "max_duration_sec"}
+              if set(value) - required - optional:
                   raise SystemExit(f"line {line_number}: unknown field")
               if set(value) & required != required:
                   raise SystemExit(f"line {line_number}: missing required field")
-              if not isinstance(value["count"], int) or value["count"] <= 0:
-                  raise SystemExit(f"line {line_number}: count must be positive")
+              if value["inspection_profile"] != "smoke":
+                  raise SystemExit(f"line {line_number}: profile must be smoke")
+              if not isinstance(value["count_min"], int) or value["count_min"] <= 0:
+                  raise SystemExit(f"line {line_number}: count_min must be positive")
+              if not isinstance(value["count_max"], int) or value["count_max"] < value["count_min"]:
+                  raise SystemExit(f"line {line_number}: count_max must be >= count_min")
+              if value["target_total_duration_sec"] <= 0:
+                  raise SystemExit(f"line {line_number}: target duration must be positive")
               if not value["seed"]:
                   raise SystemExit(f"line {line_number}: seed must not be empty")
               if value.get("min_duration_sec", 0) < 0:
@@ -89,7 +103,7 @@ jobs:
           bash -n scripts/ci/resolve-ghcr-package-digest.sh
           bash -n scripts/ci/dispatch-rtf-service-result.sh
           bash -n docker/rtf-benchmark/entrypoint.sh
-          rg -n 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
+          grep -En 'sleep infinity|exec sleep infinity' docker/rtf-benchmark/entrypoint.sh
           python - <<'PY'
           from pathlib import Path
           entrypoint = Path("docker/rtf-benchmark/entrypoint.sh").read_text()
@@ -98,9 +112,9 @@ jobs:
           print("RunPod docker-args arity contract: PASS")
           PY
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
-          rg -n 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
-          rg -n 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
-          if rg -n 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
+          grep -REn 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
+          grep -En 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
+          if grep -En 'paths2audio_files' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py; then
             echo 'NeMo transcribe must use positional audio paths' >&2
             exit 1
           fi
@@ -145,12 +159,32 @@ jobs:
               raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
           if "--docker-args 'sleep infinity'" not in script:
               raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
-          if '--ports 22/tcp --wait --wait-timeout 30m --terminate-after "$terminate_after"' not in script:
-              raise SystemExit("RunPod Pod creation must wait for SSH readiness")
-          if "date -u -d '+4 hours'" not in script or "date -u -v+4H" not in script:
-              raise SystemExit("RunPod termination safety deadline must be an absolute UTC DateTime")
+          if '--ports 22/tcp --terminate-after "$terminate_after"' not in script:
+              raise SystemExit("RunPod Pod creation must use the provider termination guard")
+          if 'runpodctl pod get "$pod_id" --output json' not in script:
+              raise SystemExit("RunPod must poll Pod readiness after creation")
+          if 'date -u -d "+${RTF_RUNPOD_MAX_HOURS} hours"' not in script:
+              raise SystemExit("RunPod termination safety guard must use an absolute UTC DateTime")
+          if 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES' not in script:
+              raise SystemExit("RunPod readiness timeout must be configurable")
+          if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
+              raise SystemExit("RunPod Pod creation timeout must be configurable")
+          if 'phase=pod_create' not in script:
+              raise SystemExit("RunPod Pod creation must emit bounded progress")
+          if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
+              raise SystemExit("RunPod Pod creation must discover rented Pods by name")
+          if 'pod_create_discovered=1' not in script:
+              raise SystemExit("RunPod Pod creation must release a blocked CLI after API discovery")
+          if 'RUNPOD_POD_CREATE_TIMEOUT' not in script:
+              raise SystemExit("RunPod Pod creation timeout must be typed")
+          if 'RTF_RUNPOD_POLL_SECONDS' not in script:
+              raise SystemExit("RunPod readiness polling interval must be configurable")
+          if 'date -u -v+${RTF_RUNPOD_MAX_HOURS}H' not in script:
+              raise SystemExit("RunPod termination must support BSD date for local verification")
           if 'trap cleanup_runpod EXIT' not in script:
               raise SystemExit("RunPod must retain a deletion safety trap")
+          if 'trap cleanup_on_signal INT TERM HUP' not in script:
+              raise SystemExit("RunPod must clean up on workflow cancellation signals")
           if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
               raise SystemExit("RunPod create failures must clean up Pods by unique name")
           if 'pod_create_failed=1' not in script:
@@ -188,6 +222,12 @@ jobs:
               raise SystemExit("RunPod CLI configuration must require a healthy doctor result")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
+          if "Cleanup RunPod Pods after benchmark" not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must clean up RunPod Pods after cancellation")
+          if "if: always() && inputs.provider == 'runpod'" not in benchmark_workflow:
+              raise SystemExit("RunPod cleanup must run after blocked or canceled execution")
+          if 'runpodctl pod list --all --name "$run_id"' not in benchmark_workflow:
+              raise SystemExit("RunPod cleanup must find Pods by unique batch run id")
           if 'successful_batches=0' not in benchmark_workflow or "all benchmark batches failed; marking the benchmark job as FAILURE" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must fail when every batch is blocked")
           if "max-parallel: 1" not in benchmark_workflow:
@@ -221,7 +261,7 @@ jobs:
 
           build = Path(".github/workflows/ghcr-build-publish.yml").read_text()
           resolver = Path(".github/workflows/rtf-resolver.yml").read_text()
-          if "name: rtf-image" not in build:
+          if "name: Resolve published RTF image identity" not in build:
               raise SystemExit("GHCR workflow must resolve the RTF image after build")
           if "ghcr-build-parakeet-rtf-benchmark" not in build:
               raise SystemExit("GHCR workflow must consume the canonical RTF build artifact")

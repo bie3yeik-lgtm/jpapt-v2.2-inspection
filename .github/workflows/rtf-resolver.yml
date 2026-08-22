@@ -292,10 +292,20 @@ jobs:
           set -euo pipefail
           branch="inspection/rtf-resolver-${RUN_ID}"
           git fetch --no-tags origin main
+          # The resolver writes receipt/manifest files into the checkout before
+          # opening its delivery branch. Reset the runner checkout explicitly
+          # so those generated files are committed on the new branch rather
+          # than preventing the branch switch with a dirty-worktree error.
+          git reset --hard origin/main
+          git clean -fd
           git checkout --no-track -b "$branch" origin/main
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- rtf-scores/benchmark
+          if git diff --cached --quiet; then
+            echo 'Resolved manifest and receipt already match origin/main; no delivery PR is required.'
+            exit 0
+          fi
           git commit -m "Add resolved RTF benchmark manifest ${RUN_ID}"
           git push --set-upstream origin "$branch"
           gh pr create \

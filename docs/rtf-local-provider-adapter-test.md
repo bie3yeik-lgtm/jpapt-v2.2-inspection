@@ -13,6 +13,88 @@ content/receiptを返し、`scripts/run-benchmark.sh`が同じローカルartifa
 
 ## 実行方法
 
+### 無課金の環境preflight
+
+`.env`を自動実行せず、単純な`KEY=value`だけを読み込みます。`RUNPOD_API`は
+ローカル互換aliasとして`RUNPOD_TOKEN`へ変換します。HF Job、RunPod Pod、Docker
+pull、ネットワークAPIは呼び出しません。
+
+```bash
+# WSL login shell supplies the mise/HF CLI PATH on this Windows workspace.
+bash -lc 'cd /mnt/k/workspace/jpapt-v2.2-inspection && bash scripts/ci/rtf-local-preflight.sh --provider all'
+```
+
+Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使うことを推奨します。
+
+## ローカル`.env`の不足項目チェック
+
+現在の`.env`に`HF_TOKEN`と`RUNPOD_API`があれば、mockによる無課金のadapter検証は実行できます。
+ただし、実providerを起動するdry-run相当の事前検証（外部APIへ接続するがPod/Jobを作らない
+確認を含む）と、実provider起動には次の境界があります。
+
+| 項目 | 必須段階 | 用途 | 現在の扱い |
+|---|---|---|---|
+| `HF_TOKEN` | HF live | HF Job作成とprivate Hub参照 | `.env`に追加済み。値は表示・commitしない |
+| `RUNPOD_TOKEN` | RunPod live | runpodctl API/SSH key同期 | Actionsの正本名。`RUNPOD_API`はローカルaliasとして補完 |
+| `RUNPOD_API` | ローカル互換 | `RUNPOD_TOKEN`未設定時の入力alias | 追加済み。canonical名への移行を推奨 |
+| `RTF_IMAGE_DIGEST` | live launch | GHCR imageのimmutable digest | 未設定ならpreflightは警告、launchは停止 |
+| model/dataset/fixture revision | live launch | 再現可能なidentity固定 | `.env.example`のplaceholderを実値へ置換 |
+| `RTF_FIXTURE_MANIFEST_SHA256` | live launch | fixtureとrunの一致検証 | 未設定なら既存workflowの解決結果を使う場合を除き停止 |
+| `hf`, `runpodctl`, `jq` | static/mock/live wrapper | CLIとJSON回収 | WSL login shellで確認済み |
+| Docker/driver/GPU | docker/live execution | image buildまたは実推論 | static/mockでは不要。外部実験前に別途確認 |
+
+したがって、現時点で追加の秘密値は不要です。実providerを安全に起動する前に必要なのは、
+`RUNPOD_API`を`RUNPOD_TOKEN`へ整理すること、`RTF_IMAGE_DIGEST`とrevision群を実値で埋めること、
+およびWSLのCLI存在・versionを確認することです。`.env`は`.gitignore`対象であり、GitHub Actions
+へは渡さず、ActionsではRepository Secret（`HF_TOKEN`/`RUNPOD_TOKEN`）を使用します。
+
+現環境の注意点:
+
+- このWindows workspaceでは、WSL login shellに`hf`、`runpodctl`、`jq`が存在する。
+  PowerShell側の`jq`は未導入なので、preflightとadapter wrapperはWSLで実行する。
+- 現在のWSL CLIは`hf 1.27.0`、`runpodctl 2.9.0`、`jq 1.8.1`である。GitHub Actionsは
+  RunPod CLIを別途installし、HF clientもupgradeするため、live受入前にバージョン差を
+  解消またはログへ記録する。
+- `RTF_IMAGE_DIGEST`が未設定の場合、preflightは警告で終了するが、provider launchは
+  digest固定を要求して停止する。
+
+## 2026-08-23 `.env`追加後の不足項目監査
+
+`.env`のキー名だけを確認した結果、現在は`HF_TOKEN`、`RUNPOD_API`、
+`CR_PAT`、`GITHUB_PAT_TOKEN`、`GITHUB_CLASSIC_TOKEN`が存在する。値はログ、文書、
+Gitへ出力しない。
+
+`HF_TOKEN`と`RUNPOD_API`だけで十分なのは、providerを作成しない`static`／`mock`段階
+である。実Job／Podを作成しないdry-runでは、これらのtoken自体も不要であり、fake CLI
+による契約確認だけを行う。`CR_PAT`もActionsの正本ではなく、ローカルでprivate GHCR
+imageをpullするときだけ必要になる。
+
+実provider投入前、または実imageを使うローカル境界試験には、次の値が別途必要である。
+
+| 区分 | 必須入力 | 用途 |
+|---|---|---|
+| image identity | `RTF_IMAGE_DIGEST` | `ghcr.io/...@sha256:<64 hex>`の実行環境固定 |
+| model identity | `RTF_MODEL_ID`, `RTF_MODEL_REVISION` | modelと40桁revisionの固定 |
+| dataset identity | `RTF_DATASET_ID`, `RTF_DATASET_REVISION` | datasetと40桁revisionの固定 |
+| fixture identity | `RTF_FIXTURE_REPO_ID`, `RTF_FIXTURE_REVISION`, `RTF_FIXTURE_MANIFEST_SHA256` | Resolverが発行したJSONLとmanifest SHAの固定 |
+| run identity | `RTF_RUN_ID`, `RTF_GPU` | provider job/pod名とPhase 1 matrixの選択 |
+| local image access | `GHCR_USERNAME`相当のlogin名、`CR_PAT`、Docker login済み状態 | private GHCRをpullする場合のみ |
+
+`RTF_MANIFEST`はfixture repositoryから取得する実行では通常不要で、ローカルに既に
+materializeしたJSONLを使う場合だけ指定する。`RTF_BATCH_SIZE`、`RTF_PRECISION`、
+`RTF_DECODER`、dataset profile、RunPodのtimeout等は既定値があるが、再現性を重視する
+受入試験では明示指定する。
+
+なお、`rtf-local-preflight.sh`は安全のため`.env`を親シェルへexportしない。preflightの
+PASS後に別コマンドで`run-benchmark.sh`を呼ぶ場合は、値がそのプロセスへ渡っていることを
+確認する必要がある。`.env`をshellとして直接`source`する運用は、任意コマンド実行を
+許すため採用しない。必要なら、既存preflightと同じ単純な`KEY=value` parserを共有する
+専用wrapperを追加する。
+
+監査時点の無課金確認結果は、WSL上で`hf 1.27.0`、`runpodctl 2.9.0-c094cac`、
+`jq 1.8.1`を検出し、`bash scripts/ci/rtf-local-preflight.sh --provider all`はPASSした。
+ただし`RTF_IMAGE_DIGEST`未設定のため、これはprovider launch可能の証明ではない。
+
 ```bash
 # Dockerfile、schema、entrypoint、adapterの静的検証だけ
 bash scripts/ci/test-rtf-provider-adapters.sh --mode static
@@ -20,12 +102,15 @@ bash scripts/ci/test-rtf-provider-adapters.sh --mode static
 # HF Jobs/RunPodのCLI hand-offをfake CLIで検証（外部リソースなし）
 bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
 
+# 実provider投入前の入力完全性だけを、外部APIなしで確認
+bash scripts/ci/rtf-local-preflight.sh --provider all --require-launch-inputs
+
 # Dockerfileを実際にlocal imageへbuild（時間がかかるため通常のチェックからは除外）
 # 必要な受入段階で明示的に実行する
 bash scripts/ci/test-rtf-provider-adapters.sh --mode docker \
   --image parakeet-rtf-benchmark:local
 
-# 実providerを明示的に起動する場合のみ
+# 実providerを明示的に起動する場合のみ（dry-runではなく外部状態・課金が発生）
 RTF_IMAGE_DIGEST=sha256:<digest> \
 HF_TOKEN=... \
 bash scripts/ci/test-rtf-provider-adapters.sh \
@@ -57,4 +142,5 @@ identity、content probe、metrics、result SHA、provider evidenceが別途必�
 
 `rtf-benchmark-contracts.yml`は高速な`--mode mock`を実行する。これによりGitHub Actions自身が
 外部providerへ到達できない場合でも、adapterのCLI引数・回収経路・Dockerfile契約をPR時に
-検証できる。
+検証できる。mockにはRunPod createの無出力ハングを時間短縮して再現し、
+`RUNPOD_POD_CREATE_TIMEOUT` receiptを確認するケースも含む。

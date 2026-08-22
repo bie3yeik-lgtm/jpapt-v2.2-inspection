@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh
+  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -74,6 +74,9 @@ static_checks() {
   ! grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
+  grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }
 
@@ -98,11 +101,25 @@ EOF
   cat > "$fake_bin/runpodctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-}:${2:-}" in
-  pod:create) printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
+  case "${1:-}:${2:-}" in
+  pod:create)
+    if [[ "${RTF_FAKE_RUNPOD_HANG:-0}" == 1 ]]; then
+      sleep 120
+    fi
+    if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 ]]; then
+      printf '%s\n' '{"error":"failed to create pod: graphql error: There are no longer any instances available with the requested specifications."}'
+      exit 1
+    fi
+    printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
+  pod:get)
+    if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 ]]; then
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null}' ;
+    else
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{}}' ;
+    fi ;;
   pod:delete) : ;;
   pod:list) printf '%s\n' '[]' ;;
-  ssh:info) printf '%s\n' '{"sshCommand":"ssh mock@runpod"}' ;;
+  ssh:info) printf '%s\n' '{"ssh_command":"ssh mock@runpod"}' ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
 EOF
@@ -169,20 +186,33 @@ mock_case() {
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  export RTF_RUNPOD_POLL_SECONDS=1
+  set +e
   if [[ "$provider" == hf ]]; then
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null
   else
     ./scripts/run-benchmark.sh --provider runpod --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null
   fi
+  local status=$?
+  set -e
+  if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 && "$provider" == runpod ]]; then
+    [[ "$status" -ne 0 ]] || fail "RunPod no-instance mock unexpectedly succeeded"
+    jq -e '.status == "blocked" and .error_code == "RUNPOD_NO_INSTANCE_AVAILABLE" and .run_id == $run_id' \
+      --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod no-instance receipt was not classified"
+    rm -rf "$fake_root"
+    pass "RunPod no-instance failure produces a typed receipt"
+    return
+  fi
+  [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
   rm -rf "$fake_root"
 }
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod; failure_receipt_check ;;
+    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check ;;
     hf) mock_case hf; failure_receipt_check ;;
-    runpod) mock_case runpod ;;
+    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; runpod_create_timeout_check ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
 }
@@ -210,6 +240,52 @@ failure_receipt_check() {
   unset RTF_FAKE_FAILURE
   rm -rf "$fake_root"
   pass "HF CUDA illegal access produces a typed failure receipt"
+}
+
+runpod_create_timeout_check() {
+  local fake_root case_dir date_state status
+  fake_root="$(mktemp -d)"
+  case_dir="$fake_root/result"
+  date_state="$fake_root/date-count"
+  mkdir -p "$case_dir"
+  write_fake_cli "$fake_root/bin"
+  # Make the next epoch read exceed the one-minute production timeout without
+  # waiting a real minute.
+  cat > "$fake_root/bin/date" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$*" == "+%s" ]]; then
+  if [[ ! -f "$date_state" ]]; then
+    touch "$date_state"
+    echo 1000
+  else
+    echo 2000
+  fi
+else
+  /usr/bin/date "\$@"
+fi
+EOF
+  chmod +x "$fake_root/bin/date"
+  export PATH="$fake_root/bin:$PATH"
+  export RTF_FAKE_RUNPOD_HANG=1
+  export RTF_RUN_ID="local-runpod-create-timeout-test" RTF_GPU=a5000 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
+  export RTF_MODEL_ID="nvidia/parakeet-tdt_ctc-0.6b-ja" RTF_MODEL_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  export RTF_DATASET_ID="japanese-asr/ja_asr.common_voice_8_0" RTF_DATASET_REVISION="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  export RTF_FIXTURE_REPO_ID="gawohok7/rtf-benchmark-fixtures" RTF_FIXTURE_REVISION="cccccccccccccccccccccccccccccccccccccccc"
+  export RTF_FIXTURE_MANIFEST_SHA256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  export RTF_IMAGE_DIGEST="sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  export RTF_RUNPOD_CREATE_TIMEOUT_MINUTES=1 RTF_RUNPOD_POLL_SECONDS=1
+  export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
+  set +e
+  ./scripts/run-benchmark.sh --provider runpod --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >"$case_dir/log" 2>&1
+  status=$?
+  set -e
+  [[ "$status" -eq 124 ]] || fail "RunPod create timeout mock returned status $status"
+  jq -e '.status == "blocked" and .error_code == "RUNPOD_POD_CREATE_TIMEOUT" and .run_id == "local-runpod-create-timeout-test"' \
+    "$case_dir/result-receipt.json" >/dev/null || fail "RunPod create timeout receipt was not classified"
+  unset RTF_FAKE_RUNPOD_HANG
+  rm -rf "$fake_root"
+  pass "RunPod Pod create timeout produces a typed receipt without external resources"
 }
 
 docker_checks() {

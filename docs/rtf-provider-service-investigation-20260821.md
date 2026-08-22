@@ -90,14 +90,15 @@ batch 8/32はT4の実メモリと可変長audio batchの組み合わせで説明
 ```text
 runpodctl pod create --image <digest-pinned-image> --gpu-id <mapped GPU name>
   --env <JSON> --docker-args 'sleep infinity' --ports 22/tcp
-  --wait --wait-timeout 30m --terminate-after <UTC deadline>
+  --terminate-after <UTC DateTime>
+-> runpodctl pod get <pod-id> --output json (readiness polling)
 -> runpodctl ssh info <pod-id>
 -> SSHで /opt/rtf-benchmark/entrypoint.sh を実行
 -> SSHでmetricsとreceiptをcat
 -> Pod delete
 ```
 
-RunPod公式仕様でも`--image`、`--gpu-id`、`--env` JSON、`--docker-args`、`--ports`、`--terminate-after`がPod createの引数であり、SSH情報の取得は`runpodctl ssh info`で行う。基本引数は仕様に沿っている。
+RunPod公式仕様でも`--image`、`--gpu-id`、`--env` JSON、`--docker-args`、`--ports`、`--terminate-after`がPod createの引数であり、SSH情報の取得は`runpodctl ssh info`で行う。実際にActionsで使用したrunpodctl v2.11.0は`--terminate-after`をGraphQLの`DateTime`として検証するため、既定2時間後のUTC timestampを渡す。`pod create --wait`の単一blocking呼出しは、Actions cancel時に`runpodctl`孤児プロセスとなり進捗も取得できなかったため廃止した。さらに、create自体もスケジューリング・image pull待ちで無出力のまま停止し得るため、`RTF_RUNPOD_CREATE_TIMEOUT_MINUTES`（既定20分）の独立上限を設け、`phase=pod_create`の経過ログを出す。create応答が戻らなくても、同じ一意run IDのPodがAPI一覧へ現れた場合はそのIDを採用してcreate待ちを解放し、`pod get` readinessへ進む。上限超過は`RUNPOD_POD_CREATE_TIMEOUT`として記録し、固有run IDでのPod検索・削除を行う。create成功後は`pod get`を`RTF_RUNPOD_POLL_SECONDS`（既定15秒）でpollし、`desiredStatus=RUNNING`かつ`runtime`存在を確認する。readiness全体は`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`（既定20分）で制限し、イメージ取得・起動を含むprovider側の準備時間を吸収する。
 
 参照: [RunPod runpodctl pod reference](https://docs.runpod.io/runpodctl/reference/runpodctl-pod)
 
