@@ -137,10 +137,10 @@ jobs:
           cache-from: |
             type=gha,scope=${{ matrix.package }},version=2
             type=registry,ref=${{ matrix.image }}:buildcache
+          # Export the final image cache only. mode=max attempted to export
+          # the full 2.7GB NeMo build graph after the image was already
+          # pushed, making the workflow appear hung and wasting runner time.
           cache-to: |
-            # Export the final image cache only. mode=max attempted to export
-            # the full 2.7GB NeMo build graph after the image was already
-            # pushed, making the workflow appear hung and wasting runner time.
             type=gha,mode=min,scope=${{ matrix.package }},version=2,ignore-error=true
             ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=min,image-manifest=true,oci-mediatypes=true,compression=zstd,ignore-error=true', matrix.image) || '' }}
 
