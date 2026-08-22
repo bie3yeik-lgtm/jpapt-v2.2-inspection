@@ -90,14 +90,14 @@ batch 8/32はT4の実メモリと可変長audio batchの組み合わせで説明
 ```text
 runpodctl pod create --image <digest-pinned-image> --gpu-id <mapped GPU name>
   --env <JSON> --docker-args 'sleep infinity' --ports 22/tcp
-  --wait --wait-timeout 30m --terminate-after <UTC deadline>
+  --wait --wait-timeout <readiness duration> --terminate-after <duration>
 -> runpodctl ssh info <pod-id>
 -> SSHで /opt/rtf-benchmark/entrypoint.sh を実行
 -> SSHでmetricsとreceiptをcat
 -> Pod delete
 ```
 
-RunPod公式仕様でも`--image`、`--gpu-id`、`--env` JSON、`--docker-args`、`--ports`、`--terminate-after`がPod createの引数であり、SSH情報の取得は`runpodctl ssh info`で行う。基本引数は仕様に沿っている。
+RunPod公式仕様でも`--image`、`--gpu-id`、`--env` JSON、`--docker-args`、`--ports`、`--terminate-after`がPod createの引数であり、SSH情報の取得は`runpodctl ssh info`で行う。`--terminate-after`はISO timestampではなくduration（現在の実装は既定2時間の`2h`）を渡す。Pod readiness待ちは`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`（既定20分）で明示し、イメージ取得・起動を含むprovider側の準備時間を吸収する。
 
 参照: [RunPod runpodctl pod reference](https://docs.runpod.io/runpodctl/reference/runpodctl-pod)
 

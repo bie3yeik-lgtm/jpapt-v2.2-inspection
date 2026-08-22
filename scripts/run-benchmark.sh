@@ -55,6 +55,7 @@ fi
 : "${RTF_REPEAT:=3}"
 : "${RTF_HF_TIMEOUT:=2h}"
 : "${RTF_RUNPOD_MAX_HOURS:=2}"
+: "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 if [[ "$PROVIDER" == hf ]]; then
@@ -185,15 +186,14 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 6' >&2
       exit 2
     }
-    terminate_after="$(date -u -d "+${RTF_RUNPOD_MAX_HOURS} hours" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
-    if [[ -z "$terminate_after" ]]; then
-      # BSD date (for local macOS execution) uses a different flag shape.
-      terminate_after="$(date -u -v+${RTF_RUNPOD_MAX_HOURS}H '+%Y-%m-%dT%H:%M:%SZ')"
-    fi
-    [[ "$terminate_after" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
-      echo "failed to generate RunPod termination deadline: $terminate_after" >&2
+    [[ "$RTF_RUNPOD_WAIT_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES must be a positive integer' >&2
       exit 2
     }
+    # RunPod's --terminate-after contract is a duration, not an ISO timestamp.
+    terminate_after="${RTF_RUNPOD_MAX_HOURS}h"
+    runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
+    echo "RunPod pod readiness timeout: $runpod_wait_timeout; termination guard: $terminate_after" >&2
     env_json="$(jq -cn \
       --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
       --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
@@ -216,7 +216,7 @@ case "$PROVIDER" in
     set +e
     pod_json="$(runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
-      --ports 22/tcp --wait --wait-timeout 30m --terminate-after "$terminate_after" \
+      --ports 22/tcp --wait --wait-timeout "$runpod_wait_timeout" --terminate-after "$terminate_after" \
       --output json 2>&1)"
     pod_create_status=$?
     set -e

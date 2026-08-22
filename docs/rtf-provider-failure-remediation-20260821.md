@@ -124,3 +124,9 @@ batch 8ではcontent probeは成功したが、本測定でT4の14.74 GiB中2.70
 Repository Secretの`RUNPOD_TOKEN`はworkflowから利用でき、`runpodctl doctor`は`healthy=true`、API key・API connectivity・SSH key同期の全てがpassした。したがってSecret権限とCLI設定は受入れ済みである。
 
 一方、A5000 Podのbatch 1作成・接続・推論は約8分経過してもresult receiptを出力しなかったため、課金継続を避けてActionsをキャンセルした。collectにはbatch 1/8/32すべて`BENCHMARK_SETUP_FAILED`として保存され、RunPodの実GPU metricsやcontent probeは未取得である。RunPodの成功や失敗を推測せず、次回はPod create/SSH/image pullの個別時刻とremote receiptを取得できる観測を追加してから再試験する。
+
+## RunPod引数契約の修正
+
+上記の未成立runを再試験する前に、`scripts/run-benchmark.sh`のRunPod引数を公式CLIの契約へ合わせた。`--terminate-after`へローカルで計算したISO UTC timestampを渡す方式を廃止し、providerが解釈するduration（既定`2h`）を渡す。Podのreadiness待ちは既定20分の`RTF_RUNPOD_WAIT_TIMEOUT_MINUTES`として分離し、イメージpull・Pod起動・SSH準備の時間を含めて調整可能にした。既存の作成失敗時の名前検索、EXIT時delete、metrics/receipt回収後の即時deleteは維持する。
+
+この変更はRepository Secretの利用方式を変更しない。GitHub Actionsでは`HF_TOKEN: ${{ secrets.HF_TOKEN }}`および`RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}`をworkflow stepのenvへ注入し、`run-benchmark.sh`へ渡す。ローカル`.env`やtoken値をActionsへコピーしない。次のRunPod guarded試験はこの引数修正を含むimageで一度だけ行い、Pod create、SSH接続、remote content probe、receipt、metrics URI/SHAを個別に確認する。
