@@ -89,6 +89,31 @@ jobs:
           cargo run --quiet --locked -p asr-hf -- validate-targets
           cargo run --quiet --locked -p asr-contracts --bin asr-action-policy
 
+      - name: Validate GHCR Buildx cache contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/ghcr-build-publish.yml').read_text()
+          required = [
+              'type=gha,scope=${{ matrix.package }},version=2',
+              'type=registry,ref=${{ matrix.image }}:buildcache',
+              'mode=max,scope=${{ matrix.package }},version=2,ignore-error=true',
+              "github.event_name != 'pull_request'",
+              'image-manifest=true',
+              'oci-mediatypes=true',
+              'compression=zstd',
+          ]
+          missing = [item for item in required if item not in workflow]
+          if missing:
+              raise SystemExit(f'GHCR cache contract is incomplete: {missing}')
+          if 'cache-to: type=registry' in workflow:
+              raise SystemExit('registry cache export must remain event-gated')
+          print('GHCR Buildx cache contract: valid')
+          PY
+
       - name: Validate repository-dispatch contracts with Rust
         shell: bash
         run: |
