@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32457129494-b1",
+  "run_id": "rtf-hf-32595956141-b1",
   "service_id": "hf-jobs",
-  "status": "blocked",
+  "status": "completed",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a87fa28c81709766c80354f",
-  "result_uri": null,
-  "result_sha256": null,
-  "metrics_uri": null,
-  "metrics_path": null,
-  "metrics_sha256": null,
-  "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "HF Job did not emit RTF_RESULT_RECEIPT"
+  "job_id": "6a8a03597c5c7dd3792352a5",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/98d86d8dc3af4809f3d662160fdb6e2cd2e1a8f7/results/rtf-hf-32595956141-b1/metrics.json",
+  "result_sha256": "75ece9fc786fcc2afb8649057bde4a75e6f3f95f7234980c3d69ba9976ea0fe2",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/98d86d8dc3af4809f3d662160fdb6e2cd2e1a8f7/results/rtf-hf-32595956141-b1/metrics.json",
+  "metrics_path": "results/rtf-service/metrics.json",
+  "metrics_sha256": "75ece9fc786fcc2afb8649057bde4a75e6f3f95f7234980c3d69ba9976ea0fe2",
+  "error_code": null,
+  "error_message": null
 }
