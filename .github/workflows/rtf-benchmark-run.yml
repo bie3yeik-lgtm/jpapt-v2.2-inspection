@@ -145,7 +145,13 @@ jobs:
           mkdir -p "$HOME/.runpod"
           touch "$HOME/.runpod/.runpod.yaml"
           runpodctl config --apiKey="$RUNPOD_TOKEN"
-          doctor_json="$(runpodctl doctor --output json)"
+          # Provider configuration must not hold a runner forever before a
+          # Pod is created. The timeout is pre-provider and therefore cannot
+          # create GPU cost; a timeout fails the run closed.
+          doctor_json="$(timeout --signal=TERM 90s runpodctl doctor --output json)" || {
+            echo 'RUNPOD_CLI_DOCTOR_TIMEOUT_OR_FAILURE: RunPod CLI doctor did not complete within 90 seconds' >&2
+            exit 124
+          }
           echo "$doctor_json" | jq .
           jq -e '.healthy == true' <<<"$doctor_json" >/dev/null || {
             echo 'RunPod CLI doctor did not report a healthy configuration' >&2
