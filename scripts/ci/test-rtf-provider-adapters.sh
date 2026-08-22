@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh
+  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -74,6 +74,7 @@ static_checks() {
   ! grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }
 

@@ -18,6 +18,12 @@ done
 [[ "$PROVIDER" == "hf" || "$PROVIDER" == "runpod" ]] || usage
 [[ -n "$IMAGE" ]] || usage
 
+# Local dotenv compatibility only. GitHub Actions keeps RUNPOD_TOKEN as the
+# canonical secret name and never receives RUNPOD_API.
+if [[ "$PROVIDER" == runpod && -z "${RUNPOD_TOKEN:-}" && -n "${RUNPOD_API:-}" ]]; then
+  export RUNPOD_TOKEN="$RUNPOD_API"
+fi
+
 : "${RTF_RUN_ID:?RTF_RUN_ID is required}"
 : "${RTF_MANIFEST:=/workspace/benchmark-v1.jsonl}"
 : "${RTF_MODEL_ID:?RTF_MODEL_ID is required}"

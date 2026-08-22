@@ -13,6 +13,29 @@ content/receiptを返し、`scripts/run-benchmark.sh`が同じローカルartifa
 
 ## 実行方法
 
+### 無課金の環境preflight
+
+`.env`を自動実行せず、単純な`KEY=value`だけを読み込みます。`RUNPOD_API`は
+ローカル互換aliasとして`RUNPOD_TOKEN`へ変換します。HF Job、RunPod Pod、Docker
+pull、ネットワークAPIは呼び出しません。
+
+```bash
+# WSL login shell supplies the mise/HF CLI PATH on this Windows workspace.
+bash -lc 'cd /mnt/k/workspace/jpapt-v2.2-inspection && bash scripts/ci/rtf-local-preflight.sh --provider all'
+```
+
+Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使うことを推奨します。
+
+現環境の注意点:
+
+- このWindows workspaceでは、WSL login shellに`hf`、`runpodctl`、`jq`が存在する。
+  PowerShell側の`jq`は未導入なので、preflightとadapter wrapperはWSLで実行する。
+- 現在のWSL CLIは`hf 1.27.0`、`runpodctl 2.9.0`、`jq 1.8.1`である。GitHub Actionsは
+  RunPod CLIを別途installし、HF clientもupgradeするため、live受入前にバージョン差を
+  解消またはログへ記録する。
+- `RTF_IMAGE_DIGEST`が未設定の場合、preflightは警告で終了するが、provider launchは
+  digest固定を要求して停止する。
+
 ```bash
 # Dockerfile、schema、entrypoint、adapterの静的検証だけ
 bash scripts/ci/test-rtf-provider-adapters.sh --mode static
