@@ -119,7 +119,7 @@ set -euo pipefail
     fi ;;
   pod:delete) : ;;
   pod:list) printf '%s\n' '[]' ;;
-  ssh:info) printf '%s\n' '{"sshCommand":"ssh mock@runpod"}' ;;
+  ssh:info) printf '%s\n' '{"ssh_command":"ssh mock@runpod"}' ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
 EOF

@@ -366,7 +366,10 @@ case "$PROVIDER" in
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       exit 1
     fi
-    ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '.sshCommand')"
+    # runpodctl releases have emitted both camelCase and snake_case JSON keys.
+    # Accept only a non-empty command from either spelling; do not synthesize
+    # an SSH endpoint from an incomplete response.
+    ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '(.sshCommand // .ssh_command) // empty')"
     runpod_ssh() {
       local remote_command
       printf -v remote_command '%q ' "$@"
