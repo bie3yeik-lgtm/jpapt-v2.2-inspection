@@ -85,8 +85,15 @@ def main() -> int:
         current_target_sec = first_chunk_target_sec if not records else chunk_target_sec
         if pending_duration >= 30.0 and pending_duration + duration > current_target_sec:
             flush()
+        # Common Voice-derived datasets have used both `sentence` and `text`
+        # for the reference transcript. Resolve the pinned dataset's actual
+        # transcript field explicitly; never emit a whitespace-only reference
+        # because Rust ranking requires a real CER value.
+        reference = row.get("sentence") or row.get("text") or row.get("transcription")
+        if not isinstance(reference, str) or not reference.strip():
+            continue
         pending_audio.append(array)
-        pending_text.append(str(row.get("sentence", "")))
+        pending_text.append(reference)
         pending_duration += duration
         if (
             pending_duration >= 30.0
