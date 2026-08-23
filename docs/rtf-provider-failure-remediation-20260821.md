@@ -215,6 +215,26 @@ cleanup: Pod list is empty after cancellation
 
 ## RunPod imageのSSH daemon不足
 
-SSH probeが255となる実行を受け、RTF imageを確認したところ、NeMo base imageを含め`openssh-server`がインストールされていなかった。`--docker-args 'sleep infinity'`はentrypointのkeepalive分岐を実行するだけで、SSH daemonを自動提供しないため、port 22を公開してもSSH接続は成立しない。
+SSH probeが255となる実行を受け、RTF imageを確認したところ、NeMo base imageを含め`openssh-server`がインストールされていなかった。さらにRunPodのcreate引数解釈をprovider実装へ委ねる構成では、image entrypointがkeepalive分岐へ到達したことを証明できなかった。
 
-修正として、RTF imageへ`openssh-server`を追加し、entrypointの`sleep infinity`分岐で`ssh-keygen -A`と`/usr/sbin/sshd`をruntime起動する。host keyはimage layerへ焼き込まず、private keyをimageへ含めない。`sshd`が存在しない場合はkeepaliveをfail closedにする。次のRunPod試験はこのimageをGHCRへpublishし、発行されたdigestを使ってguarded batch 1を一度だけ実行する。
+修正として、RTF imageへ`openssh-server`を追加し、Dockerfileの固定CMDを
+`["sleep", "infinity"]`とした。entrypointはそのCMDを認識して
+`ssh-keygen -A`と`/usr/sbin/sshd`をruntime起動する。host keyはimage layerへ
+焼き込まず、private keyをimageへ含めない。RunPod createではprovider固有の
+`--docker-args`解釈に依存せず、明示的な`--ssh`とimageのENTRYPOINT/CMDを使用する。
+`sshd`が存在しない場合はkeepaliveをfail closedにする。
+
+## 2026-08-23 固定CMD方式への切り替え前の実RunPod証拠
+
+GHCR公開run `32606733212` は成功し、RTF image digestとfixture revisionを
+固定したうえでbenchmark run `32607178440`を`l4 / smoke / guarded`で一度だけ
+起動した。Podは`initializing`から`running`へ遷移したが、`runpodctl ssh info`
+から得たSSH commandの実接続probeは15秒でtimeoutした。metrics/resultは生成
+されず、batch 1の実行開始前にworkflowをcancelした。cleanup stepは成功し、
+対象Podが残っていないことを確認した。
+
+この実験は、前節の`openssh-server`追加だけではRunPodの起動経路を証明できない
+ことを示す。次のimageではDockerfileの固定CMDでprovider引数の解釈を排除し、
+create requestにも`--ssh`を明示する。再実験の受入条件は、PodのSSH probe成功、
+content gateの`content_available=true`、およびbatch 1 receiptのmetrics/result
+URI生成である。batch 1が成立しない限り、batch 8/32は起動しない。

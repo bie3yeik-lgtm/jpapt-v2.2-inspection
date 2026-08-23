@@ -157,8 +157,8 @@ jobs:
               raise SystemExit("deprecated runpodctl exec must not be used")
           if '--cloud-type SECURE' not in script:
               raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
-          if "--docker-args 'sleep infinity'" not in script:
-              raise SystemExit("RunPod must keep the Pod alive while invoking the entrypoint over SSH")
+          if '--ssh' not in script:
+              raise SystemExit("RunPod Pod creation must explicitly enable SSH")
           if '--ports 22/tcp --terminate-after "$terminate_after"' not in script:
               raise SystemExit("RunPod Pod creation must use the provider termination guard")
           if 'runpodctl pod get "$pod_id" --output json' not in script:

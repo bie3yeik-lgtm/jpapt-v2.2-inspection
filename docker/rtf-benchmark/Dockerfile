@@ -34,3 +34,4 @@ RUN chmod +x /opt/rtf-benchmark/entrypoint.sh \
 
 ENV PYTHONPATH=/opt/rtf-benchmark/benchmark-runner
 ENTRYPOINT ["/opt/rtf-benchmark/entrypoint.sh"]
+CMD ["sleep", "infinity"]

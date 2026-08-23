@@ -266,7 +266,7 @@ case "$PROVIDER" in
     pod_create_failed=1
     set +e
     runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --docker-args 'sleep infinity' \
+      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --ssh \
       --ports 22/tcp --terminate-after "$terminate_after" \
       --output json >"$create_log" 2>&1 &
     pod_create_pid=$!

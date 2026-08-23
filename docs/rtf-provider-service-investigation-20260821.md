@@ -89,7 +89,7 @@ batch 8/32はT4の実メモリと可変長audio batchの組み合わせで説明
 
 ```text
 runpodctl pod create --image <digest-pinned-image> --gpu-id <mapped GPU name>
-  --env <JSON> --docker-args 'sleep infinity' --ports 22/tcp
+  --env <JSON> --ssh --ports 22/tcp
   --terminate-after <UTC DateTime>
 -> runpodctl pod get <pod-id> --output json (readiness polling)
 -> runpodctl ssh info <pod-id>
