@@ -224,6 +224,18 @@ SSH probeが255となる実行を受け、RTF imageを確認したところ、Ne
 `--docker-args`解釈に依存せず、明示的な`--ssh`とimageのENTRYPOINT/CMDを使用する。
 `sshd`が存在しない場合はkeepaliveをfail closedにする。
 
+## CI SSH probeの非対話契約
+
+RunPod benchmark run `32609409754`の固定CMD方式A5000再試行では、PodのTCP port
+mappingは開いたが、providerが返す
+SSH commandをそのまま`bash -c`へ渡すとhost-key確認または対話認証待ちでtimeout
+し得ることを確認した。CIでは`BatchMode=yes`、
+`StrictHostKeyChecking=no`、`UserKnownHostsFile=/dev/null`、有限の
+`ConnectTimeout`、`ConnectionAttempts=1`をSSH commandの先頭へ注入する。
+これにより、SSH経路不通・鍵不一致・host-key待ちをtimeoutではなくboundedな
+終了コードとして分類できる。秘密鍵自体はprovider/RunPod CLIの管理対象であり、
+ログやreceiptへ出力しない。
+
 ## 2026-08-23 固定CMD方式への切り替え前の実RunPod証拠
 
 GHCR公開run `32606733212` は成功し、RTF image digestとfixture revisionを
@@ -238,3 +250,5 @@ GHCR公開run `32606733212` は成功し、RTF image digestとfixture revision�
 create requestにも`--ssh`を明示する。再実験の受入条件は、PodのSSH probe成功、
 content gateの`content_available=true`、およびbatch 1 receiptのmetrics/result
 URI生成である。batch 1が成立しない限り、batch 8/32は起動しない。
+このrunはSSH probe修正前にキャンセルし、cleanup成功とPod消失を確認したため、
+metrics/resultは取得していない。

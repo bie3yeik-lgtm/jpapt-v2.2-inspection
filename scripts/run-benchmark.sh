@@ -65,8 +65,19 @@ fi
 : "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
+: "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
+
+decorate_runpod_ssh_command() {
+  local command="$1"
+  local connect_timeout="$2"
+  [[ "$command" == "ssh "* ]] || {
+    echo 'RunPod SSH command must start with ssh' >&2
+    return 2
+  }
+  printf '%s\n' "${command/ssh /ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=${connect_timeout} -o ConnectionAttempts=1 }"
+}
 if [[ "$PROVIDER" == hf ]]; then
   case "$RTF_GPU" in
     t4) HF_FLAVOR="${HF_FLAVOR:-t4-small}" ;;
@@ -219,6 +230,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS must be a positive integer' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -355,6 +370,9 @@ case "$PROVIDER" in
         <<<"$pod_list_state_json" 2>/dev/null || true)"
       ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1 || true)"
       ssh_probe_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
+      if [[ -n "$ssh_probe_command" ]]; then
+        ssh_probe_command="$(decorate_runpod_ssh_command "$ssh_probe_command" "$RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS" || true)"
+      fi
       [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
@@ -406,6 +424,7 @@ case "$PROVIDER" in
     # Accept only a non-empty command from either spelling; do not synthesize
     # an SSH endpoint from an incomplete response.
     ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '(.sshCommand // .ssh_command) // empty')"
+    ssh_command="$(decorate_runpod_ssh_command "$ssh_command" "$RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS")"
     runpod_ssh() {
       local remote_command
       printf -v remote_command '%q ' "$@"
