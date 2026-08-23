@@ -75,6 +75,9 @@ static_checks() {
   grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'RTF_PYTHON_BIN" -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'RTF_RUNNER_ROOT="/opt/rtf-benchmark/benchmark-runner"' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'benchmark_runner/__init__.py' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'export PYTHONPATH="$RTF_RUNNER_ROOT' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null

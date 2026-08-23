@@ -70,6 +70,18 @@ if [[ "${1:-}" == "--batch-size" ]]; then
   shift 2
 fi
 
+# Do not rely on the Docker ENV being preserved when RunPod starts an SSH
+# session. The benchmark is invoked through that session after the keepalive
+# entrypoint has started sshd, and provider images have historically exposed
+# different environment inheritance behavior. Resolve the package location
+# from the image contract and prepend it explicitly for every module call.
+RTF_RUNNER_ROOT="/opt/rtf-benchmark/benchmark-runner"
+[[ -f "$RTF_RUNNER_ROOT/benchmark_runner/__init__.py" ]] || {
+  echo "RTF benchmark package is missing: $RTF_RUNNER_ROOT/benchmark_runner" >&2
+  exit 1
+}
+export PYTHONPATH="$RTF_RUNNER_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
 # HF Jobs and RunPod do not guarantee the same PATH even when they execute
 # the same image. Resolve the interpreter once at the runtime boundary and
 # use it for every benchmark module invocation.
