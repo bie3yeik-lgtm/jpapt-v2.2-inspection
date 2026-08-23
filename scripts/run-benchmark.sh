@@ -67,6 +67,7 @@ fi
 : "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
+: "${RTF_RUNPOD_LOG:=runpod-job.log}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
@@ -501,18 +502,35 @@ case "$PROVIDER" in
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
+    remote_log="$RTF_RUNPOD_LOG"
+    mkdir -p "$(dirname "$remote_log")"
     set +e
     {
       printf '%s\n' 'set -a' '. /run/rtf-benchmark.env' 'set +a'
       printf 'export RTF_JOB_ID=%q\n' "$pod_id"
       printf '%s\n' 'exec /opt/rtf-benchmark/entrypoint.sh'
-    } | runpod_ssh bash -s
-    remote_status=$?
+    } | runpod_ssh bash -s 2>&1 | tee "$remote_log"
+    remote_status="${PIPESTATUS[1]}"
     set -e
     write_runpod_diagnostics benchmark_execution "" ""
-    runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
+    # A completed provider can close the SSH channel immediately after
+    # publishing its result. Preserve the machine-readable stdout contract so
+    # a post-run SSH timeout cannot discard an otherwise valid receipt.
+    receipt_line="$(grep '^RTF_RESULT_RECEIPT=' "$remote_log" | tail -n 1 || true)"
+    content_line="$(grep '^RTF_CONTENT_PROBE=' "$remote_log" | tail -n 1 || true)"
+    if [[ -n "$content_line" ]]; then
+      printf '%s\n' "${content_line#RTF_CONTENT_PROBE=}" > "${RTF_LOCAL_CONTENT:-content.json}"
+    fi
+    if [[ -n "$receipt_line" ]]; then
+      printf '%s\n' "${receipt_line#RTF_RESULT_RECEIPT=}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    fi
+    if [[ ! -s "${RTF_LOCAL_CONTENT:-content.json}" ]]; then
+      runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
+    fi
     runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}" || true
-    runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
+    if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
+      runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
+    fi
     if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
@@ -525,7 +543,13 @@ case "$PROVIDER" in
         '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"PROVIDER_EXECUTION_FAILED",error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     fi
-    [[ "$remote_status" -eq 0 ]] || exit "$remote_status"
+    receipt_completed=false
+    if jq -e '.status == "completed"' "${RTF_LOCAL_RECEIPT:-result-receipt.json}" >/dev/null 2>&1; then
+      receipt_completed=true
+    fi
+    if [[ "$remote_status" -ne 0 && "$receipt_completed" != true ]]; then
+      exit "$remote_status"
+    fi
     # Delete this Pod as soon as its metrics and receipt have been copied.
     # The EXIT trap remains as a failure-path safety net.
     delete_pod
