@@ -122,7 +122,19 @@ jobs:
             echo 'RTF image ENTRYPOINT/CMD contract is invalid' >&2
             exit 2
           }
-          docker run --rm --entrypoint python "$IMAGE" -c '
+          docker run --rm --entrypoint /bin/bash "$IMAGE" -s <<'CONTAINER_SCRIPT'
+          set -euo pipefail
+          if command -v python >/dev/null 2>&1; then
+              python_bin="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+              python_bin="$(command -v python3)"
+          else
+              for candidate in /opt/venv/bin/python /opt/conda/bin/python /usr/local/bin/python3 /usr/bin/python3; do
+                  if [[ -x "$candidate" ]]; then python_bin="$candidate"; break; fi
+              done
+          fi
+          : "${python_bin:?RTF image has no usable Python interpreter}"
+          "$python_bin" -c '
           from pathlib import Path
           path = Path("/opt/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py")
           source = path.read_text(encoding="utf-8")
@@ -132,6 +144,7 @@ jobs:
               raise SystemExit(f"RTF image is missing loader safety policy: {missing}")
           print("RTF image loader safety policy: present")
           '
+          CONTAINER_SCRIPT
       - name: Restore provider package cache
         uses: actions/cache@v6
         with:
@@ -258,6 +271,7 @@ jobs:
             export RTF_LOCAL_OUTPUT="$batch_dir/metrics.json"
             export RTF_LOCAL_CONTENT="$batch_dir/content.json"
             export RTF_LOCAL_RECEIPT="$batch_dir/result-receipt.json"
+            export RTF_LOCAL_PROVIDER_DIAGNOSTICS="$batch_dir/provider-diagnostics.json"
             export RTF_HF_LOG="$batch_dir/hf-job.log"
             set +e
             ./scripts/run-benchmark.sh \

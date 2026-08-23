@@ -70,16 +70,20 @@ static_checks() {
   grep -F 'openssh-server' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F '/usr/sbin/sshd' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PUBLIC_KEY' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'RTF_PYTHON_BIN' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
-  grep -F 'python -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'RTF_PYTHON_BIN" -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
+  grep -F 'write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
+  grep -F '} | runpod_ssh bash -s' scripts/run-benchmark.sh >/dev/null
+  ! grep -F 'runpod_ssh bash -lc "set -a;' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
   grep -F 'UserKnownHostsFile=/dev/null' scripts/run-benchmark.sh >/dev/null
@@ -93,6 +97,7 @@ static_checks() {
   grep -F 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_SSH_INFO_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'ssh_info_diagnostic' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_LOCAL_PROVIDER_DIAGNOSTICS' scripts/run-benchmark.sh >/dev/null
   grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
@@ -178,6 +183,13 @@ if [[ "${RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS:-0}" == 1 ]]; then
   [[ " $* " == *'UserKnownHostsFile=/dev/null'* ]] || exit 99
 fi
 case " $* " in
+  *' tee /run/rtf-benchmark.env '*)
+    cat > "${RTF_FAKE_SSH_ENV_FILE:?RTF_FAKE_SSH_ENV_FILE is required}" ;;
+  *' chmod 600 /run/rtf-benchmark.env '*) : ;;
+  *' bash -s '*)
+    remote_script="$(cat)"
+    grep -F '. /run/rtf-benchmark.env' <<<"$remote_script" >/dev/null || exit 96
+    grep -F 'RTF_JOB_ID=' <<<"$remote_script" >/dev/null || exit 95 ;;
   *' /output/content.json '*)
     printf '%s\n' '{"schema_version":1,"run_id":"local-runpod-test","status":"completed","content_available":true,"hypothesis_text":"mock"}' ;;
   *' /output/metrics.json '*)
@@ -241,7 +253,9 @@ mock_case() {
   export RTF_LOCAL_CONTENT="$case_dir/content.json"
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
+  export RTF_LOCAL_PROVIDER_DIAGNOSTICS="$case_dir/provider-diagnostics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  export RTF_FAKE_SSH_ENV_FILE="$case_dir/runpod.env"
   export RTF_RUNPOD_POLL_SECONDS=1
   export RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS=1
   set +e
@@ -272,6 +286,16 @@ mock_case() {
   fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
+  if [[ "$provider" == runpod ]]; then
+    grep -F 'RTF_DATASET_ID=japanese-asr/ja_asr.common_voice_8_0' "$case_dir/runpod.env" >/dev/null ||
+      fail "RunPod mock environment omitted RTF_DATASET_ID"
+    grep -F 'RTF_MODEL_ID=nvidia/parakeet-tdt_ctc-0.6b-ja' "$case_dir/runpod.env" >/dev/null ||
+      fail "RunPod mock environment omitted RTF_MODEL_ID"
+    pass "RunPod mock environment transfer includes benchmark identity"
+    jq -e '.schema_version == 1 and .phase == "benchmark_execution" and .pod_id == "runpod-mock-pod"' \
+      "$case_dir/provider-diagnostics.json" >/dev/null || fail "RunPod provider diagnostics were not collected"
+    pass "RunPod mock provider diagnostics collection"
+  fi
   unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
   rm -rf "$fake_root"
 }
@@ -425,6 +449,18 @@ live_checks() {
   else
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
   fi
+  receipt_path="${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+  [[ -s "$receipt_path" ]] || fail "live $PROVIDER provider produced no result receipt"
+  jq -e '.status == "completed"' "$receipt_path" >/dev/null || {
+    error_code="$(jq -r '.error_code // "PROVIDER_EXECUTION_FAILED"' "$receipt_path")"
+    fail "live $PROVIDER provider produced a non-completed receipt: $error_code"
+  }
+  jq -e '
+    (.metrics_sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")) and
+    (.result_sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")) and
+    (.metrics_uri | type == "string" and length > 0) and
+    (.result_uri | type == "string" and length > 0)
+  ' "$receipt_path" >/dev/null || fail "live $PROVIDER provider completed without metrics/result identity"
   pass "live $PROVIDER provider verification completed; external resources were used"
 }
 

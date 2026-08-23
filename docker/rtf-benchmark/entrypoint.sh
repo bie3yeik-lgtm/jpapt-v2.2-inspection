@@ -70,6 +70,24 @@ if [[ "${1:-}" == "--batch-size" ]]; then
   shift 2
 fi
 
+# HF Jobs and RunPod do not guarantee the same PATH even when they execute
+# the same image. Resolve the interpreter once at the runtime boundary and
+# use it for every benchmark module invocation.
+if command -v python >/dev/null 2>&1; then
+  RTF_PYTHON_BIN="$(command -v python)"
+elif command -v python3 >/dev/null 2>&1; then
+  RTF_PYTHON_BIN="$(command -v python3)"
+else
+  for candidate in /opt/venv/bin/python /opt/conda/bin/python /usr/local/bin/python3 /usr/bin/python3; do
+    if [[ -x "$candidate" ]]; then
+      RTF_PYTHON_BIN="$candidate"
+      break
+    fi
+  done
+fi
+: "${RTF_PYTHON_BIN:?RTF benchmark image has no usable Python interpreter}"
+export RTF_PYTHON_BIN
+
 content_gate=0
 if [[ "$#" -eq 0 ]]; then
   content_gate=1
@@ -105,7 +123,7 @@ if [[ "$#" -eq 0 ]]; then
     : "${HF_TOKEN:?HF_TOKEN is required when RTF_FIXTURE_REPO_ID is set}"
     : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required when RTF_FIXTURE_REPO_ID is set}"
     fixture_args=(
-      python -m benchmark_runner.load_fixture \
+      "$RTF_PYTHON_BIN" -m benchmark_runner.load_fixture \
       --repo-id "$RTF_FIXTURE_REPO_ID" --revision "$RTF_FIXTURE_REVISION" \
       --filename "$RTF_FIXTURE_FILENAME" --output-manifest "$RTF_MANIFEST" \
       --audio-dir /workspace/benchmark-audio
@@ -115,7 +133,7 @@ if [[ "$#" -eq 0 ]]; then
     fi
     "${fixture_args[@]}"
   elif [[ ! -f "$RTF_MANIFEST" ]]; then
-    python -m benchmark_runner.resolve_dataset \
+    "$RTF_PYTHON_BIN" -m benchmark_runner.resolve_dataset \
       --dataset-id "$RTF_DATASET_ID" --revision "$RTF_DATASET_REVISION" \
       --configuration "$RTF_DATASET_CONFIGURATION" --split "$RTF_DATASET_SPLIT" \
       --count-min "$RTF_DATASET_COUNT_MIN" --count-max "$RTF_DATASET_COUNT_MAX" \
@@ -140,7 +158,7 @@ fi
 # resources on full-batch timing or publish metrics.
 if [[ "$content_gate" -eq 1 ]]; then
   set +e
-  python -m benchmark_runner.content_probe \
+  "$RTF_PYTHON_BIN" -m benchmark_runner.content_probe \
     --manifest "$RTF_MANIFEST" --output "$RTF_CONTENT_OUTPUT" \
     --run-id "$RTF_RUN_ID" --model-id "$RTF_MODEL_ID" \
     --model-revision "$RTF_MODEL_REVISION" --dataset-id "$RTF_DATASET_ID" \
@@ -160,14 +178,14 @@ fi
 error_log="${RTF_ERROR_LOG:-/tmp/rtf-benchmark-error.log}"
 rm -f "$error_log"
 set +e
-python -m benchmark_runner "$@" 2> "$error_log"
+"$RTF_PYTHON_BIN" -m benchmark_runner "$@" 2> "$error_log"
 runner_status=$?
 set -e
 cat "$error_log" >&2 || true
 
 publish_status=0
 if [[ -f "${RTF_OUTPUT:-/output/metrics.json}" ]]; then
-  python -m benchmark_runner.publish_result || publish_status=$?
+  "$RTF_PYTHON_BIN" -m benchmark_runner.publish_result || publish_status=$?
 fi
 
 if [[ "$runner_status" -ne 0 ]]; then
@@ -182,7 +200,7 @@ if [[ "$runner_status" -ne 0 ]]; then
       export RTF_FAILURE_CODE="${RTF_FAILURE_CODE:-BENCHMARK_INFERENCE_FAILED}"
       export RTF_FAILURE_MESSAGE="${RTF_FAILURE_MESSAGE:-benchmark process exited without producing metrics}"
     fi
-    python -m benchmark_runner.publish_result || publish_status=$?
+    "$RTF_PYTHON_BIN" -m benchmark_runner.publish_result || publish_status=$?
   fi
   exit "$runner_status"
 fi
