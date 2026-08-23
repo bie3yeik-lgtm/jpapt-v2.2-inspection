@@ -157,7 +157,12 @@ set -euo pipefail
     else
       printf '%s\n' '[]'
     fi ;;
-  ssh:info) printf '%s\n' '{"ssh_command":"ssh mock@runpod"}' ;;
+  ssh:info)
+    if [[ "${RTF_FAKE_RUNPOD_SSH_INFO_FAILURE:-0}" == 1 ]]; then
+      printf '%s\n' '{"code":"pod_not_ready","message":"pod not ready"}'
+    else
+      printf '%s\n' '{"ssh_command":"ssh mock@runpod"}'
+    fi ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
 EOF
@@ -273,9 +278,9 @@ mock_case() {
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check ;;
+    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check; runpod_ssh_info_failure_check ;;
     hf) mock_case hf; failure_receipt_check ;;
-    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; runpod_create_timeout_check ;;
+    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; runpod_create_timeout_check; runpod_ssh_info_failure_check ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
 }
@@ -349,6 +354,49 @@ EOF
   unset RTF_FAKE_RUNPOD_HANG
   rm -rf "$fake_root"
   pass "RunPod Pod create timeout produces a typed receipt without external resources"
+}
+
+runpod_ssh_info_failure_check() {
+  local fake_root case_dir date_state status
+  fake_root="$(mktemp -d)"
+  case_dir="$fake_root/result"
+  date_state="$fake_root/date-count"
+  mkdir -p "$case_dir"
+  write_fake_cli "$fake_root/bin"
+  cat > "$fake_root/bin/date" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$*" == "+%s" ]]; then
+  count=0
+  [[ -f "$date_state" ]] && count="\$(cat "$date_state")"
+  count=\$((count + 1))
+  echo "\$count" > "$date_state"
+  if (( \$count <= 4 )); then echo 1000; else echo 2000; fi
+else
+  /usr/bin/date "\$@"
+fi
+EOF
+  chmod +x "$fake_root/bin/date"
+  export PATH="$fake_root/bin:$PATH"
+  export RTF_FAKE_RUNPOD_LIST_READY=1 RTF_FAKE_RUNPOD_SSH_INFO_FAILURE=1
+  export RTF_RUN_ID="local-runpod-ssh-info-test" RTF_GPU=a5000 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
+  export RTF_MODEL_ID="nvidia/parakeet-tdt_ctc-0.6b-ja" RTF_MODEL_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  export RTF_DATASET_ID="japanese-asr/ja_asr.common_voice_8_0" RTF_DATASET_REVISION="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  export RTF_FIXTURE_REPO_ID="gawohok7/rtf-benchmark-fixtures" RTF_FIXTURE_REVISION="cccccccccccccccccccccccccccccccccccccccc"
+  export RTF_FIXTURE_MANIFEST_SHA256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  export RTF_IMAGE_DIGEST="sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=1 RTF_RUNPOD_POLL_SECONDS=1
+  export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
+  set +e
+  ./scripts/run-benchmark.sh --provider runpod --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >"$case_dir/log" 2>&1
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "RunPod SSH info failure mock unexpectedly succeeded"
+  jq -e '.status == "blocked" and .error_code == "RUNPOD_SSH_INFO_UNAVAILABLE" and (.error_message | contains("pod_not_ready"))' \
+    "$case_dir/result-receipt.json" >/dev/null || fail "RunPod SSH info diagnostic receipt was not classified"
+  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_SSH_INFO_FAILURE
+  rm -rf "$fake_root"
+  pass "RunPod SSH info failure produces a bounded diagnostic receipt"
 }
 
 docker_checks() {
