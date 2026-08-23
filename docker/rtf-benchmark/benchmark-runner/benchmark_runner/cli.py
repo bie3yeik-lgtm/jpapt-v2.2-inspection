@@ -7,6 +7,7 @@ import json
 import math
 import os
 import shutil
+import statistics
 import subprocess
 import threading
 import time
@@ -21,6 +22,11 @@ class ProviderMetricsError(RuntimeError):
     def __init__(self, error_code: str, message: str) -> None:
         super().__init__(message)
         self.error_code = error_code
+
+
+def median_metric(values: list[float]) -> float | None:
+    """Return the deterministic p50 for sequential benchmark measurements."""
+    return float(statistics.median(values)) if values else None
 
 
 def read_nonnegative_float_env(name: str) -> float | None:
@@ -95,9 +101,20 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset-id", required=True)
     p.add_argument("--dataset-revision", required=True)
     p.add_argument("--decoder", choices=("tdt", "ctc", "whisper"), required=True)
-    p.add_argument("--batch-size", type=int, choices=(1, 8, 32), required=True)
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        choices=(1, 8, 32),
+        required=True,
+        help="number of sequential batch-1 measurements aggregated by median",
+    )
     p.add_argument("--precision", choices=("float32", "float16", "bfloat16"), required=True)
-    p.add_argument("--repeat", type=int, default=3)
+    p.add_argument(
+        "--repeat",
+        type=int,
+        default=3,
+        help="legacy compatibility input; sequential measurement count is --batch-size",
+    )
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
     p.add_argument("--service-id", choices=("hf-jobs", "hf-inference-endpoint", "runpod-pod"), required=True)
     p.add_argument("--gpu", required=True)
@@ -192,13 +209,15 @@ def main() -> int:
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         gpu_price_per_hour = read_nonnegative_float_env("RTF_GPU_PRICE_PER_HOUR")
         utilization_samples: list[float] = []
+        cer_samples: list[float] = []
+        peak_memory_samples: list[int] = []
         with torch.inference_mode():
-            if device.type == "cuda":
-                torch.cuda.reset_peak_memory_stats()
-                torch.cuda.synchronize()
             timings = []
-            hypotheses = []
-            for _ in range(args.repeat):
+            # `batch_size` is the benchmark matrix dimension, not the number
+            # of audio files submitted to NeMo at once. Each measurement is a
+            # separate batch-1 pass; the reported metrics are the median over
+            # exactly 1, 8, or 32 sequential passes.
+            for _ in range(args.batch_size):
                 model = load_model(
                     ASRModel,
                     snapshot_download,
@@ -208,6 +227,9 @@ def main() -> int:
                     device=device,
                     token=os.environ.get("HF_TOKEN"),
                 )
+                if device.type == "cuda":
+                    torch.cuda.reset_peak_memory_stats()
+                    torch.cuda.synchronize()
                 with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
                     release_inference_temporaries(torch, device)
                     with GpuUtilizationSampler() as utilization_sampler:
@@ -215,7 +237,7 @@ def main() -> int:
                         hypotheses = transcribe(
                             model,
                             paths,
-                            batch_size=args.batch_size,
+                            batch_size=1,
                             torch_module=torch,
                             device=device,
                         )
@@ -223,21 +245,21 @@ def main() -> int:
                     timings.append(processing_time)
                     if utilization_sampler.average is not None:
                         utilization_samples.append(utilization_sampler.average)
+                texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
+                if reference_text := " ".join(references).strip():
+                    cer_samples.append(jiwer.cer(reference_text, " ".join(texts).strip()))
+                if device.type == "cuda":
+                    peak_memory_samples.append(int(torch.cuda.max_memory_allocated()))
                 del model
                 release_inference_temporaries(torch, device)
-            elapsed = sum(timings) / len(timings)
-        texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
-        del hypotheses
+            elapsed = median_metric(timings)
+        if elapsed is None:
+            raise RuntimeError("benchmark produced no timing measurements")
         release_inference_temporaries(torch, device)
         reference_text = " ".join(references).strip()
-        hypothesis_text = " ".join(texts).strip()
         audio_duration = sum(durations)
         processing_duration = max(elapsed, 1e-9)
-        gpu_utilization_pct = (
-            sum(utilization_samples) / len(utilization_samples)
-            if utilization_samples
-            else None
-        )
+        gpu_utilization_pct = median_metric(utilization_samples)
         if args.service_id == "runpod-pod" and gpu_price_per_hour is None:
             raise ProviderMetricsError(
                 "RUNPOD_GPU_PRICE_UNAVAILABLE",
@@ -260,7 +282,7 @@ def main() -> int:
             "decoder": args.decoder,
             "batch_size": args.batch_size,
             "precision": args.precision,
-            "repeat": args.repeat,
+            "repeat": args.batch_size,
             "provider": args.provider,
             "environment": "linux",
             "service_id": args.service_id,
@@ -276,8 +298,8 @@ def main() -> int:
             "rtf": rtf,
             "rtfx": audio_duration / processing_duration,
             "rtf_scope": "model",
-            "cer": jiwer.cer(reference_text, hypothesis_text) if reference_text else None,
-            "peak_vram_bytes": torch.cuda.max_memory_allocated() if device.type == "cuda" else None,
+            "cer": median_metric(cer_samples) if reference_text else None,
+            "peak_vram_bytes": int(statistics.median(peak_memory_samples)) if peak_memory_samples else None,
             "gpu_utilization_pct": gpu_utilization_pct,
             "gpu_price_per_hour": gpu_price_per_hour,
             "cost_per_audio_hour": gpu_price_per_hour * rtf if gpu_price_per_hour is not None else None,
