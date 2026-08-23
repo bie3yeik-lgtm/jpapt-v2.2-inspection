@@ -52,6 +52,17 @@ GHCR credentialのIDで埋めること、`RTF_IMAGE_DIGEST`とrevision群を実�
 `RUNPOD_REGISTRY_AUTH_ID`）を使用します。registry authのpasswordはRunPod側へ登録する
 だけで、repository、workflow、image、receiptへコピーしません。
 
+RunPod registry credentialの登録は、tokenをチャットやworkflowへ渡さず、tokenをローテーション
+したことを確認してから、次のlocal-only wrapperで行う。
+
+```bash
+bash scripts/ci/runpod-register-ghcr-auth.sh \
+  --env-file .env --username bie3yeik-lgtm --confirm-new-token
+```
+
+出力されるのはregistry authのID/nameだけである。出力されたIDをRepository Secret
+`RUNPOD_REGISTRY_AUTH_ID`へ登録し、`CR_PAT`自体はActionsへ登録しない。
+
 現環境の注意点:
 
 - このWindows workspaceでは、WSL login shellに`hf`、`runpodctl`、`jq`が存在する。
