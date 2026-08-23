@@ -6,12 +6,83 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import subprocess
+import threading
 import time
 from pathlib import Path
 
 import jiwer
 
 from benchmark_runner.transcribe_compat import transcribe
+
+
+class ProviderMetricsError(RuntimeError):
+    def __init__(self, error_code: str, message: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+def read_nonnegative_float_env(name: str) -> float | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ProviderMetricsError("PROVIDER_METRICS_INVALID", f"{name} must be numeric") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ProviderMetricsError("PROVIDER_METRICS_INVALID", f"{name} must be finite and non-negative")
+    return parsed
+
+
+class GpuUtilizationSampler:
+    """Sample NVIDIA utilization only while the timed inference is running."""
+
+    def __init__(self, interval_seconds: float = 0.5) -> None:
+        self.executable = shutil.which("nvidia-smi")
+        self.interval_seconds = interval_seconds
+        self.samples: list[float] = []
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def _sample(self) -> None:
+        if self.executable is None:
+            return
+        while not self.stop_event.is_set():
+            try:
+                completed = subprocess.run(
+                    [
+                        self.executable,
+                        "--query-gpu=utilization.gpu",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                values = [float(line.strip()) for line in completed.stdout.splitlines() if line.strip()]
+                if values and all(math.isfinite(value) and 0 <= value <= 100 for value in values):
+                    self.samples.append(sum(values) / len(values))
+            except (OSError, subprocess.SubprocessError, ValueError):
+                pass
+            self.stop_event.wait(self.interval_seconds)
+
+    def __enter__(self) -> GpuUtilizationSampler:
+        if self.executable is not None:
+            self.thread = threading.Thread(target=self._sample, name="rtf-gpu-utilization", daemon=True)
+            self.thread.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=3)
+
+    @property
+    def average(self) -> float | None:
+        return sum(self.samples) / len(self.samples) if self.samples else None
 
 
 def parser() -> argparse.ArgumentParser:
@@ -119,6 +190,8 @@ def main() -> int:
         paths = [str(sample["audio_path"]) for sample in samples]
         references = [str(sample.get("text", "")) for sample in samples]
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
+        gpu_price_per_hour = read_nonnegative_float_env("RTF_GPU_PRICE_PER_HOUR")
+        utilization_samples: list[float] = []
         with torch.inference_mode():
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
@@ -137,15 +210,19 @@ def main() -> int:
                 )
                 with torch.autocast(device_type=device.type, dtype=autocast, enabled=autocast is not None):
                     release_inference_temporaries(torch, device)
-                    started = time.perf_counter()
-                    hypotheses = transcribe(
-                        model,
-                        paths,
-                        batch_size=args.batch_size,
-                        torch_module=torch,
-                        device=device,
-                    )
-                    timings.append(time.perf_counter() - started)
+                    with GpuUtilizationSampler() as utilization_sampler:
+                        started = time.perf_counter()
+                        hypotheses = transcribe(
+                            model,
+                            paths,
+                            batch_size=args.batch_size,
+                            torch_module=torch,
+                            device=device,
+                        )
+                        processing_time = time.perf_counter() - started
+                    timings.append(processing_time)
+                    if utilization_sampler.average is not None:
+                        utilization_samples.append(utilization_sampler.average)
                 del model
                 release_inference_temporaries(torch, device)
             elapsed = sum(timings) / len(timings)
@@ -156,6 +233,22 @@ def main() -> int:
         hypothesis_text = " ".join(texts).strip()
         audio_duration = sum(durations)
         processing_duration = max(elapsed, 1e-9)
+        gpu_utilization_pct = (
+            sum(utilization_samples) / len(utilization_samples)
+            if utilization_samples
+            else None
+        )
+        if args.service_id == "runpod-pod" and gpu_price_per_hour is None:
+            raise ProviderMetricsError(
+                "RUNPOD_GPU_PRICE_UNAVAILABLE",
+                "RunPod did not provide RTF_GPU_PRICE_PER_HOUR",
+            )
+        if args.service_id == "runpod-pod" and gpu_utilization_pct is None:
+            raise ProviderMetricsError(
+                "RUNPOD_GPU_UTILIZATION_UNAVAILABLE",
+                "nvidia-smi returned no valid utilization sample during inference",
+            )
+        rtf = processing_duration / audio_duration
         result = {
             "schema_version": 1,
             "run_id": args.run_id,
@@ -180,21 +273,21 @@ def main() -> int:
             "manifest_sha256": manifest_sha256,
             "audio_duration_sec": audio_duration,
             "processing_duration_sec": processing_duration,
-            "rtf": processing_duration / audio_duration,
+            "rtf": rtf,
             "rtfx": audio_duration / processing_duration,
             "rtf_scope": "model",
             "cer": jiwer.cer(reference_text, hypothesis_text) if reference_text else None,
             "peak_vram_bytes": torch.cuda.max_memory_allocated() if device.type == "cuda" else None,
-            "gpu_utilization_pct": None,
-            "gpu_price_per_hour": None,
-            "cost_per_audio_hour": None,
+            "gpu_utilization_pct": gpu_utilization_pct,
+            "gpu_price_per_hour": gpu_price_per_hour,
+            "cost_per_audio_hour": gpu_price_per_hour * rtf if gpu_price_per_hour is not None else None,
         }
     except Exception as exc:
         result = {
             "schema_version": 1,
             "run_id": args.run_id,
             "status": "blocked",
-            "error_code": "BENCHMARK_INFERENCE_FAILED",
+            "error_code": getattr(exc, "error_code", "BENCHMARK_INFERENCE_FAILED"),
             "error_message": str(exc),
             "model_id": args.model_id,
             "model_revision": args.model_revision,

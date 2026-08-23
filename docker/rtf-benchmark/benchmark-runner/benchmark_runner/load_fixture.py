@@ -33,10 +33,24 @@ def main() -> int:
     args.audio_dir.mkdir(parents=True, exist_ok=True)
     records = []
     names: set[str] = set()
-    for line in manifest.read_text(encoding="utf-8").splitlines():
+    for line_number, line in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
         if not line:
             continue
         record = json.loads(line)
+        # The locked Common Voice dataset names its transcript `sentence`,
+        # while the RTF fixture contract names the canonical field `text`.
+        # Normalize this at the fixture boundary so CER is computed from the
+        # dataset reference rather than silently becoming null.
+        reference = record.get("text")
+        if not isinstance(reference, str) or not reference.strip():
+            for candidate in ("sentence", "transcription", "reference_text"):
+                value = record.get(candidate)
+                if isinstance(value, str) and value.strip():
+                    reference = value
+                    break
+        if not isinstance(reference, str) or not reference.strip():
+            raise ValueError(f"fixture line {line_number} has no non-empty reference transcript")
+        record["text"] = reference
         source = str(record["audio_path"])
         name = Path(source).name
         if name in names:
