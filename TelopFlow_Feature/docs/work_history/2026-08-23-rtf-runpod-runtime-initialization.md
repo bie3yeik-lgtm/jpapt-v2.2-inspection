@@ -53,7 +53,6 @@ visibilityの場合、Pod createへ`--registry-auth-id`を渡さない限りimag
 しない可能性がある。このためadapterは`RUNPOD_REGISTRY_AUTH_ID`を任意で渡せる一方、
 GitHub Actionsのprivate-GHCR laneでは`RTF_RUNPOD_REQUIRE_REGISTRY_AUTH=1`により
 ID未設定のPod作成を事前停止する。
-
 ## 実装した診断境界
 
 `scripts/run-benchmark.sh` に `RTF_LOCAL_PROVIDER_DIAGNOSTICS` を追加した。
@@ -71,7 +70,6 @@ provider evidenceとして確認できる。
 
 RunPod createには、設定時のみ`--registry-auth-id "$RUNPOD_REGISTRY_AUTH_ID"`を追加
 する。credential passwordそのものはPod metadataへ渡さない。
-
 ## 検証結果
 
 ```text
