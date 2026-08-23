@@ -70,6 +70,7 @@ fi
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
+: "${RTF_RUNPOD_REQUIRE_REGISTRY_AUTH:=0}"
 
 decorate_runpod_ssh_command() {
   local command="$1"
@@ -173,6 +174,10 @@ case "$PROVIDER" in
     ;;
   runpod)
     command -v runpodctl >/dev/null || { echo "runpodctl is required" >&2; exit 1; }
+    if [[ "$RTF_RUNPOD_REQUIRE_REGISTRY_AUTH" == 1 && -z "${RUNPOD_REGISTRY_AUTH_ID:-}" ]]; then
+      echo 'RUNPOD_REGISTRY_AUTH_ID is required for the private GHCR image' >&2
+      exit 2
+    fi
     pod_id=""
     pod_create_failed=0
     delete_named_pods() {
@@ -288,9 +293,15 @@ case "$PROVIDER" in
     # runpodctl is terminated before returning the Pod ID.
     pod_create_failed=1
     set +e
-    runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh \
-      --ports 22/tcp --terminate-after "$terminate_after" \
+    runpod_create_args=(
+      pod create --name "${RTF_RUN_ID}" --image "$IMAGE"
+      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh
+      --ports 22/tcp --terminate-after "$terminate_after"
+    )
+    if [[ -n "${RUNPOD_REGISTRY_AUTH_ID:-}" ]]; then
+      runpod_create_args+=(--registry-auth-id "$RUNPOD_REGISTRY_AUTH_ID")
+    fi
+    runpodctl "${runpod_create_args[@]}" \
       --output json >"$create_log" 2>&1 &
     pod_create_pid=$!
     pod_create_status=124

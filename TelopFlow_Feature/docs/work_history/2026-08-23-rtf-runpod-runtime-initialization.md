@@ -47,6 +47,17 @@ metrics: not produced
 RunPod Pod一覧は空である。このrunはCUDA、Python、fixture、metrics処理の失敗では
 なく、providerのruntime/image initialization未完了として扱う。
 
+追加のread-only確認で、RunPod accountのregistry auth一覧には既存のNVIDIA registry
+credentialだけがあり、GHCR用credential IDは存在しなかった。GHCR packageがprivate
+visibilityの場合、Pod createへ`--registry-auth-id`を渡さない限りimage pullが完了
+しない可能性がある。このためadapterは`RUNPOD_REGISTRY_AUTH_ID`を任意で渡せる一方、
+GitHub Actionsのprivate-GHCR laneでは`RTF_RUNPOD_REQUIRE_REGISTRY_AUTH=1`により
+ID未設定のPod作成を事前停止する。
+
+さらに、対象digestのGHCR manifestへ匿名read-only requestを行ったところ、HTTP
+`401 Unauthorized`と`scope=repository:bie3yeik-lgtm/parakeet-rtf-benchmark:pull`
+が返った。対象packageがprivateであり、RunPod側registry authが必要であることを
+provider外部の応答でも確認した。
 ## 実装した診断境界
 
 `scripts/run-benchmark.sh` に `RTF_LOCAL_PROVIDER_DIAGNOSTICS` を追加した。
@@ -62,6 +73,8 @@ RunPodの次の状態を、秘密値を含めずJSON artifactへ保存する。
 これによりruntime初期化停滞、SSH endpoint未公開、Pod終了をreceiptとは別の
 provider evidenceとして確認できる。
 
+RunPod createには、設定時のみ`--registry-auth-id "$RUNPOD_REGISTRY_AUTH_ID"`を追加
+する。credential passwordそのものはPod metadataへ渡さない。
 ## 検証結果
 
 ```text

@@ -106,7 +106,7 @@ static_checks() {
   grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
-  grep -F 'HF_TOKEN|RUNPOD_TOKEN|RUNPOD_API|HF_FLAVOR|RUNPOD_GPU_ID|RTF_*' scripts/ci/rtf-local-env.sh >/dev/null
+  grep -F 'HF_TOKEN|RUNPOD_TOKEN|RUNPOD_API|RUNPOD_REGISTRY_AUTH_ID|HF_FLAVOR|RUNPOD_GPU_ID|RTF_*' scripts/ci/rtf-local-env.sh >/dev/null
   grep -F 'unset GITHUB_PAT_TOKEN GITHUB_CLASSIC_TOKEN GITHUB_TOKEN GH_TOKEN CR_PAT' scripts/ci/rtf-local-env.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }

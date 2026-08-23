@@ -200,6 +200,8 @@ jobs:
         id: execute
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_REGISTRY_AUTH_ID: ${{ secrets.RUNPOD_REGISTRY_AUTH_ID }}
+          RTF_RUNPOD_REQUIRE_REGISTRY_AUTH: '1'
           RTF_MODEL_ID: ${{ inputs.model_id }}
           RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
           RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
