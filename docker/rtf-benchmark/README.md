@@ -78,6 +78,21 @@ runpodctl pod create --name parakeet-bench --ssh \
   --wait --wait-timeout 30m
 ```
 
+The image is based on the NVIDIA NeMo Speech `26.07.00` image, whose NGC
+metadata uses a CUDA 13.2 base. RunPod creation therefore must request a
+compatible machine with `--min-cuda-version 13.2`; the workflow sets
+`RTF_RUNPOD_MIN_CUDA_VERSION=13.2` and the lifecycle wrapper passes that value
+to `runpodctl pod create`. This is a scheduling compatibility gate, not a
+substitute for the runtime content probe. If the provider still reports that
+the NVIDIA driver is too old, the run is blocked with
+`PROVIDER_CUDA_DRIVER_INCOMPATIBLE` and must not be counted as an RTF result.
+
+The compatibility rule follows the official RunPod Pod management guidance:
+the host CUDA version must match the container CUDA version, and the Pod
+creation UI/API can constrain machine selection by CUDA version. The image
+choice follows the official NVIDIA NeMo Speech installation guidance and NGC
+container metadata.
+
 The entrypoint converts the supported benchmark command forms to the same
 `benchmark_runner` invocation.
 RunPod automation uses `runpodctl ssh info` and SSH after the Pod becomes

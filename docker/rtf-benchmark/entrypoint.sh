@@ -202,7 +202,10 @@ fi
 
 if [[ "$runner_status" -ne 0 ]]; then
   if [[ ! -s "${RTF_OUTPUT:-/output/metrics.json}" && ! -s "${RTF_RECEIPT:-/output/result-receipt.json}" ]]; then
-    if grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$error_log"; then
+    if grep -Eqi 'driver .*too old|CUDA driver version is insufficient|nvidia driver on your system is too old' "$error_log"; then
+      export RTF_FAILURE_CODE="PROVIDER_CUDA_DRIVER_INCOMPATIBLE"
+      export RTF_FAILURE_MESSAGE="benchmark image CUDA runtime is incompatible with the provider NVIDIA driver"
+    elif grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$error_log"; then
       export RTF_FAILURE_CODE="PROVIDER_CUDA_ILLEGAL_ACCESS"
       export RTF_FAILURE_MESSAGE="benchmark process terminated with a CUDA illegal memory access"
     elif grep -Eqi 'out of memory|CUDA OOM|cuda out of memory' "$error_log"; then
