@@ -172,6 +172,14 @@ jobs:
               raise SystemExit("RunPod readiness timeout must be configurable")
           if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
+          for required in (
+              'RTF_RUNPOD_LOG',
+              'RTF_RESULT_RECEIPT=',
+              'PIPESTATUS[1]',
+              'receipt_completed',
+          ):
+              if required not in script:
+                  raise SystemExit(f"RunPod stdout receipt recovery is missing: {required}")
           workflow = Path(".github/workflows/rtf-benchmark-run.yml").read_text()
           for required in (
               "RTF_FIXTURE_POINTER_MISMATCH",
