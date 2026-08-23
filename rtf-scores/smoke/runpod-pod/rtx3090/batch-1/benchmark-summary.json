@@ -1,0 +1,16 @@
+{
+  "model": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+  "provider": "runpod",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "batch_size": 1,
+  "decoder": "tdt",
+  "precision": "fp16",
+  "audio_seconds": 5402.784,
+  "elapsed_seconds": 15.671496693976223,
+  "rtf": 0.002900633579646387,
+  "rtfx": 344.75226620037574,
+  "peak_vram_gb": 5.221195220947266,
+  "cer": null,
+  "gpu_price_hour": null,
+  "cost_per_audio_hour": null
+}
