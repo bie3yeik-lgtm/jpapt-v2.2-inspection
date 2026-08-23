@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32629746571-b1",
+  "run_id": "rtf-runpod-32631925879-b1",
   "service_id": "runpod-pod",
-  "status": "completed",
+  "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "8lj5o1uzmlmn5p",
-  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/d4c46bb6d59c4627c66adbdb9d905466e5f64519/results/rtf-runpod-32629746571-b1/metrics.json",
-  "result_sha256": "02954d2594b807a5a16320a189b8f6be9e565506facf03fb79f0f3fe93b9de0f",
-  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/d4c46bb6d59c4627c66adbdb9d905466e5f64519/results/rtf-runpod-32629746571-b1/metrics.json",
-  "metrics_path": "results/rtf-service/metrics.json",
-  "metrics_sha256": "02954d2594b807a5a16320a189b8f6be9e565506facf03fb79f0f3fe93b9de0f",
-  "error_code": null,
-  "error_message": null
+  "job_id": null,
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "BENCHMARK_SETUP_FAILED",
+  "error_message": "benchmark setup did not produce a result receipt for batch 1"
 }
