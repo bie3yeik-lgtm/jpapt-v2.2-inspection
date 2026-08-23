@@ -318,6 +318,8 @@ case "$PROVIDER" in
       failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
       if [[ "$pod_create_timed_out" -eq 1 ]]; then
         failure_code="RUNPOD_POD_CREATE_TIMEOUT"
+      elif grep -Eqi 'balance is too low|insufficient balance|add funds to your account' <<<"$pod_json"; then
+        failure_code="RUNPOD_ACCOUNT_BALANCE_TOO_LOW"
       elif grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
         failure_code="RUNPOD_NO_INSTANCE_AVAILABLE"
       elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then

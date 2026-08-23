@@ -88,6 +88,7 @@ static_checks() {
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'batch_sizes=(1 8 32)' .github/workflows/rtf-benchmark-run.yml >/dev/null
@@ -126,6 +127,10 @@ set -euo pipefail
     if [[ "${RTF_FAKE_RUNPOD_HANG:-0}" == 1 ]]; then
       sleep 120
     fi
+    if [[ "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" == 1 ]]; then
+      printf '%s\n' '{"error":"failed to create pod: graphql error: Your account balance is too low to rent a pod. Please add funds to your account.","code":"graphql_error"}'
+      exit 1
+    fi
     if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 ]]; then
       printf '%s\n' '{"error":"failed to create pod: graphql error: There are no longer any instances available with the requested specifications."}'
       exit 1
@@ -141,6 +146,7 @@ set -euo pipefail
   pod:list)
     if [[ "${RTF_FAKE_RUNPOD_LIST_READY:-0}" == 1 && \
           "${RTF_FAKE_RUNPOD_FAILURE:-0}" != 1 && \
+          "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" != 1 && \
           "${RTF_FAKE_RUNPOD_HANG:-0}" != 1 ]]; then
       printf '%s\n' '[{"id":"runpod-mock-pod","runtimeStatus":"RUNNING"}]'
     else
@@ -245,6 +251,15 @@ mock_case() {
     pass "RunPod no-instance failure produces a typed receipt"
     return
   fi
+  if [[ "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" == 1 && "$provider" == runpod ]]; then
+    [[ "$status" -ne 0 ]] || fail "RunPod balance-low mock unexpectedly succeeded"
+    jq -e '.status == "blocked" and .error_code == "RUNPOD_ACCOUNT_BALANCE_TOO_LOW" and .run_id == $run_id' \
+      --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod balance-low receipt was not classified"
+    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS RTF_FAKE_RUNPOD_BALANCE_LOW
+    rm -rf "$fake_root"
+    pass "RunPod account balance block produces a typed receipt"
+    return
+  fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
   unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
@@ -253,9 +268,9 @@ mock_case() {
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check ;;
+    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check ;;
     hf) mock_case hf; failure_receipt_check ;;
-    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; runpod_create_timeout_check ;;
+    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; runpod_create_timeout_check ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
 }
