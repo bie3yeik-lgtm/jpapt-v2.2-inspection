@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
+  bash -n scripts/run-benchmark.sh scripts/ci/rtf-runpod-safe-wrapper.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -89,6 +89,7 @@ static_checks() {
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
+  grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'batch_sizes=(1 8 32)' .github/workflows/rtf-benchmark-run.yml >/dev/null
@@ -367,7 +368,11 @@ live_checks() {
   : "${RTF_BATCH_SIZE:=1}"
   : "${RTF_IMAGE_DIGEST:?RTF_IMAGE_DIGEST must be set to a digest-pinned image}"
   [[ "$RTF_IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "RTF_IMAGE_DIGEST is not a SHA-256 digest"
-  ./scripts/run-benchmark.sh --provider "$PROVIDER" --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  if [[ "$PROVIDER" == runpod ]]; then
+    ./scripts/ci/rtf-runpod-safe-wrapper.sh --provider runpod --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  else
+    ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  fi
   pass "live $PROVIDER provider verification completed; external resources were used"
 }
 

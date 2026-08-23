@@ -130,6 +130,19 @@ bash scripts/ci/test-rtf-provider-adapters.sh \
 `--mode live`はHF JobまたはRunPod Podを作成し、課金・外部状態変更を発生させる。
 `--allow-external`がない場合は実行しない。RunPodでは`RUNPOD_TOKEN`も必要である。
 
+ローカルRunPod live試験では、次の外側wrapperを使用する。inner adapterのcleanupに加え、
+WSL/terminal interruption時に子processを停止し、`RTF_RUN_ID`と完全一致するPodだけを
+削除する。
+
+```bash
+bash scripts/ci/rtf-runpod-safe-wrapper.sh \
+  --provider runpod \
+  --image ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<64-hex-digest>
+```
+
+wrapperは`RTF_RUN_ID=rtf-...-b1|b8|b32`を要求し、任意のPod名やprefixによる削除は
+許可しない。GitHub Actionsではworkflowの独立したcleanup stepも引き続き実行する。
+
 ## 2026-08-23 継続監査
 
 `.env`の値そのものを表示せず、allowlist wrapper経由で次を確認した。
