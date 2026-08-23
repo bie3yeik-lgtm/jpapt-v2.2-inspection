@@ -89,6 +89,7 @@ static_checks() {
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30' scripts/run-benchmark.sh >/dev/null
   grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null

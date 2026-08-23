@@ -37,6 +37,21 @@ RunPod lifecycle/image-readiness failure boundary. The next investigation
 must determine why the selected image remains `initializing` (image pull,
 registry reachability, or provider capacity) before another paid retry.
 
+## No-Pod image investigation
+
+The digest manifest was checked without credentials through the GHCR Bearer
+challenge. The manifest returned HTTP 200 and the image index contained a
+Linux/amd64 image. Its resolved image manifest has 50 layers totaling
+approximately 10.15 GiB. Therefore the evidence does not support a missing
+digest or a private-registry authentication failure; the dominant readiness
+cost is image transfer and container startup.
+
+The RunPod readiness allowance is consequently increased from 20 to 30
+minutes. The create timeout remains separately bounded at 20 minutes, and the
+provider termination deadline remains two hours. This change is intended to
+avoid cancelling a valid large-image startup while retaining a finite cost
+guard.
+
 ## Safety evidence
 
 - Only one Pod was created.
