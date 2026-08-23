@@ -69,19 +69,23 @@ benchmark environment variables (including the runtime `HF_TOKEN`) must be
 supplied through `--env`; they are omitted below intentionally:
 
 ```bash
-runpodctl pod create --name parakeet-bench \
+runpodctl pod create --name parakeet-bench --ssh \
   --image ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<digest> \
   --cloud-type SECURE \
   --gpu-id "NVIDIA RTX A5000" \
   --env '{"RTF_RUN_ID":"...","RTF_MODEL_ID":"..."}' \
-  --docker-args 'sleep infinity' \
   --ports 22/tcp \
   --wait --wait-timeout 30m
 ```
 
-The entrypoint converts both forms to the same `benchmark_runner` invocation.
+The entrypoint converts the supported benchmark command forms to the same
+`benchmark_runner` invocation.
 RunPod automation uses `runpodctl ssh info` and SSH after the Pod becomes
-reachable; the deprecated `runpodctl exec` command is not used.
+reachable. The image has an explicit `CMD ["sleep", "infinity"]`; its
+entrypoint recognizes that CMD, installs no runtime packages, and starts
+`sshd` before keeping the container alive. The create request therefore does
+not depend on provider-specific `docker-args` parsing. The deprecated
+`runpodctl exec` command is not used.
 Missing runtime variables fail closed; credentials are not image defaults.
 
 The runner enforces `num_workers=0`, `pin_memory=false`, and
