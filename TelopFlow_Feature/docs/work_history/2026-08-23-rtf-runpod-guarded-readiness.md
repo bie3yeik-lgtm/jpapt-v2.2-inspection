@@ -52,6 +52,27 @@ provider termination deadline remains two hours. This change is intended to
 avoid cancelling a valid large-image startup while retaining a finite cost
 guard.
 
+## Second guarded observation
+
+After the 30-minute allowance was implemented, one new Pod was started with
+run ID `rtf-runpod-guarded-20260823-r2-b1`. The Pod eventually reached
+`runtimeStatus=running`, but `runpodctl ssh info` did not return an SSH command
+and the readiness probe reported `command_present=false`. The benchmark did
+not start, and no content or metrics artifact was produced. The Pod was
+deleted explicitly after stopping the observation; no batch 8/32 job was
+created.
+
+This narrows the remaining RunPod boundary from image availability to provider
+SSH endpoint publication/readiness. The next fix must investigate RunPod
+Secure Cloud port/SSH exposure and the `runpodctl ssh info` contract. Do not
+retry the benchmark until that boundary is understood.
+
+The adapter now treats runtime availability and SSH-info availability as
+separate states. Once the Pod reports `running`, the adapter allows five
+minutes for `runpodctl ssh info` and then emits
+`RUNPOD_SSH_INFO_UNAVAILABLE`, deletes the Pod, and stops. The overall
+large-image readiness allowance remains 30 minutes for the pre-runtime pull.
+
 ## Safety evidence
 
 - Only one Pod was created.

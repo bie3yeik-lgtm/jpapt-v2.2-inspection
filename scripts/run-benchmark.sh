@@ -66,6 +66,7 @@ fi
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
+: "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 
@@ -234,6 +235,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_SSH_INFO_WAIT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES must be a positive integer' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -247,7 +252,7 @@ case "$PROVIDER" in
       echo "failed to generate RunPod termination deadline: $terminate_after" >&2
       exit 2
     }
-    echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
+    echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; SSH info grace: ${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES}m; termination deadline: $terminate_after" >&2
     # Do not put HF_TOKEN or benchmark configuration into RunPod Pod
     # metadata. Provider-side env handling has varied across runpodctl
     # versions, and Pod metadata is visible to provider control-plane reads.
@@ -343,6 +348,8 @@ case "$PROVIDER" in
     pod_create_failed=0
     readiness_deadline=$(( $(date +%s) + RTF_RUNPOD_WAIT_TIMEOUT_MINUTES * 60 ))
     pod_ready=0
+    runtime_ready_since=0
+    readiness_error_code="RUNPOD_READINESS_TIMEOUT"
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
       pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1 || true)"
       # The CLI's `pod get` and `pod list` responses are not schema-identical.
@@ -365,6 +372,9 @@ case "$PROVIDER" in
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
+        if [[ "$runtime_ready_since" -eq 0 ]]; then
+          runtime_ready_since="$(date +%s)"
+        fi
         # RUNNING only means the Pod lifecycle reached running. Require an
         # actual SSH handshake before invoking the benchmark entrypoint;
         # otherwise the provider may still be publishing the SSH port.
@@ -383,6 +393,10 @@ case "$PROVIDER" in
           pod_ready=1
           break
         fi
+        if (( $(date +%s) - runtime_ready_since >= RTF_RUNPOD_SSH_INFO_WAIT_MINUTES * 60 )); then
+          readiness_error_code="RUNPOD_SSH_INFO_UNAVAILABLE"
+          break
+        fi
       fi
       if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.desiredStatus // "") | ascii_upcase) == "EXITED" or ((.desiredStatus // "") | ascii_upcase) == "TERMINATED"' <<<"$pod_list_summary" >/dev/null 2>&1; then
@@ -391,14 +405,14 @@ case "$PROVIDER" in
       sleep "$RTF_RUNPOD_POLL_SECONDS"
     done
     if [[ "$pod_ready" -ne 1 ]]; then
-      failure_code="RUNPOD_READINESS_TIMEOUT"
+      failure_code="$readiness_error_code"
       if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"${pod_state_json:-}" >/dev/null 2>&1; then
         failure_code="RUNPOD_POD_EXITED_BEFORE_READINESS"
       fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
-        --arg error_message "RunPod Pod did not become SSH-ready within ${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES} minutes" \
+        --arg error_message "RunPod Pod did not become SSH-ready; provider SSH info was unavailable after the bounded readiness grace" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
