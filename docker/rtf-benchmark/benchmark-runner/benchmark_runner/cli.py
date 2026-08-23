@@ -154,6 +154,22 @@ def release_inference_temporaries(torch_module: object, device: object) -> None:
         torch_module.cuda.ipc_collect()
 
 
+def refresh_gpu_between_batches(torch_module: object, device: object) -> None:
+    """Establish a clean CUDA boundary before the next sequential batch.
+
+    CUDA work is asynchronous.  Synchronizing before cleanup ensures that
+    the previous measurement has finished, while the second synchronization
+    makes cache and IPC reclamation visible before the next model is restored.
+    This is intentionally a batch-boundary operation and is not included in
+    the timed inference interval.
+    """
+    if getattr(device, "type", None) == "cuda":
+        torch_module.cuda.synchronize()
+    release_inference_temporaries(torch_module, device)
+    if getattr(device, "type", None) == "cuda":
+        torch_module.cuda.synchronize()
+
+
 def load_model(asr_model: object, snapshot_download: object, torch_module: object,
                *, model_id: str, model_revision: str, device: object,
                token: str | None) -> object:
@@ -250,8 +266,10 @@ def main() -> int:
                     cer_samples.append(jiwer.cer(reference_text, " ".join(texts).strip()))
                 if device.type == "cuda":
                     peak_memory_samples.append(int(torch.cuda.max_memory_allocated()))
+                del hypotheses
+                del texts
                 del model
-                release_inference_temporaries(torch, device)
+                refresh_gpu_between_batches(torch, device)
             elapsed = median_metric(timings)
         if elapsed is None:
             raise RuntimeError("benchmark produced no timing measurements")
