@@ -99,6 +99,10 @@ static_checks() {
   ! grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
+  grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' scripts/run-benchmark.sh >/dev/null
+  grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' docker/rtf-benchmark/benchmark-runner/benchmark_runner/content_probe.py >/dev/null
+  grep -F 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.2' scripts/run-benchmark.sh >/dev/null
+  grep -F -- '--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30' scripts/run-benchmark.sh >/dev/null

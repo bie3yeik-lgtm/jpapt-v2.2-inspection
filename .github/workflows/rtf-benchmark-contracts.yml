@@ -172,6 +172,15 @@ jobs:
               raise SystemExit("RunPod readiness timeout must be configurable")
           if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
+          if 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.2' not in script:
+              raise SystemExit("RunPod CUDA compatibility floor must be pinned")
+          if '--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"' not in script:
+              raise SystemExit("RunPod Pod creation must select a compatible CUDA version")
+          if 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' not in script:
+              raise SystemExit("RunPod CUDA driver incompatibility must be typed")
+          content_probe = Path("docker/rtf-benchmark/benchmark-runner/benchmark_runner/content_probe.py").read_text()
+          if 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' not in content_probe:
+              raise SystemExit("content probe must classify CUDA driver incompatibility")
           for required in (
               'RTF_RUNPOD_LOG',
               'RTF_RUNPOD_CONTAINER_LOG_TAIL',

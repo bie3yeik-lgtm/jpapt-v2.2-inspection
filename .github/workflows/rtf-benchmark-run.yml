@@ -257,6 +257,7 @@ jobs:
           export RTF_RUNPOD_MAX_HOURS=2
           export RTF_RUNPOD_WAIT_TIMEOUT_MINUTES=30
           export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=5
+          export RTF_RUNPOD_MIN_CUDA_VERSION=13.2
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in

@@ -12,6 +12,23 @@ from typing import Any
 from benchmark_runner.transcribe_compat import transcribe
 
 
+def _failure_code(exc: Exception) -> tuple[str, str]:
+    message = str(exc)
+    if any(
+        marker in message.lower()
+        for marker in (
+            "driver on your system is too old",
+            "cuda driver version is insufficient",
+            "nvidia driver on your system is too old",
+        )
+    ):
+        return (
+            "PROVIDER_CUDA_DRIVER_INCOMPATIBLE",
+            "benchmark image CUDA runtime is incompatible with the provider NVIDIA driver",
+        )
+    return "PROVIDER_CONTENT_PROBE_FAILED", message
+
+
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="benchmark-content-probe")
     parser.add_argument("--manifest", type=Path, required=True)
@@ -113,9 +130,10 @@ def main() -> int:
             "content_available": True,
         })
     except Exception as exc:
+        error_code, error_message = _failure_code(exc)
         base.update({
-            "error_code": "PROVIDER_CONTENT_PROBE_FAILED",
-            "error_message": str(exc),
+            "error_code": error_code,
+            "error_message": error_message,
             "content_available": False,
         })
     output = args.output

@@ -69,6 +69,7 @@ fi
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_RUNPOD_LOG:=runpod-job.log}"
 : "${RTF_RUNPOD_CONTAINER_LOG_TAIL:=100}"
+: "${RTF_RUNPOD_MIN_CUDA_VERSION:=13.2}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
@@ -152,6 +153,9 @@ case "$PROVIDER" in
       if grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$hf_log"; then
         failure_code="PROVIDER_CUDA_ILLEGAL_ACCESS"
         failure_message="HF Job terminated with a CUDA illegal memory access"
+      elif grep -Eqi 'driver .*too old|CUDA driver version is insufficient|nvidia driver on your system is too old' "$hf_log"; then
+        failure_code="PROVIDER_CUDA_DRIVER_INCOMPATIBLE"
+        failure_message="HF Job image CUDA runtime is incompatible with the provider NVIDIA driver"
       elif grep -Eqi 'out of memory|CUDA OOM|cuda out of memory' "$hf_log"; then
         failure_code="PROVIDER_CUDA_OOM"
         failure_message="HF Job terminated with CUDA out of memory"
@@ -292,6 +296,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || {
+      echo 'RTF_RUNPOD_MIN_CUDA_VERSION must be a CUDA major.minor version' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -327,6 +335,7 @@ case "$PROVIDER" in
     runpod_create_args=(
       pod create --name "${RTF_RUN_ID}" --image "$IMAGE"
       --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh
+      --min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"
       --ports 22/tcp --terminate-after "$terminate_after"
     )
     if [[ -n "${RUNPOD_REGISTRY_AUTH_ID:-}" ]]; then
@@ -564,14 +573,26 @@ case "$PROVIDER" in
     fi
     if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      failure_code="PROVIDER_EXECUTION_FAILED"
+      failure_message="RunPod execution did not produce a result receipt"
+      if grep -Eqi 'driver .*too old|CUDA driver version is insufficient|nvidia driver on your system is too old' "$remote_log"; then
+        failure_code="PROVIDER_CUDA_DRIVER_INCOMPATIBLE"
+        failure_message="RunPod image CUDA runtime is incompatible with the provider NVIDIA driver"
+      elif grep -Eqi 'illegal memory access|cudaErrorIllegalAddress' "$remote_log"; then
+        failure_code="PROVIDER_CUDA_ILLEGAL_ACCESS"
+        failure_message="RunPod benchmark terminated with a CUDA illegal memory access"
+      elif grep -Eqi 'out of memory|CUDA OOM|cuda out of memory' "$remote_log"; then
+        failure_code="PROVIDER_CUDA_OOM"
+        failure_message="RunPod benchmark terminated with CUDA out of memory"
+      fi
       jq -n \
-        --arg run_id "$RTF_RUN_ID" --arg error_message "RunPod execution did not produce a result receipt" \
+        --arg run_id "$RTF_RUN_ID" --arg error_code "$failure_code" --arg error_message "$failure_message" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
         --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
         --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
-        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"PROVIDER_EXECUTION_FAILED",error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     fi
     receipt_completed=false
