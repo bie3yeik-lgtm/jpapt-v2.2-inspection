@@ -53,6 +53,11 @@ visibilityの場合、Pod createへ`--registry-auth-id`を渡さない限りimag
 しない可能性がある。このためadapterは`RUNPOD_REGISTRY_AUTH_ID`を任意で渡せる一方、
 GitHub Actionsのprivate-GHCR laneでは`RTF_RUNPOD_REQUIRE_REGISTRY_AUTH=1`により
 ID未設定のPod作成を事前停止する。
+
+さらに、対象digestのGHCR manifestへ匿名read-only requestを行ったところ、HTTP
+`401 Unauthorized`と`scope=repository:bie3yeik-lgtm/parakeet-rtf-benchmark:pull`
+が返った。対象packageがprivateであり、RunPod側registry authが必要であることを
+provider外部の応答でも確認した。
 ## 実装した診断境界
 
 `scripts/run-benchmark.sh` に `RTF_LOCAL_PROVIDER_DIAGNOSTICS` を追加した。
