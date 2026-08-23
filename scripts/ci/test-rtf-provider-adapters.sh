@@ -67,6 +67,7 @@ static_checks() {
   grep -F 'LABEL io.jpapt.role="rtf-benchmark"' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F 'ENTRYPOINT ["/opt/rtf-benchmark/entrypoint.sh"]' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F 'CMD ["sleep", "infinity"]' docker/rtf-benchmark/Dockerfile >/dev/null
+  grep -F 'python -c '\''import benchmark_runner; import benchmark_runner.load_fixture'\''' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F 'openssh-server' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F '/usr/sbin/sshd' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PUBLIC_KEY' docker/rtf-benchmark/entrypoint.sh >/dev/null
