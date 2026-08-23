@@ -118,6 +118,9 @@ static_checks() {
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'batch_sizes=(1 8 32)' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'for _ in range(args.batch_size)' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
+  grep -F 'batch_size=1,' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
+  grep -F 'statistics.median' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
   grep -F "inputs.cost_mode }}' == full-matrix" .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null

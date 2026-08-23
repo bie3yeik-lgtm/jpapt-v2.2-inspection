@@ -3892,7 +3892,9 @@ modelとdecoderの非互換な組み合わせは「未実行の成功」とし�
 = 162 benchmark records
 ```
 
-同一組み合わせのrepeatはrecord内部の計測条件として管理し、matrixの別軸にはしない。
+`batch=1/8/32`はNeMoへ同時投入する音声数ではない。各batchはbatch-1推論を指定回数だけ
+順次実行し、processing time、RTF、CER、GPU利用率を中央値でmetricsへ出力する。
+同一組み合わせの`repeat`は後方互換フィールドとして保持するが、逐次測定回数の正本は`batch_size`である。
 上記件数は現在のモデル、decoder、dataset候補に基づく目標値であり、実際のmatrix生成時に
 source-controlled manifestと整合しているかを検証する。
 
@@ -3903,7 +3905,7 @@ source-controlled manifestと整合しているかを検証する。
 
 各recordには少なくとも次を保存する。
 
-- RTF / RTFx（batch=1はlatency、batch=8/32はthroughputの比較材料）
+- RTF / RTFx（batch=1/8/32は、それぞれ1/8/32回の逐次batch-1測定の中央値）
 - service RTFとmodel RTFのscope
 - CER、VRAM、GPU、provider、precision、decoder
 - GPU単価と `$/audio-hour`
