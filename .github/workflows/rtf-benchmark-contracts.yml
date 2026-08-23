@@ -174,6 +174,10 @@ jobs:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
           for required in (
               'RTF_RUNPOD_LOG',
+              'RTF_RUNPOD_CONTAINER_LOG_TAIL',
+              'pod logs <pod-id>',
+              '--source container',
+              '--follow',
               'RTF_RESULT_RECEIPT=',
               'PIPESTATUS[1]',
               'receipt_completed',

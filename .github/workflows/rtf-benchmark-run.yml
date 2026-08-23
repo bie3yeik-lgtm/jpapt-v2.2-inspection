@@ -296,6 +296,7 @@ jobs:
             export RTF_LOCAL_PROVIDER_DIAGNOSTICS="$batch_dir/provider-diagnostics.json"
             export RTF_HF_LOG="$batch_dir/hf-job.log"
             export RTF_RUNPOD_LOG="$batch_dir/runpod-job.log"
+            export RTF_RUNPOD_CONTAINER_LOG_TAIL=100
             set +e
             ./scripts/run-benchmark.sh \
               --provider '${{ inputs.provider }}' \

@@ -83,6 +83,10 @@ static_checks() {
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
+  grep -F 'pod logs <pod-id>' scripts/run-benchmark.sh >/dev/null
+  grep -F -- '--source container' scripts/run-benchmark.sh >/dev/null
+  grep -F -- '--follow' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RunPod container log:' scripts/run-benchmark.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
@@ -174,6 +178,14 @@ set -euo pipefail
     else
       printf '%s\n' '{"ssh_command":"ssh mock@runpod"}'
     fi ;;
+  pod:logs)
+    if [[ "$*" == *'--help'* ]]; then
+      printf '%s\n' 'runpodctl pod logs <pod-id>'
+      exit 0
+    fi
+    sleep 0.2
+    printf '%s\n' '{"source":"container","line":"mock container log","ts":"2026-08-23T00:00:00Z"}'
+    ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
 EOF
@@ -261,6 +273,8 @@ mock_case() {
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_LOCAL_PROVIDER_DIAGNOSTICS="$case_dir/provider-diagnostics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  export RTF_RUNPOD_LOG="$case_dir/runpod-job.log"
+  export RTF_RUNPOD_CONTAINER_LOG_TAIL=100
   export RTF_FAKE_SSH_ENV_FILE="$case_dir/runpod.env"
   export RTF_RUNPOD_POLL_SECONDS=1
   export RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS=1

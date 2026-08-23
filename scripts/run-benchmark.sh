@@ -68,6 +68,7 @@ fi
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_RUNPOD_LOG:=runpod-job.log}"
+: "${RTF_RUNPOD_CONTAINER_LOG_TAIL:=100}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
@@ -180,6 +181,7 @@ case "$PROVIDER" in
       exit 2
     fi
     pod_id=""
+    runpod_container_log_pid=""
     pod_create_failed=0
     delete_named_pods() {
       local candidate_ids candidate_id
@@ -204,10 +206,38 @@ case "$PROVIDER" in
       fi
     }
     cleanup_runpod() {
+      stop_runpod_container_logs || true
       delete_pod || true
       if [[ "$pod_create_failed" -eq 1 ]]; then
         delete_named_pods
       fi
+    }
+    start_runpod_container_logs() {
+      local log_help
+      if ! log_help="$(runpodctl pod logs --help 2>&1)" ||
+        ! grep -F 'pod logs <pod-id>' <<<"$log_help" >/dev/null; then
+        echo 'RunPod container log streaming is unavailable in this runpodctl version' >&2
+        return 0
+      fi
+      [[ -z "$runpod_container_log_pid" ]] || return 0
+      echo "::group::RunPod container logs ($pod_id)"
+      (
+        runpodctl pod logs "$pod_id" \
+          --source container \
+          --tail "$RTF_RUNPOD_CONTAINER_LOG_TAIL" \
+          --follow 2>&1 |
+          while IFS= read -r line; do
+            printf 'RunPod container log: %s\n' "$line"
+          done
+      ) &
+      runpod_container_log_pid=$!
+    }
+    stop_runpod_container_logs() {
+      [[ -n "$runpod_container_log_pid" ]] || return 0
+      kill "$runpod_container_log_pid" 2>/dev/null || true
+      wait "$runpod_container_log_pid" 2>/dev/null || true
+      runpod_container_log_pid=""
+      echo '::endgroup::'
     }
     write_runpod_diagnostics() {
       local phase="$1"
@@ -464,6 +494,7 @@ case "$PROVIDER" in
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       exit 1
     fi
+    start_runpod_container_logs
     # runpodctl releases have emitted both camelCase and snake_case JSON keys.
     # Accept only a non-empty command from either spelling; do not synthesize
     # an SSH endpoint from an incomplete response.
@@ -550,6 +581,7 @@ case "$PROVIDER" in
     if [[ "$remote_status" -ne 0 && "$receipt_completed" != true ]]; then
       exit "$remote_status"
     fi
+    stop_runpod_container_logs
     # Delete this Pod as soon as its metrics and receipt have been copied.
     # The EXIT trap remains as a failure-path safety net.
     delete_pod
