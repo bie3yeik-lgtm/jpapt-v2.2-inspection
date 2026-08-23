@@ -291,14 +291,19 @@ jobs:
         run: |
           set -euo pipefail
           branch="inspection/rtf-resolver-${RUN_ID}"
+          generated_patch="$RUNNER_TEMP/rtf-resolver-repository.patch"
+          # Receipt/manifest generation happens on the checkout's current
+          # branch. Preserve those changes before refreshing the branch from
+          # origin/main; otherwise reset --hard would silently discard the
+          # newly resolved image digest and fixture receipt.
+          git diff --binary -- rtf-scores/benchmark > "$generated_patch"
           git fetch --no-tags origin main
-          # The resolver writes receipt/manifest files into the checkout before
-          # opening its delivery branch. Reset the runner checkout explicitly
-          # so those generated files are committed on the new branch rather
-          # than preventing the branch switch with a dirty-worktree error.
           git reset --hard origin/main
           git clean -fd
           git checkout --no-track -b "$branch" origin/main
+          if [[ -s "$generated_patch" ]]; then
+            git apply "$generated_patch"
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- rtf-scores/benchmark
