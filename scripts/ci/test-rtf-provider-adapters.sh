@@ -71,11 +71,13 @@ static_checks() {
   grep -F '/usr/sbin/sshd' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PUBLIC_KEY' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'python -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
+  grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
   grep -F 'UserKnownHostsFile=/dev/null' scripts/run-benchmark.sh >/dev/null

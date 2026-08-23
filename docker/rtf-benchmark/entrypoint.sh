@@ -37,6 +37,17 @@ if {
     printf '%s\n' "$PUBLIC_KEY" > /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
   fi
+  # Docker injects benchmark variables into PID 1, but an sshd session does
+  # not inherit that container environment. Persist only the narrow benchmark
+  # allowlist for the root SSH execution boundary; the file is root-readable
+  # and never printed by the adapter.
+  : > /run/rtf-benchmark.env
+  while IFS='=' read -r key value; do
+    case "$key" in
+      HF_TOKEN|RTF_*) printf '%s=%q\n' "$key" "$value" >> /run/rtf-benchmark.env ;;
+    esac
+  done < <(printenv)
+  chmod 600 /run/rtf-benchmark.env
   cat > /etc/ssh/sshd_config.d/99-rtf-runpod.conf <<'EOF'
 PubkeyAuthentication yes
 PermitRootLogin prohibit-password

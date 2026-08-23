@@ -434,7 +434,7 @@ case "$PROVIDER" in
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
     set +e
-    runpod_ssh sh -c "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
+    runpod_ssh bash -lc "set -a; . /run/rtf-benchmark.env; set +a; export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
     remote_status=$?
     set -e
     runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
