@@ -338,7 +338,7 @@ jobs:
                 > "$receipt_path"
             fi
           done
-          receipts="$(for batch_size in 1 8 32; do
+          receipts="$(for batch_size in "${batch_sizes[@]}"; do
             jq --arg batch_size "$batch_size" \
               '. + {batch_size:($batch_size | tonumber)}' \
               "results/batches/batch-${batch_size}/result-receipt.json"

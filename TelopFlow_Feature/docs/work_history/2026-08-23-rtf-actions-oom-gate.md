@@ -38,6 +38,11 @@ contract. It does not claim that batch 8 or 32 fit the selected GPU. Those
 cases require an explicit `full-matrix` run after GPU-specific memory sizing
 and are not a prerequisite for the no-waste guarded smoke gate.
 
+The first correction exposed one remaining post-processing defect: receipt
+normalization still aggregated the old fixed `1,8,32` list and failed when the
+unattempted guarded files were absent. The normalization aggregation now uses
+the same selected `batch_sizes` array as execution and cleanup.
+
 ## Local evidence
 
 - `test-rtf-provider-adapters.sh --mode static`: expected to cover the guarded
