@@ -173,6 +173,34 @@ load = false
 
 The large image is therefore not copied from BuildKit into the Docker daemon merely for smoke validation.
 
+### Build cache strategy
+
+The Buildx build uses two cache layers, independently scoped by Docker package:
+
+```text
+cache-from:
+  GitHub Actions cache, version 2
+  GHCR registry cache: <image>:buildcache
+
+cache-to:
+  GitHub Actions cache, mode=min, version 2
+  GHCR registry cache, mode=min, non-PR events only
+```
+
+The GitHub Actions cache is the primary PR cache target and is exported on a
+best-effort basis. Fork or restricted PRs may be unable to write it; the
+export is therefore `ignore-error=true`. The registry cache is a durable
+cross-runner source for publicly readable packages and is written only by
+push/manual publish runs; fork or PR builds never write to GHCR.
+`image-manifest=true`, OCI media types, and zstd compression keep the
+registry cache consumable by current Buildx versions. A cache miss is safe:
+Buildx falls back to a normal build, while cache export availability cannot
+turn a valid image build into a failure.
+
+The cache tag is an optimization artifact only. The published image identity
+continues to be the returned immutable image digest; `:buildcache` must never
+be used as an evaluation or promotion identity.
+
 `pull_request.paths` evaluates the PR change set, which can cause the workflow to be started again after unrelated later commits. The explicit previous-head/current-head gate suppresses the expensive build on those synchronize events.
 
 Concurrency is scoped to the heavyweight `build` job rather than the whole workflow. Docs-only synchronize runs never enter that concurrency group, while a newer real Docker build for the same package can cancel an obsolete build job.

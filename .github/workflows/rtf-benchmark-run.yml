@@ -106,11 +106,22 @@ jobs:
         env:
           IMAGE: ${{ steps.resolve.outputs.image }}
           GH_TOKEN: ${{ github.token }}
+          IMAGE_PULL_TIMEOUT_MINUTES: 15
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io \
             --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
-          docker pull "$IMAGE" >/dev/null
+          timeout --signal=TERM "${IMAGE_PULL_TIMEOUT_MINUTES}m" docker pull "$IMAGE" >/dev/null || {
+            echo "RTF image pull did not complete within ${IMAGE_PULL_TIMEOUT_MINUTES} minutes" >&2
+            exit 124
+          }
+          docker image inspect "$IMAGE" | jq -e '
+            .[0].Config.Entrypoint == ["/opt/rtf-benchmark/entrypoint.sh"] and
+            .[0].Config.Cmd == ["sleep", "infinity"]
+          ' >/dev/null || {
+            echo 'RTF image ENTRYPOINT/CMD contract is invalid' >&2
+            exit 2
+          }
           docker run --rm --entrypoint python "$IMAGE" -c '
           from pathlib import Path
           path = Path("/opt/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py")
@@ -145,7 +156,13 @@ jobs:
           mkdir -p "$HOME/.runpod"
           touch "$HOME/.runpod/.runpod.yaml"
           runpodctl config --apiKey="$RUNPOD_TOKEN"
-          doctor_json="$(runpodctl doctor --output json)"
+          # Provider configuration must not hold a runner forever before a
+          # Pod is created. The timeout is pre-provider and therefore cannot
+          # create GPU cost; a timeout fails the run closed.
+          doctor_json="$(timeout --signal=TERM 90s runpodctl doctor --output json)" || {
+            echo 'RUNPOD_CLI_DOCTOR_TIMEOUT_OR_FAILURE: RunPod CLI doctor did not complete within 90 seconds' >&2
+            exit 124
+          }
           echo "$doctor_json" | jq .
           jq -e '.healthy == true' <<<"$doctor_json" >/dev/null || {
             echo 'RunPod CLI doctor did not report a healthy configuration' >&2
@@ -275,6 +292,24 @@ jobs:
             echo 'all benchmark batches failed; marking the benchmark job as FAILURE' >&2
             exit 1
           fi
+      - name: Cleanup RunPod Pods after benchmark
+        if: always() && inputs.provider == 'runpod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required for RunPod cleanup'; exit 1; }
+          for batch_size in 1 8 32; do
+            run_id="rtf-runpod-${{ github.run_id }}-b${batch_size}"
+            candidate_ids="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null \
+              | jq -r '.[] | (.id // .podId // .pod_id)' 2>/dev/null || true)"
+            while IFS= read -r candidate_id; do
+              [[ -n "$candidate_id" ]] || continue
+              echo "Deleting RunPod cleanup candidate $candidate_id for $run_id"
+              runpodctl pod delete "$candidate_id" >/dev/null || \
+                echo "::error::failed to delete RunPod cleanup candidate $candidate_id"
+            done <<< "$candidate_ids"
+          done
       - name: Normalize provider receipts
         id: receipts
         if: always()
