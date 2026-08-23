@@ -107,8 +107,11 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           entrypoint = Path("docker/rtf-benchmark/entrypoint.sh").read_text()
+          dockerfile = Path("docker/rtf-benchmark/Dockerfile").read_text()
           if '"$#" -eq 1 && "${1:-}" == "sleep infinity"' not in entrypoint:
               raise SystemExit("ENTRYPOINT must accept RunPod's single-string docker args form")
+          if 'CMD ["sleep", "infinity"]' not in dockerfile:
+              raise SystemExit("Dockerfile must own the RunPod keepalive CMD")
           print("RunPod docker-args arity contract: PASS")
           PY
           python -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py scripts/ci/build-rtf-benchmark-record.py
@@ -212,6 +215,10 @@ jobs:
               raise SystemExit("RTF Benchmark Run must allow the sequential three-batch provider window")
           if "Verify resolved image contains the RTF loader safety policy" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must verify the resolved image contains the provider fix")
+          if 'timeout --signal=TERM "${IMAGE_PULL_TIMEOUT_MINUTES}m" docker pull' not in benchmark_workflow:
+              raise SystemExit("RTF image pull must be bounded before provider execution")
+          if 'Config.Cmd == ["sleep", "infinity"]' not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must verify the published keepalive CMD")
           if "RTF_NUM_WORKERS" in benchmark_workflow or "RTF_NUM_WORKERS" in script:
               raise SystemExit("RTF worker count must be fixed in the image policy, not passed dynamically")
           if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:

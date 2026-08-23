@@ -142,6 +142,11 @@ set -euo pipefail
 if [[ "${RTF_FAKE_RUNPOD_SSH_NOT_READY:-0}" == 1 && " $* " == *' true '* ]]; then
   exit 255
 fi
+if [[ "${RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS:-0}" == 1 ]]; then
+  [[ " $* " == *'BatchMode=yes'* ]] || exit 97
+  [[ " $* " == *'StrictHostKeyChecking=no'* ]] || exit 98
+  [[ " $* " == *'UserKnownHostsFile=/dev/null'* ]] || exit 99
+fi
 case " $* " in
   *' /output/content.json '*)
     printf '%s\n' '{"schema_version":1,"run_id":"local-runpod-test","status":"completed","content_available":true,"hypothesis_text":"mock"}' ;;
@@ -208,6 +213,7 @@ mock_case() {
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
   export RTF_RUNPOD_POLL_SECONDS=1
+  export RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS=1
   set +e
   if [[ "$provider" == hf ]]; then
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >/dev/null
@@ -220,14 +226,14 @@ mock_case() {
     [[ "$status" -ne 0 ]] || fail "RunPod no-instance mock unexpectedly succeeded"
     jq -e '.status == "blocked" and .error_code == "RUNPOD_NO_INSTANCE_AVAILABLE" and .run_id == $run_id' \
       --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod no-instance receipt was not classified"
-    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY
+    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
     rm -rf "$fake_root"
     pass "RunPod no-instance failure produces a typed receipt"
     return
   fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
-  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY
+  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
   rm -rf "$fake_root"
 }
 

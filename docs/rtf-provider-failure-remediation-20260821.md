@@ -258,3 +258,7 @@ metrics/resultは取得していない。
 （RTX 3090）はimage verificationが長時間継続し、Pod作成前にcancelした。
 これらはprovider供給またはrunner image pullの失敗であり、SSH修正の否定証拠
 ではない。いずれもcleanup後に対象Podが存在しないことを確認している。
+
+runner側のimage verificationには15分のpull上限と、公開imageのENTRYPOINT/CMD
+検証を追加した。これにより、image pullが無期限にrunnerを占有せず、RunPodへ
+課金される前に起動契約不備を検出できる。

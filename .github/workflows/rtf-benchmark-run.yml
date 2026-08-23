@@ -106,11 +106,22 @@ jobs:
         env:
           IMAGE: ${{ steps.resolve.outputs.image }}
           GH_TOKEN: ${{ github.token }}
+          IMAGE_PULL_TIMEOUT_MINUTES: 15
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io \
             --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
-          docker pull "$IMAGE" >/dev/null
+          timeout --signal=TERM "${IMAGE_PULL_TIMEOUT_MINUTES}m" docker pull "$IMAGE" >/dev/null || {
+            echo "RTF image pull did not complete within ${IMAGE_PULL_TIMEOUT_MINUTES} minutes" >&2
+            exit 124
+          }
+          docker image inspect "$IMAGE" | jq -e '
+            .[0].Config.Entrypoint == ["/opt/rtf-benchmark/entrypoint.sh"] and
+            .[0].Config.Cmd == ["sleep", "infinity"]
+          ' >/dev/null || {
+            echo 'RTF image ENTRYPOINT/CMD contract is invalid' >&2
+            exit 2
+          }
           docker run --rm --entrypoint python "$IMAGE" -c '
           from pathlib import Path
           path = Path("/opt/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py")
