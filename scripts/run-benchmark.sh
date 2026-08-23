@@ -457,12 +457,21 @@ case "$PROVIDER" in
       printf 'RTF_SERVICE_ID=%q\n' runpod-pod
       printf 'HF_TOKEN=%q\n' "${HF_TOKEN:-}"
     }
-    write_runpod_environment | runpod_ssh bash -lc 'umask 077; cat > /run/rtf-benchmark.env; chmod 600 /run/rtf-benchmark.env'
+    # Do not pass a compound `bash -lc` command through SSH argv. OpenSSH
+    # reconstructs the remote command string and a quoted `set -a; . ...`
+    # sequence can be reduced to `bash -lc set`, leaving the environment file
+    # empty. Transfer the allowlisted file through stdin to a simple command.
+    write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env >/dev/null
+    runpod_ssh chmod 600 /run/rtf-benchmark.env
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
     set +e
-    runpod_ssh bash -lc "set -a; . /run/rtf-benchmark.env; set +a; export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
+    {
+      printf '%s\n' 'set -a' '. /run/rtf-benchmark.env' 'set +a'
+      printf 'export RTF_JOB_ID=%q\n' "$pod_id"
+      printf '%s\n' 'exec /opt/rtf-benchmark/entrypoint.sh'
+    } | runpod_ssh bash -s
     remote_status=$?
     set -e
     runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true

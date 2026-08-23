@@ -70,16 +70,20 @@ static_checks() {
   grep -F 'openssh-server' docker/rtf-benchmark/Dockerfile >/dev/null
   grep -F '/usr/sbin/sshd' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PUBLIC_KEY' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'RTF_PYTHON_BIN' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
-  grep -F 'python -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'RTF_PYTHON_BIN" -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
   ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
+  grep -F 'write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
+  grep -F '} | runpod_ssh bash -s' scripts/run-benchmark.sh >/dev/null
+  ! grep -F 'runpod_ssh bash -lc "set -a;' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
   grep -F 'UserKnownHostsFile=/dev/null' scripts/run-benchmark.sh >/dev/null
@@ -178,6 +182,13 @@ if [[ "${RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS:-0}" == 1 ]]; then
   [[ " $* " == *'UserKnownHostsFile=/dev/null'* ]] || exit 99
 fi
 case " $* " in
+  *' tee /run/rtf-benchmark.env '*)
+    cat > "${RTF_FAKE_SSH_ENV_FILE:?RTF_FAKE_SSH_ENV_FILE is required}" ;;
+  *' chmod 600 /run/rtf-benchmark.env '*) : ;;
+  *' bash -s '*)
+    remote_script="$(cat)"
+    grep -F '. /run/rtf-benchmark.env' <<<"$remote_script" >/dev/null || exit 96
+    grep -F 'RTF_JOB_ID=' <<<"$remote_script" >/dev/null || exit 95 ;;
   *' /output/content.json '*)
     printf '%s\n' '{"schema_version":1,"run_id":"local-runpod-test","status":"completed","content_available":true,"hypothesis_text":"mock"}' ;;
   *' /output/metrics.json '*)
@@ -242,6 +253,7 @@ mock_case() {
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
+  export RTF_FAKE_SSH_ENV_FILE="$case_dir/runpod.env"
   export RTF_RUNPOD_POLL_SECONDS=1
   export RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS=1
   set +e
@@ -272,6 +284,13 @@ mock_case() {
   fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
+  if [[ "$provider" == runpod ]]; then
+    grep -F 'RTF_DATASET_ID=japanese-asr/ja_asr.common_voice_8_0' "$case_dir/runpod.env" >/dev/null ||
+      fail "RunPod mock environment omitted RTF_DATASET_ID"
+    grep -F 'RTF_MODEL_ID=nvidia/parakeet-tdt_ctc-0.6b-ja' "$case_dir/runpod.env" >/dev/null ||
+      fail "RunPod mock environment omitted RTF_MODEL_ID"
+    pass "RunPod mock environment transfer includes benchmark identity"
+  fi
   unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
   rm -rf "$fake_root"
 }
