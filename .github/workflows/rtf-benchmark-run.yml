@@ -229,7 +229,11 @@ jobs:
           mkdir -p results/batches
           successful_batches=0
           cost_guard_failed=0
-          for batch_size in 1 8 32; do
+          batch_sizes=(1)
+          if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
+            batch_sizes=(1 8 32)
+          fi
+          for batch_size in "${batch_sizes[@]}"; do
             batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
             batch_dir="results/batches/batch-${batch_size}"
             mkdir -p "$batch_dir"
@@ -299,7 +303,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required for RunPod cleanup'; exit 1; }
-          for batch_size in 1 8 32; do
+          batch_sizes=(1)
+          if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
+            batch_sizes=(1 8 32)
+          fi
+          for batch_size in "${batch_sizes[@]}"; do
             run_id="rtf-runpod-${{ github.run_id }}-b${batch_size}"
             candidate_ids="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null \
               | jq -r '.[] | (.id // .podId // .pod_id)' 2>/dev/null || true)"
@@ -315,7 +323,11 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          for batch_size in 1 8 32; do
+          batch_sizes=(1)
+          if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
+            batch_sizes=(1 8 32)
+          fi
+          for batch_size in "${batch_sizes[@]}"; do
             receipt_path="results/batches/batch-${batch_size}/result-receipt.json"
             if [[ ! -s "$receipt_path" ]]; then
               mkdir -p "$(dirname "$receipt_path")"
