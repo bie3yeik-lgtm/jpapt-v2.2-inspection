@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh
+  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -83,6 +83,8 @@ static_checks() {
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
+  grep -F 'HF_TOKEN|RUNPOD_TOKEN|RUNPOD_API|HF_FLAVOR|RUNPOD_GPU_ID|RTF_*' scripts/ci/rtf-local-env.sh >/dev/null
+  grep -F 'unset GITHUB_PAT_TOKEN GITHUB_CLASSIC_TOKEN GITHUB_TOKEN GH_TOKEN CR_PAT' scripts/ci/rtf-local-env.sh >/dev/null
   pass "Dockerfile, entrypoint, schemas, and provider adapter syntax"
 }
 

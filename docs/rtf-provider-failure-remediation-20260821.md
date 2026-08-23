@@ -262,3 +262,9 @@ metrics/resultは取得していない。
 runner側のimage verificationには15分のpull上限と、公開imageのENTRYPOINT/CMD
 検証を追加した。これにより、image pullが無期限にrunnerを占有せず、RunPodへ
 課金される前に起動契約不備を検出できる。
+
+run `32610773321`では、RunPod GPU inventory上でRTX 4090が
+`available=true / stock=High`だったにもかかわらず、Pod create APIが
+`Something went wrong`を返した。Pod作成前の`PROVIDER_RUNPOD_POD_CREATE_FAILED`
+としてreceipt化され、guarded batch 8/32は起動されなかった。これはGPU供給不足
+とは異なるprovider API側の一時的失敗であり、metrics/resultは未取得である。

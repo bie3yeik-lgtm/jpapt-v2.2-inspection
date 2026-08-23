@@ -88,8 +88,18 @@ materializeしたJSONLを使う場合だけ指定する。`RTF_BATCH_SIZE`、`RT
 なお、`rtf-local-preflight.sh`は安全のため`.env`を親シェルへexportしない。preflightの
 PASS後に別コマンドで`run-benchmark.sh`を呼ぶ場合は、値がそのプロセスへ渡っていることを
 確認する必要がある。`.env`をshellとして直接`source`する運用は、任意コマンド実行を
-許すため採用しない。必要なら、既存preflightと同じ単純な`KEY=value` parserを共有する
-専用wrapperを追加する。
+許すため採用しない。ローカル実行時は、allowlist付きの専用wrapperを使う。
+
+```bash
+bash scripts/ci/rtf-local-env.sh --env-file .env -- \
+  bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
+```
+
+このwrapperは`HF_TOKEN`、`RUNPOD_TOKEN`、`RUNPOD_API`、`HF_FLAVOR`、
+`RUNPOD_GPU_ID`、`RTF_*`だけを子プロセスへ渡し、`GITHUB_PAT_TOKEN`、
+`GITHUB_CLASSIC_TOKEN`、`CR_PAT`などのGitHub/GHCR用値は渡さない。実providerを
+起動する`--mode live`は、wrapperを使っても外部状態と課金が発生するため、
+`--allow-external`を明示した場合に限る。
 
 監査時点の無課金確認結果は、WSL上で`hf 1.27.0`、`runpodctl 2.9.0-c094cac`、
 `jq 1.8.1`を検出し、`bash scripts/ci/rtf-local-preflight.sh --provider all`はPASSした。
