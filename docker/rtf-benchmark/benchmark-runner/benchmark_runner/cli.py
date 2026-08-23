@@ -49,6 +49,7 @@ class GpuUtilizationSampler:
         self.executable = shutil.which("nvidia-smi")
         self.interval_seconds = interval_seconds
         self.samples: list[float] = []
+        self.memory_bandwidth_samples: list[float] = []
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
@@ -60,7 +61,7 @@ class GpuUtilizationSampler:
                 completed = subprocess.run(
                     [
                         self.executable,
-                        "--query-gpu=utilization.gpu",
+                        "--query-gpu=utilization.gpu,utilization.memory",
                         "--format=csv,noheader,nounits",
                     ],
                     check=True,
@@ -68,9 +69,24 @@ class GpuUtilizationSampler:
                     text=True,
                     timeout=2,
                 )
-                values = [float(line.strip()) for line in completed.stdout.splitlines() if line.strip()]
-                if values and all(math.isfinite(value) and 0 <= value <= 100 for value in values):
-                    self.samples.append(sum(values) / len(values))
+                gpu_values: list[float] = []
+                memory_values: list[float] = []
+                for line in completed.stdout.splitlines():
+                    fields = [field.strip() for field in line.split(",")]
+                    if len(fields) != 2:
+                        continue
+                    gpu_value, memory_value = (float(field) for field in fields)
+                    if (
+                        math.isfinite(gpu_value)
+                        and 0 <= gpu_value <= 100
+                        and math.isfinite(memory_value)
+                        and 0 <= memory_value <= 100
+                    ):
+                        gpu_values.append(gpu_value)
+                        memory_values.append(memory_value)
+                if gpu_values:
+                    self.samples.append(sum(gpu_values) / len(gpu_values))
+                    self.memory_bandwidth_samples.append(sum(memory_values) / len(memory_values))
             except (OSError, subprocess.SubprocessError, ValueError):
                 pass
             self.stop_event.wait(self.interval_seconds)
@@ -89,6 +105,14 @@ class GpuUtilizationSampler:
     @property
     def average(self) -> float | None:
         return sum(self.samples) / len(self.samples) if self.samples else None
+
+    @property
+    def memory_bandwidth_average(self) -> float | None:
+        return (
+            sum(self.memory_bandwidth_samples) / len(self.memory_bandwidth_samples)
+            if self.memory_bandwidth_samples
+            else None
+        )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -224,7 +248,9 @@ def main() -> int:
         references = [str(sample.get("text", "")) for sample in samples]
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
         gpu_price_per_hour = read_nonnegative_float_env("RTF_GPU_PRICE_PER_HOUR")
+        queue_latency_sec = read_nonnegative_float_env("RTF_QUEUE_LATENCY_SEC")
         utilization_samples: list[float] = []
+        memory_bandwidth_samples: list[float] = []
         cer_samples: list[float] = []
         peak_memory_samples: list[int] = []
         with torch.inference_mode():
@@ -261,6 +287,8 @@ def main() -> int:
                     timings.append(processing_time)
                     if utilization_sampler.average is not None:
                         utilization_samples.append(utilization_sampler.average)
+                    if utilization_sampler.memory_bandwidth_average is not None:
+                        memory_bandwidth_samples.append(utilization_sampler.memory_bandwidth_average)
                 texts = [str(item.text if hasattr(item, "text") else item) for item in hypotheses]
                 if reference_text := " ".join(references).strip():
                     cer_samples.append(jiwer.cer(reference_text, " ".join(texts).strip()))
@@ -319,6 +347,8 @@ def main() -> int:
             "cer": median_metric(cer_samples) if reference_text else None,
             "peak_vram_bytes": int(statistics.median(peak_memory_samples)) if peak_memory_samples else None,
             "gpu_utilization_pct": gpu_utilization_pct,
+            "memory_bandwidth_utilization_pct": median_metric(memory_bandwidth_samples),
+            "queue_latency_sec": queue_latency_sec,
             "gpu_price_per_hour": gpu_price_per_hour,
             "cost_per_audio_hour": gpu_price_per_hour * rtf if gpu_price_per_hour is not None else None,
         }

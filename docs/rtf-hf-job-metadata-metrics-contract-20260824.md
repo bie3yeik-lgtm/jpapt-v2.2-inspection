@@ -29,6 +29,13 @@ HF Job / RunPod Pod 完了
 - HFの`cost_basis=hf_jobs_billed_starting_running_minutes`
 - RunPodの`cost_basis=runpod_billing_history`
 
+provider実行metricsには次の補助値も追加する。
+
+- `memory_bandwidth_utilization_pct`: `nvidia-smi`の`utilization.memory`の実行中平均。GPUメモリコントローラ利用率であり、実効GB/sではない。
+- `queue_latency_sec`: provider受付から実行可能状態までの時間。HFはJobの`scheduling_secs`、RunPodはPod作成開始からSSH readyまでを使用する。
+
+preprocessing、decode、first-responseは現行NeMoの一括`transcribe()`境界内にあり、現在の実装では個別計測しない。推測値をRTF metricsへ混在させない。
+
 HF Jobs は分単位の課金であるため、`billed_minutes = ceil(total_secs / 60)` とする。RunPodは公式billing historyの`amount`と`timeBilledMs`を使用する。`cost_per_audio_hour` は `job_cost_usd / (audio_duration_sec / 3600)` で、モデル推論単体のコストではなくJob全体の実行コストを音声時間へ換算した値である。RunPodのPod単価だけでなく、確定したbilling historyの実額を優先する。
 
 ## 不変性と受入れ条件

@@ -128,6 +128,9 @@ static_checks() {
   grep -F 'RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'runpod_billing_history' evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
   grep -F 'provider_job' evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
+  grep -F 'memory_bandwidth_utilization_pct' evaluation/schemas/rtf-service-metrics.schema.json docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
+  grep -F 'queue_latency_sec' evaluation/schemas/rtf-service-metrics.schema.json scripts/run-benchmark.sh docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
+  grep -F 'utilization.memory' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
   grep -F "inputs.cost_mode }}' == full-matrix" .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null

@@ -432,6 +432,7 @@ case "$PROVIDER" in
     pod_create_failed=0
     readiness_deadline=$(( $(date +%s) + RTF_RUNPOD_WAIT_TIMEOUT_MINUTES * 60 ))
     pod_ready=0
+    RTF_QUEUE_LATENCY_SEC=""
     runtime_ready_since=0
     readiness_error_code="RUNPOD_READINESS_TIMEOUT"
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
@@ -478,6 +479,7 @@ case "$PROVIDER" in
         echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text${ssh_info_diagnostic:+ diagnostic=$ssh_info_diagnostic}" >&2
         if [[ "$ssh_ready" -eq 1 ]]; then
           pod_ready=1
+          RTF_QUEUE_LATENCY_SEC="$(( $(date +%s) - create_started ))"
           break
         fi
         if (( $(date +%s) - runtime_ready_since >= RTF_RUNPOD_SSH_INFO_WAIT_MINUTES * 60 )); then
@@ -554,7 +556,7 @@ case "$PROVIDER" in
         RTF_DATASET_CONFIGURATION RTF_DATASET_SPLIT RTF_DATASET_SEED \
         RTF_DATASET_COUNT_MIN RTF_DATASET_COUNT_MAX RTF_DATASET_TARGET_TOTAL_SEC \
         RTF_DATASET_MAX_DURATION_SEC RTF_INSPECTION_PROFILE RTF_PROFILE_ID \
-        RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER \
+        RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER RTF_QUEUE_LATENCY_SEC \
         RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_FIXTURE_FILENAME \
         RTF_FIXTURE_MANIFEST_SHA256 RTF_CUDA_DIAGNOSTICS RTF_RESULT_REPO_ID \
         RTF_RESULT_PATH RTF_IMAGE_DIGEST RTF_GPU_PRICE_PER_HOUR; do
