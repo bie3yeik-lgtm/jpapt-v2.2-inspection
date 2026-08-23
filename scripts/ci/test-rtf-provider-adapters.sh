@@ -425,6 +425,18 @@ live_checks() {
   else
     ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
   fi
+  receipt_path="${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+  [[ -s "$receipt_path" ]] || fail "live $PROVIDER provider produced no result receipt"
+  jq -e '.status == "completed"' "$receipt_path" >/dev/null || {
+    error_code="$(jq -r '.error_code // "PROVIDER_EXECUTION_FAILED"' "$receipt_path")"
+    fail "live $PROVIDER provider produced a non-completed receipt: $error_code"
+  }
+  jq -e '
+    (.metrics_sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")) and
+    (.result_sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")) and
+    (.metrics_uri | type == "string" and length > 0) and
+    (.result_uri | type == "string" and length > 0)
+  ' "$receipt_path" >/dev/null || fail "live $PROVIDER provider completed without metrics/result identity"
   pass "live $PROVIDER provider verification completed; external resources were used"
 }
 
