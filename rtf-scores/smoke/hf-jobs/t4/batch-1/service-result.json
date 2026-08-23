@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32617045634-b1",
+  "run_id": "rtf-hf-32630552673-b1",
   "service_id": "hf-jobs",
   "status": "completed",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a8a72a373304676c8ec9788",
-  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/0556991b56c5f6e9753402ab2265232ce2577ae1/results/rtf-hf-32617045634-b1/metrics.json",
-  "result_sha256": "f2adf4c83f12ae133806d39622345045284ae326686420899f80c3084c5faf03",
-  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/0556991b56c5f6e9753402ab2265232ce2577ae1/results/rtf-hf-32617045634-b1/metrics.json",
+  "job_id": "6a8abb947c5c7dd379235e23",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/7b5fbee33d69fbe015c134666b59ee0881da75c1/results/rtf-hf-32630552673-b1/metrics.json",
+  "result_sha256": "4090c39c8217fced8fb4a02d65265640f37e1a199409d68092fb56636f9af924",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/7b5fbee33d69fbe015c134666b59ee0881da75c1/results/rtf-hf-32630552673-b1/metrics.json",
   "metrics_path": "results/rtf-service/metrics.json",
-  "metrics_sha256": "f2adf4c83f12ae133806d39622345045284ae326686420899f80c3084c5faf03",
+  "metrics_sha256": "4090c39c8217fced8fb4a02d65265640f37e1a199409d68092fb56636f9af924",
   "error_code": null,
   "error_message": null
 }
