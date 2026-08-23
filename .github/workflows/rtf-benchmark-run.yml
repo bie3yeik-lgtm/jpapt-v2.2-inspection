@@ -233,6 +233,26 @@ jobs:
           export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
           export RTF_IMAGE_DIGEST="${RTF_IMAGE_DIGEST##*@}"
+          pointer_fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          receipt_fixture_repo_id="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          receipt_fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          receipt_image_digest="$(jq -er '.image | split("@")[1]' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          [[ "$pointer_fixture_revision" == "$RTF_FIXTURE_REVISION" ]] || {
+            echo 'RTF_FIXTURE_POINTER_MISMATCH: fixture pointer and receipt revisions differ' >&2
+            exit 2
+          }
+          [[ "$receipt_fixture_repo_id" == "$RTF_FIXTURE_REPO_ID" ]] || {
+            echo 'RTF_FIXTURE_REPOSITORY_MISMATCH: fixture pointer and receipt repositories differ' >&2
+            exit 2
+          }
+          [[ "$receipt_fixture_revision" == "$RTF_FIXTURE_REVISION" ]] || {
+            echo 'RTF_FIXTURE_RECEIPT_REVISION_MISMATCH: receipt revision does not match pointer' >&2
+            exit 2
+          }
+          [[ "$receipt_image_digest" == "$RTF_IMAGE_DIGEST" ]] || {
+            echo "RTF_FIXTURE_IMAGE_MISMATCH: fixture was resolved for $receipt_image_digest, but benchmark image is $RTF_IMAGE_DIGEST" >&2
+            exit 2
+          }
           export RTF_HF_TIMEOUT=2h
           export RTF_RUNPOD_MAX_HOURS=2
           export RTF_RUNPOD_WAIT_TIMEOUT_MINUTES=30

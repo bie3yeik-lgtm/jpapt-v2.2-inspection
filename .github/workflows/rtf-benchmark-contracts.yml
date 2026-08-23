@@ -172,6 +172,16 @@ jobs:
               raise SystemExit("RunPod readiness timeout must be configurable")
           if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
+          workflow = Path(".github/workflows/rtf-benchmark-run.yml").read_text()
+          for required in (
+              "RTF_FIXTURE_POINTER_MISMATCH",
+              "RTF_FIXTURE_REPOSITORY_MISMATCH",
+              "RTF_FIXTURE_RECEIPT_REVISION_MISMATCH",
+              "RTF_FIXTURE_IMAGE_MISMATCH",
+              "receipt_image_digest",
+          ):
+              if required not in workflow:
+                  raise SystemExit(f"RTF Benchmark Run is missing fixture identity gate: {required}")
           if 'phase=pod_create' not in script:
               raise SystemExit("RunPod Pod creation must emit bounded progress")
           if 'runpodctl pod list --all --name "$RTF_RUN_ID"' not in script:
