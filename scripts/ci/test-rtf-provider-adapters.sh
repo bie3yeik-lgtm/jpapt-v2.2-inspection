@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh scripts/ci/rtf-runpod-safe-wrapper.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
+  bash -n scripts/run-benchmark.sh scripts/ci/rtf-runpod-safe-wrapper.sh scripts/ci/runpod-register-ghcr-auth.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -98,6 +98,8 @@ static_checks() {
   grep -F 'RUNPOD_SSH_INFO_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'ssh_info_diagnostic' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_LOCAL_PROVIDER_DIAGNOSTICS' scripts/run-benchmark.sh >/dev/null
+  grep -F -- '--confirm-new-token' scripts/ci/runpod-register-ghcr-auth.sh >/dev/null
+  grep -F 'unset CR_PAT' scripts/ci/runpod-register-ghcr-auth.sh >/dev/null
   grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
