@@ -37,6 +37,7 @@ Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使う�
 | `HF_TOKEN` | HF live | HF Job作成とprivate Hub参照 | `.env`に追加済み。値は表示・commitしない |
 | `RUNPOD_TOKEN` | RunPod live | runpodctl API/SSH key同期 | Actionsの正本名。`RUNPOD_API`はローカルaliasとして補完 |
 | `RUNPOD_API` | ローカル互換 | `RUNPOD_TOKEN`未設定時の入力alias | 追加済み。canonical名への移行を推奨 |
+| `RUNPOD_REGISTRY_AUTH_ID` | RunPod live | private GHCR image pull用のRunPod registry auth ID | RunPod accountにGHCR credentialを登録した後に設定。値が無い実行は停止 |
 | `RTF_IMAGE_DIGEST` | live launch | GHCR imageのimmutable digest | 未設定ならpreflightは警告、launchは停止 |
 | model/dataset/fixture revision | live launch | 再現可能なidentity固定 | `.env.example`のplaceholderを実値へ置換 |
 | `RTF_FIXTURE_MANIFEST_SHA256` | live launch | fixtureとrunの一致検証 | 未設定なら既存workflowの解決結果を使う場合を除き停止 |
@@ -44,9 +45,12 @@ Actionsの正本名は`RUNPOD_TOKEN`です。`.env`でも同じ名前を使う�
 | Docker/driver/GPU | docker/live execution | image buildまたは実推論 | static/mockでは不要。外部実験前に別途確認 |
 
 したがって、現時点で追加の秘密値は不要です。実providerを安全に起動する前に必要なのは、
-`RUNPOD_API`を`RUNPOD_TOKEN`へ整理すること、`RTF_IMAGE_DIGEST`とrevision群を実値で埋めること、
+`RUNPOD_API`を`RUNPOD_TOKEN`へ整理すること、`RUNPOD_REGISTRY_AUTH_ID`をRunPodへ登録した
+GHCR credentialのIDで埋めること、`RTF_IMAGE_DIGEST`とrevision群を実値で埋めること、
 およびWSLのCLI存在・versionを確認することです。`.env`は`.gitignore`対象であり、GitHub Actions
-へは渡さず、ActionsではRepository Secret（`HF_TOKEN`/`RUNPOD_TOKEN`）を使用します。
+へは渡さず、ActionsではRepository Secret（`HF_TOKEN`/`RUNPOD_TOKEN`/
+`RUNPOD_REGISTRY_AUTH_ID`）を使用します。registry authのpasswordはRunPod側へ登録する
+だけで、repository、workflow、image、receiptへコピーしません。
 
 現環境の注意点:
 
@@ -77,6 +81,7 @@ imageをpullするときだけ必要になる。
 | model identity | `RTF_MODEL_ID`, `RTF_MODEL_REVISION` | modelと40桁revisionの固定 |
 | dataset identity | `RTF_DATASET_ID`, `RTF_DATASET_REVISION` | datasetと40桁revisionの固定 |
 | fixture identity | `RTF_FIXTURE_REPO_ID`, `RTF_FIXTURE_REVISION`, `RTF_FIXTURE_MANIFEST_SHA256` | Resolverが発行したJSONLとmanifest SHAの固定 |
+| RunPod image pull | `RUNPOD_REGISTRY_AUTH_ID` | private GHCR packageをPod runtimeがpullするためのcredential参照 |
 | run identity | `RTF_RUN_ID`, `RTF_GPU` | provider job/pod名とPhase 1 matrixの選択 |
 | local image access | `GHCR_USERNAME`相当のlogin名、`CR_PAT`、Docker login済み状態 | private GHCRをpullする場合のみ |
 
@@ -95,7 +100,7 @@ bash scripts/ci/rtf-local-env.sh --env-file .env -- \
   bash scripts/ci/test-rtf-provider-adapters.sh --mode mock
 ```
 
-このwrapperは`HF_TOKEN`、`RUNPOD_TOKEN`、`RUNPOD_API`、`HF_FLAVOR`、
+このwrapperは`HF_TOKEN`、`RUNPOD_TOKEN`、`RUNPOD_API`、`RUNPOD_REGISTRY_AUTH_ID`、`HF_FLAVOR`、
 `RUNPOD_GPU_ID`、`RTF_*`だけを子プロセスへ渡し、`GITHUB_PAT_TOKEN`、
 `GITHUB_CLASSIC_TOKEN`、`CR_PAT`などのGitHub/GHCR用値は渡さない。実providerを
 起動する`--mode live`は、wrapperを使っても外部状態と課金が発生するため、

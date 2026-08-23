@@ -121,6 +121,9 @@ if [[ "$REQUIRE_LAUNCH_INPUTS" -eq 1 ]]; then
   require_key RTF_GPU
   [[ "${RTF_IMAGE_DIGEST:-}" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || \
     failures+=("RTF_IMAGE_DIGEST must be sha256:<64 hex> for launch")
+  if [[ "$PROVIDER" == runpod || "$PROVIDER" == all ]] && [[ "${RTF_RUNPOD_REQUIRE_REGISTRY_AUTH:-0}" == 1 ]]; then
+    require_key RUNPOD_REGISTRY_AUTH_ID
+  fi
 fi
 
 echo "RTF local preflight: provider=$PROVIDER launch_inputs=$REQUIRE_LAUNCH_INPUTS env_file=$ENV_FILE"
