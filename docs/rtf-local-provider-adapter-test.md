@@ -130,6 +130,37 @@ bash scripts/ci/test-rtf-provider-adapters.sh \
 `--mode live`はHF JobまたはRunPod Podを作成し、課金・外部状態変更を発生させる。
 `--allow-external`がない場合は実行しない。RunPodでは`RUNPOD_TOKEN`も必要である。
 
+ローカルRunPod live試験では、次の外側wrapperを使用する。inner adapterのcleanupに加え、
+WSL/terminal interruption時に子processを停止し、`RTF_RUN_ID`と完全一致するPodだけを
+削除する。
+
+```bash
+bash scripts/ci/rtf-runpod-safe-wrapper.sh \
+  --provider runpod \
+  --image ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:<64-hex-digest>
+```
+
+wrapperは`RTF_RUN_ID=rtf-...-b1|b8|b32`を要求し、任意のPod名やprefixによる削除は
+許可しない。GitHub Actionsではworkflowの独立したcleanup stepも引き続き実行する。
+
+## 2026-08-23 継続監査
+
+`.env`の値そのものを表示せず、allowlist wrapper経由で次を確認した。
+
+- `rtf-local-preflight.sh --provider all`: PASS（Job/Pod作成なし）
+- `hf auth whoami`: PASS（認証確認のみ）
+- `runpodctl doctor --output json`: PASS（Pod作成・課金なし）
+- `--require-launch-inputs`: FAIL（意図したfail-closed）
+
+launch inputのFAIL項目は、`RTF_IMAGE_DIGEST`、`RTF_RUN_ID`、model/dataset/fixtureの
+各immutable revision、`RTF_FIXTURE_MANIFEST_SHA256`、`RTF_GPU`である。これはtoken不足
+ではなく、どのimage・model・dataset・fixtureを実行するかを固定する値が`.env`に未設定
+という意味である。これらを推測値やfloating値で補完してはいけない。
+
+この監査ではHF JobもRunPod Podも作成していない。RunPodについては別途、残高不足により
+Pod作成前に停止したguarded試行があり、現在のadapterはそれを
+`RUNPOD_ACCOUNT_BALANCE_TOO_LOW`として記録する。残高が補充されるまで再試行しない。
+
 ## 現在のチェック方針
 
 タスク解消を優先するため、通常のローカルチェックでは`static`と`mock`だけを実行する。
