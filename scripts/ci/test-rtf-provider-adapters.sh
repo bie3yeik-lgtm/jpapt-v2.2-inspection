@@ -76,8 +76,10 @@ static_checks() {
   grep -F 'python -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
+  ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
+  grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
   grep -F 'UserKnownHostsFile=/dev/null' scripts/run-benchmark.sh >/dev/null

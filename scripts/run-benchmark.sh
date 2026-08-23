@@ -248,25 +248,11 @@ case "$PROVIDER" in
       exit 2
     }
     echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
-    env_json="$(jq -cn \
-      --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
-      --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
-      --arg content_output "$RTF_CONTENT_OUTPUT" \
-      --arg model_revision "$RTF_MODEL_REVISION" --arg dataset_id "$RTF_DATASET_ID" \
-      --arg dataset_revision "$RTF_DATASET_REVISION" --arg gpu "$RTF_GPU" \
-      --arg batch "$RTF_BATCH_SIZE" --arg precision "$RTF_PRECISION" \
-      --arg decoder "$RTF_DECODER" --arg fixture_repo "$RTF_FIXTURE_REPO_ID" \
-      --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg hf_token "${HF_TOKEN:-}" \
-      --arg result_repo "$RTF_RESULT_REPO_ID" --arg result_path "$RTF_RESULT_PATH" \
-      --arg image_digest "$RTF_IMAGE_DIGEST" \
-      --arg profile "$RTF_INSPECTION_PROFILE" --arg profile_id "$RTF_PROFILE_ID" \
-      --arg config "$RTF_DATASET_CONFIGURATION" --arg split "$RTF_DATASET_SPLIT" --arg seed "$RTF_DATASET_SEED" \
-      --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
-      --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
-      --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
-      --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" \
-      --arg error_log "/output/benchmark-error.log" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+    # Do not put HF_TOKEN or benchmark configuration into RunPod Pod
+    # metadata. Provider-side env handling has varied across runpodctl
+    # versions, and Pod metadata is visible to provider control-plane reads.
+    # The authoritative payload is transferred over the already authenticated
+    # SSH channel after readiness and written root-only on the Pod.
     # `runpodctl pod create` can block while the provider schedules a Pod or
     # pulls the image, without emitting output. Keep that phase bounded and
     # observable; the EXIT trap also removes an orphan Pod found by name if
@@ -281,7 +267,7 @@ case "$PROVIDER" in
     pod_create_failed=1
     set +e
     runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --ssh \
+      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh \
       --ports 22/tcp --terminate-after "$terminate_after" \
       --output json >"$create_log" 2>&1 &
     pod_create_pid=$!
@@ -430,6 +416,26 @@ case "$PROVIDER" in
       printf -v remote_command '%q ' "$@"
       eval "$ssh_command $remote_command"
     }
+    write_runpod_environment() {
+      local key value
+      for key in \
+        RTF_RUN_ID RTF_MANIFEST RTF_OUTPUT RTF_CONTENT_OUTPUT RTF_ERROR_LOG \
+        RTF_MODEL_ID RTF_MODEL_REVISION RTF_DATASET_ID RTF_DATASET_REVISION \
+        RTF_DATASET_CONFIGURATION RTF_DATASET_SPLIT RTF_DATASET_SEED \
+        RTF_DATASET_COUNT_MIN RTF_DATASET_COUNT_MAX RTF_DATASET_TARGET_TOTAL_SEC \
+        RTF_DATASET_MAX_DURATION_SEC RTF_INSPECTION_PROFILE RTF_PROFILE_ID \
+        RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER \
+        RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_FIXTURE_FILENAME \
+        RTF_FIXTURE_MANIFEST_SHA256 RTF_CUDA_DIAGNOSTICS RTF_RESULT_REPO_ID \
+        RTF_RESULT_PATH RTF_IMAGE_DIGEST; do
+        value="${!key:-}"
+        printf '%s=%q\n' "$key" "$value"
+      done
+      printf 'RTF_PROVIDER=%q\n' cuda
+      printf 'RTF_SERVICE_ID=%q\n' runpod-pod
+      printf 'HF_TOKEN=%q\n' "${HF_TOKEN:-}"
+    }
+    write_runpod_environment | runpod_ssh bash -lc 'umask 077; cat > /run/rtf-benchmark.env; chmod 600 /run/rtf-benchmark.env'
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
