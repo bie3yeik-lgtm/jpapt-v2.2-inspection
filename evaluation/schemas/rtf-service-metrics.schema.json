@@ -35,6 +35,8 @@
     "cer": {"type": ["number", "null"], "minimum": 0},
     "peak_vram_bytes": {"type": ["integer", "null"], "minimum": 0},
     "gpu_utilization_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "memory_bandwidth_utilization_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "queue_latency_sec": {"type": ["number", "null"], "minimum": 0},
     "gpu_price_per_hour": {"type": ["number", "null"], "minimum": 0},
     "cost_per_audio_hour": {"type": ["number", "null"], "minimum": 0},
     "provider_job": {

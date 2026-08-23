@@ -33,6 +33,16 @@ def _job_field(job: Any, name: str) -> Any:
     return value
 
 
+def _duration_field(job: Any, name: str) -> float | None:
+    durations = _job_field(job, "durations")
+    value = getattr(durations, name, None) if durations is not None else None
+    if value is None and isinstance(durations, dict):
+        value = durations.get(name)
+    if value is None:
+        return None
+    return _positive_number(value, name)
+
+
 def build_billing_metadata(job: Any, hardware: list[Any], *, job_id: str, namespace: str) -> dict[str, Any]:
     flavor = _job_field(job, "flavor")
     if not isinstance(flavor, str) or not flavor:
@@ -116,6 +126,9 @@ def main() -> int:
     payload = json.loads(original)
     audio_hours = _positive_number(payload.get("audio_duration_sec"), "audio_duration_sec") / 3600.0
     payload["provider_job"] = metadata
+    scheduling_seconds = _duration_field(job, "scheduling_secs")
+    if scheduling_seconds is not None:
+        payload["queue_latency_sec"] = scheduling_seconds
     payload["gpu_price_per_hour"] = metadata["unit_cost_usd_per_minute"] * 60.0
     payload["cost_per_audio_hour"] = metadata["job_cost_usd"] / audio_hours
     enriched = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
