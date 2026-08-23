@@ -268,3 +268,15 @@ run `32610773321`では、RunPod GPU inventory上でRTX 4090が
 `Something went wrong`を返した。Pod作成前の`PROVIDER_RUNPOD_POD_CREATE_FAILED`
 としてreceipt化され、guarded batch 8/32は起動されなかった。これはGPU供給不足
 とは異なるprovider API側の一時的失敗であり、metrics/resultは未取得である。
+
+2026-08-23のローカルguarded RunPod試験では、RTX 4090 Podの作成と`running`化、
+SSH commandの発行までは成功したが、SSH probeが`Permission denied
+(publickey,password)`で失敗した。Podの`ssh_key` fingerprintとローカル
+`runpodctl` key fingerprintは一致していたため、鍵の在庫やAPI認証ではなく、独自
+ENTRYPOINTがRunPod標準startupのauthorized key materializationを置き換えたことが
+原因と判断した。Podは直ちにdeleteし、metrics/resultは未取得である。
+
+修正として、keepalive起動時にRunPodの`PUBLIC_KEY`を`/root/.ssh/authorized_keys`
+へ反映し、`PubkeyAuthentication`、`PermitRootLogin prohibit-password`を明示した。
+今後はこのimage契約をlocal Dockerで確認した後、同じRTX 4090・batch=1で一度だけ
+再試験する。

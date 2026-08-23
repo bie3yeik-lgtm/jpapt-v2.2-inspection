@@ -28,7 +28,22 @@ if {
     exit 1
   }
   mkdir -p /run/sshd
+  mkdir -p /root/.ssh
+  chmod 700 /root/.ssh
+  # RunPod injects the account's public keys through PUBLIC_KEY. The base
+  # RunPod image normally materializes this file in its own startup script;
+  # this image owns the ENTRYPOINT, so reproduce only that narrow contract.
+  if [[ -n "${PUBLIC_KEY:-}" ]]; then
+    printf '%s\n' "$PUBLIC_KEY" > /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+  fi
+  cat > /etc/ssh/sshd_config.d/99-rtf-runpod.conf <<'EOF'
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+AuthorizedKeysFile .ssh/authorized_keys
+EOF
   ssh-keygen -A >/dev/null 2>&1 || true
+  /usr/sbin/sshd -t
   /usr/sbin/sshd
   exec sleep infinity
 fi
