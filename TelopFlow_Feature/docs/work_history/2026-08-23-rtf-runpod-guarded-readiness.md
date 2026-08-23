@@ -67,6 +67,11 @@ SSH endpoint publication/readiness. The next fix must investigate RunPod
 Secure Cloud port/SSH exposure and the `runpodctl ssh info` contract. Do not
 retry the benchmark until that boundary is understood.
 
+The non-creating account check `runpodctl ssh list-keys --output json` also
+completed successfully after the attempts, so the evidence does not indicate
+that the local account lacked an SSH key. The unresolved boundary is the
+per-Pod SSH endpoint publication, not local key discovery.
+
 The adapter now treats runtime availability and SSH-info availability as
 separate states. Once the Pod reports `running`, the adapter allows five
 minutes for `runpodctl ssh info` and then emits
