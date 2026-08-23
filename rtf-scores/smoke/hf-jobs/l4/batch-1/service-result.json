@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "rtf-hf-32651086081-b1",
+  "service_id": "hf-jobs",
+  "status": "completed",
+  "provider": "cuda",
+  "environment": "linux",
+  "job_id": "6a8b1d7f7c5c7dd3792362e8",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/16ab182788b1c97c23327aba50692edebd02b2f7/results/rtf-hf-32651086081-b1/metrics.json",
+  "result_sha256": "823befe64853b3351a9042492d5a161a7a68fd087756f214e4b932189c17c0d6",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/16ab182788b1c97c23327aba50692edebd02b2f7/results/rtf-hf-32651086081-b1/metrics.json",
+  "metrics_path": "results/rtf-service/metrics.json",
+  "metrics_sha256": "823befe64853b3351a9042492d5a161a7a68fd087756f214e4b932189c17c0d6",
+  "error_code": null,
+  "error_message": null
+}
