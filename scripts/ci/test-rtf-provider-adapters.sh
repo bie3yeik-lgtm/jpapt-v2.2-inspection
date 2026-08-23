@@ -97,6 +97,7 @@ static_checks() {
   grep -F 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_SSH_INFO_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'ssh_info_diagnostic' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_LOCAL_PROVIDER_DIAGNOSTICS' scripts/run-benchmark.sh >/dev/null
   grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
@@ -252,6 +253,7 @@ mock_case() {
   export RTF_LOCAL_CONTENT="$case_dir/content.json"
   export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
   export RTF_LOCAL_OUTPUT="$case_dir/metrics.json"
+  export RTF_LOCAL_PROVIDER_DIAGNOSTICS="$case_dir/provider-diagnostics.json"
   export RTF_HF_LOG="$case_dir/hf-job.log"
   export RTF_FAKE_SSH_ENV_FILE="$case_dir/runpod.env"
   export RTF_RUNPOD_POLL_SECONDS=1
@@ -290,6 +292,9 @@ mock_case() {
     grep -F 'RTF_MODEL_ID=nvidia/parakeet-tdt_ctc-0.6b-ja' "$case_dir/runpod.env" >/dev/null ||
       fail "RunPod mock environment omitted RTF_MODEL_ID"
     pass "RunPod mock environment transfer includes benchmark identity"
+    jq -e '.schema_version == 1 and .phase == "benchmark_execution" and .pod_id == "runpod-mock-pod"' \
+      "$case_dir/provider-diagnostics.json" >/dev/null || fail "RunPod provider diagnostics were not collected"
+    pass "RunPod mock provider diagnostics collection"
   fi
   unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
   rm -rf "$fake_root"

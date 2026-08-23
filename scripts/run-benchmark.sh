@@ -69,6 +69,7 @@ fi
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
+: "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
 
 decorate_runpod_ssh_command() {
   local command="$1"
@@ -202,6 +203,22 @@ case "$PROVIDER" in
         delete_named_pods
       fi
     }
+    write_runpod_diagnostics() {
+      local phase="$1"
+      local error_code="${2:-}"
+      local error_message="${3:-}"
+      [[ -n "$RTF_LOCAL_PROVIDER_DIAGNOSTICS" ]] || return 0
+      mkdir -p "$(dirname "$RTF_LOCAL_PROVIDER_DIAGNOSTICS")"
+      jq -n \
+        --arg schema_version 1 --arg run_id "$RTF_RUN_ID" --arg pod_id "${pod_id:-}" \
+        --arg phase "$phase" --arg error_code "$error_code" --arg error_message "$error_message" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg gpu "$RTF_GPU" \
+        --arg pod_get "${pod_state_json:-}" --arg pod_list "${pod_list_state_json:-}" \
+        --arg ssh_info "${ssh_info_json:-}" --arg ssh_diagnostic "${ssh_info_diagnostic:-}" \
+        --arg observed_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        '{schema_version:($schema_version|tonumber),run_id:$run_id,pod_id:($pod_id|if length == 0 then null else . end),phase:$phase,error_code:($error_code|if length == 0 then null else . end),error_message:($error_message|if length == 0 then null else . end),image_digest:$image_digest,gpu:$gpu,observed_at:$observed_at,pod_get_raw:($pod_get|if length == 0 then null else . end),pod_list_raw:($pod_list|if length == 0 then null else . end),ssh_info_raw:($ssh_info|if length == 0 then null else . end),ssh_diagnostic:($ssh_diagnostic|if length == 0 then null else . end)}' \
+        > "$RTF_LOCAL_PROVIDER_DIAGNOSTICS"
+    }
     # GitHub cancellation can signal the shell while `pod create` is still
     # waiting for the provider. Handle signals explicitly; an EXIT-only trap
     # is not sufficient to prevent a rented Pod from surviving cancellation.
@@ -330,6 +347,11 @@ case "$PROVIDER" in
       elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then
         failure_code="RUNPOD_TERMINATE_AFTER_INVALID"
       fi
+      pod_state_json=""
+      pod_list_state_json="$pod_json"
+      ssh_info_json=""
+      ssh_info_diagnostic=""
+      write_runpod_diagnostics pod_create "$failure_code" "RunPod Pod creation failed before remote execution"
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
@@ -372,6 +394,7 @@ case "$PROVIDER" in
       fi
       [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
+      write_runpod_diagnostics readiness_poll "" ""
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
         if [[ "$runtime_ready_since" -eq 0 ]]; then
@@ -416,6 +439,7 @@ case "$PROVIDER" in
       if [[ -n "${ssh_info_diagnostic:-}" ]]; then
         error_message="$error_message: $ssh_info_diagnostic"
       fi
+      write_runpod_diagnostics readiness_failed "$failure_code" "$error_message"
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
         --arg error_message "$error_message" \
@@ -474,6 +498,7 @@ case "$PROVIDER" in
     } | runpod_ssh bash -s
     remote_status=$?
     set -e
+    write_runpod_diagnostics benchmark_execution "" ""
     runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
     runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}" || true
     runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
