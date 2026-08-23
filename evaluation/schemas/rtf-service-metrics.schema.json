@@ -36,6 +36,42 @@
     "peak_vram_bytes": {"type": ["integer", "null"], "minimum": 0},
     "gpu_utilization_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
     "gpu_price_per_hour": {"type": ["number", "null"], "minimum": 0},
-    "cost_per_audio_hour": {"type": ["number", "null"], "minimum": 0}
+    "cost_per_audio_hour": {"type": ["number", "null"], "minimum": 0},
+    "provider_job": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "job_id", "url", "namespace", "flavor", "billing_duration_sec", "billed_minutes", "unit_cost_usd_per_minute", "job_cost_usd", "cost_basis"],
+          "properties": {
+            "provider": {"const": "hf-jobs"},
+            "job_id": {"type": "string", "minLength": 1},
+            "url": {"type": "string", "format": "uri"},
+            "namespace": {"type": "string", "minLength": 1},
+            "flavor": {"type": "string", "minLength": 1},
+            "billing_duration_sec": {"type": "number", "exclusiveMinimum": 0},
+            "billed_minutes": {"type": "integer", "minimum": 1},
+            "unit_cost_usd_per_minute": {"type": "number", "exclusiveMinimum": 0},
+            "job_cost_usd": {"type": "number", "exclusiveMinimum": 0},
+            "cost_basis": {"const": "hf_jobs_billed_starting_running_minutes"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "job_id", "url", "gpu_type_id", "billing_duration_sec", "billed_seconds", "job_cost_usd", "cost_basis"],
+          "properties": {
+            "provider": {"const": "runpod-pod"},
+            "job_id": {"type": "string", "minLength": 1},
+            "url": {"type": "string", "format": "uri"},
+            "gpu_type_id": {"type": "string", "minLength": 1},
+            "billing_duration_sec": {"type": "number", "exclusiveMinimum": 0},
+            "billed_seconds": {"type": "integer", "minimum": 1},
+            "job_cost_usd": {"type": "number", "exclusiveMinimum": 0},
+            "cost_basis": {"const": "runpod_billing_history"}
+          }
+        }
+      ]
+    }
   }
 }

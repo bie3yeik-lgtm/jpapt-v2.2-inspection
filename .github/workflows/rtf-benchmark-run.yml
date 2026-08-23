@@ -66,6 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_JOB_NAMESPACE: gawohok7
           MODEL_ID: ${{ inputs.model_id }}
         run: |
           set -euo pipefail
@@ -200,6 +201,8 @@ jobs:
         id: execute
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+          HF_JOB_NAMESPACE: gawohok7
           RUNPOD_REGISTRY_AUTH_ID: ${{ secrets.RUNPOD_REGISTRY_AUTH_ID }}
           RTF_RUNPOD_REQUIRE_REGISTRY_AUTH: '1'
           RTF_MODEL_ID: ${{ inputs.model_id }}

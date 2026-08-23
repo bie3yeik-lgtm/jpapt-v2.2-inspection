@@ -176,6 +176,17 @@ case "$PROVIDER" in
       exit 1
     fi
     printf '%s\n' "${receipt_line#RTF_RESULT_RECEIPT=}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    if jq -e '.status == "completed"' "${RTF_LOCAL_RECEIPT:-result-receipt.json}" >/dev/null 2>&1; then
+      metadata_script="scripts/ci/enrich_hf_job_metrics.py"
+      [[ -f "$metadata_script" ]] || { echo "HF Job metadata collector is missing: $metadata_script" >&2; exit 2; }
+      if ! python "$metadata_script" --receipt "${RTF_LOCAL_RECEIPT:-result-receipt.json}" \
+        --namespace "${HF_JOB_NAMESPACE:-gawohok7}"; then
+        jq '.status = "blocked" | .error_code = "HF_JOB_METADATA_UNAVAILABLE" | .error_message = "HF Job billing metadata could not be collected; metrics were not accepted for ranking"' \
+          "${RTF_LOCAL_RECEIPT:-result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}.tmp"
+        mv "${RTF_LOCAL_RECEIPT:-result-receipt.json}.tmp" "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+        exit 1
+      fi
+    fi
     [[ "$hf_status" -eq 0 ]] || exit "$hf_status"
     ;;
   runpod)
@@ -627,5 +638,15 @@ case "$PROVIDER" in
     # Delete this Pod as soon as its metrics and receipt have been copied.
     # The EXIT trap remains as a failure-path safety net.
     delete_pod
+    if [[ "$receipt_completed" == true ]]; then
+      metadata_script="scripts/ci/enrich_runpod_job_metrics.py"
+      [[ -f "$metadata_script" ]] || { echo "RunPod billing metadata collector is missing: $metadata_script" >&2; exit 2; }
+      if ! python "$metadata_script" --receipt "${RTF_LOCAL_RECEIPT:-result-receipt.json}"; then
+        jq '.status = "blocked" | .error_code = "RUNPOD_BILLING_METADATA_UNAVAILABLE" | .error_message = "RunPod billing history could not be collected; metrics were not accepted for ranking"' \
+          "${RTF_LOCAL_RECEIPT:-result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}.tmp"
+        mv "${RTF_LOCAL_RECEIPT:-result-receipt.json}.tmp" "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+        exit 1
+      fi
+    fi
     ;;
 esac

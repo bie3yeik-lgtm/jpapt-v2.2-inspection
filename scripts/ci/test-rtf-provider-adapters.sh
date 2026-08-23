@@ -121,6 +121,13 @@ static_checks() {
   grep -F 'for _ in range(args.batch_size)' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
   grep -F 'batch_size=1,' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
   grep -F 'statistics.median' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py >/dev/null
+  grep -F 'enrich_hf_job_metrics.py' scripts/run-benchmark.sh >/dev/null
+  grep -F 'HF_JOB_METADATA_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
+  grep -F 'enrich_runpod_job_metrics.py' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_BILLING_METADATA_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'runpod_billing_history' evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
+  grep -F 'provider_job' evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
   grep -F "inputs.cost_mode }}' == full-matrix" .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null
@@ -133,6 +140,8 @@ static_checks() {
 write_fake_cli() {
   local fake_bin="$1"
   mkdir -p "$fake_bin"
+  local real_python
+  real_python="$(command -v python || command -v python3)"
   cat > "$fake_bin/hf" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -227,6 +236,16 @@ case " $* " in
 esac
 EOF
   chmod +x "$fake_bin/hf" "$fake_bin/runpodctl" "$fake_bin/ssh"
+  cat > "$fake_bin/python" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == scripts/ci/enrich_hf_job_metrics.py || "\${1:-}" == scripts/ci/enrich_runpod_job_metrics.py ]]; then
+  echo '{"job_id":"hf-mock-job","flavor":"t4-small","billed_minutes":1}'
+  exit 0
+fi
+exec "$real_python" "\$@"
+EOF
+  chmod +x "$fake_bin/python"
 }
 
 assert_result_files() {
