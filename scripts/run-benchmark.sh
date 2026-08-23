@@ -503,6 +503,27 @@ case "$PROVIDER" in
         > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
       exit 1
     fi
+    # RunPod exposes the rented GPU price on `pod get` as costPerHr. Capture
+    # it from the provider response and pass it to the container; a missing
+    # price must never become a completed result with a null cost metric.
+    RTF_GPU_PRICE_PER_HOUR="$(jq -er '(.adjustedCostPerHr // .adjusted_cost_per_hr // .costPerHr // .cost_per_hr) | if type == "number" then . elif type == "string" then tonumber else error end | select(isfinite and . >= 0)' <<<"$pod_state_json" 2>/dev/null || true)"
+    if [[ -z "$RTF_GPU_PRICE_PER_HOUR" ]]; then
+      failure_code="RUNPOD_GPU_PRICE_UNAVAILABLE"
+      error_message="RunPod Pod became SSH-ready but pod get did not expose costPerHr"
+      write_runpod_diagnostics metrics_preflight "$failure_code" "$error_message"
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
+        --arg error_message "$error_message" \
+        --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+        --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+        --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+        --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:$job_id,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+      exit 1
+    fi
     start_runpod_container_logs
     # runpodctl releases have emitted both camelCase and snake_case JSON keys.
     # Accept only a non-empty command from either spelling; do not synthesize
@@ -525,7 +546,7 @@ case "$PROVIDER" in
         RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER \
         RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_FIXTURE_FILENAME \
         RTF_FIXTURE_MANIFEST_SHA256 RTF_CUDA_DIAGNOSTICS RTF_RESULT_REPO_ID \
-        RTF_RESULT_PATH RTF_IMAGE_DIGEST; do
+        RTF_RESULT_PATH RTF_IMAGE_DIGEST RTF_GPU_PRICE_PER_HOUR; do
         value="${!key:-}"
         printf '%s=%q\n' "$key" "$value"
       done

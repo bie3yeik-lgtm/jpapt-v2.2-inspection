@@ -98,6 +98,8 @@ static_checks() {
   ! grep -F 'lough inspection' scripts/run-benchmark.sh .github/workflows/ghcr-build-publish.yml .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'RTF_NUM_WORKERS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
+  grep -F 'RTF_GPU_PRICE_PER_HOUR' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_GPU_PRICE_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' docker/rtf-benchmark/benchmark-runner/benchmark_runner/content_probe.py >/dev/null
@@ -162,9 +164,9 @@ set -euo pipefail
     printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
   pod:get)
     if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 || "${RTF_FAKE_RUNPOD_GET_NOT_READY:-0}" == 1 ]]; then
-      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null}' ;
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null,"costPerHr":"0.5"}' ;
     else
-      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{}}' ;
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{},"costPerHr":"0.5"}' ;
     fi ;;
   pod:delete) : ;;
   pod:list)
@@ -315,6 +317,8 @@ mock_case() {
       fail "RunPod mock environment omitted RTF_DATASET_ID"
     grep -F 'RTF_MODEL_ID=nvidia/parakeet-tdt_ctc-0.6b-ja' "$case_dir/runpod.env" >/dev/null ||
       fail "RunPod mock environment omitted RTF_MODEL_ID"
+    grep -F 'RTF_GPU_PRICE_PER_HOUR=0.5' "$case_dir/runpod.env" >/dev/null ||
+      fail "RunPod mock environment omitted provider GPU price"
     pass "RunPod mock environment transfer includes benchmark identity"
     jq -e '.schema_version == 1 and .phase == "benchmark_execution" and .pod_id == "runpod-mock-pod"' \
       "$case_dir/provider-diagnostics.json" >/dev/null || fail "RunPod provider diagnostics were not collected"
