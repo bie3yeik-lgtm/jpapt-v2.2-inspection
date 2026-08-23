@@ -252,3 +252,9 @@ content gateの`content_available=true`、およびbatch 1 receiptのmetrics/res
 URI生成である。batch 1が成立しない限り、batch 8/32は起動しない。
 このrunはSSH probe修正前にキャンセルし、cleanup成功とPod消失を確認したため、
 metrics/resultは取得していない。
+
+続くrun `32609020213`（L4）と`32610055661`（A5000）は、いずれも
+`RUNPOD_NO_INSTANCE_AVAILABLE`でPod作成前に停止した。run `32610319215`
+（RTX 3090）はimage verificationが長時間継続し、Pod作成前にcancelした。
+これらはprovider供給またはrunner image pullの失敗であり、SSH修正の否定証拠
+ではない。いずれもcleanup後に対象Podが存在しないことを確認している。
