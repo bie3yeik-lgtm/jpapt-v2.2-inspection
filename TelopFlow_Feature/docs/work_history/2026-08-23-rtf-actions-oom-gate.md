@@ -43,10 +43,20 @@ normalization still aggregated the old fixed `1,8,32` list and failed when the
 unattempted guarded files were absent. The normalization aggregation now uses
 the same selected `batch_sizes` array as execution and cleanup.
 
+The corrected workflow was rerun as Actions run `32617045634` on HF/t4. It
+completed successfully. Its uploaded artifact contains only
+`results/batches/batch-1/result-receipt.json`; the receipt is `completed` and
+has metrics SHA-256
+`f2adf4c83f12ae133806d39622345045284ae326686420899f80c3084c5faf03`.
+No batch-8 or batch-32 provider Job was created in this guarded run.
+
 ## Local evidence
 
-- `test-rtf-provider-adapters.sh --mode static`: expected to cover the guarded
-  batch-list contract after this change.
+- `test-rtf-provider-adapters.sh --mode static`: PASS.
+- `test-rtf-provider-adapters.sh --mode mock`: PASS.
+- YAML parse with PyYAML: PASS.
+- `git diff --check`: PASS.
+- Actions run `32617045634`: PASS, batch-1 only; no OOM.
 - No new provider Job or Pod was created for this workflow edit.
 
 ## Next safe unit
