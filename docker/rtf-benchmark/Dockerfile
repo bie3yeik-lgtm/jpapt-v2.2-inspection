@@ -30,7 +30,9 @@ COPY docker/rtf-benchmark/benchmark-runner /opt/rtf-benchmark/benchmark-runner
 COPY docker/rtf-benchmark/entrypoint.sh /opt/rtf-benchmark/entrypoint.sh
 RUN chmod +x /opt/rtf-benchmark/entrypoint.sh \
     && find /opt/rtf-benchmark/benchmark-runner -type f -name '*.py' -print0 \
-      | xargs -0 -r python -m py_compile
+      | xargs -0 -r python -m py_compile \
+    && PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
+      python -c 'import benchmark_runner; import benchmark_runner.load_fixture'
 
 ENV PYTHONPATH=/opt/rtf-benchmark/benchmark-runner
 ENTRYPOINT ["/opt/rtf-benchmark/entrypoint.sh"]
