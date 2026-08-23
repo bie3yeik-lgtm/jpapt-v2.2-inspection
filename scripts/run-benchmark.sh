@@ -365,6 +365,8 @@ case "$PROVIDER" in
         <<<"$pod_list_state_json" 2>/dev/null || true)"
       ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1 || true)"
       ssh_probe_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
+      ssh_info_diagnostic="$(jq -r '(.code // .errorCode // .error_code // .message // .error) // empty' \
+        <<<"$ssh_info_json" 2>/dev/null | tr '\r\n' '  ' | cut -c1-160 || true)"
       if [[ -n "$ssh_probe_command" ]]; then
         ssh_probe_command="$(decorate_runpod_ssh_command "$ssh_probe_command" "$RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS" || true)"
       fi
@@ -388,7 +390,7 @@ case "$PROVIDER" in
         ssh_ready_text=false
         [[ -n "$ssh_probe_command" ]] && ssh_command_present=true
         [[ "$ssh_ready" -eq 1 ]] && ssh_ready_text=true
-        echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text" >&2
+        echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text${ssh_info_diagnostic:+ diagnostic=$ssh_info_diagnostic}" >&2
         if [[ "$ssh_ready" -eq 1 ]]; then
           pod_ready=1
           break
@@ -410,9 +412,13 @@ case "$PROVIDER" in
         failure_code="RUNPOD_POD_EXITED_BEFORE_READINESS"
       fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      error_message="RunPod Pod did not become SSH-ready; provider SSH info was unavailable after the bounded readiness grace"
+      if [[ -n "${ssh_info_diagnostic:-}" ]]; then
+        error_message="$error_message: $ssh_info_diagnostic"
+      fi
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
-        --arg error_message "RunPod Pod did not become SSH-ready; provider SSH info was unavailable after the bounded readiness grace" \
+        --arg error_message "$error_message" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \

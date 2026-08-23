@@ -73,6 +73,10 @@ minutes for `runpodctl ssh info` and then emits
 `RUNPOD_SSH_INFO_UNAVAILABLE`, deletes the Pod, and stops. The overall
 large-image readiness allowance remains 30 minutes for the pre-runtime pull.
 
+The failure receipt now includes a bounded, machine-readable SSH-info
+diagnostic when RunPod returns one (for example `pod not ready`). It truncates
+the diagnostic and never records credentials or the full provider response.
+
 ## Safety evidence
 
 - Only one Pod was created.

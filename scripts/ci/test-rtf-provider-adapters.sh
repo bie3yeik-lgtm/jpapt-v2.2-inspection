@@ -92,6 +92,7 @@ static_checks() {
   grep -F 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30' scripts/run-benchmark.sh >/dev/null
   grep -F 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_SSH_INFO_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
+  grep -F 'ssh_info_diagnostic' scripts/run-benchmark.sh >/dev/null
   grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
   grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
