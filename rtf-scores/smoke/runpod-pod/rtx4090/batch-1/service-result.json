@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32627998231-b1",
+  "run_id": "rtf-runpod-32629486660-b1",
   "service_id": "runpod-pod",
   "status": "blocked",
   "provider": "cuda",
@@ -11,6 +11,6 @@
   "metrics_uri": null,
   "metrics_path": null,
   "metrics_sha256": null,
-  "error_code": "PROVIDER_EXECUTION_FAILED",
-  "error_message": "RunPod execution did not produce a result receipt"
+  "error_code": "RUNPOD_NO_INSTANCE_AVAILABLE",
+  "error_message": "RunPod Pod creation failed before remote execution: {\"error\":\"failed to create pod: graphql error: There are no longer any instances available with the requested specifications. Please refresh and try again.\",\"code\":\"graphql_error\"}"
 }
