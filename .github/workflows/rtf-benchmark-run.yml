@@ -267,6 +267,7 @@ jobs:
           mkdir -p results/batches
           successful_batches=0
           cost_guard_failed=0
+          matrix_oom_guard_failed=0
           batch_sizes=(1)
           if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
             batch_sizes=(1 8 32)
@@ -275,17 +276,21 @@ jobs:
             batch_run_id="rtf-${{ inputs.provider }}-${{ github.run_id }}-b${batch_size}"
             batch_dir="results/batches/batch-${batch_size}"
             mkdir -p "$batch_dir"
-            if [[ '${{ inputs.cost_mode }}' == guarded && "$cost_guard_failed" -eq 1 ]]; then
+            if [[ "$cost_guard_failed" -eq 1 && ( '${{ inputs.cost_mode }}' == guarded || "$matrix_oom_guard_failed" -eq 1 ) ]]; then
               jq -n \
                 --arg run_id "$batch_run_id" \
-                '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"COST_GUARD_SKIPPED",error_message:"skipped after an earlier batch failed; use full-matrix for explicit diagnostic expansion"}' \
+                --arg error_code "$(if [[ "$matrix_oom_guard_failed" -eq 1 ]]; then echo OOM_GUARD_SKIPPED; else echo COST_GUARD_SKIPPED; fi)" \
+                --arg error_message "$(if [[ "$matrix_oom_guard_failed" -eq 1 ]]; then echo 'skipped after a CUDA OOM to avoid repeated provider cost'; else echo 'skipped after an earlier guarded batch failed'; fi)" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message}' \
                 > "$batch_dir/result-receipt.json"
               jq -n \
                 --arg run_id "$batch_run_id" --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
                 --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" --arg image_digest "$RTF_IMAGE_DIGEST" \
                 --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
                 --arg gpu "$RTF_GPU" --arg inspection_profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$batch_size" \
-                '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"COST_GUARD_SKIPPED",error_message:"provider execution was not attempted",model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",batch_size:($batch_size|tonumber),repeat:3,provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,inspection_profile:$inspection_profile,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,image_digest:$image_digest,sample_index:0,audio_path:"",reference_text:"",content_available:false}' \
+                --arg error_code "$(if [[ "$matrix_oom_guard_failed" -eq 1 ]]; then echo OOM_GUARD_SKIPPED; else echo COST_GUARD_SKIPPED; fi)" \
+                --arg error_message "$(if [[ "$matrix_oom_guard_failed" -eq 1 ]]; then echo 'provider execution was not attempted after a CUDA OOM'; else echo 'provider execution was not attempted'; fi)" \
+                '{schema_version:1,run_id:$run_id,status:"blocked",error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,decoder:"tdt",precision:"float16",batch_size:($batch_size|tonumber),repeat:3,provider:"cuda",environment:"linux",service_id:(if "${{ inputs.provider }}" == "hf" then "hf-jobs" else "runpod-pod" end),gpu:$gpu,inspection_profile:$inspection_profile,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,image_digest:$image_digest,sample_index:0,audio_path:"",reference_text:"",content_available:false}' \
                 > "$batch_dir/content.json"
               continue
             fi
@@ -326,6 +331,10 @@ jobs:
             jq -e --arg run_id "$batch_run_id" '(.schema_version == 1) and (.run_id == $run_id)' "$RTF_LOCAL_RECEIPT" >/dev/null
             if [[ "$execute_status" -ne 0 ]] || ! jq -e '.status == "completed"' "$RTF_LOCAL_RECEIPT" >/dev/null 2>&1; then
               cost_guard_failed=1
+            fi
+            if [[ '${{ inputs.cost_mode }}' == full-matrix ]] && jq -e '.error_code == "PROVIDER_CUDA_OOM"' "$RTF_LOCAL_RECEIPT" >/dev/null 2>&1; then
+              matrix_oom_guard_failed=1
+              echo "batch ${batch_size} hit CUDA OOM; later matrix batches will be recorded as skipped" >&2
             fi
             if [[ "$execute_status" -ne 0 ]]; then
               echo "batch ${batch_size} exited with status ${execute_status}; continuing remaining batches" >&2
