@@ -62,10 +62,11 @@ fi
 : "${RTF_HF_TIMEOUT:=2h}"
 : "${RTF_RUNPOD_MAX_HOURS:=2}"
 : "${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES:=20}"
-: "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=20}"
+: "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30}"
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
+: "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 
@@ -234,6 +235,10 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS must be a positive integer' >&2
       exit 2
     }
+    [[ "$RTF_RUNPOD_SSH_INFO_WAIT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES must be a positive integer' >&2
+      exit 2
+    }
     runpod_wait_timeout="${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES}m"
     # runpodctl v2.11.0 forwards this field to the GraphQL DateTime scalar.
     # Calculate an absolute UTC timestamp locally; --wait-timeout remains a
@@ -247,26 +252,12 @@ case "$PROVIDER" in
       echo "failed to generate RunPod termination deadline: $terminate_after" >&2
       exit 2
     }
-    echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; termination deadline: $terminate_after" >&2
-    env_json="$(jq -cn \
-      --arg run_id "$RTF_RUN_ID" --arg manifest "$RTF_MANIFEST" \
-      --arg output "$RTF_OUTPUT" --arg model_id "$RTF_MODEL_ID" \
-      --arg content_output "$RTF_CONTENT_OUTPUT" \
-      --arg model_revision "$RTF_MODEL_REVISION" --arg dataset_id "$RTF_DATASET_ID" \
-      --arg dataset_revision "$RTF_DATASET_REVISION" --arg gpu "$RTF_GPU" \
-      --arg batch "$RTF_BATCH_SIZE" --arg precision "$RTF_PRECISION" \
-      --arg decoder "$RTF_DECODER" --arg fixture_repo "$RTF_FIXTURE_REPO_ID" \
-      --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg hf_token "${HF_TOKEN:-}" \
-      --arg result_repo "$RTF_RESULT_REPO_ID" --arg result_path "$RTF_RESULT_PATH" \
-      --arg image_digest "$RTF_IMAGE_DIGEST" \
-      --arg profile "$RTF_INSPECTION_PROFILE" --arg profile_id "$RTF_PROFILE_ID" \
-      --arg config "$RTF_DATASET_CONFIGURATION" --arg split "$RTF_DATASET_SPLIT" --arg seed "$RTF_DATASET_SEED" \
-      --arg count_min "$RTF_DATASET_COUNT_MIN" --arg count_max "$RTF_DATASET_COUNT_MAX" \
-      --arg target_total "$RTF_DATASET_TARGET_TOTAL_SEC" --arg max_duration "$RTF_DATASET_MAX_DURATION_SEC" \
-      --arg repeat "$RTF_REPEAT" --arg filename "$RTF_FIXTURE_FILENAME" --arg manifest_sha "$RTF_FIXTURE_MANIFEST_SHA256" \
-      --arg cuda_diagnostics "${RTF_CUDA_DIAGNOSTICS:-0}" \
-      --arg error_log "/output/benchmark-error.log" \
-      '{RTF_RUN_ID:$run_id,RTF_MANIFEST:$manifest,RTF_OUTPUT:$output,RTF_CONTENT_OUTPUT:$content_output,RTF_ERROR_LOG:$error_log,RTF_MODEL_ID:$model_id,RTF_MODEL_REVISION:$model_revision,RTF_DATASET_ID:$dataset_id,RTF_DATASET_REVISION:$dataset_revision,RTF_DATASET_CONFIGURATION:$config,RTF_DATASET_SPLIT:$split,RTF_DATASET_SEED:$seed,RTF_DATASET_COUNT_MIN:$count_min,RTF_DATASET_COUNT_MAX:$count_max,RTF_DATASET_TARGET_TOTAL_SEC:$target_total,RTF_DATASET_MAX_DURATION_SEC:$max_duration,RTF_INSPECTION_PROFILE:$profile,RTF_PROFILE_ID:$profile_id,RTF_GPU:$gpu,RTF_BATCH_SIZE:$batch,RTF_PRECISION:$precision,RTF_REPEAT:$repeat,RTF_DECODER:$decoder,RTF_FIXTURE_REPO_ID:$fixture_repo,RTF_FIXTURE_REVISION:$fixture_revision,RTF_FIXTURE_FILENAME:$filename,RTF_FIXTURE_MANIFEST_SHA256:$manifest_sha,RTF_CUDA_DIAGNOSTICS:$cuda_diagnostics,RTF_RESULT_REPO_ID:$result_repo,RTF_RESULT_PATH:$result_path,RTF_IMAGE_DIGEST:$image_digest,HF_TOKEN:$hf_token,RTF_PROVIDER:"cuda",RTF_SERVICE_ID:"runpod-pod"}')"
+    echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; SSH info grace: ${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES}m; termination deadline: $terminate_after" >&2
+    # Do not put HF_TOKEN or benchmark configuration into RunPod Pod
+    # metadata. Provider-side env handling has varied across runpodctl
+    # versions, and Pod metadata is visible to provider control-plane reads.
+    # The authoritative payload is transferred over the already authenticated
+    # SSH channel after readiness and written root-only on the Pod.
     # `runpodctl pod create` can block while the provider schedules a Pod or
     # pulls the image, without emitting output. Keep that phase bounded and
     # observable; the EXIT trap also removes an orphan Pod found by name if
@@ -281,7 +272,7 @@ case "$PROVIDER" in
     pod_create_failed=1
     set +e
     runpodctl pod create --name "${RTF_RUN_ID}" --image "$IMAGE" \
-      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --env "$env_json" --ssh \
+      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh \
       --ports 22/tcp --terminate-after "$terminate_after" \
       --output json >"$create_log" 2>&1 &
     pod_create_pid=$!
@@ -332,6 +323,8 @@ case "$PROVIDER" in
       failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
       if [[ "$pod_create_timed_out" -eq 1 ]]; then
         failure_code="RUNPOD_POD_CREATE_TIMEOUT"
+      elif grep -Eqi 'balance is too low|insufficient balance|add funds to your account' <<<"$pod_json"; then
+        failure_code="RUNPOD_ACCOUNT_BALANCE_TOO_LOW"
       elif grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
         failure_code="RUNPOD_NO_INSTANCE_AVAILABLE"
       elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then
@@ -355,6 +348,8 @@ case "$PROVIDER" in
     pod_create_failed=0
     readiness_deadline=$(( $(date +%s) + RTF_RUNPOD_WAIT_TIMEOUT_MINUTES * 60 ))
     pod_ready=0
+    runtime_ready_since=0
+    readiness_error_code="RUNPOD_READINESS_TIMEOUT"
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
       pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1 || true)"
       # The CLI's `pod get` and `pod list` responses are not schema-identical.
@@ -370,6 +365,8 @@ case "$PROVIDER" in
         <<<"$pod_list_state_json" 2>/dev/null || true)"
       ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1 || true)"
       ssh_probe_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
+      ssh_info_diagnostic="$(jq -r '(.code // .errorCode // .error_code // .message // .error) // empty' \
+        <<<"$ssh_info_json" 2>/dev/null | tr '\r\n' '  ' | cut -c1-160 || true)"
       if [[ -n "$ssh_probe_command" ]]; then
         ssh_probe_command="$(decorate_runpod_ssh_command "$ssh_probe_command" "$RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS" || true)"
       fi
@@ -377,6 +374,9 @@ case "$PROVIDER" in
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
+        if [[ "$runtime_ready_since" -eq 0 ]]; then
+          runtime_ready_since="$(date +%s)"
+        fi
         # RUNNING only means the Pod lifecycle reached running. Require an
         # actual SSH handshake before invoking the benchmark entrypoint;
         # otherwise the provider may still be publishing the SSH port.
@@ -390,9 +390,13 @@ case "$PROVIDER" in
         ssh_ready_text=false
         [[ -n "$ssh_probe_command" ]] && ssh_command_present=true
         [[ "$ssh_ready" -eq 1 ]] && ssh_ready_text=true
-        echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text" >&2
+        echo "RunPod SSH readiness: command_present=$ssh_command_present ready=$ssh_ready_text${ssh_info_diagnostic:+ diagnostic=$ssh_info_diagnostic}" >&2
         if [[ "$ssh_ready" -eq 1 ]]; then
           pod_ready=1
+          break
+        fi
+        if (( $(date +%s) - runtime_ready_since >= RTF_RUNPOD_SSH_INFO_WAIT_MINUTES * 60 )); then
+          readiness_error_code="RUNPOD_SSH_INFO_UNAVAILABLE"
           break
         fi
       fi
@@ -403,14 +407,18 @@ case "$PROVIDER" in
       sleep "$RTF_RUNPOD_POLL_SECONDS"
     done
     if [[ "$pod_ready" -ne 1 ]]; then
-      failure_code="RUNPOD_READINESS_TIMEOUT"
+      failure_code="$readiness_error_code"
       if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"${pod_state_json:-}" >/dev/null 2>&1; then
         failure_code="RUNPOD_POD_EXITED_BEFORE_READINESS"
       fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      error_message="RunPod Pod did not become SSH-ready; provider SSH info was unavailable after the bounded readiness grace"
+      if [[ -n "${ssh_info_diagnostic:-}" ]]; then
+        error_message="$error_message: $ssh_info_diagnostic"
+      fi
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
-        --arg error_message "RunPod Pod did not become SSH-ready within ${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES} minutes" \
+        --arg error_message "$error_message" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
@@ -430,11 +438,31 @@ case "$PROVIDER" in
       printf -v remote_command '%q ' "$@"
       eval "$ssh_command $remote_command"
     }
+    write_runpod_environment() {
+      local key value
+      for key in \
+        RTF_RUN_ID RTF_MANIFEST RTF_OUTPUT RTF_CONTENT_OUTPUT RTF_ERROR_LOG \
+        RTF_MODEL_ID RTF_MODEL_REVISION RTF_DATASET_ID RTF_DATASET_REVISION \
+        RTF_DATASET_CONFIGURATION RTF_DATASET_SPLIT RTF_DATASET_SEED \
+        RTF_DATASET_COUNT_MIN RTF_DATASET_COUNT_MAX RTF_DATASET_TARGET_TOTAL_SEC \
+        RTF_DATASET_MAX_DURATION_SEC RTF_INSPECTION_PROFILE RTF_PROFILE_ID \
+        RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER \
+        RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_FIXTURE_FILENAME \
+        RTF_FIXTURE_MANIFEST_SHA256 RTF_CUDA_DIAGNOSTICS RTF_RESULT_REPO_ID \
+        RTF_RESULT_PATH RTF_IMAGE_DIGEST; do
+        value="${!key:-}"
+        printf '%s=%q\n' "$key" "$value"
+      done
+      printf 'RTF_PROVIDER=%q\n' cuda
+      printf 'RTF_SERVICE_ID=%q\n' runpod-pod
+      printf 'HF_TOKEN=%q\n' "${HF_TOKEN:-}"
+    }
+    write_runpod_environment | runpod_ssh bash -lc 'umask 077; cat > /run/rtf-benchmark.env; chmod 600 /run/rtf-benchmark.env'
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
     set +e
-    runpod_ssh sh -c "export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
+    runpod_ssh bash -lc "set -a; . /run/rtf-benchmark.env; set +a; export RTF_JOB_ID='$pod_id'; exec /opt/rtf-benchmark/entrypoint.sh"
     remote_status=$?
     set -e
     runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true

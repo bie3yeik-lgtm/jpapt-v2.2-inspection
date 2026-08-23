@@ -58,7 +58,7 @@ static_checks() {
   command -v bash >/dev/null || fail "bash is required"
   [[ -n "$PYTHON_BIN" ]] || fail "python or python3 is required"
   command -v jq >/dev/null || fail "jq is required"
-  bash -n scripts/run-benchmark.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
+  bash -n scripts/run-benchmark.sh scripts/ci/rtf-runpod-safe-wrapper.sh docker/rtf-benchmark/entrypoint.sh scripts/ci/rtf-local-preflight.sh scripts/ci/rtf-local-env.sh
   "$PYTHON_BIN" -m py_compile docker/rtf-benchmark/benchmark-runner/benchmark_runner/*.py
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-provider-content.schema.json >/dev/null
   "$PYTHON_BIN" -m json.tool evaluation/schemas/rtf-service-result.schema.json >/dev/null
@@ -71,11 +71,15 @@ static_checks() {
   grep -F '/usr/sbin/sshd' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PUBLIC_KEY' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'python -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'hf jobs run --name "$RTF_RUN_ID"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl pod create' scripts/run-benchmark.sh >/dev/null
+  ! grep -F -- '--env "$env_json"' scripts/run-benchmark.sh >/dev/null
   grep -F 'runpodctl ssh info' scripts/run-benchmark.sh >/dev/null
+  grep -F '/run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
+  grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
   grep -F 'UserKnownHostsFile=/dev/null' scripts/run-benchmark.sh >/dev/null
@@ -84,7 +88,18 @@ static_checks() {
   grep -F 'RTF_DATALOADER_POLICY=' docker/rtf-benchmark/benchmark-runner/benchmark_runner/transcribe_compat.py >/dev/null
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RUNPOD_SSH_INFO_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
+  grep -F 'ssh_info_diagnostic' scripts/run-benchmark.sh >/dev/null
+  grep -F 'exact run' scripts/ci/rtf-runpod-safe-wrapper.sh >/dev/null
   grep -F 'phase=pod_create' scripts/run-benchmark.sh >/dev/null
+  grep -F 'batch_sizes=(1)' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'batch_sizes=(1 8 32)' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F "inputs.cost_mode }}' == full-matrix" .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
   grep -F 'HF_TOKEN|RUNPOD_TOKEN|RUNPOD_API|HF_FLAVOR|RUNPOD_GPU_ID|RTF_*' scripts/ci/rtf-local-env.sh >/dev/null
   grep -F 'unset GITHUB_PAT_TOKEN GITHUB_CLASSIC_TOKEN GITHUB_TOKEN GH_TOKEN CR_PAT' scripts/ci/rtf-local-env.sh >/dev/null
@@ -117,6 +132,10 @@ set -euo pipefail
     if [[ "${RTF_FAKE_RUNPOD_HANG:-0}" == 1 ]]; then
       sleep 120
     fi
+    if [[ "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" == 1 ]]; then
+      printf '%s\n' '{"error":"failed to create pod: graphql error: Your account balance is too low to rent a pod. Please add funds to your account.","code":"graphql_error"}'
+      exit 1
+    fi
     if [[ "${RTF_FAKE_RUNPOD_FAILURE:-0}" == 1 ]]; then
       printf '%s\n' '{"error":"failed to create pod: graphql error: There are no longer any instances available with the requested specifications."}'
       exit 1
@@ -132,12 +151,18 @@ set -euo pipefail
   pod:list)
     if [[ "${RTF_FAKE_RUNPOD_LIST_READY:-0}" == 1 && \
           "${RTF_FAKE_RUNPOD_FAILURE:-0}" != 1 && \
+          "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" != 1 && \
           "${RTF_FAKE_RUNPOD_HANG:-0}" != 1 ]]; then
       printf '%s\n' '[{"id":"runpod-mock-pod","runtimeStatus":"RUNNING"}]'
     else
       printf '%s\n' '[]'
     fi ;;
-  ssh:info) printf '%s\n' '{"ssh_command":"ssh mock@runpod"}' ;;
+  ssh:info)
+    if [[ "${RTF_FAKE_RUNPOD_SSH_INFO_FAILURE:-0}" == 1 ]]; then
+      printf '%s\n' '{"code":"pod_not_ready","message":"pod not ready"}'
+    else
+      printf '%s\n' '{"ssh_command":"ssh mock@runpod"}'
+    fi ;;
   *) echo "unsupported fake runpodctl invocation" >&2; exit 2 ;;
 esac
 EOF
@@ -236,6 +261,15 @@ mock_case() {
     pass "RunPod no-instance failure produces a typed receipt"
     return
   fi
+  if [[ "${RTF_FAKE_RUNPOD_BALANCE_LOW:-0}" == 1 && "$provider" == runpod ]]; then
+    [[ "$status" -ne 0 ]] || fail "RunPod balance-low mock unexpectedly succeeded"
+    jq -e '.status == "blocked" and .error_code == "RUNPOD_ACCOUNT_BALANCE_TOO_LOW" and .run_id == $run_id' \
+      --arg run_id "$run_id" "$case_dir/result-receipt.json" >/dev/null || fail "RunPod balance-low receipt was not classified"
+    unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS RTF_FAKE_RUNPOD_BALANCE_LOW
+    rm -rf "$fake_root"
+    pass "RunPod account balance block produces a typed receipt"
+    return
+  fi
   [[ "$status" -eq 0 ]] || fail "$provider mock unexpectedly failed"
   assert_result_files "$case_dir" "$provider" "$run_id"
   unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_GET_NOT_READY RTF_FAKE_RUNPOD_SSH_NOT_READY RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS
@@ -244,9 +278,9 @@ mock_case() {
 
 mock_checks() {
   case "$PROVIDER" in
-    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check ;;
+    all) mock_case hf; mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; failure_receipt_check; runpod_create_timeout_check; runpod_ssh_info_failure_check ;;
     hf) mock_case hf; failure_receipt_check ;;
-    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; runpod_create_timeout_check ;;
+    runpod) mock_case runpod; RTF_FAKE_RUNPOD_FAILURE=1 mock_case runpod; RTF_FAKE_RUNPOD_BALANCE_LOW=1 mock_case runpod; runpod_create_timeout_check; runpod_ssh_info_failure_check ;;
     *) fail "unsupported provider: $PROVIDER" ;;
   esac
 }
@@ -322,6 +356,49 @@ EOF
   pass "RunPod Pod create timeout produces a typed receipt without external resources"
 }
 
+runpod_ssh_info_failure_check() {
+  local fake_root case_dir date_state status
+  fake_root="$(mktemp -d)"
+  case_dir="$fake_root/result"
+  date_state="$fake_root/date-count"
+  mkdir -p "$case_dir"
+  write_fake_cli "$fake_root/bin"
+  cat > "$fake_root/bin/date" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$*" == "+%s" ]]; then
+  count=0
+  [[ -f "$date_state" ]] && count="\$(cat "$date_state")"
+  count=\$((count + 1))
+  echo "\$count" > "$date_state"
+  if (( \$count <= 4 )); then echo 1000; else echo 2000; fi
+else
+  /usr/bin/date "\$@"
+fi
+EOF
+  chmod +x "$fake_root/bin/date"
+  export PATH="$fake_root/bin:$PATH"
+  export RTF_FAKE_RUNPOD_LIST_READY=1 RTF_FAKE_RUNPOD_SSH_INFO_FAILURE=1
+  export RTF_RUN_ID="local-runpod-ssh-info-test" RTF_GPU=a5000 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
+  export RTF_MODEL_ID="nvidia/parakeet-tdt_ctc-0.6b-ja" RTF_MODEL_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  export RTF_DATASET_ID="japanese-asr/ja_asr.common_voice_8_0" RTF_DATASET_REVISION="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  export RTF_FIXTURE_REPO_ID="gawohok7/rtf-benchmark-fixtures" RTF_FIXTURE_REVISION="cccccccccccccccccccccccccccccccccccccccc"
+  export RTF_FIXTURE_MANIFEST_SHA256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  export RTF_IMAGE_DIGEST="sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=1 RTF_RUNPOD_POLL_SECONDS=1
+  export RTF_LOCAL_RECEIPT="$case_dir/result-receipt.json"
+  set +e
+  ./scripts/run-benchmark.sh --provider runpod --image "ghcr.io/example/rtf@${RTF_IMAGE_DIGEST}" >"$case_dir/log" 2>&1
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "RunPod SSH info failure mock unexpectedly succeeded"
+  jq -e '.status == "blocked" and .error_code == "RUNPOD_SSH_INFO_UNAVAILABLE" and (.error_message | contains("pod_not_ready"))' \
+    "$case_dir/result-receipt.json" >/dev/null || fail "RunPod SSH info diagnostic receipt was not classified"
+  unset RTF_FAKE_RUNPOD_LIST_READY RTF_FAKE_RUNPOD_SSH_INFO_FAILURE
+  rm -rf "$fake_root"
+  pass "RunPod SSH info failure produces a bounded diagnostic receipt"
+}
+
 docker_checks() {
   command -v docker >/dev/null || fail "docker is required for --mode docker"
   docker build --pull=false --tag "$IMAGE" \
@@ -343,7 +420,11 @@ live_checks() {
   : "${RTF_BATCH_SIZE:=1}"
   : "${RTF_IMAGE_DIGEST:?RTF_IMAGE_DIGEST must be set to a digest-pinned image}"
   [[ "$RTF_IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "RTF_IMAGE_DIGEST is not a SHA-256 digest"
-  ./scripts/run-benchmark.sh --provider "$PROVIDER" --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  if [[ "$PROVIDER" == runpod ]]; then
+    ./scripts/ci/rtf-runpod-safe-wrapper.sh --provider runpod --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  else
+    ./scripts/run-benchmark.sh --provider hf --image "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@${RTF_IMAGE_DIGEST}"
+  fi
   pass "live $PROVIDER provider verification completed; external resources were used"
 }
 
