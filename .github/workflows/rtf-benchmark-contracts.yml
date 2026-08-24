@@ -23,9 +23,11 @@ on:
       - ".github/workflows/runpod-rtf-service-inventory.yml"
       - "scripts/ci/test-rtf-provider-adapters.sh"
       - "scripts/ci/resolve-ghcr-package-digest.sh"
+      - "scripts/ci/prepare-rtf-fixture.py"
       - "scripts/ci/dispatch-rtf-service-result.sh"
       - "scripts/ci/build-rtf-benchmark-record.py"
       - "docker/rtf-benchmark/**"
+      - "docker/rtf-benchmark-smoke/**"
       - "evaluation/schemas/rtf-service-*.json"
       - "evaluation/schemas/rtf-provider-content.schema.json"
       - "evaluation/schemas/rtf-benchmark-record.schema.json"
@@ -125,6 +127,7 @@ jobs:
           python -m json.tool evaluation/schemas/runpod-cuda-probe.schema.json >/dev/null
           python -m py_compile scripts/ci/check-runpod-rtf-services.py
           python -m py_compile scripts/ci/prepare-rtf-fixture.py
+          test -f docker/rtf-benchmark-smoke/Dockerfile
           bash -n scripts/ci/run-runpod-cuda-probe.sh
           bash -n scripts/ci/test-runpod-cuda-probe.sh
           scripts/ci/test-runpod-cuda-probe.sh
@@ -207,8 +210,10 @@ jobs:
               raise SystemExit("fixture loader must support the runner-materialized local fixture")
           if 'prepare-rtf-fixture.py' not in Path(".github/workflows/rtf-benchmark-run.yml").read_text():
               raise SystemExit("benchmark workflow must materialize the fixture once on the runner")
-          if 'tar -C "$RTF_FIXTURE_LOCAL_DIR"' not in script:
-              raise SystemExit("RunPod must transfer the runner-materialized fixture instead of re-downloading it")
+          if 'RTF_BUNDLED_FIXTURE_DIR' not in Path("docker/rtf-benchmark/entrypoint.sh").read_text():
+              raise SystemExit("benchmark entrypoint must support the bundled smoke fixture")
+          if 'Build and publish smoke fixture image' not in Path(".github/workflows/rtf-benchmark-run.yml").read_text():
+              raise SystemExit("benchmark workflow must build the smoke fixture image")
           if 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' not in script:
               raise SystemExit("RunPod CUDA driver incompatibility must be typed")
           content_probe = Path("docker/rtf-benchmark/benchmark-runner/benchmark_runner/content_probe.py").read_text()

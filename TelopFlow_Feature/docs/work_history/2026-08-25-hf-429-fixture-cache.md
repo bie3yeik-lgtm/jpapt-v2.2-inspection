@@ -12,10 +12,12 @@ RunPod benchmarkで、各batchの新しいPodが同一revisionのfixtureと音�
   - Hubの429時は300秒待機して再試行する。
 - `.github/workflows/rtf-benchmark-run.yml`
   - provider実行前にRunner側でfixtureをmaterializeする。
-  - `.ci/rtf-fixture`は一時生成物でありcommitしない。
+  - materialized fixtureをsmoke専用派生Docker imageへ格納し、digest固定でpushする。
+  - `.ci/rtf-fixture`はimage build完了後に破棄される一時生成物でありcommitしない。
+- `docker/rtf-benchmark-smoke/Dockerfile`
+  - 既存のdigest-pinned benchmark imageをbaseにし、検証済みfixtureを内蔵する。
 - `scripts/run-benchmark.sh`
-  - RunPod Podへfixture一式をSSH経由で転送する。
-  - Pod側のfixture取得をローカル経路へ切り替える。
+  - 旧来の明示local fixture転送経路を互換用に保持するが、canonical smoke workflowでは使用しない。
 - `docker/rtf-benchmark/entrypoint.sh`
   - `RTF_FIXTURE_LOCAL_DIR`がある場合はHubへアクセスせずlocal fixture loaderを使用する。
 - `docker/rtf-benchmark/benchmark-runner/benchmark_runner/load_fixture.py`
@@ -28,9 +30,8 @@ RunPod benchmarkで、各batchの新しいPodが同一revisionのfixtureと音�
 
 ```text
 Runner: Hubからfixtureを1回取得・SHA検証
-  -> batch 1 Pod: fixtureをSSH転送、Hubアクセスなし
-  -> batch 8 Pod: fixtureをSSH転送、Hubアクセスなし
-  -> batch 32 Pod: fixtureをSSH転送、Hubアクセスなし
+  -> smoke fixture imageへ格納・digest固定push
+  -> batch 1/8/32 Pod: 同じfixture内蔵imageを使用、Hubアクセスなし
 ```
 
 直接Hub取得が残る経路では、429を即時失敗にせず300秒待機して再試行する。
@@ -47,6 +48,6 @@ Runner: Hubからfixtureを1回取得・SHA検証
 
 実RunPodでのfixture転送と次回Actions実行は未検証。次回はログに以下が出ることを確認する。
 
-- `Transferring runner-materialized fixture to RunPod`
+- `Build and publish smoke fixture image`
 - Pod内でのHub `HEAD`アクセスが発生しないこと
-- local fixture経路でcontent probeが完了すること
+- `RTF_BUNDLED_FIXTURE_DIR`経路でcontent probeが完了すること

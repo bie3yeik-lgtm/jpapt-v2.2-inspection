@@ -136,7 +136,8 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_SERVICE_ID:?RTF_SERVICE_ID is required}"
   : "${RTF_GPU:?RTF_GPU is required}"
   : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
-  : "${RTF_FIXTURE_LOCAL_DIR:=}"
+  : "${RTF_BUNDLED_FIXTURE_DIR:=}"
+  : "${RTF_FIXTURE_LOCAL_DIR:=${RTF_BUNDLED_FIXTURE_DIR:-}}"
   : "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE}}"
   if [[ -n "$RTF_FIXTURE_LOCAL_DIR" ]]; then
     [[ -d "$RTF_FIXTURE_LOCAL_DIR" ]] || {

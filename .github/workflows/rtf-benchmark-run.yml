@@ -55,7 +55,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  packages: read
+  packages: write
 
 jobs:
   benchmark:
@@ -169,6 +169,48 @@ jobs:
           print("RTF image loader safety policy: present")
           '
           CONTAINER_SCRIPT
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and publish smoke fixture image
+        if: inputs.provider == 'runpod'
+        id: fixture_image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          BASE_IMAGE: ${{ steps.resolve.outputs.image }}
+          FIXTURE_REPO_ID: gawohok7/rtf-benchmark-fixtures
+          FIXTURE_FILENAME: benchmark-v1.jsonl
+          FIXTURE_REVISION: ${{ steps.resolve.outputs.model_revision }}
+        run: |
+          set -euo pipefail
+          fixture_repo_id='gawohok7/rtf-benchmark-fixtures'
+          fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          manifest_sha256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          rm -rf .ci/rtf-fixture
+          python scripts/ci/prepare-rtf-fixture.py \
+            --repo-id "$fixture_repo_id" \
+            --revision "$fixture_revision" \
+            --filename "$FIXTURE_FILENAME" \
+            --output-dir .ci/rtf-fixture \
+            --expected-manifest-sha256 "$manifest_sha256"
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/parakeet-rtf-benchmark-smoke"
+          base_digest="${BASE_IMAGE##*@}"
+          image_tag="$image_name:smoke-${fixture_revision}-${base_digest#sha256:}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
+          docker buildx build \
+            --file docker/rtf-benchmark-smoke/Dockerfile \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "FIXTURE_REVISION=$fixture_revision" \
+            --build-arg "FIXTURE_MANIFEST_SHA256=$manifest_sha256" \
+            --tag "$image_tag" --push .ci/rtf-fixture
+          digest="$(docker buildx imagetools inspect "$image_tag" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "smoke fixture image digest was not resolved: $digest" >&2
+            exit 2
+          }
+          image="$image_name@$digest"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Smoke fixture image: $image"
       - name: Restore provider package cache
         uses: actions/cache@v6
         with:
@@ -221,7 +263,7 @@ jobs:
           gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
           min_cuda="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
           bash scripts/ci/run-runpod-cuda-probe.sh \
-            --gpu "$RTF_GPU" --gpu-id "$gpu_id" --image "${{ steps.resolve.outputs.image }}" \
+            --gpu "$RTF_GPU" --gpu-id "$gpu_id" --image "${{ steps.fixture_image.outputs.image }}" \
             --min-cuda-version "$min_cuda" --output .ci/runpod-cuda-probe.json
       - name: Validate Rust cost policy before provider execution
         run: |
@@ -255,7 +297,8 @@ jobs:
           RTF_FIXTURE_REPO_ID: ''
           RTF_FIXTURE_REVISION: ''
           RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
-          RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
+          RTF_IMAGE_DIGEST: ${{ inputs.provider == 'runpod' && steps.fixture_image.outputs.image || steps.resolve.outputs.image }}
+          RTF_BASE_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           RTF_GPU: ${{ steps.gpu.outputs.gpu }}
           RTF_REPEAT: 3
@@ -268,7 +311,6 @@ jobs:
           RTF_DATASET_MAX_DURATION_SEC: 600
           RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
           RTF_FIXTURE_MANIFEST_SHA256: ''
-          RTF_FIXTURE_LOCAL_DIR: .ci/rtf-fixture
           RTF_HF_429_WAIT_SECONDS: '300'
           RTF_HF_429_MAX_ATTEMPTS: '3'
           RTF_CUDA_DIAGNOSTICS: ${{ inputs.cuda_diagnostics && '1' || '0' }}
@@ -281,14 +323,8 @@ jobs:
           export RTF_FIXTURE_REPO_ID="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_REVISION="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           export RTF_FIXTURE_MANIFEST_SHA256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
-          rm -rf .ci/rtf-fixture
-          python scripts/ci/prepare-rtf-fixture.py \
-            --repo-id "$RTF_FIXTURE_REPO_ID" \
-            --revision "$RTF_FIXTURE_REVISION" \
-            --filename "$RTF_FIXTURE_FILENAME" \
-            --output-dir .ci/rtf-fixture \
-            --expected-manifest-sha256 "$RTF_FIXTURE_MANIFEST_SHA256"
           export RTF_IMAGE_DIGEST="${RTF_IMAGE_DIGEST##*@}"
+          base_image_digest="${RTF_BASE_IMAGE_DIGEST##*@}"
           pointer_fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
           receipt_fixture_repo_id="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.receipt.json)"
           receipt_fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.receipt.json)"
@@ -305,8 +341,8 @@ jobs:
             echo 'RTF_FIXTURE_RECEIPT_REVISION_MISMATCH: receipt revision does not match pointer' >&2
             exit 2
           }
-          [[ "$receipt_image_digest" == "$RTF_IMAGE_DIGEST" ]] || {
-            echo "RTF_FIXTURE_IMAGE_MISMATCH: fixture was resolved for $receipt_image_digest, but benchmark image is $RTF_IMAGE_DIGEST" >&2
+          [[ "$receipt_image_digest" == "$base_image_digest" ]] || {
+            echo "RTF_FIXTURE_IMAGE_MISMATCH: fixture was resolved for $receipt_image_digest, but base benchmark image is $base_image_digest" >&2
             exit 2
           }
           export RTF_HF_TIMEOUT=2h
@@ -367,7 +403,7 @@ jobs:
             set +e
             ./scripts/run-benchmark.sh \
               --provider '${{ inputs.provider }}' \
-              --image '${{ steps.resolve.outputs.image }}'
+              --image '${{ inputs.provider == 'runpod' && steps.fixture_image.outputs.image || steps.resolve.outputs.image }}'
             execute_status=$?
             set -e
             if [[ ! -s "$RTF_LOCAL_RECEIPT" ]]; then
