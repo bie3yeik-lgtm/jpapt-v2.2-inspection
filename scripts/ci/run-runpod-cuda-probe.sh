@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() { echo "usage: $0 --gpu NAME --gpu-id ID --image IMAGE --min-cuda-version VERSION --output PATH [--cloud-type auto|SECURE|COMMUNITY] [--terminate-after-hours HOURS] [--heartbeat-seconds SECONDS]" >&2; exit 2; }
-gpu=""; gpu_id=""; image=""; min_cuda_version=""; output=""; cloud_type=auto; terminate_after_hours=24; heartbeat_seconds=30
+usage() { echo "usage: $0 --gpu NAME --gpu-id ID --image IMAGE --min-cuda-version VERSION --output PATH [--cloud-type auto|SECURE|COMMUNITY] [--terminate-after-hours HOURS] [--heartbeat-seconds SECONDS] [--create-attempts N] [--create-retry-backoff-seconds SECONDS]" >&2; exit 2; }
+gpu=""; gpu_id=""; image=""; min_cuda_version=""; output=""; cloud_type=auto; terminate_after_hours=24; heartbeat_seconds=30; create_attempts=3; create_retry_backoff_seconds=20
 while (($#)); do
   case "$1" in
     --gpu) gpu="${2:?missing --gpu value}"; shift 2;;
@@ -13,6 +13,8 @@ while (($#)); do
     --cloud-type) cloud_type="${2:?missing --cloud-type value}"; shift 2;;
     --terminate-after-hours) terminate_after_hours="${2:?missing --terminate-after-hours value}"; shift 2;;
     --heartbeat-seconds) heartbeat_seconds="${2:?missing --heartbeat-seconds value}"; shift 2;;
+    --create-attempts) create_attempts="${2:?missing --create-attempts value}"; shift 2;;
+    --create-retry-backoff-seconds) create_retry_backoff_seconds="${2:?missing --create-retry-backoff-seconds value}"; shift 2;;
     *) usage;;
   esac
 done
@@ -21,6 +23,8 @@ done
 [[ "$cloud_type" == auto || "$cloud_type" == SECURE || "$cloud_type" == COMMUNITY ]] || usage
 [[ "$terminate_after_hours" =~ ^[1-9][0-9]*$ && "$terminate_after_hours" -le 168 ]] || { echo 'terminate-after-hours must be 1..168' >&2; exit 2; }
 [[ "$heartbeat_seconds" =~ ^[1-9][0-9]*$ ]] || { echo 'heartbeat-seconds must be positive' >&2; exit 2; }
+[[ "$create_attempts" =~ ^[1-9][0-9]*$ && "$create_attempts" -le 5 ]] || { echo 'create-attempts must be 1..5' >&2; exit 2; }
+[[ "$create_retry_backoff_seconds" =~ ^[1-9][0-9]*$ && "$create_retry_backoff_seconds" -le 300 ]] || { echo 'create-retry-backoff-seconds must be 1..300' >&2; exit 2; }
 command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 1; }
 [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
@@ -59,24 +63,47 @@ elif [[ "$cloud_type" == COMMUNITY && "$(jq -r '.communityCloud // .community_cl
   failure_code=RUNPOD_GPU_CLOUD_UNAVAILABLE; failure_message="GPU is not available on COMMUNITY cloud: $gpu_id"; write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; exit 1
 fi
 terminate_after="$(date -u -d "+${terminate_after_hours} hours" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+${terminate_after_hours}H '+%Y-%m-%dT%H:%M:%SZ')"
-create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-cuda-probe.XXXXXX")"
-create_deadline=$(( $(date +%s) + 1800 )); create_pid=""; create_status=124
-runpodctl pod create --name "$run_id" --image "$image" --cloud-type "$cloud_type_observed" --gpu-id "$gpu_id" --ssh --ports 22/tcp --terminate-after "$terminate_after" --min-cuda-version "$min_cuda_version" --output json >"$create_log" 2>&1 &
-create_pid=$!
-while [[ "$(date +%s)" -lt "$create_deadline" ]]; do
-  pod_json="$(<"$create_log")"
-  pod_id="$(jq -er '(.id // .podId // .pod_id) // empty' <<<"$pod_json" 2>/dev/null || true)"
-  if [[ -z "$pod_id" ]]; then pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
-  if [[ -n "$pod_id" ]]; then kill "$create_pid" 2>/dev/null || true; create_status=0; break; fi
-  if ! kill -0 "$create_pid" 2>/dev/null; then
-    if wait "$create_pid"; then create_status=0; else create_status=$?; fi
+create_probe_pod_once() {
+  local attempt="$1"
+  create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-cuda-probe.XXXXXX")"
+  create_deadline=$(( $(date +%s) + 1800 )); create_pid=""; create_status=124; pod_id=""
+  pod_json=""
+  echo "RunPod CUDA probe Pod create attempt=$attempt/$create_attempts" >&2
+  runpodctl pod create --name "$run_id" --image "$image" --cloud-type "$cloud_type_observed" --gpu-id "$gpu_id" --ssh --ports 22/tcp --terminate-after "$terminate_after" --min-cuda-version "$min_cuda_version" --output json >"$create_log" 2>&1 &
+  create_pid=$!
+  while [[ "$(date +%s)" -lt "$create_deadline" ]]; do
+    pod_json="$(<"$create_log")"
+    pod_id="$(jq -er '(.id // .podId // .pod_id) // empty' <<<"$pod_json" 2>/dev/null || true)"
+    if [[ -z "$pod_id" ]]; then pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
+    if [[ -n "$pod_id" ]]; then kill "$create_pid" 2>/dev/null || true; create_status=0; break; fi
+    if ! kill -0 "$create_pid" 2>/dev/null; then
+      if wait "$create_pid"; then create_status=0; else create_status=$?; fi
+      break
+    fi
+    echo "RunPod CUDA probe heartbeat phase=pod_create attempt=$attempt/$create_attempts" >&2
+    sleep "$heartbeat_seconds"
+  done
+  if [[ -z "$pod_id" ]]; then wait "$create_pid" 2>/dev/null || create_status=$?; pod_json="$(<"$create_log")"; pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
+  rm -f "$create_log"
+  [[ "$create_status" -eq 0 && -n "$pod_id" ]]
+}
+
+pod_created=0
+for create_attempt in $(seq 1 "$create_attempts"); do
+  if create_probe_pod_once "$create_attempt"; then
+    pod_created=1
     break
   fi
-  echo "RunPod CUDA probe heartbeat phase=pod_create" >&2
-  sleep "$heartbeat_seconds"
+  if ! grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json" || [[ "$create_attempt" -ge "$create_attempts" ]]; then
+    break
+  fi
+  retry_inventory="$(runpodctl gpu list --include-unavailable --output json 2>&1 || true)"
+  retry_match="$(jq -c --arg gpu_id "$gpu_id" '[.[] | select((.gpuId // .gpu_id) == $gpu_id)] | first // empty' <<<"$retry_inventory" 2>/dev/null || true)"
+  echo "RunPod CUDA probe capacity retry: next_attempt=$((create_attempt + 1))/$create_attempts inventory=$(tr '\r\n' ' ' <<<"$retry_match" | cut -c1-1000)" >&2
+  sleep $((create_retry_backoff_seconds * create_attempt))
 done
-if [[ -z "$pod_id" ]]; then wait "$create_pid" 2>/dev/null || create_status=$?; pod_json="$(<"$create_log")"; pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
-if [[ "$create_status" -ne 0 || -z "$pod_id" ]]; then
+
+if [[ "$pod_created" -ne 1 ]]; then
   echo "::error::RunPod CUDA probe Pod create failed: exit_status=$create_status pod_id=${pod_id:-<none>}" >&2
   tr '\r\n' '  ' <<<"$pod_json" | cut -c1-2000 >&2 || true
   failure_code=RUNPOD_POD_CREATE_FAILED; failure_message="probe Pod creation failed"

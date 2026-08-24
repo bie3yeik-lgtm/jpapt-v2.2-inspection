@@ -10,9 +10,20 @@ cat > "$mock_bin/runpodctl" <<'MOCK'
 set -euo pipefail
 case "$*" in
   *"gpu list"*) if [[ "${MOCK_UNAVAILABLE:-0}" == 1 ]]; then printf '%s\n' '[{"gpuId":"NVIDIA RTX A5000","available":false,"secureCloud":true,"communityCloud":false}]'; else printf '%s\n' '[{"gpuId":"NVIDIA RTX A5000","available":true,"secureCloud":true,"communityCloud":false}]'; fi ;;
-  *"pod create"*) printf '%s\n' '{"id":"probe-pod-1"}' ;;
+  *"pod create"*)
+    create_count=0
+    if [[ -f "$MOCK_CREATE_COUNT_FILE" ]]; then create_count="$(<"$MOCK_CREATE_COUNT_FILE")"; fi
+    create_count=$((create_count + 1)); printf '%s\n' "$create_count" > "$MOCK_CREATE_COUNT_FILE"
+    if [[ "$create_count" -le "${MOCK_CREATE_CAPACITY_FAILURES:-0}" ]]; then
+      printf '%s\n' '{"error":"There are no longer any instances available with the requested specifications."}'
+      exit 1
+    fi
+    printf '%s\n' '{"id":"probe-pod-1"}' ;;
   *"pod get"*) printf '%s\n' '{"id":"probe-pod-1","desiredStatus":"RUNNING","runtimeStatus":"running"}' ;;
-  *"pod list"*) printf '%s\n' '[{"id":"probe-pod-1","desiredStatus":"RUNNING","runtimeStatus":"running"}]' ;;
+  *"pod list"*)
+    create_count=0
+    if [[ -f "$MOCK_CREATE_COUNT_FILE" ]]; then create_count="$(<"$MOCK_CREATE_COUNT_FILE")"; fi
+    if [[ "$create_count" -le "${MOCK_CREATE_CAPACITY_FAILURES:-0}" ]]; then printf '%s\n' '[]'; else printf '%s\n' '[{"id":"probe-pod-1","desiredStatus":"RUNNING","runtimeStatus":"running"}]'; fi ;;
   *"ssh info"*) printf '%s\n' '{"sshCommand":"ssh mock-host"}' ;;
   *"pod delete"*) : > "$RUNPOD_DELETE_MARKER" ;;
   *) printf '%s\n' '[]' ;;
@@ -28,12 +39,21 @@ chmod +x "$mock_bin/runpodctl" "$mock_bin/ssh"
 export PATH="$mock_bin:$PATH"
 export RUNPOD_TOKEN=test-token
 export RUNPOD_DELETE_MARKER="$test_dir/deleted"
+export MOCK_CREATE_COUNT_FILE="$test_dir/create-count"
 report="$test_dir/pass.json"
 bash scripts/ci/run-runpod-cuda-probe.sh \
   --gpu a5000 --gpu-id 'NVIDIA RTX A5000' --image 'ghcr.io/example/probe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   --min-cuda-version 13.0 --output "$report"
 jq -e '.status == "PASS" and .cleanup_status == "PASS" and .cuda_runtime_check == "PASS"' "$report" >/dev/null
 test -e "$RUNPOD_DELETE_MARKER"
+
+export MOCK_CREATE_CAPACITY_FAILURES=2
+retry_report="$test_dir/retry.json"
+bash scripts/ci/run-runpod-cuda-probe.sh \
+  --gpu a5000 --gpu-id 'NVIDIA RTX A5000' --image 'ghcr.io/example/probe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  --min-cuda-version 13.0 --output "$retry_report" --create-retry-backoff-seconds 1
+jq -e '.status == "PASS" and .cleanup_status == "PASS"' "$retry_report" >/dev/null
+[[ "$(<"$MOCK_CREATE_COUNT_FILE")" -eq 3 ]]
 
 export MOCK_UNAVAILABLE=1
 if bash scripts/ci/run-runpod-cuda-probe.sh \

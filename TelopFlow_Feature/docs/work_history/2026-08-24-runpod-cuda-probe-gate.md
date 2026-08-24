@@ -15,6 +15,7 @@ CUDA device、cleanupを検証する。
 - benchmark Podは作成後からmetrics・receipt取得まで30秒周期で`pod get`と`pod list`を確認するwatchdogを実行し、Pod消失・停止を3回連続で検知した場合に失敗理由をログへ出す。
 - `pod create`、readiness各API、`ssh info`、リモートbenchmark、metrics/receipt取得について、終了コード、Pod ID、応答本文の最大2000文字をActions logへ出力する。
 - completed receiptではbilling metadataをPod削除前に取得し、metrics・receipt・billing metadata取得後にContainer Logsを停止してPodを削除する。billing失敗、内部エラー、signal時は既存のcleanup trapを通じてPodを削除する。
+- inventory直後に容量が枯れるRunPodのraceに対して、probe Pod作成を容量不足エラーに限定して最大3回再試行し、各回のinventoryとbackoffをログへ出力する。
 - RunPod公式CLIに作成後の`--terminate-after`更新操作はないため、heartbeatによるタイマー更新ではなく、長い安全期限と明示的cleanupで実装した。
 - watchdog heartbeatごとにGPU使用率・メモリ使用量・温度・電力を`nvidia-smi`で取得し、ECC/Xid等のエラーと直前のコンテナログtailをPod消失時の診断情報へ追加した。これにより、batch負荷によるOOM、GPUエラー、温度・電力異常の可能性を後から切り分けられる。
 - inventory workflowにinventory-only／probe-selected／probe-allを追加した。
