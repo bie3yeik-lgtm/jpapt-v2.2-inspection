@@ -60,13 +60,14 @@ fi
 : "${RTF_DATASET_MAX_DURATION_SEC:=600}"
 : "${RTF_REPEAT:=3}"
 : "${RTF_HF_TIMEOUT:=2h}"
-: "${RTF_RUNPOD_MAX_HOURS:=2}"
+: "${RTF_RUNPOD_MAX_HOURS:=24}"
 : "${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES:=20}"
 : "${RTF_RUNPOD_WAIT_TIMEOUT_MINUTES:=30}"
 : "${RTF_RUNPOD_POLL_SECONDS:=15}"
 : "${RTF_RUNPOD_SSH_PROBE_TIMEOUT_SECONDS:=10}"
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
+: "${RTF_RUNPOD_HEARTBEAT_SECONDS:=30}"
 : "${RTF_RUNPOD_LOG:=runpod-job.log}"
 : "${RTF_RUNPOD_CONTAINER_LOG_TAIL:=100}"
 : "${RTF_RUNPOD_MIN_CUDA_VERSION:=13.0}"
@@ -203,6 +204,8 @@ case "$PROVIDER" in
     fi
     pod_id=""
     runpod_container_log_pid=""
+    runpod_watchdog_pid=""
+    runpod_watchdog_failure_file=""
     pod_create_failed=0
     delete_named_pods() {
       local candidate_ids candidate_id
@@ -226,7 +229,18 @@ case "$PROVIDER" in
         fi
       fi
     }
+    log_runpod_response() {
+      local label="$1"
+      local response="${2:-}"
+      response="$(tr '\r\n' '  ' <<<"$response" | cut -c1-2000)"
+      if [[ -n "$response" ]]; then
+        echo "RunPod $label response: $response" >&2
+      else
+        echo "RunPod $label response: <empty>" >&2
+      fi
+    }
     cleanup_runpod() {
+      stop_runpod_pod_watchdog || true
       stop_runpod_container_logs || true
       delete_pod || true
       if [[ "$pod_create_failed" -eq 1 ]]; then
@@ -260,6 +274,38 @@ case "$PROVIDER" in
       runpod_container_log_pid=""
       echo '::endgroup::'
     }
+    start_runpod_pod_watchdog() {
+      [[ -n "$pod_id" && -z "$runpod_watchdog_pid" ]] || return 0
+      runpod_watchdog_failure_file="$(mktemp "${TMPDIR:-/tmp}/rtf-runpod-watchdog.XXXXXX")"
+      : > "$runpod_watchdog_failure_file"
+      (
+        consecutive_failures=0
+        while true; do
+          pod_watchdog_state="$(timeout 30s runpodctl pod get "$pod_id" --output json 2>/dev/null || true)"
+          pod_watchdog_list="$(timeout 30s runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>/dev/null || true)"
+          pod_watchdog_exists="$(jq -er --arg pod_id "$pod_id" '[.[] | select((.id // .podId // .pod_id) == $pod_id)] | length > 0' <<<"$pod_watchdog_list" 2>/dev/null || echo false)"
+          pod_watchdog_status="$(jq -r '(.runtimeStatus // .runtime_status // .runtime.status // .desiredStatus // .desired_status // "") | ascii_downcase' <<<"$pod_watchdog_state" 2>/dev/null || true)"
+          echo "RunPod heartbeat: pod_id=$pod_id exists=$pod_watchdog_exists status=${pod_watchdog_status:-unknown}" >&2
+          if [[ "$pod_watchdog_exists" == true && "$pod_watchdog_status" != exited && "$pod_watchdog_status" != terminated ]]; then
+            consecutive_failures=0
+          else
+            consecutive_failures=$((consecutive_failures + 1))
+          fi
+          if (( consecutive_failures >= 3 )); then
+            printf '%s\n' "RUNPOD_POD_LOST: Pod disappeared or stopped during benchmark" > "$runpod_watchdog_failure_file"
+            exit 1
+          fi
+          sleep "$RTF_RUNPOD_HEARTBEAT_SECONDS"
+        done
+      ) &
+      runpod_watchdog_pid=$!
+    }
+    stop_runpod_pod_watchdog() {
+      [[ -n "$runpod_watchdog_pid" ]] || return 0
+      kill "$runpod_watchdog_pid" 2>/dev/null || true
+      wait "$runpod_watchdog_pid" 2>/dev/null || true
+      runpod_watchdog_pid=""
+    }
     write_runpod_diagnostics() {
       local phase="$1"
       local error_code="${2:-}"
@@ -285,8 +331,8 @@ case "$PROVIDER" in
     }
     trap cleanup_runpod EXIT
     trap cleanup_on_signal INT TERM HUP
-    [[ "$RTF_RUNPOD_MAX_HOURS" =~ ^[1-6]$ ]] || {
-      echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 6' >&2
+    [[ "$RTF_RUNPOD_MAX_HOURS" =~ ^[1-9][0-9]*$ && "$RTF_RUNPOD_MAX_HOURS" -le 168 ]] || {
+      echo 'RTF_RUNPOD_MAX_HOURS must be an integer between 1 and 168' >&2
       exit 2
     }
     [[ "$RTF_RUNPOD_CREATE_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
@@ -311,6 +357,10 @@ case "$PROVIDER" in
     }
     [[ "$RTF_RUNPOD_SSH_INFO_WAIT_MINUTES" =~ ^[1-9][0-9]*$ ]] || {
       echo 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES must be a positive integer' >&2
+      exit 2
+    }
+    [[ "$RTF_RUNPOD_HEARTBEAT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'RTF_RUNPOD_HEARTBEAT_SECONDS must be a positive integer' >&2
       exit 2
     }
     [[ -z "$RTF_RUNPOD_MIN_CUDA_VERSION" || "$RTF_RUNPOD_MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || {
@@ -426,6 +476,8 @@ case "$PROVIDER" in
     if [[ "$pod_create_status" -ne 0 || -z "$pod_id" ]]; then
       pod_create_failed=1
       printf '%s\n' "$pod_json" >&2
+      echo "::error::RunPod pod create failed: exit_status=$pod_create_status timed_out=$pod_create_timed_out pod_id=${pod_id:-<none>}" >&2
+      log_runpod_response "pod create" "$pod_json"
       failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
       failure_message="RunPod Pod creation failed before remote execution"
       if [[ "$pod_create_timed_out" -eq 1 ]]; then
@@ -468,19 +520,31 @@ case "$PROVIDER" in
     runtime_ready_since=0
     readiness_error_code="RUNPOD_READINESS_TIMEOUT"
     while [[ "$(date +%s)" -lt "$readiness_deadline" ]]; do
-      pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1 || true)"
+      if pod_state_json="$(runpodctl pod get "$pod_id" --output json 2>&1)"; then
+        pod_get_status=0
+      else
+        pod_get_status=$?
+      fi
       # The CLI's `pod get` and `pod list` responses are not schema-identical.
       # In particular, current list responses expose runtimeStatus while some
       # get responses expose desiredStatus/runtime. Poll both representations
       # for the exact Pod ID instead of treating a valid running Pod as absent.
-      pod_list_state_json="$(runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>&1 || true)"
+      if pod_list_state_json="$(runpodctl pod list --all --name "$RTF_RUN_ID" --output json 2>&1)"; then
+        pod_list_status=0
+      else
+        pod_list_status=$?
+      fi
       pod_state_summary="$(jq -c --arg pod_id "$pod_id" \
         '{get:{id:(.id // .podId // .pod_id),desiredStatus:(.desiredStatus // .desired_status),runtimeAvailable:(.runtime != null),lastStatusChange},pod_id:$pod_id}' \
         <<<"$pod_state_json" 2>/dev/null || true)"
       pod_list_summary="$(jq -c --arg pod_id "$pod_id" \
         '[.[] | select((.id // .podId // .pod_id) == $pod_id) | {id:(.id // .podId // .pod_id),runtimeStatus:(.runtimeStatus // .runtime_status),desiredStatus:(.desiredStatus // .desired_status)}] | first // {}' \
         <<<"$pod_list_state_json" 2>/dev/null || true)"
-      ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1 || true)"
+      if ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1)"; then
+        ssh_info_status=0
+      else
+        ssh_info_status=$?
+      fi
       ssh_probe_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
       ssh_info_diagnostic="$(jq -r '(.code // .errorCode // .error_code // .message // .error) // empty' \
         <<<"$ssh_info_json" 2>/dev/null | tr '\r\n' '  ' | cut -c1-160 || true)"
@@ -489,6 +553,10 @@ case "$PROVIDER" in
       fi
       [[ -n "$pod_state_summary" ]] && echo "RunPod pod readiness: $pod_state_summary" >&2
       [[ -n "$pod_list_summary" ]] && echo "RunPod pod list readiness: $pod_list_summary" >&2
+      echo "RunPod readiness poll: pod_get_exit=$pod_get_status pod_list_exit=$pod_list_status ssh_info_exit=$ssh_info_status ssh_command_present=$([[ -n "$ssh_probe_command" ]] && echo true || echo false)" >&2
+      (( pod_get_status == 0 )) || log_runpod_response "pod get" "$pod_state_json"
+      (( pod_list_status == 0 )) || log_runpod_response "pod list" "$pod_list_state_json"
+      (( ssh_info_status == 0 )) || log_runpod_response "ssh info" "$ssh_info_json"
       write_runpod_diagnostics readiness_poll "" ""
       if jq -e '(.desiredStatus == "RUNNING") and (.runtime != null)' <<<"$pod_state_json" >/dev/null 2>&1 || \
         jq -e '((.runtimeStatus // "") | ascii_downcase) == "running"' <<<"$pod_list_summary" >/dev/null 2>&1; then
@@ -541,6 +609,8 @@ case "$PROVIDER" in
       if [[ -n "${ssh_info_diagnostic:-}" ]]; then
         error_message="$error_message: $ssh_info_diagnostic"
       fi
+      echo "::error::RunPod readiness failed: code=$failure_code pod_id=$pod_id ssh_info_exit=${ssh_info_status:-unknown} diagnostic=${ssh_info_diagnostic:-<none>}" >&2
+      log_runpod_response "last ssh info" "${ssh_info_json:-}"
       write_runpod_diagnostics readiness_failed "$failure_code" "$error_message"
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
@@ -579,7 +649,19 @@ case "$PROVIDER" in
     # runpodctl releases have emitted both camelCase and snake_case JSON keys.
     # Accept only a non-empty command from either spelling; do not synthesize
     # an SSH endpoint from an incomplete response.
-    ssh_command="$(runpodctl ssh info "$pod_id" --output json | jq -er '(.sshCommand // .ssh_command) // empty')"
+    if ssh_info_json="$(runpodctl ssh info "$pod_id" --output json 2>&1)"; then
+      ssh_info_status=0
+    else
+      ssh_info_status=$?
+    fi
+    ssh_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_info_json" 2>/dev/null || true)"
+    if [[ "$ssh_info_status" -ne 0 || -z "$ssh_command" ]]; then
+      failure_code="RUNPOD_SSH_FAILED"
+      failure_message="RunPod SSH info did not return a usable SSH command"
+      echo "::error::$failure_message: exit_status=$ssh_info_status pod_id=$pod_id" >&2
+      log_runpod_response "ssh info" "$ssh_info_json"
+      exit 1
+    fi
     ssh_command="$(decorate_runpod_ssh_command "$ssh_command" "$RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS")"
     runpod_ssh() {
       local remote_command
@@ -611,6 +693,7 @@ case "$PROVIDER" in
     # empty. Transfer the allowlisted file through stdin to a simple command.
     write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env >/dev/null
     runpod_ssh chmod 600 /run/rtf-benchmark.env
+    start_runpod_pod_watchdog
     # The Pod command intentionally keeps the container alive. Invoke the
     # image entrypoint explicitly over the supported SSH path so fixture
     # loading, inference, publishing, and result collection share one path.
@@ -624,6 +707,10 @@ case "$PROVIDER" in
     } | runpod_ssh bash -s 2>&1 | tee "$remote_log"
     remote_status="${PIPESTATUS[1]}"
     set -e
+    echo "RunPod benchmark SSH command finished: exit_status=$remote_status log=$remote_log" >&2
+    if [[ "$remote_status" -ne 0 ]]; then
+      echo "::error::RunPod benchmark remote execution failed; inspect $remote_log for container output" >&2
+    fi
     write_runpod_diagnostics benchmark_execution "" ""
     # A completed provider can close the SSH channel immediately after
     # publishing its result. Preserve the machine-readable stdout contract so
@@ -637,16 +724,27 @@ case "$PROVIDER" in
       printf '%s\n' "${receipt_line#RTF_RESULT_RECEIPT=}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
     fi
     if [[ ! -s "${RTF_LOCAL_CONTENT:-content.json}" ]]; then
-      runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}" || true
+      if ! runpod_ssh cat "$RTF_CONTENT_OUTPUT" > "${RTF_LOCAL_CONTENT:-content.json}"; then
+        echo "RunPod metrics content retrieval failed: remote_path=$RTF_CONTENT_OUTPUT" >&2
+      fi
     fi
-    runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}" || true
+    if ! runpod_ssh cat "$RTF_OUTPUT" > "${RTF_LOCAL_OUTPUT:-metrics.json}"; then
+      echo "RunPod metrics retrieval failed: remote_path=$RTF_OUTPUT" >&2
+    fi
     if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
-      runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}" || true
+      if ! runpod_ssh cat "${RTF_RECEIPT:-/output/result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"; then
+        echo "RunPod receipt retrieval failed: remote_path=${RTF_RECEIPT:-/output/result-receipt.json}" >&2
+      fi
+    fi
+    stop_runpod_pod_watchdog
+    if [[ -s "$runpod_watchdog_failure_file" ]]; then
+      echo "::error::$(<"$runpod_watchdog_failure_file")" >&2
     fi
     if [[ ! -s "${RTF_LOCAL_RECEIPT:-result-receipt.json}" ]]; then
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       failure_code="PROVIDER_EXECUTION_FAILED"
       failure_message="RunPod execution did not produce a result receipt"
+      echo "::error::${failure_message}: remote_status=$remote_status pod_id=$pod_id log=$remote_log" >&2
       if grep -Eqi 'driver .*too old|CUDA driver version is insufficient|nvidia driver on your system is too old' "$remote_log"; then
         failure_code="PROVIDER_CUDA_DRIVER_INCOMPATIBLE"
         failure_message="RunPod image CUDA runtime is incompatible with the provider NVIDIA driver"
