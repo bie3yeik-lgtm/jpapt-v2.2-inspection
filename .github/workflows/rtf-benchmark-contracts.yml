@@ -39,6 +39,50 @@ permissions:
   contents: read
 
 jobs:
+  self-hosted-docker-smoke:
+    name: Validate self-hosted Docker RTF smoke
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify Docker daemon
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          platform="$(docker info --format '{{.OSType}}/{{.Architecture}}')"
+          echo "Docker platform: $platform"
+          [[ "$platform" == linux/amd64 || "$platform" == linux/x86_64 ]] || {
+            echo "self-hosted Docker smoke requires Linux amd64/x86_64, got $platform" >&2
+            exit 2
+          }
+
+      - name: Build self-hosted validation image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull=false \
+            --file docker/self-hosted-ci/Dockerfile \
+            --tag jpapt-self-hosted-docker-smoke:${GITHUB_SHA} \
+            .
+
+      - name: Run repository contract checks inside Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --label jpapt.workflow=self-hosted-docker-smoke \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            jpapt-self-hosted-docker-smoke:${GITHUB_SHA}
+
+      - name: Remove validation image
+        if: always()
+        shell: bash
+        run: |
+          docker image rm "jpapt-self-hosted-docker-smoke:${GITHUB_SHA}" || true
+
   validate:
     name: Validate deterministic RTF benchmark contract
     runs-on: ubuntu-latest
@@ -130,7 +174,7 @@ jobs:
           test -f docker/rtf-benchmark-smoke/Dockerfile
           bash -n scripts/ci/run-runpod-cuda-probe.sh
           bash -n scripts/ci/test-runpod-cuda-probe.sh
-          scripts/ci/test-runpod-cuda-probe.sh
+          bash scripts/ci/test-runpod-cuda-probe.sh
           grep -En 'runpod-rtf-services.json|check-runpod-rtf-services.py|RTF_RUNPOD_MIN_CUDA_VERSION' .github/workflows/rtf-benchmark-run.yml
           grep -REn 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
           grep -En 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py
@@ -178,8 +222,10 @@ jobs:
               raise SystemExit("RunPod must obtain SSH connection info")
           if 'runpodctl exec' in script:
               raise SystemExit("deprecated runpodctl exec must not be used")
-          if '--cloud-type SECURE' not in script:
-              raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
+          if '--cloud-type "$RTF_RUNPOD_CLOUD_TYPE"' not in script:
+              raise SystemExit("RunPod benchmark Pods must pass the resolved cloud type")
+          if 'RTF_RUNPOD_CLOUD_TYPE=SECURE' not in script or 'RTF_RUNPOD_CLOUD_TYPE=COMMUNITY' not in script:
+              raise SystemExit("RunPod benchmark must resolve both Secure and Community capacity")
           if '--ssh' not in script:
               raise SystemExit("RunPod Pod creation must explicitly enable SSH")
           if '--ports 22/tcp --terminate-after "$terminate_after"' not in script:
@@ -431,8 +477,8 @@ jobs:
           value = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
           if value["schema_version"] != 1 or value["repetitions"] != 3:
               raise SystemExit("invalid Phase 1 matrix metadata")
-          if len(value["entries"]) != 12:
-              raise SystemExit("Phase 1 matrix must contain twelve provider/GPU entries")
+          if len(value["entries"]) != 11:
+              raise SystemExit("Phase 1 matrix must contain eleven provider/GPU entries")
           for entry in value["entries"]:
               if entry["service_id"] == "hf-jobs" and not entry["flavor"]:
                   raise SystemExit("HF Jobs entries require a hardware flavor")
