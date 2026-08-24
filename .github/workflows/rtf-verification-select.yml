@@ -1,4 +1,5 @@
 name: RTF Verification Select
+run-name: RTF verification / ${{ inputs.service_id }} / ${{ inputs.gpu }}
 
 on:
   workflow_dispatch:
@@ -9,10 +10,10 @@ on:
         type: choice
         options: [hf-jobs, runpod-pod]
       gpu:
-        description: GPU target (must be compatible with service_id)
+        description: GPU label (HF L4 and RunPod L4 are separate)
         required: true
         type: choice
-        options: [t4, l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
+        options: [t4, hf-l4, runpod-l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
       model_id:
         description: Model target
         required: true
@@ -39,6 +40,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve provider GPU label
+        id: gpu
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          GPU_LABEL: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ID:$GPU_LABEL" in
+            hf-jobs:t4|hf-jobs:hf-l4) gpu="${GPU_LABEL#hf-}";;
+            runpod-pod:runpod-l4) gpu=l4;;
+            runpod-pod:a5000|runpod-pod:a4000|runpod-pod:a4500|runpod-pod:a40|runpod-pod:rtx2000-ada|runpod-pod:rtx4000-ada|runpod-pod:rtx3090|runpod-pod:rtx4090) gpu="$GPU_LABEL";;
+            *) echo "service/GPU label is invalid: $SERVICE_ID/$GPU_LABEL" >&2; exit 2;;
+          esac
+          echo "gpu=$gpu" >> "$GITHUB_OUTPUT"
+          echo "service GPU label: $GPU_LABEL (canonical GPU: $gpu)"
 
       - name: Install RunPod CLI for live selectable check
         if: inputs.service_id == 'runpod-pod'
@@ -48,7 +64,7 @@ jobs:
         if: inputs.service_id == 'runpod-pod'
         env:
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
-          GPU: ${{ inputs.gpu }}
+          GPU: ${{ steps.gpu.outputs.gpu }}
         run: |
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
@@ -78,7 +94,7 @@ jobs:
         if: inputs.service_id == 'runpod-pod'
         env:
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
-          GPU: ${{ inputs.gpu }}
+          GPU: ${{ steps.gpu.outputs.gpu }}
         run: |
           set -euo pipefail
           gpu_json="$(jq -cer --arg gpu "$GPU" '.entries[] | select(.gpu == $gpu)' .github/runpod-rtf-services.json)"
@@ -127,7 +143,7 @@ jobs:
         id: select
         env:
           SERVICE_ID: ${{ inputs.service_id }}
-          GPU: ${{ inputs.gpu }}
+          GPU: ${{ steps.gpu.outputs.gpu }}
           MODEL_ID: ${{ inputs.model_id }}
           DATASET_ID: ${{ inputs.dataset_id }}
           DECODER: ${{ inputs.decoder }}

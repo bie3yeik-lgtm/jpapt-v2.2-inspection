@@ -1,4 +1,5 @@
 name: RTF Benchmark Run
+run-name: RTF benchmark / ${{ inputs.provider }} / ${{ inputs.gpu }}
 
 on:
   workflow_dispatch:
@@ -9,10 +10,10 @@ on:
         type: choice
         options: [hf, runpod]
       gpu:
-        description: Provider GPU name
+        description: Provider GPU label (HF L4 and RunPod L4 are separate)
         required: true
         type: choice
-        options: [t4, l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
+        options: [t4, hf-l4, runpod-l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
       runpod_cloud_type:
         description: RunPod cloud tier; auto selects a tier where this GPU is currently available
         required: false
@@ -65,8 +66,24 @@ jobs:
     timeout-minutes: 360
     outputs:
       receipts: ${{ steps.receipts.outputs.receipts }}
+      gpu: ${{ steps.gpu.outputs.gpu }}
     steps:
       - uses: actions/checkout@v7
+      - name: Resolve provider GPU label
+        id: gpu
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          GPU_LABEL: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER:$GPU_LABEL" in
+            hf:t4|hf:hf-l4) gpu="${GPU_LABEL#hf-}";;
+            runpod:runpod-l4) gpu=l4;;
+            runpod:a5000|runpod:a4000|runpod:a4500|runpod:a40|runpod:rtx2000-ada|runpod:rtx4000-ada|runpod:rtx3090|runpod:rtx4090) gpu="$GPU_LABEL";;
+            *) echo "provider/GPU label is invalid: $PROVIDER/$GPU_LABEL" >&2; exit 2;;
+          esac
+          echo "gpu=$gpu" >> "$GITHUB_OUTPUT"
+          echo "provider GPU label: $GPU_LABEL (canonical GPU: $gpu)"
       - name: Resolve immutable image and model revisions
         id: resolve
         env:
@@ -174,7 +191,7 @@ jobs:
         if: inputs.provider == 'runpod'
         env:
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
-          RTF_GPU: ${{ inputs.gpu }}
+          RTF_GPU: ${{ steps.gpu.outputs.gpu }}
         run: |
           set -euo pipefail
           [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
@@ -213,7 +230,7 @@ jobs:
           policy_url="${RTF_COST_POLICY_URL:-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/evaluation/manifests/rtf-cost-policy.json}"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$policy_url" -o .ci/rtf-cost-policy-definition.json
           cost_args=(
-            --provider '${{ inputs.provider }}' --gpu '${{ inputs.gpu }}'
+            --provider '${{ inputs.provider }}' --gpu '${{ steps.gpu.outputs.gpu }}'
             --batch-size 1 --repeat 3 --sample-count 50
             --target-total-sec 5400 --max-duration-sec 600
             --mode '${{ inputs.cost_mode }}'
@@ -240,7 +257,7 @@ jobs:
           RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
           RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
           RTF_INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
-          RTF_GPU: ${{ inputs.gpu }}
+          RTF_GPU: ${{ steps.gpu.outputs.gpu }}
           RTF_REPEAT: 3
           RTF_DATASET_CONFIGURATION: default
           RTF_DATASET_SPLIT: test
@@ -294,7 +311,7 @@ jobs:
           export RTF_RUNPOD_CLOUD_TYPE='${{ inputs.runpod_cloud_type }}'
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
-          case '${{ inputs.provider }}:${{ inputs.gpu }}' in
+          case '${{ inputs.provider }}:${{ steps.gpu.outputs.gpu }}' in
             hf:t4|hf:l4|runpod:a5000|runpod:a4000|runpod:a4500|runpod:a40|runpod:rtx2000-ada|runpod:rtx4000-ada|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
             *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
           esac
@@ -453,7 +470,7 @@ jobs:
       provider: cuda
       environment: linux
       inspection_profile: ${{ inputs.inspection_profile }}
-      gpu: ${{ inputs.gpu }}
+      gpu: ${{ needs.benchmark.outputs.gpu }}
       batch_size: ${{ matrix.result.batch_size }}
       job_id: ${{ matrix.result.job_id || '' }}
       result_uri: ${{ matrix.result.result_uri || '' }}
