@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32642551618-b1",
+  "run_id": "rtf-runpod-32679402395-b1",
   "service_id": "runpod-pod",
-  "status": "completed",
+  "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "l3t3xg23ryrbih",
-  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/34d484c4af45a6775d844131c82d1a106c222e92/results/rtf-runpod-32642551618-b1/metrics.json",
-  "result_sha256": "50a3e7a046c1bc3a40f3c26ba9b6cc1a73d0b8ec5412da3e98f158a1d1be96dc",
-  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/34d484c4af45a6775d844131c82d1a106c222e92/results/rtf-runpod-32642551618-b1/metrics.json",
+  "job_id": "302dxrn8tgydk0",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/2ec0f7d32038eaaaf874b3c33aedd173495a142e/results/rtf-runpod-32679402395-b1/metrics.json",
+  "result_sha256": "c7eb3f90b29a0d208b626b5706dbab8e6c0fc8c00c3108b1d13f946aaf175c69",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/2ec0f7d32038eaaaf874b3c33aedd173495a142e/results/rtf-runpod-32679402395-b1/metrics.json",
   "metrics_path": "results/rtf-service/metrics.json",
-  "metrics_sha256": "50a3e7a046c1bc3a40f3c26ba9b6cc1a73d0b8ec5412da3e98f158a1d1be96dc",
-  "error_code": null,
-  "error_message": null
+  "metrics_sha256": "c7eb3f90b29a0d208b626b5706dbab8e6c0fc8c00c3108b1d13f946aaf175c69",
+  "error_code": "RUNPOD_BILLING_METADATA_UNAVAILABLE",
+  "error_message": "RunPod billing history could not be collected; metrics were not accepted for ranking"
 }

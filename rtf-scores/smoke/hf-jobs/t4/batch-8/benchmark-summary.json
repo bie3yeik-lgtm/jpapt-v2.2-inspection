@@ -2,15 +2,15 @@
   "model": "nvidia/parakeet-tdt_ctc-0.6b-ja",
   "provider": "hf",
   "gpu": "t4",
-  "batch_size": 1,
+  "batch_size": 8,
   "decoder": "tdt",
   "precision": "fp16",
   "audio_seconds": 5402.784,
-  "elapsed_seconds": 59.104359622000004,
-  "rtf": 0.010939611804210572,
-  "rtfx": 91.41092187705489,
-  "peak_vram_gb": 5.125980377197266,
+  "elapsed_seconds": 59.45099974899989,
+  "rtf": 0.011003771342515246,
+  "rtfx": 90.87793347143649,
+  "peak_vram_gb": 5.268803834915161,
   "cer": 0.5559925316807691,
   "gpu_price_hour": 0.40002,
-  "cost_per_audio_hour": 0.03998138737362071
+  "cost_per_audio_hour": 0.05330851649816095
 }
