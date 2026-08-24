@@ -75,6 +75,7 @@ static_checks() {
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'tail -F "$container_log_file"' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'RTF_PYTHON_BIN" -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'RTF_RUNNER_ROOT="/opt/rtf-benchmark/benchmark-runner"' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'benchmark_runner/__init__.py' docker/rtf-benchmark/entrypoint.sh >/dev/null
@@ -91,6 +92,7 @@ static_checks() {
   grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F '} | runpod_ssh bash -s' scripts/run-benchmark.sh >/dev/null
+  grep -F 'tee -a /run/rtf-benchmark-container.log' scripts/run-benchmark.sh >/dev/null
   ! grep -F 'runpod_ssh bash -lc "set -a;' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
@@ -103,7 +105,7 @@ static_checks() {
   grep -F 'PROVIDER_CUDA_ILLEGAL_ACCESS' scripts/run-benchmark.sh >/dev/null
   grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'PROVIDER_CUDA_DRIVER_INCOMPATIBLE' docker/rtf-benchmark/benchmark-runner/benchmark_runner/content_probe.py >/dev/null
-  grep -F 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.2' scripts/run-benchmark.sh >/dev/null
+  grep -F 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.0' scripts/run-benchmark.sh >/dev/null
   grep -F -- '--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_POD_CREATE_TIMEOUT' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_ACCOUNT_BALANCE_TOO_LOW' scripts/run-benchmark.sh >/dev/null
@@ -124,6 +126,13 @@ static_checks() {
   grep -F 'enrich_hf_job_metrics.py' scripts/run-benchmark.sh >/dev/null
   grep -F 'HF_JOB_METADATA_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'enrich_runpod_job_metrics.py' scripts/run-benchmark.sh >/dev/null
+  python - <<'PY'
+from pathlib import Path
+script = Path("scripts/run-benchmark.sh").read_text()
+tail = script[script.index("receipt_completed=false"):]
+assert tail.index('metadata_script="scripts/ci/enrich_runpod_job_metrics.py"') < tail.index('stop_runpod_container_logs')
+assert tail.index('stop_runpod_container_logs') < tail.index('delete_pod\n    ;;')
+PY
   grep -F 'RUNPOD_BILLING_METADATA_UNAVAILABLE' scripts/run-benchmark.sh >/dev/null
   grep -F 'RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}' .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'runpod_billing_history' evaluation/schemas/rtf-service-metrics.schema.json >/dev/null
@@ -164,6 +173,8 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
   case "${1:-}:${2:-}" in
+  gpu:list)
+    printf '%s\n' '[{"gpuId":"NVIDIA RTX A5000","available":true,"secureCloud":true,"communityCloud":false}]' ;;
   pod:create)
     if [[ "${RTF_FAKE_RUNPOD_HANG:-0}" == 1 ]]; then
       sleep 120

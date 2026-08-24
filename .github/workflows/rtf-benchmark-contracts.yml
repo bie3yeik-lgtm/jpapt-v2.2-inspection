@@ -188,7 +188,7 @@ jobs:
               raise SystemExit("RunPod readiness timeout must be configurable")
           if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
-          if 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.2' not in script:
+          if 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.0' not in script:
               raise SystemExit("RunPod CUDA compatibility floor must be pinned")
           if '--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"' not in script:
               raise SystemExit("RunPod Pod creation must select a compatible CUDA version")
@@ -241,8 +241,13 @@ jobs:
               raise SystemExit("RunPod create failures must activate orphan cleanup")
           if "(.id // .podId // .pod_id) // empty" not in script:
               raise SystemExit("RunPod create errors must not pass a literal null pod id to delete")
+          runpod_tail = script[script.index('receipt_completed=false'):]
+          if 'metadata_script="scripts/ci/enrich_runpod_job_metrics.py"' not in runpod_tail:
+              raise SystemExit("RunPod must collect billing metadata for completed receipts")
+          if runpod_tail.index('metadata_script="scripts/ci/enrich_runpod_job_metrics.py"') > runpod_tail.index('stop_runpod_container_logs'):
+              raise SystemExit("RunPod billing metadata must be collected before stopping logs and deleting the Pod")
           if 'delete_pod\n    ;;' not in script:
-              raise SystemExit("RunPod must delete the Pod immediately after result collection")
+              raise SystemExit("RunPod must delete the Pod after result and billing metadata collection")
           if 'runpodctl pod delete "$pod_id"' not in script:
               raise SystemExit("RunPod must delete each benchmark Pod")
           if "exec /opt/rtf-benchmark/entrypoint.sh" not in script:
