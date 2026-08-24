@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jpapt.example/schemas/runpod-cuda-probe.schema.json",
+  "title": "RunPod CUDA probe report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "observed_at", "finished_at", "service_id",
+    "provider", "environment", "gpu", "gpu_id", "image", "minimum_cuda_version",
+    "cloud_type", "pod_id", "status", "cuda_scheduler_check", "cuda_runtime_check",
+    "cuda_driver_check", "provider_execution_check", "failure_code",
+    "failure_message", "cleanup_status"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "service_id": {"const": "runpod-pod"},
+    "provider": {"const": "cuda"},
+    "environment": {"const": "linux"},
+    "gpu": {"type": "string", "minLength": 1},
+    "gpu_id": {"type": "string", "minLength": 1},
+    "image": {"type": "string", "pattern": "^ghcr\\.io/.+@sha256:[0-9a-f]{64}$"},
+    "minimum_cuda_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "cloud_type": {"enum": ["SECURE", "COMMUNITY"]},
+    "pod_id": {"type": ["string", "null"]},
+    "status": {"enum": ["PASS", "FAIL", "BLOCKED"]},
+    "cuda_scheduler_check": {"enum": ["PASS", "NOT_VERIFIED"]},
+    "cuda_runtime_check": {"enum": ["PASS", "NOT_VERIFIED"]},
+    "cuda_driver_check": {"enum": ["PASS", "NOT_VERIFIED"]},
+    "provider_execution_check": {"enum": ["PASS", "NOT_VERIFIED"]},
+    "failure_code": {"type": ["string", "null"]},
+    "failure_message": {"type": ["string", "null"]},
+    "cleanup_status": {"enum": ["PASS", "FAIL", "NOT_REQUIRED", "not_started"]}
+  }
+}

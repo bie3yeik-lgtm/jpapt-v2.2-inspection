@@ -193,12 +193,19 @@ jobs:
             echo 'RunPod CLI doctor did not report a healthy configuration' >&2
             exit 1
           }
+          mkdir -p .ci
           runpodctl gpu list --include-unavailable --output json > .ci/runpod-gpu-inventory.json
           python scripts/ci/check-runpod-rtf-services.py \
             --config .github/runpod-rtf-services.json \
             --inventory .ci/runpod-gpu-inventory.json \
             --output .ci/runpod-rtf-service-report.json \
             --require-gpu "$RTF_GPU"
+          gpu_json="$(jq -cer --arg gpu "$RTF_GPU" '.entries[] | select(.gpu == $gpu)' .github/runpod-rtf-services.json)"
+          gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
+          min_cuda="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
+          bash scripts/ci/run-runpod-cuda-probe.sh \
+            --gpu "$RTF_GPU" --gpu-id "$gpu_id" --image "${{ steps.resolve.outputs.image }}" \
+            --min-cuda-version "$min_cuda" --output .ci/runpod-cuda-probe.json
       - name: Validate Rust cost policy before provider execution
         run: |
           set -euo pipefail

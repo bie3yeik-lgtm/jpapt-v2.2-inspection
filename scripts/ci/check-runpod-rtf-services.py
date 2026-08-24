@@ -21,6 +21,7 @@ def main() -> int:
         raise SystemExit("RunPod inventory must be a JSON array")
     by_id = {str(item.get("gpuId", item.get("gpu_id", ""))): item for item in inventory}
     minimum_cuda = config["minimum_cuda_version"]
+    allowed_clouds = set(config["cloud_types"])
     results = []
     for entry in config["entries"]:
         item = by_id.get(entry["gpu_id"], {})
@@ -38,7 +39,10 @@ def main() -> int:
             "community_cloud": community,
             "cuda_requirement": minimum_cuda,
             "cuda_requirement_status": "enforced_at_pod_create",
-            "selectable": available and (secure or community),
+            "selectable": available and (
+                (secure and "SECURE" in allowed_clouds)
+                or (community and "COMMUNITY" in allowed_clouds)
+            ),
             "stock_status": item.get("stockStatus", item.get("stock_status")),
         })
     report = {
