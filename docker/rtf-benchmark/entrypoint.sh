@@ -56,6 +56,12 @@ EOF
   ssh-keygen -A >/dev/null 2>&1 || true
   /usr/sbin/sshd -t
   /usr/sbin/sshd
+  # Keep the SSH-launched benchmark output visible in RunPod's Container Logs.
+  # The keepalive command is PID 1, so mirror the explicit remote log file to
+  # container stdout while preserving the same output for the SSH caller.
+  container_log_file=/run/rtf-benchmark-container.log
+  : > "$container_log_file"
+  tail -F "$container_log_file" &
   exec sleep infinity
 fi
 

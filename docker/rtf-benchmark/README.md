@@ -101,6 +101,9 @@ entrypoint recognizes that CMD, installs no runtime packages, and starts
 `sshd` before keeping the container alive. The create request therefore does
 not depend on provider-specific `docker-args` parsing. The deprecated
 `runpodctl exec` command is not used.
+SSH-launched benchmark stdout/stderr is also mirrored to
+`/run/rtf-benchmark-container.log`, which the keepalive process tails to
+Container stdout so it is visible in RunPod Container Logs.
 Missing runtime variables fail closed; credentials are not image defaults.
 
 The runner enforces `num_workers=0`, `pin_memory=false`, and

@@ -722,6 +722,7 @@ case "$PROVIDER" in
     mkdir -p "$(dirname "$remote_log")"
     set +e
     {
+      printf '%s\n' 'exec > >(tee -a /run/rtf-benchmark-container.log) 2>&1'
       printf '%s\n' 'set -a' '. /run/rtf-benchmark.env' 'set +a'
       printf 'export RTF_JOB_ID=%q\n' "$pod_id"
       printf '%s\n' 'exec /opt/rtf-benchmark/entrypoint.sh'

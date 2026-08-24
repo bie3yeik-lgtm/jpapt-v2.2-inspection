@@ -75,6 +75,7 @@ static_checks() {
   grep -F 'authorized_keys' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F '/run/rtf-benchmark.env' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'PubkeyAuthentication yes' docker/rtf-benchmark/entrypoint.sh >/dev/null
+  grep -F 'tail -F "$container_log_file"' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'RTF_PYTHON_BIN" -m benchmark_runner.content_probe' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'RTF_RUNNER_ROOT="/opt/rtf-benchmark/benchmark-runner"' docker/rtf-benchmark/entrypoint.sh >/dev/null
   grep -F 'benchmark_runner/__init__.py' docker/rtf-benchmark/entrypoint.sh >/dev/null
@@ -91,6 +92,7 @@ static_checks() {
   grep -F 'write_runpod_environment' scripts/run-benchmark.sh >/dev/null
   grep -F 'write_runpod_environment | runpod_ssh tee /run/rtf-benchmark.env' scripts/run-benchmark.sh >/dev/null
   grep -F '} | runpod_ssh bash -s' scripts/run-benchmark.sh >/dev/null
+  grep -F 'tee -a /run/rtf-benchmark-container.log' scripts/run-benchmark.sh >/dev/null
   ! grep -F 'runpod_ssh bash -lc "set -a;' scripts/run-benchmark.sh >/dev/null
   grep -F 'BatchMode=yes' scripts/run-benchmark.sh >/dev/null
   grep -F 'StrictHostKeyChecking=no' scripts/run-benchmark.sh >/dev/null
