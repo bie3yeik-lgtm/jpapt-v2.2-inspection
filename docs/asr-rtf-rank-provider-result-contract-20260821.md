@@ -241,11 +241,16 @@ decoder/precision
 `asr-rtf-rank`はaccepted recordだけでなく、除外recordと除外理由を別のdiagnostic outputへ
 保存する。ranking JSONが空の場合はexit 2とし、MarkdownやPRを生成しない。
 
-同一の`service_id`、`gpu`、`batch_size`に対して複数のrecordが存在する場合は、
+`rtf-scores/<profile>`配下を再帰的に走査し、同一の`service_id`、`gpu`、`batch_size`に対して複数のrecordが存在する場合は、
 blocked/not_verifiedを候補にせず、completedかつCER・cost・provider execution proofを満たす
 recordだけを候補にする。その候補のうち`completed_at`が最も新しいrecordをrankingへ採用する。
 `completed_at`がない旧recordは`run_id`を後方互換のrecency keyとして扱う。採用されなかった
 古いcompleted recordは`ranking-exclusions.json`へ`superseded`理由で保存する。
+
+さらに、recordと同じディレクトリにある`metrics.json`を必須のmetrics sidecarとし、
+recordの`metrics_sha256`との一致、JSON object、`status=completed`を確認できないrecordは
+ranking候補から除外する。除外理由は`ranking-exclusions.json`へ保存する。これにより、
+RunPodの新しいblocked/not_verified試行が、過去の有効なmetricsを隠すことを防ぐ。
 
 ### Unit 6 — Actions integration
 

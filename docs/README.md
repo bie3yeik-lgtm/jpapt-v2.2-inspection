@@ -32,9 +32,10 @@
 24. [rtf-benchmark-action-run-evidence-20260821.md](./rtf-benchmark-action-run-evidence-20260821.md) — GitHub Actions実run結果とRTF Benchmark未達事項
 25. [rtf-provider-service-investigation-20260821.md](./rtf-provider-service-investigation-20260821.md) — HF Jobs / RunPodの実run失敗境界とprovider adapter調査
 26. [rtf-provider-failure-remediation-20260821.md](./rtf-provider-failure-remediation-20260821.md) — HF CUDA illegal access、typed failure receipt、GHCR→Resolver profile不一致の修正正本
-27. [parent-external-dispatch-workflows-20260820.md](./parent-external-dispatch-workflows-20260820.md) — 親 `repository_dispatch` 向け workflow 実装ブランチの目的、#134/#154/#160 対応、実装 backlog
-28. [recursive-delivery-entry-parent-external-dispatch-20260820.md](./recursive-delivery-entry-parent-external-dispatch-20260820.md) — 上記ブランチの recursive delivery 着手入口
-29. [parent-repository-external-dispatch-config-handoff-20260820.md](./parent-repository-external-dispatch-config-handoff-20260820.md) — 公開正本 merge 後に親 repo で行う route config 更新 handoff
+27. [rtf-runpod-serverless-cost-effectiveness-20260824.md](./rtf-runpod-serverless-cost-effectiveness-20260824.md) — Parakeet ServerlessのGPU候補、料金、cold start、Podとの使い分け
+28. [parent-external-dispatch-workflows-20260820.md](./parent-external-dispatch-workflows-20260820.md) — 親 `repository_dispatch` 向け workflow 実装ブランチの目的、#134/#154/#160 対応、実装 backlog
+29. [recursive-delivery-entry-parent-external-dispatch-20260820.md](./recursive-delivery-entry-parent-external-dispatch-20260820.md) — 上記ブランチの recursive delivery 着手入口
+30. [parent-repository-external-dispatch-config-handoff-20260820.md](./parent-repository-external-dispatch-config-handoff-20260820.md) — 公開正本 merge 後に親 repo で行う route config 更新 handoff
 
 ## 現在の実装スタック
 

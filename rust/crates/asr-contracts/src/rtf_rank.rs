@@ -51,8 +51,14 @@ pub fn rank_rtf_records(
             });
             continue;
         }
-        validate_rtf_benchmark_record(&value)
-            .map_err(|error| ContractError::validation(format!("{input}: {error}")))?;
+        if let Err(error) = validate_rtf_benchmark_record(&value) {
+            excluded.push(RtfRankExclusion {
+                input,
+                run_id,
+                reason: format!("invalid benchmark record: {error}"),
+            });
+            continue;
+        }
         if let Some(phase) = expected_phase
             && value["phase"].as_str() != Some(phase)
         {
@@ -93,6 +99,8 @@ pub fn rank_rtf_records(
             "no accepted completed benchmark records are available for ranking",
         ));
     }
+    // Keep the newest valid metrics for each benchmark machine/cell. Batch size
+    // remains part of the key because smoke ranking compares batch 1/8/32.
     let mut latest_by_cell = std::collections::BTreeMap::<String, (String, Value)>::new();
     for (input, value) in candidates {
         let cell = format!(
@@ -282,5 +290,29 @@ mod tests {
         assert_eq!(result.records.len(), 1);
         assert_eq!(result.records[0]["run_id"], "run-complete");
         assert_eq!(result.excluded[0].reason, "status is not completed");
+    }
+
+    #[test]
+    fn excludes_invalid_completed_record_and_keeps_valid_machine() {
+        let valid = record("run-valid", Some(0.1), Some(0.1));
+        let invalid = json!({
+            "run_id": "run-invalid", "status": "completed", "service_id": "hf-jobs",
+            "gpu": "t4", "batch_size": 1
+        });
+        let result = rank_rtf_records(
+            vec![
+                ("invalid.json".to_owned(), invalid),
+                ("valid.json".to_owned(), valid),
+            ],
+            Some("phase1"),
+        )
+        .expect("invalid record should be excluded while valid data remains");
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0]["run_id"], "run-valid");
+        assert!(
+            result.excluded[0]
+                .reason
+                .starts_with("invalid benchmark record:")
+        );
     }
 }
