@@ -3,6 +3,11 @@
 `.github/workflows/self-hosted-docker-smoke.yml` is a manual verification
 workflow for a repository-owned self-hosted GitHub Actions runner.
 
+While the standalone workflow is waiting for its first merge to the default
+branch, the same job is also exposed from the existing
+`rtf-benchmark-contracts.yml` `workflow_dispatch` path. This allows the
+feature branch to be verified on the self-hosted runner before merge.
+
 The runner must expose a working Docker daemon to the runner process. The
 workflow deliberately uses `runs-on: self-hosted` and invokes Docker on the
 host; it does not use a GitHub-hosted runner or Docker-in-Docker.
