@@ -3,12 +3,6 @@ name: Vast Offer Inventory
 on:
   workflow_dispatch:
     inputs:
-      profile:
-        description: Vast search profile from the AudioAttention advice
-        required: true
-        default: student
-        type: choice
-        options: [student, teacher, all]
       pricing_type:
         description: Vast pricing mode; bid is interruptible
         required: true
@@ -16,14 +10,34 @@ on:
         type: choice
         options: [bid, on-demand]
       limit:
-        description: Maximum offers per search
+        description: Maximum offers to return
         required: true
         default: "25"
         type: string
-      min_cuda_version:
-        description: Minimum host CUDA capability required by the Parakeet benchmark
+      storage_gb:
+        description: Allocated storage passed to Vast CLI --storage
         required: true
-        default: "13.0"
+        default: "100"
+        type: string
+      gpu_name:
+        description: Optional GPU model filter (RTX_4090 or RTX_4090,RTX_3090)
+        required: false
+        default: ""
+        type: string
+      num_gpus:
+        description: Optional GPU count filter (1, >=2, or in [1,2,4])
+        required: false
+        default: ""
+        type: string
+      gpu_ram:
+        description: Optional GPU RAM filter (48, >=48, <=96000)
+        required: false
+        default: ""
+        type: string
+      duration:
+        description: Optional minimum rental duration filter in seconds (>=3600)
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -36,10 +50,13 @@ jobs:
     timeout-minutes: 10
     env:
       VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
-      PROFILE: ${{ inputs.profile }}
       PRICING_TYPE: ${{ inputs.pricing_type }}
       LIMIT: ${{ inputs.limit }}
-      MIN_CUDA_VERSION: ${{ inputs.min_cuda_version }}
+      STORAGE_GB: ${{ inputs.storage_gb }}
+      GPU_NAME: ${{ inputs.gpu_name }}
+      NUM_GPUS: ${{ inputs.num_gpus }}
+      GPU_RAM: ${{ inputs.gpu_ram }}
+      DURATION: ${{ inputs.duration }}
     steps:
       - uses: actions/checkout@v7
 
@@ -49,7 +66,7 @@ jobs:
           set -euo pipefail
           [[ -n "$VAST_API_KEY" ]] || { echo 'VAST_API_KEY repository secret is required'; exit 1; }
           [[ "$LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo 'limit must be an integer from 1 to 999'; exit 2; }
-          [[ "$MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || { echo 'min_cuda_version must be major.minor'; exit 2; }
+          [[ "$STORAGE_GB" =~ ^[1-9][0-9]{0,3}$ ]] || { echo 'storage_gb must be an integer from 1 to 9999'; exit 2; }
 
       - name: Install Vast CLI
         shell: bash
@@ -59,46 +76,39 @@ jobs:
         shell: bash
         run: vastai --version | tee vast-cli-version.txt
 
-      - name: Search default Vast offer profiles
+      - name: Build Vast search query
+        id: query
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p vast-offers
+          python scripts/vast/build-search-query.py \
+            --gpu-name "$GPU_NAME" \
+            --num-gpus "$NUM_GPUS" \
+            --gpu-ram "$GPU_RAM" \
+            --duration "$DURATION" \
+            --output-json vast-offers/search-query.json \
+            | tee vast-offers/search-query.txt
+          query="$(tr -d '\n' < vast-offers/search-query.txt)"
+          echo "query=$query" >> "$GITHUB_OUTPUT"
+          echo "Built Vast search query: $query"
 
-          search_profile() {
-            local profile="$1"
-            local storage_gb="$2"
-            local query="$3"
-            local output="vast-offers/${profile}-${PRICING_TYPE}.json"
-            echo "Searching profile=${profile} pricing=${PRICING_TYPE} storage_gb=${storage_gb}"
-            vastai search offers \
-              --api-key "$VAST_API_KEY" \
-              --raw \
-              --no-default \
-              --type "$PRICING_TYPE" \
-              --order dph_total \
-              --storage "$storage_gb" \
-              --limit "$LIMIT" \
-              "$query" > "$output"
-          }
-
-          case "$PROFILE" in
-            student)
-              search_profile student 100 \
-                "gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true cuda_max_good>=${MIN_CUDA_VERSION}"
-              ;;
-            teacher)
-              search_profile teacher 150 \
-                "gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1 cuda_max_good>=${MIN_CUDA_VERSION}"
-              ;;
-            all)
-              search_profile student 100 \
-                "gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true cuda_max_good>=${MIN_CUDA_VERSION}"
-              search_profile teacher 150 \
-                "gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1 cuda_max_good>=${MIN_CUDA_VERSION}"
-              ;;
-            *) echo "unsupported profile: $PROFILE" >&2; exit 2 ;;
-          esac
+      - name: Search Vast offers
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="$(< vast-offers/search-query.txt)"
+          output="vast-offers/search-${PRICING_TYPE}.json"
+          echo "Searching pricing=${PRICING_TYPE} storage_gb=${STORAGE_GB}"
+          vastai search offers \
+            --api-key "$VAST_API_KEY" \
+            --raw \
+            --no-default \
+            --type "$PRICING_TYPE" \
+            --order dph_total \
+            --storage "$STORAGE_GB" \
+            --limit "$LIMIT" \
+            "$query" > "$output"
 
       - name: Normalize offer inventory
         shell: bash
@@ -109,7 +119,7 @@ jobs:
             --output-json vast-offers/inventory.json \
             --output-csv vast-offers/inventory.csv \
             --output-markdown vast-offers/inventory.md \
-            --profile "$PROFILE" \
+            --search-query "${{ steps.query.outputs.query }}" \
             --pricing-type "$PRICING_TYPE" \
             --limit "$LIMIT"
           cat vast-offers/inventory.md >> "$GITHUB_STEP_SUMMARY"
