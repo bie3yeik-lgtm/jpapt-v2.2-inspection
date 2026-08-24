@@ -29,6 +29,7 @@
 - metrics生成側は`RTF_COMPUTE_PRICE_PER_HOUR`を優先し、既存の`RTF_GPU_PRICE_PER_HOUR`をfallbackとして維持する。
 - `vast`をservice metrics schemaへ追加し、RustのVast最低限metricsテストを追加した。
 - `rtf-scores/smoke/runpod-pod/rtx3090/batch-32/metrics.json`のRTF、RTFx、CER、処理時間、音声時間、GPU価格、audio-hourコスト、VRAM、utilization、memory bandwidth、queue latency等をbenchmark recordへ変換できる境界を維持する。
+- rankingの比較identityはmodel、decoder、dataset、manifest、precisionを使用する。`fixture_revision`と`image_digest`は追跡・再現性のためrecordへ保持するが、同一manifestのprovider比較を不必要に分断しない。
 
 ## 出力配置
 
