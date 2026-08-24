@@ -204,6 +204,10 @@ jobs:
           if 'RTF_HF_429_WAIT_SECONDS:=300' not in script or 'RTF_HF_429_MAX_ATTEMPTS:=3' not in script:
               raise SystemExit("RunPod fixture downloads must use the five-minute 429 retry window")
           load_fixture = Path("docker/rtf-benchmark/benchmark-runner/benchmark_runner/load_fixture.py").read_text()
+          materializer = Path("scripts/ci/prepare-rtf-fixture.py").read_text()
+          for name, source in (("fixture loader", load_fixture), ("fixture materializer", materializer)):
+              if 'from huggingface_hub import hf_hub_download' not in source or 'from huggingface_hub.utils import HfHubHTTPError' not in source:
+                  raise SystemExit(f"{name} must use the huggingface_hub.utils error import path")
           if 'waiting {wait_seconds}s for the five-minute rate window' not in load_fixture:
               raise SystemExit("fixture loader must wait for the five-minute HF 429 window")
           if '--local-dir' not in load_fixture or 'RTF_FIXTURE_LOCAL_DIR' not in Path("docker/rtf-benchmark/entrypoint.sh").read_text():
