@@ -11,6 +11,8 @@ set -euo pipefail
 case "$*" in
   *"gpu list"*) if [[ "${MOCK_UNAVAILABLE:-0}" == 1 ]]; then printf '%s\n' '[{"gpuId":"NVIDIA RTX A5000","available":false,"secureCloud":true,"communityCloud":false}]'; else printf '%s\n' '[{"gpuId":"NVIDIA RTX A5000","available":true,"secureCloud":true,"communityCloud":false}]'; fi ;;
   *"pod create"*) printf '%s\n' '{"id":"probe-pod-1"}' ;;
+  *"pod get"*) printf '%s\n' '{"id":"probe-pod-1","desiredStatus":"RUNNING","runtimeStatus":"running"}' ;;
+  *"pod list"*) printf '%s\n' '[{"id":"probe-pod-1","desiredStatus":"RUNNING","runtimeStatus":"running"}]' ;;
   *"ssh info"*) printf '%s\n' '{"sshCommand":"ssh mock-host"}' ;;
   *"pod delete"*) : > "$RUNPOD_DELETE_MARKER" ;;
   *) printf '%s\n' '[]' ;;

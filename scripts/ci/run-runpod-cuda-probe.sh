@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() { echo "usage: $0 --gpu NAME --gpu-id ID --image IMAGE --min-cuda-version VERSION --output PATH [--cloud-type auto|SECURE|COMMUNITY]" >&2; exit 2; }
-gpu=""; gpu_id=""; image=""; min_cuda_version=""; output=""; cloud_type=auto
+usage() { echo "usage: $0 --gpu NAME --gpu-id ID --image IMAGE --min-cuda-version VERSION --output PATH [--cloud-type auto|SECURE|COMMUNITY] [--terminate-after-hours HOURS] [--heartbeat-seconds SECONDS]" >&2; exit 2; }
+gpu=""; gpu_id=""; image=""; min_cuda_version=""; output=""; cloud_type=auto; terminate_after_hours=24; heartbeat_seconds=30
 while (($#)); do
   case "$1" in
     --gpu) gpu="${2:?missing --gpu value}"; shift 2;;
@@ -11,12 +11,16 @@ while (($#)); do
     --min-cuda-version) min_cuda_version="${2:?missing --min-cuda-version value}"; shift 2;;
     --output) output="${2:?missing --output value}"; shift 2;;
     --cloud-type) cloud_type="${2:?missing --cloud-type value}"; shift 2;;
+    --terminate-after-hours) terminate_after_hours="${2:?missing --terminate-after-hours value}"; shift 2;;
+    --heartbeat-seconds) heartbeat_seconds="${2:?missing --heartbeat-seconds value}"; shift 2;;
     *) usage;;
   esac
 done
 [[ -n "$gpu" && -n "$gpu_id" && -n "$image" && -n "$min_cuda_version" && -n "$output" ]] || usage
 [[ "$min_cuda_version" =~ ^[0-9]+\.[0-9]+$ ]] || { echo 'minimum CUDA version must be major.minor' >&2; exit 2; }
 [[ "$cloud_type" == auto || "$cloud_type" == SECURE || "$cloud_type" == COMMUNITY ]] || usage
+[[ "$terminate_after_hours" =~ ^[1-9][0-9]*$ && "$terminate_after_hours" -le 168 ]] || { echo 'terminate-after-hours must be 1..168' >&2; exit 2; }
+[[ "$heartbeat_seconds" =~ ^[1-9][0-9]*$ ]] || { echo 'heartbeat-seconds must be positive' >&2; exit 2; }
 command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 1; }
 [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
@@ -54,27 +58,62 @@ elif [[ "$cloud_type" == SECURE && "$(jq -r '.secureCloud // .secure_cloud // fa
 elif [[ "$cloud_type" == COMMUNITY && "$(jq -r '.communityCloud // .community_cloud // false' <<<"$match")" != true ]]; then
   failure_code=RUNPOD_GPU_CLOUD_UNAVAILABLE; failure_message="GPU is not available on COMMUNITY cloud: $gpu_id"; write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; exit 1
 fi
-terminate_after="$(date -u -d '+15 minutes' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+15M '+%Y-%m-%dT%H:%M:%SZ')"
+terminate_after="$(date -u -d "+${terminate_after_hours} hours" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+${terminate_after_hours}H '+%Y-%m-%dT%H:%M:%SZ')"
 create_log="$(mktemp "${TMPDIR:-/tmp}/rtf-cuda-probe.XXXXXX")"
-set +e
-runpodctl pod create --name "$run_id" --image "$image" --cloud-type "$cloud_type_observed" --gpu-id "$gpu_id" --ssh --ports 22/tcp --terminate-after "$terminate_after" --min-cuda-version "$min_cuda_version" --output json >"$create_log" 2>&1
-create_status=$?; set -e
-pod_json="$(<"$create_log")"; pod_id="$(jq -er '(.id // .podId // .pod_id) // empty' <<<"$pod_json" 2>/dev/null || true)"
-if [[ -z "$pod_id" ]]; then
-  pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"
-fi
+create_deadline=$(( $(date +%s) + 1800 )); create_pid=""; create_status=124
+runpodctl pod create --name "$run_id" --image "$image" --cloud-type "$cloud_type_observed" --gpu-id "$gpu_id" --ssh --ports 22/tcp --terminate-after "$terminate_after" --min-cuda-version "$min_cuda_version" --output json >"$create_log" 2>&1 &
+create_pid=$!
+while [[ "$(date +%s)" -lt "$create_deadline" ]]; do
+  pod_json="$(<"$create_log")"
+  pod_id="$(jq -er '(.id // .podId // .pod_id) // empty' <<<"$pod_json" 2>/dev/null || true)"
+  if [[ -z "$pod_id" ]]; then pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
+  if [[ -n "$pod_id" ]]; then kill "$create_pid" 2>/dev/null || true; create_status=0; break; fi
+  if ! kill -0 "$create_pid" 2>/dev/null; then
+    if wait "$create_pid"; then create_status=0; else create_status=$?; fi
+    break
+  fi
+  echo "RunPod CUDA probe heartbeat phase=pod_create" >&2
+  sleep "$heartbeat_seconds"
+done
+if [[ -z "$pod_id" ]]; then wait "$create_pid" 2>/dev/null || create_status=$?; pod_json="$(<"$create_log")"; pod_id="$(runpodctl pod list --all --name "$run_id" --output json 2>/dev/null | jq -er '.[0] | (.id // .podId // .pod_id) // empty' 2>/dev/null || true)"; fi
 if [[ "$create_status" -ne 0 || -z "$pod_id" ]]; then
+  echo "::error::RunPod CUDA probe Pod create failed: exit_status=$create_status pod_id=${pod_id:-<none>}" >&2
+  tr '\r\n' '  ' <<<"$pod_json" | cut -c1-2000 >&2 || true
   failure_code=RUNPOD_POD_CREATE_FAILED; failure_message="probe Pod creation failed"
   if grep -Eqi 'cuda|nvidia driver|driver version|unsupported cuda' <<<"$pod_json"; then failure_code=RUNPOD_CUDA_REQUIREMENT_UNSATISFIED; fi
   if grep -Eqi 'no instances available|insufficient capacity' <<<"$pod_json"; then failure_code=RUNPOD_NO_INSTANCE_AVAILABLE; fi
   exit 1
 fi
-ssh_command=""; deadline=$(( $(date +%s) + 300 ))
-while [[ "$(date +%s)" -lt "$deadline" && -z "$ssh_command" ]]; do ssh_json="$(runpodctl ssh info "$pod_id" --output json 2>/dev/null || true)"; ssh_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_json" 2>/dev/null || true)"; [[ -n "$ssh_command" ]] || sleep 10; done
-if [[ -z "$ssh_command" ]]; then failure_code=RUNPOD_SSH_FAILED; failure_message="probe Pod did not expose SSH before timeout"; exit 1; fi
+ssh_command=""; readiness_deadline=$(( $(date +%s) + 3600 )); consecutive_missing=0
+while [[ "$(date +%s)" -lt "$readiness_deadline" && -z "$ssh_command" ]]; do
+  pod_state="$(timeout 30s runpodctl pod get "$pod_id" --output json 2>/dev/null || true)"
+  pod_list="$(timeout 30s runpodctl pod list --all --name "$run_id" --output json 2>/dev/null || true)"
+  pod_exists="$(jq -er --arg pod_id "$pod_id" '[.[] | select((.id // .podId // .pod_id) == $pod_id)] | length > 0' <<<"$pod_list" 2>/dev/null || echo false)"
+  runtime_status="$(jq -r '(.runtimeStatus // .runtime_status // .runtime.status // .desiredStatus // .desired_status // "") | ascii_downcase' <<<"$pod_state" 2>/dev/null || true)"
+  echo "RunPod CUDA probe heartbeat phase=readiness exists=$pod_exists status=${runtime_status:-unknown}" >&2
+  if [[ "$pod_exists" != true && -n "$pod_list" ]]; then consecutive_missing=$((consecutive_missing + 1)); else consecutive_missing=0; fi
+  if [[ "$consecutive_missing" -ge 3 || "$runtime_status" == exited || "$runtime_status" == terminated ]]; then failure_code=RUNPOD_POD_EXITED_BEFORE_READINESS; failure_message="probe Pod disappeared or exited before SSH readiness"; exit 1; fi
+  if ssh_json="$(timeout 30s runpodctl ssh info "$pod_id" --output json 2>&1)"; then
+    ssh_status=0
+  else
+    ssh_status=$?
+  fi
+  ssh_command="$(jq -er '(.sshCommand // .ssh_command) // empty' <<<"$ssh_json" 2>/dev/null || true)"
+  echo "RunPod CUDA probe SSH poll: exit_status=$ssh_status command_present=$([[ -n "$ssh_command" ]] && echo true || echo false)" >&2
+  (( ssh_status == 0 )) || { echo "RunPod CUDA probe ssh info response: $(tr '\r\n' '  ' <<<"$ssh_json" | cut -c1-2000)" >&2; }
+  [[ -n "$ssh_command" ]] || sleep "$heartbeat_seconds"
+done
+if [[ -z "$ssh_command" ]]; then
+  echo "::error::RunPod CUDA probe SSH readiness timed out after 3600 seconds for pod_id=$pod_id" >&2
+  failure_code=RUNPOD_SSH_FAILED; failure_message="probe Pod did not expose SSH before timeout"; exit 1
+fi
 ssh_command="${ssh_command/ssh /ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 }"
 probe_output="$(timeout 60s bash -c "$ssh_command 'nvidia-smi && test -e /dev/nvidia0'" 2>/dev/null || true)"
-if [[ -z "$probe_output" ]] || ! grep -F "$gpu_id" <<<"$probe_output" >/dev/null; then failure_code=RUNPOD_NVIDIA_SMI_FAILED; failure_message="nvidia-smi did not report the requested GPU"; exit 1; fi
+if [[ -z "$probe_output" ]] || ! grep -F "$gpu_id" <<<"$probe_output" >/dev/null; then
+  echo "::error::RunPod CUDA probe nvidia-smi failed or reported an unexpected GPU: pod_id=$pod_id" >&2
+  tr '\r\n' '  ' <<<"$probe_output" | cut -c1-2000 >&2 || true
+  failure_code=RUNPOD_NVIDIA_SMI_FAILED; failure_message="nvidia-smi did not report the requested GPU"; exit 1
+fi
 cuda_version="$(grep -Eo 'CUDA Version: [0-9]+\.[0-9]+' <<<"$probe_output" | awk '{print $3}' | head -n 1 || true)"
 if [[ -z "$cuda_version" ]]; then failure_code=RUNPOD_CUDA_RUNTIME_FAILED; failure_message="nvidia-smi did not report a CUDA version"; exit 1; fi
 required_major="${min_cuda_version%%.*}"; required_minor="${min_cuda_version##*.}"

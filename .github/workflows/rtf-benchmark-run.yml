@@ -283,9 +283,13 @@ jobs:
             exit 2
           }
           export RTF_HF_TIMEOUT=2h
-          export RTF_RUNPOD_MAX_HOURS=2
-          export RTF_RUNPOD_WAIT_TIMEOUT_MINUTES=30
-          export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=5
+          # Low-spec Pods can spend a long time pulling the image and warming
+          # the runtime. Keep a 24-hour provider-side safety lease; the
+          # GitHub job timeout remains the outer workflow limit.
+          export RTF_RUNPOD_MAX_HOURS=24
+          export RTF_RUNPOD_WAIT_TIMEOUT_MINUTES=120
+          export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=60
+          export RTF_RUNPOD_HEARTBEAT_SECONDS=30
           export RTF_RUNPOD_MIN_CUDA_VERSION="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
           export RTF_RUNPOD_CLOUD_TYPE='${{ inputs.runpod_cloud_type }}'
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"

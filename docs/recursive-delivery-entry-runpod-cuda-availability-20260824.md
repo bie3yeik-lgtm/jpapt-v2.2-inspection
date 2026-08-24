@@ -45,8 +45,8 @@ python -m py_compile scripts/ci/check-runpod-rtf-services.py
 `scripts/ci/run-runpod-cuda-probe.sh`は一GPUを対象に次を実施する。
 
 1. inventoryでavailabilityとcloud typeを確認する。
-2. `runpodctl pod create`にGPU ID、digest-pinned image、`--min-cuda-version`、SSH、15分の終了期限を渡す。
-3. SSH情報を最大5分待つ。
+2. `runpodctl pod create`にGPU ID、digest-pinned image、`--min-cuda-version`、SSH、24時間の安全終了期限を渡す。
+3. SSH情報を最大1時間待ち、30秒ごとにPodの存在・状態・SSH情報を記録する。
 4. Pod上の`nvidia-smi`出力から要求GPU名を確認する。
 5. `CUDA Version`を取得し、minimum CUDA version以上か比較する。
 6. `/dev/nvidia0`の存在を確認する。
@@ -111,7 +111,7 @@ mise run check
 ## rollbackとコスト保護
 
 通常の定期実行は`inventory-only`とする。probeは手動またはRTF実行前に限定する。
-probeは15分のterminate期限、5分のSSH待機、60秒の診断timeoutを持つ。cleanup失敗時は
+probeは24時間の安全terminate期限、1時間のSSH待機、30秒周期のheartbeatを持つ。metricsまたはreceipt取得完了時、または内部エラー時にcleanupする。RunPod CLIには作成後のterminate期限を更新する公式操作がないため、heartbeat自体は期限を延長せず、Pod消失を検知して失敗ログとcleanupへつなぐ。cleanup失敗時は
 reportのPod IDを使って手動削除し、成功rankingへ進めない。
 
 参照:
