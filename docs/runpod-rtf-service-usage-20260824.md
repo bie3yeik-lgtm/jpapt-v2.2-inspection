@@ -33,7 +33,7 @@ artifact `runpod-rtf-service-inventory-<run_id>`には、raw inventory、結合�
 
 自分でimageを指定する場合は、`ghcr.io/<owner>/<image>@sha256:<64桁のsha256>`形式にしてください。
 
-probeは、在庫とcloud typeの確認、一時Podの作成、SSH readiness（最大1時間）、`nvidia-smi`、GPU名、CUDA Version（13.0以上）、`/dev/nvidia0`の確認、Pod削除を順に行います。Podには`--min-cuda-version 13.0`と24時間の安全終了期限を指定し、作成後も30秒ごとにPodの存在と状態を確認します。
+probeは、在庫とcloud typeの確認、一時Podの作成、SSH readiness（最大1時間）、`nvidia-smi`、GPU名、CUDA Version（13.0以上）、`/dev/nvidia0`の確認、Pod削除を順に行います。Podには`--min-cuda-version 13.0`と24時間の安全終了期限を指定し、作成後も30秒ごとにPodの存在と状態を確認します。作成時にRunPodが一時的な容量不足（`no longer any instances available`等）を返した場合は、inventoryを再確認して最大3回、20秒・40秒の段階的backoffで再試行します。残高不足、認証、CUDA要件不一致などは再試行しません。
 
 RTF benchmark本体では、Podの作成後からmetrics・receipt・RunPod billing metadataの取得完了まで同じheartbeatを実行します。各heartbeatで`nvidia-smi`からGPU使用率、メモリ使用量、温度、電力を取得し、ECC/Xid等のGPUエラー情報も確認します。Pod消失・停止時には直前のGPU診断、コンテナログtail、Pod状態をActions logとprovider diagnosticsへ保存します。completed receiptの場合は、Pod IDがbilling APIで参照可能な状態でbilling metadataを先に結合し、その後にContainer Logs停止とPod削除を行います。SSH、benchmark、API、billing metadataの内部エラーが発生した場合は、終了処理でPodを削除します。作成・readiness・SSH情報取得・metrics取得に失敗した場合は、Actions logに終了コード、Pod ID、RunPod応答の要約を出力します。RunPod CLIの公式仕様には作成後の`--terminate-after`を延長する更新操作がないため、heartbeatはタイマーを延長するものではなく、長い安全期限と早期cleanupを組み合わせた監視です。
 

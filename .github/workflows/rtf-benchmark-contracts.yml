@@ -188,6 +188,11 @@ jobs:
               raise SystemExit("RunPod readiness timeout must be configurable")
           if 'RTF_RUNPOD_CREATE_TIMEOUT_MINUTES' not in script:
               raise SystemExit("RunPod Pod creation timeout must be configurable")
+          probe_script = Path("scripts/ci/run-runpod-cuda-probe.sh").read_text()
+          if 'create_attempts=3' not in probe_script or 'create_retry_backoff_seconds=20' not in probe_script:
+              raise SystemExit("RunPod probe must retry transient capacity failures with bounded backoff")
+          if 'capacity retry:' not in probe_script:
+              raise SystemExit("RunPod probe capacity retries must be observable")
           if 'RTF_RUNPOD_MIN_CUDA_VERSION:=13.0' not in script:
               raise SystemExit("RunPod CUDA compatibility floor must be pinned")
           if '--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"' not in script:
