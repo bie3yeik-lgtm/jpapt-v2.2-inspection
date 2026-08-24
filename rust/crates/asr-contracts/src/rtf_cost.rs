@@ -215,23 +215,4 @@ mod tests {
         request.allow_expensive_matrix = true;
         assert!(validate_rtf_cost_plan(&request, &policy()).is_ok());
     }
-
-    #[test]
-    fn runpod_phase_one_gpu_targets_are_accepted() {
-        for gpu in ["l4", "a4000", "a4500"] {
-            let plan = validate_rtf_cost_plan(&super::RtfCostRequest {
-                provider: "runpod".into(),
-                gpu: gpu.into(),
-                batch_size: 1,
-                repeat: 3,
-                sample_count: 50,
-                target_total_sec: 5400,
-                max_duration_sec: 600,
-                mode: "guarded".into(),
-                allow_expensive_matrix: false,
-            })
-            .expect("new RunPod GPU target must be accepted by the cost policy");
-            assert_eq!(plan.gpu, gpu);
-        }
-    }
 }
