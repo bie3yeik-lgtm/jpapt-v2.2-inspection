@@ -73,13 +73,24 @@ jobs:
             '$sidecar_exclusions + .' rtf-scores/ranking-exclusions.json \
             > rtf-scores/ranking-exclusions.json.tmp
           mv rtf-scores/ranking-exclusions.json.tmp rtf-scores/ranking-exclusions.json
-          jq -r '.records[] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-rows
+          jq -r '.records[:3][] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-top-rows
+          jq -r '.records | if length <= 3 then [] else .[-3:] end | .[] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-bottom-rows
           {
             echo '# RTF benchmark ranking'
             echo
+            echo '## Top 3'
+            echo
             echo '| Service | GPU | Batch | RTF | CER | $/audio-hour |'
             echo '|---|---|---:|---:|---:|---:|'
-            cat /tmp/ranking-rows
+            cat /tmp/ranking-top-rows
+            if [[ -s /tmp/ranking-bottom-rows ]]; then
+              echo
+              echo '## Bottom 3'
+              echo
+              echo '| Service | GPU | Batch | RTF | CER | $/audio-hour |'
+              echo '|---|---|---:|---:|---:|---:|'
+              cat /tmp/ranking-bottom-rows
+            fi
           } > rtf-scores/ranking.md
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

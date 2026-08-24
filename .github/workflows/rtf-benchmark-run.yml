@@ -13,6 +13,12 @@ on:
         required: true
         type: choice
         options: [t4, l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
+      runpod_cloud_type:
+        description: RunPod cloud tier; auto selects a tier where this GPU is currently available
+        required: false
+        default: auto
+        type: choice
+        options: [auto, SECURE, COMMUNITY]
       model_id:
         description: Model repository ID
         required: true
@@ -266,7 +272,12 @@ jobs:
           export RTF_RUNPOD_MAX_HOURS=2
           export RTF_RUNPOD_WAIT_TIMEOUT_MINUTES=30
           export RTF_RUNPOD_SSH_INFO_WAIT_MINUTES=5
-          export RTF_RUNPOD_MIN_CUDA_VERSION=13.2
+          # RunPod's published CUDA selector accepts 13.0 as the current
+          # CUDA-13 floor. The NeMo Speech 26.07 image used by this benchmark
+          # requires a CUDA-13-capable host; runtime diagnostics still report
+          # the exact driver/container mismatch when one occurs.
+          export RTF_RUNPOD_MIN_CUDA_VERSION=13.0
+          export RTF_RUNPOD_CLOUD_TYPE='${{ inputs.runpod_cloud_type }}'
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in
