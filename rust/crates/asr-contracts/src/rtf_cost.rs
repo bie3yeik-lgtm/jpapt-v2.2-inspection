@@ -41,7 +41,7 @@ pub fn validate_rtf_cost_plan(request: &RtfCostRequest) -> Result<RtfCostPlan> {
     let mode = request.mode.as_str();
     let valid_gpu = matches!(
         (provider, gpu),
-        ("hf", "t4" | "l4") | ("runpod", "a5000" | "l4" | "rtx3090" | "rtx4090")
+        ("hf", "t4" | "l4") | ("runpod", "a5000" | "a40" | "l4" | "rtx3090" | "rtx4090")
     );
     if !valid_gpu {
         return Err(ContractError::validation(format!(

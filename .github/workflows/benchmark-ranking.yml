@@ -28,8 +28,32 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t records < <(find "rtf-scores/${PHASE}" -mindepth 3 -type f -name 'benchmark-record.json' | sort)
-          [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
+          mapfile -t all_records < <(find "rtf-scores/${PHASE}" -type f -name 'benchmark-record.json' | sort)
+          [[ ${#all_records[@]} -gt 0 ]] || { echo "No ${PHASE} benchmark records; ranking is BLOCKED"; exit 1; }
+          records=()
+          metrics_exclusions='[]'
+          for record in "${all_records[@]}"; do
+            metrics="${record%benchmark-record.json}metrics.json"
+            if [[ ! -f "$metrics" ]]; then
+              metrics_exclusions="$(jq -c --arg input "$record" '. + [{input:$input,run_id:null,reason:"metrics sidecar is missing"}]' <<<"$metrics_exclusions")"
+              continue
+            fi
+            if ! expected_sha256="$(jq -er '.metrics_sha256' "$record")"; then
+              metrics_exclusions="$(jq -c --arg input "$record" '. + [{input:$input,run_id:null,reason:"benchmark record has no valid metrics_sha256"}]' <<<"$metrics_exclusions")"
+              continue
+            fi
+            actual_sha256="$(sha256sum "$metrics" | awk '{print $1}')"
+            if [[ "${expected_sha256,,}" != "$actual_sha256" ]]; then
+              metrics_exclusions="$(jq -c --arg input "$record" --arg expected "$expected_sha256" --arg actual "$actual_sha256" '. + [{input:$input,run_id:null,reason:("metrics sidecar SHA-256 mismatch: expected=" + $expected + " actual=" + $actual)}]' <<<"$metrics_exclusions")"
+              continue
+            fi
+            jq -e 'type == "object" and .status == "completed"' "$metrics" >/dev/null || {
+              metrics_exclusions="$(jq -c --arg input "$record" '. + [{input:$input,run_id:null,reason:"metrics sidecar is not a completed JSON object"}]' <<<"$metrics_exclusions")"
+              continue
+            }
+            records+=("$record")
+          done
+          [[ ${#records[@]} -gt 0 ]] || { echo "No ${PHASE} records with valid metrics; ranking is BLOCKED"; exit 1; }
           rank_phase="phase1"
           [[ "$PHASE" == pref || "$PHASE" == probe ]] && rank_phase="$PHASE"
           branch="inspection/rtf-benchmark-ranking-${PHASE}"
@@ -39,6 +63,10 @@ jobs:
           cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- \
             rtf-scores/ranking.json --phase "$rank_phase" \
             --diagnostics rtf-scores/ranking-exclusions.json "${records[@]}"
+          jq --argjson sidecar_exclusions "$metrics_exclusions" \
+            '$sidecar_exclusions + .' rtf-scores/ranking-exclusions.json \
+            > rtf-scores/ranking-exclusions.json.tmp
+          mv rtf-scores/ranking-exclusions.json.tmp rtf-scores/ranking-exclusions.json
           jq -r '.records[] | "| \(.service_id) | \(.gpu) | \(.batch_size) | \(.rtf) | \(.cer) | \(.cost_per_audio_hour) |"' rtf-scores/ranking.json > /tmp/ranking-rows
           {
             echo '# RTF benchmark ranking'
@@ -49,7 +77,7 @@ jobs:
           } > rtf-scores/ranking.md
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- rtf-scores/ranking.json rtf-scores/ranking.md
+          git add -- rtf-scores/ranking.json rtf-scores/ranking.md rtf-scores/ranking-exclusions.json
           if ! git diff --cached --quiet; then
             git commit -m "chore: generate RTF benchmark ranking ${PHASE}"
             git push --set-upstream origin "$branch"

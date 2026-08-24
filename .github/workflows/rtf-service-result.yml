@@ -234,7 +234,7 @@ jobs:
                 model: .model_id,
                 provider: $provider,
                 gpu: (if .service_id == "runpod-pod" then
-                        ({a5000:"NVIDIA RTX A5000",l4:"NVIDIA L4",rtx3090:"NVIDIA GeForce RTX 3090",rtx4090:"NVIDIA GeForce RTX 4090"}[.gpu] // .gpu)
+                        ({a5000:"NVIDIA RTX A5000",a40:"NVIDIA A40",l4:"NVIDIA L4",rtx3090:"NVIDIA GeForce RTX 3090",rtx4090:"NVIDIA GeForce RTX 4090"}[.gpu] // .gpu)
                       else .gpu end),
                 batch_size,
                 decoder,

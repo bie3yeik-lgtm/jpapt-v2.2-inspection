@@ -12,6 +12,7 @@
     {"service_id":"hf-jobs","gpu":"t4","flavor":"t4-small","provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
     {"service_id":"hf-jobs","gpu":"l4","flavor":"l4x1","provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
     {"service_id":"runpod-pod","gpu":"a5000","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
+    {"service_id":"runpod-pod","gpu":"a40","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
     {"service_id":"runpod-pod","gpu":"l4","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
     {"service_id":"runpod-pod","gpu":"rtx3090","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]},
     {"service_id":"runpod-pod","gpu":"rtx4090","flavor":null,"provider":"cuda","environment":"linux","batch_sizes":[1,8,32]}
