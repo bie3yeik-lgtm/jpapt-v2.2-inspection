@@ -45,3 +45,14 @@ workflow_dispatchによる外部実行が必要である。GPU推論、RunPod、
 
 併せて、既存contract workflowが非実行権限のshell testを直接呼んでいたため、
 `bash`経由の呼び出しへ修正した。
+
+## GitHub Actions受入れ
+
+- `32778400521`: self-hosted Docker jobは成功。既存contract jobは古いRunPod cloud-type契約で失敗。
+- `32778630579`: self-hosted Docker jobは成功。既存contract jobはPhase 1 matrixの旧件数12で失敗。
+- `32778786912`: self-hosted Docker jobと既存RTF contract jobの両方が成功。
+
+最終受入れrunのself-hosted jobは `97595911275`、既存contract jobは
+`97595911098` であり、いずれもcommit `69b3cca`をcheckoutして実行された。
+RunPod実GPU推論の成功を意味するものではなく、今回の受入れ範囲はDocker・workflow・
+契約検査である。
