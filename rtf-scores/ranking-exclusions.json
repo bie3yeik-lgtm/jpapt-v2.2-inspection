@@ -1,0 +1,7 @@
+[
+  {
+    "input": "rtf-scores/smoke/runpod-pod/rtx3090/batch-1/benchmark-record.json",
+    "run_id": null,
+    "reason": "metrics sidecar SHA-256 mismatch: expected=50a3e7a046c1bc3a40f3c26ba9b6cc1a73d0b8ec5412da3e98f158a1d1be96dc actual=c7eb3f90b29a0d208b626b5706dbab8e6c0fc8c00c3108b1d13f946aaf175c69"
+  }
+]
