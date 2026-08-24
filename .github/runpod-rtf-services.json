@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "service_id": "runpod-pod",
+  "provider": "cuda",
+  "environment": "linux",
+  "minimum_cuda_version": "13.0",
+  "cloud_types": ["SECURE", "COMMUNITY"],
+  "entries": [
+    {"gpu": "a5000", "gpu_id": "NVIDIA RTX A5000"},
+    {"gpu": "a4000", "gpu_id": "NVIDIA RTX A4000"},
+    {"gpu": "a4500", "gpu_id": "NVIDIA RTX A4500"},
+    {"gpu": "a40", "gpu_id": "NVIDIA A40"},
+    {"gpu": "rtx2000-ada", "gpu_id": "NVIDIA RTX 2000 Ada Generation"},
+    {"gpu": "rtx4000-ada", "gpu_id": "NVIDIA RTX 4000 Ada Generation"},
+    {"gpu": "l4", "gpu_id": "NVIDIA L4"},
+    {"gpu": "rtx3090", "gpu_id": "NVIDIA GeForce RTX 3090"},
+    {"gpu": "rtx4090", "gpu_id": "NVIDIA GeForce RTX 4090"}
+  ]
+}

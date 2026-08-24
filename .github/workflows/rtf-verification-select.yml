@@ -39,6 +39,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install RunPod CLI for live selectable check
+        if: inputs.service_id == 'runpod-pod'
+        run: curl -fsSL https://cli.runpod.net | sudo bash
+
+      - name: Check RunPod selectable target
+        if: inputs.service_id == 'runpod-pod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+          GPU: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+          runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json
+          python scripts/ci/check-runpod-rtf-services.py \
+            --config .github/runpod-rtf-services.json \
+            --inventory runpod-gpu-inventory.json \
+            --output runpod-rtf-service-report.json \
+            --require-gpu "$GPU"
+          jq -r '.entries[] | select(.gpu == env.GPU) | "RunPod selectable: \(.gpu) / CUDA \(.cuda_requirement) / available=\(.available)"' \
+            runpod-rtf-service-report.json >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify provider credential
         env:
           SERVICE_ID: ${{ inputs.service_id }}

@@ -1,0 +1,57 @@
+name: RunPod RTF service inventory
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install RunPod CLI
+        run: curl -fsSL https://cli.runpod.net | sudo bash
+
+      - name: Configure RunPod CLI
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+          runpodctl doctor --output json | jq -e '.healthy == true' >/dev/null
+
+      - name: Collect current GPU inventory
+        run: |
+          set -euo pipefail
+          runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json
+          jq -e 'type == "array"' runpod-gpu-inventory.json >/dev/null
+
+      - name: Check CUDA policy and current availability
+        run: |
+          set -euo pipefail
+          python scripts/ci/check-runpod-rtf-services.py \
+            --config .github/runpod-rtf-services.json \
+            --inventory runpod-gpu-inventory.json \
+            --output runpod-rtf-service-report.json | tee runpod-rtf-service-report.log
+          jq -r '.entries[] | "\(.gpu): selectable=\(.selectable) available=\(.available) secure=\(.secure_cloud) community=\(.community_cloud) cuda=\(.cuda_requirement)"' \
+            runpod-rtf-service-report.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload inventory and selection report
+        uses: actions/upload-artifact@v7
+        with:
+          name: runpod-rtf-service-inventory-${{ github.run_id }}
+          path: |
+            runpod-gpu-inventory.json
+            runpod-rtf-service-report.json
+            runpod-rtf-service-report.log
+            .github/runpod-rtf-services.json
+          if-no-files-found: error
