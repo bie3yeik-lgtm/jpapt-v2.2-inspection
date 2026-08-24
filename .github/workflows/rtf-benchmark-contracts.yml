@@ -477,8 +477,8 @@ jobs:
           value = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
           if value["schema_version"] != 1 or value["repetitions"] != 3:
               raise SystemExit("invalid Phase 1 matrix metadata")
-          if len(value["entries"]) != 12:
-              raise SystemExit("Phase 1 matrix must contain twelve provider/GPU entries")
+          if len(value["entries"]) != 11:
+              raise SystemExit("Phase 1 matrix must contain eleven provider/GPU entries")
           for entry in value["entries"]:
               if entry["service_id"] == "hf-jobs" and not entry["flavor"]:
                   raise SystemExit("HF Jobs entries require a hardware flavor")
