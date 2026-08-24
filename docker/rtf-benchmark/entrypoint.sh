@@ -136,8 +136,24 @@ if [[ "$#" -eq 0 ]]; then
   : "${RTF_SERVICE_ID:?RTF_SERVICE_ID is required}"
   : "${RTF_GPU:?RTF_GPU is required}"
   : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
+  : "${RTF_FIXTURE_LOCAL_DIR:=}"
   : "${RTF_PROFILE_ID:=${RTF_INSPECTION_PROFILE}}"
-  if [[ -n "$RTF_FIXTURE_REPO_ID" ]]; then
+  if [[ -n "$RTF_FIXTURE_LOCAL_DIR" ]]; then
+    [[ -d "$RTF_FIXTURE_LOCAL_DIR" ]] || {
+      echo "local RTF fixture directory is missing: $RTF_FIXTURE_LOCAL_DIR" >&2
+      exit 1
+    }
+    fixture_args=(
+      "$RTF_PYTHON_BIN" -m benchmark_runner.load_fixture \
+      --repo-id "$RTF_FIXTURE_REPO_ID" --revision "$RTF_FIXTURE_REVISION" \
+      --filename "$RTF_FIXTURE_FILENAME" --local-dir "$RTF_FIXTURE_LOCAL_DIR" \
+      --output-manifest "$RTF_MANIFEST" --audio-dir /workspace/benchmark-audio
+    )
+    if [[ -n "$RTF_FIXTURE_MANIFEST_SHA256" ]]; then
+      fixture_args+=(--expected-manifest-sha256 "$RTF_FIXTURE_MANIFEST_SHA256")
+    fi
+    "${fixture_args[@]}"
+  elif [[ -n "$RTF_FIXTURE_REPO_ID" ]]; then
     : "${HF_TOKEN:?HF_TOKEN is required when RTF_FIXTURE_REPO_ID is set}"
     : "${RTF_FIXTURE_REVISION:?RTF_FIXTURE_REVISION is required when RTF_FIXTURE_REPO_ID is set}"
     fixture_args=(

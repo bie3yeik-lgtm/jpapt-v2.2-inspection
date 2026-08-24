@@ -5,9 +5,38 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import time
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfHubHTTPError, hf_hub_download
+
+
+def _download(repo_id: str, revision: str, filename: str) -> Path:
+    attempts = int(os.environ.get("RTF_HF_429_MAX_ATTEMPTS", "3"))
+    wait_seconds = int(os.environ.get("RTF_HF_429_WAIT_SECONDS", "300"))
+    for attempt in range(1, attempts + 1):
+        try:
+            return Path(
+                hf_hub_download(
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    filename=filename,
+                    revision=revision,
+                    token=os.environ.get("HF_TOKEN"),
+                )
+            )
+        except HfHubHTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status != 429 or attempt >= attempts:
+                raise
+            print(
+                f"HF Hub 429 for {filename}; waiting {wait_seconds}s for the five-minute rate window "
+                f"(attempt {attempt}/{attempts - 1})",
+                flush=True,
+            )
+            time.sleep(wait_seconds)
+    raise AssertionError("unreachable")
 
 
 def main() -> int:
@@ -18,15 +47,14 @@ def main() -> int:
     parser.add_argument("--output-manifest", type=Path, required=True)
     parser.add_argument("--audio-dir", type=Path, required=True)
     parser.add_argument("--expected-manifest-sha256")
+    parser.add_argument("--local-dir", type=Path)
     args = parser.parse_args()
-    manifest = Path(
-        hf_hub_download(
-            repo_id=args.repo_id,
-            repo_type="dataset",
-            filename=args.filename,
-            revision=args.revision,
-        )
-    )
+    if args.local_dir:
+        manifest = args.local_dir / args.filename
+        if not manifest.is_file():
+            raise FileNotFoundError(f"local fixture manifest is missing: {manifest}")
+    else:
+        manifest = _download(args.repo_id, args.revision, args.filename)
     manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
     if args.expected_manifest_sha256 and manifest_sha256 != args.expected_manifest_sha256:
         raise ValueError("fixture manifest SHA-256 does not match the resolver receipt")
@@ -56,14 +84,12 @@ def main() -> int:
         if name in names:
             raise ValueError(f"fixture contains duplicate audio filename: {name}")
         names.add(name)
-        local = Path(
-            hf_hub_download(
-                repo_id=args.repo_id,
-                repo_type="dataset",
-                filename=source,
-                revision=args.revision,
-            )
-        )
+        if args.local_dir:
+            local = args.local_dir / source
+            if not local.is_file():
+                raise FileNotFoundError(f"local fixture audio is missing: {local}")
+        else:
+            local = _download(args.repo_id, args.revision, source)
         target = args.audio_dir / name
         target.write_bytes(local.read_bytes())
         expected_sha = record.get("audio_sha256")

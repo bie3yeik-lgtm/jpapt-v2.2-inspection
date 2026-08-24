@@ -74,6 +74,9 @@ fi
 : "${RTF_RUNPOD_CLOUD_TYPE:=auto}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
+: "${RTF_FIXTURE_LOCAL_DIR:=}"
+: "${RTF_HF_429_WAIT_SECONDS:=300}"
+: "${RTF_HF_429_MAX_ATTEMPTS:=3}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
 : "${RTF_RUNPOD_REQUIRE_REGISTRY_AUTH:=0}"
 
@@ -135,6 +138,7 @@ case "$PROVIDER" in
       -e "RTF_DATASET_COUNT_MAX=$RTF_DATASET_COUNT_MAX" -e "RTF_DATASET_TARGET_TOTAL_SEC=$RTF_DATASET_TARGET_TOTAL_SEC"
       -e "RTF_DATASET_MAX_DURATION_SEC=$RTF_DATASET_MAX_DURATION_SEC" -e "RTF_FIXTURE_FILENAME=$RTF_FIXTURE_FILENAME"
       -e "RTF_FIXTURE_MANIFEST_SHA256=$RTF_FIXTURE_MANIFEST_SHA256"
+      -e "RTF_HF_429_WAIT_SECONDS=$RTF_HF_429_WAIT_SECONDS" -e "RTF_HF_429_MAX_ATTEMPTS=$RTF_HF_429_MAX_ATTEMPTS"
       -e "RTF_CUDA_DIAGNOSTICS=${RTF_CUDA_DIAGNOSTICS:-0}"
       -e "RTF_ERROR_LOG=/output/benchmark-error.log"
       -e "RTF_PROVIDER=cuda" -e "RTF_SERVICE_ID=hf-jobs"
@@ -700,7 +704,8 @@ case "$PROVIDER" in
         RTF_GPU RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER RTF_QUEUE_LATENCY_SEC \
         RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_FIXTURE_FILENAME \
         RTF_FIXTURE_MANIFEST_SHA256 RTF_CUDA_DIAGNOSTICS RTF_RESULT_REPO_ID \
-        RTF_RESULT_PATH RTF_IMAGE_DIGEST RTF_GPU_PRICE_PER_HOUR; do
+        RTF_RESULT_PATH RTF_IMAGE_DIGEST RTF_GPU_PRICE_PER_HOUR \
+        RTF_HF_429_WAIT_SECONDS RTF_HF_429_MAX_ATTEMPTS; do
         value="${!key:-}"
         printf '%s=%q\n' "$key" "$value"
       done
@@ -708,6 +713,15 @@ case "$PROVIDER" in
       printf 'RTF_SERVICE_ID=%q\n' runpod-pod
       printf 'HF_TOKEN=%q\n' "${HF_TOKEN:-}"
     }
+    if [[ -n "$RTF_FIXTURE_LOCAL_DIR" ]]; then
+      [[ -d "$RTF_FIXTURE_LOCAL_DIR" ]] || {
+        echo "RTF_FIXTURE_LOCAL_DIR does not exist: $RTF_FIXTURE_LOCAL_DIR" >&2
+        exit 2
+      }
+      echo "Transferring runner-materialized fixture to RunPod: $RTF_FIXTURE_LOCAL_DIR -> /workspace/rtf-fixture" >&2
+      runpod_ssh mkdir -p /workspace/rtf-fixture
+      tar -C "$RTF_FIXTURE_LOCAL_DIR" -cf - . | runpod_ssh tar -C /workspace/rtf-fixture -xf -
+    fi
     # Do not pass a compound `bash -lc` command through SSH argv. OpenSSH
     # reconstructs the remote command string and a quoted `set -a; . ...`
     # sequence can be reduced to `bash -lc set`, leaving the environment file
