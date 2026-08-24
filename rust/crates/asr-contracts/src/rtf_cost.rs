@@ -41,7 +41,12 @@ pub fn validate_rtf_cost_plan(request: &RtfCostRequest) -> Result<RtfCostPlan> {
     let mode = request.mode.as_str();
     let valid_gpu = matches!(
         (provider, gpu),
-        ("hf", "t4" | "l4") | ("runpod", "a5000" | "a40" | "l4" | "rtx3090" | "rtx4090")
+        ("hf", "t4" | "l4")
+            | (
+                "runpod",
+                "a5000" | "a4000" | "a4500" | "a40" | "rtx2000-ada" | "rtx4000-ada" | "l4" | "rtx3090" | "rtx4090"
+            )
+            | ("vast", _) if !gpu.is_empty()
     );
     if !valid_gpu {
         return Err(ContractError::validation(format!(
@@ -145,5 +150,24 @@ mod tests {
             })
             .is_ok()
         );
+    }
+
+    #[test]
+    fn runpod_phase_one_gpu_targets_are_accepted() {
+        for gpu in ["l4", "a4000", "a4500"] {
+            let plan = validate_rtf_cost_plan(&super::RtfCostRequest {
+                provider: "runpod".into(),
+                gpu: gpu.into(),
+                batch_size: 1,
+                repeat: 3,
+                sample_count: 50,
+                target_total_sec: 5400,
+                max_duration_sec: 600,
+                mode: "guarded".into(),
+                allow_expensive_matrix: false,
+            })
+            .expect("new RunPod GPU target must be accepted by the cost policy");
+            assert_eq!(plan.gpu, gpu);
+        }
     }
 }

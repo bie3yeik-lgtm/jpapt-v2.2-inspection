@@ -148,6 +148,8 @@ jobs:
               raise SystemExit("HF L4 must map to the L4 Jobs flavor")
           for gpu_id in (
               'NVIDIA RTX A5000',
+              'NVIDIA RTX A4000',
+              'NVIDIA RTX A4500',
               'NVIDIA A40',
               'NVIDIA L4',
               'NVIDIA GeForce RTX 3090',
@@ -373,8 +375,8 @@ jobs:
           value = json.loads(Path("evaluation/manifests/rtf-phase1-matrix.json").read_text())
           if value["schema_version"] != 1 or value["repetitions"] != 3:
               raise SystemExit("invalid Phase 1 matrix metadata")
-          if len(value["entries"]) != 7:
-              raise SystemExit("Phase 1 matrix must contain seven provider/GPU entries")
+          if len(value["entries"]) != 12:
+              raise SystemExit("Phase 1 matrix must contain twelve provider/GPU entries")
           for entry in value["entries"]:
               if entry["service_id"] == "hf-jobs" and not entry["flavor"]:
                   raise SystemExit("HF Jobs entries require a hardware flavor")

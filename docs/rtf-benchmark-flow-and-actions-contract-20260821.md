@@ -88,7 +88,7 @@ Authority: `.github/workflows/rtf-benchmark-run.yml`, `scripts/run-benchmark.sh`
 | service | GPU |
 |---|---|
 | HF Inference/HF Jobs lane | T4, L4 |
-| RunPod Pod lane | A5000, L4, RTX 3090, RTX 4090 |
+| RunPod Pod lane | A5000, A4000, A4500, L4, RTX 3090, RTX 4090 |
 
 実行はbatch 1/8/32を一回のworkflowで処理し、repeatはrunner側で管理する。batch sizeをworkflow inputで一つだけ選択して比較条件を変えてはならない。
 

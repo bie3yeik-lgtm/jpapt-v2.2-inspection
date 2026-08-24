@@ -70,6 +70,45 @@ fn accepts_metrics_with_nullable_telemetry() {
 }
 
 #[test]
+fn accepts_vast_metrics_with_ranking_minimum_fields() {
+    let value = json!({
+        "schema_version": 1,
+        "run_id": "rtf-vast-1-b32",
+        "status": "completed",
+        "model_id": "nvidia/parakeet-tdt_ctc-0.6b-ja",
+        "model_revision": "44edb27eea9317daf89333e75eb830db4b1cc298",
+        "dataset_id": "japanese-asr/ja_asr.common_voice_8_0",
+        "dataset_revision": "bf8819e8d9a5feb51b0c718686bd20ea67a3c729",
+        "manifest_sha256": "0b4db78f1f110c898b5857628a51493cad77ab90af778e8ba61bd42128651522",
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "inspection_profile": "smoke",
+        "fixture_repo_id": "gawohok7/rtf-benchmark-fixtures",
+        "fixture_revision": "cfe790fffbbabb54f462d75827569cf59c270a32",
+        "decoder": "tdt",
+        "audio_duration_sec": 5402.784,
+        "processing_duration_sec": 17.355548061430454,
+        "rtf": 0.00321233424498008,
+        "rtfx": 311.3001088111244,
+        "rtf_scope": "model",
+        "provider": "cuda",
+        "environment": "linux",
+        "service_id": "vast",
+        "gpu": "RTX_4090",
+        "dtype": "float16",
+        "batch_size": 32,
+        "repeat": 32,
+        "cer": 0.5555158304532635,
+        "peak_vram_bytes": 5657336320,
+        "gpu_utilization_pct": 77.578125,
+        "memory_bandwidth_utilization_pct": 50.464962121212125,
+        "queue_latency_sec": 59.0,
+        "gpu_price_per_hour": 0.5,
+        "cost_per_audio_hour": 0.00160616712249004
+    });
+    assert!(validate_rtf_service_metrics(&value).is_ok());
+}
+
+#[test]
 fn rejects_metrics_with_zero_audio_duration() {
     let value = json!({
         "schema_version": 1,

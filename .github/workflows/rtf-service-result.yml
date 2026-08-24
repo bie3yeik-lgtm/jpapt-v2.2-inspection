@@ -18,6 +18,7 @@ on:
       metrics_uri: {required: false, type: string, default: ""}
       error_code: {required: false, type: string, default: ""}
       error_message: {required: false, type: string, default: ""}
+      score_root: {required: false, type: string, default: "rtf-scores"}
     secrets:
       HF_TOKEN: {required: false}
       RUNPOD_TOKEN: {required: false}
@@ -31,7 +32,7 @@ on:
         description: Service that executed the benchmark
         required: true
         type: choice
-        options: [hf-inference-endpoint, hf-jobs, runpod-pod, runpod-serverless]
+        options: [hf-inference-endpoint, hf-jobs, runpod-pod, runpod-serverless, vast]
       status:
         description: Provider execution status
         required: true
@@ -95,6 +96,11 @@ on:
         required: false
         default: ""
         type: string
+      score_root:
+        description: Repository root for persisted score output
+        required: false
+        default: rtf-scores
+        type: string
 
 permissions:
   contents: write
@@ -112,6 +118,7 @@ jobs:
         env:
           SERVICE_ID: ${{ inputs.service_id }}
           STATUS: ${{ inputs.status }}
+          SCORE_ROOT: ${{ inputs.score_root }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
         run: |
@@ -131,6 +138,11 @@ jobs:
                 https://api.runpod.io/graphql >/dev/null
               [[ "$STATUS" != completed || -n "$HF_TOKEN" ]] || {
                 echo 'HF_TOKEN is required to fetch and persist completed RunPod metrics'; exit 1;
+              }
+              ;;
+            vast)
+              [[ "$STATUS" != completed || -n "$HF_TOKEN" ]] || {
+                echo 'HF_TOKEN is required to fetch and persist completed Vast metrics'; exit 1;
               }
               ;;
             *) echo "unsupported service_id: $SERVICE_ID"; exit 1 ;;
@@ -170,6 +182,10 @@ jobs:
             }
             [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required to fetch completed metrics'; exit 1; }
           fi
+          [[ "$SCORE_ROOT" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo 'score_root must be a single safe repository directory name' >&2
+            exit 2
+          }
           if [[ -n "$METRICS_URI" ]]; then
             curl --fail --location --proto '=https' --tlsv1.2 \
               -H "Authorization: Bearer $HF_TOKEN" "$METRICS_URI" \
@@ -229,12 +245,12 @@ jobs:
           } | tee .ci/rtf-service/summary.md >> "$GITHUB_STEP_SUMMARY"
           if [[ "${{ inputs.status }}" == completed ]]; then
             jq \
-              --arg provider "${{ inputs.service_id == 'runpod-pod' && 'runpod' || 'hf' }}" \
+              --arg provider "${{ inputs.service_id == 'runpod-pod' && 'runpod' || (inputs.service_id == 'vast' && 'vast' || 'hf') }}" \
               '{
                 model: .model_id,
                 provider: $provider,
                 gpu: (if .service_id == "runpod-pod" then
-                        ({a5000:"NVIDIA RTX A5000",a40:"NVIDIA A40",l4:"NVIDIA L4",rtx3090:"NVIDIA GeForce RTX 3090",rtx4090:"NVIDIA GeForce RTX 4090"}[.gpu] // .gpu)
+                        ({a5000:"NVIDIA RTX A5000",a4000:"NVIDIA RTX A4000",a4500:"NVIDIA RTX A4500",a40:"NVIDIA A40","rtx2000-ada":"NVIDIA RTX 2000 Ada Generation","rtx4000-ada":"NVIDIA RTX 4000 Ada Generation",l4:"NVIDIA L4",rtx3090:"NVIDIA GeForce RTX 3090",rtx4090:"NVIDIA GeForce RTX 4090"}[.gpu] // .gpu)
                       else .gpu end),
                 batch_size,
                 decoder,
@@ -258,10 +274,11 @@ jobs:
           INSPECTION_PROFILE: ${{ inputs.inspection_profile }}
           GPU: ${{ inputs.gpu }}
           BATCH_SIZE: ${{ inputs.batch_size }}
+          SCORE_ROOT: ${{ inputs.score_root }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          destination="rtf-scores/${INSPECTION_PROFILE}/${SERVICE_ID}/${GPU}/batch-${BATCH_SIZE}"
+          destination="${SCORE_ROOT}/${INSPECTION_PROFILE}/${SERVICE_ID}/${GPU}/batch-${BATCH_SIZE}"
           artifact_branch="inspection/${RUN_ID}-${INSPECTION_PROFILE}-${SERVICE_ID}-${GPU}-batch-${BATCH_SIZE}"
 
           # Keep generated measurements independent from the workflow's source

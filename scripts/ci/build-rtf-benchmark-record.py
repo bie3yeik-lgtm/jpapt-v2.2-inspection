@@ -41,7 +41,7 @@ def main() -> int:
         "repeat": metrics["repeat"],
         "precision": metrics["dtype"],
         "status": "completed",
-        "provider_execution_proof": metrics["provider"] == "cuda" and metrics["environment"] == "linux",
+        "provider_execution_proof": metrics["provider"] in {"cpu", "cuda"} and metrics["environment"] == "linux",
         "audio_duration_sec": metrics["audio_duration_sec"],
         "processing_duration_sec": metrics["processing_duration_sec"],
         "rtf": metrics["rtf"],

@@ -1,0 +1,117 @@
+name: Rust Workspace Release
+
+on:
+  push:
+    tags:
+      - "rust-v*"
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a GitHub Release after the workspace build
+        required: true
+        default: false
+        type: boolean
+      tag:
+        description: Release tag; required when create_release is true
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build Rust workspace release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo and ORT artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/ort.pyke.io
+            target
+          key: rust-workspace-release-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust/crates/**/Cargo.toml') }}
+          restore-keys: |
+            rust-workspace-release-${{ runner.os }}-
+
+      - name: Verify locked workspace metadata
+        shell: bash
+        run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
+
+      - name: Build every workspace target in release mode
+        shell: bash
+        run: cargo build --locked --workspace --release --no-default-features --features cpu
+
+      - name: Package release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+          mapfile -t binaries < <(find target/release -maxdepth 1 -type f -executable -printf '%f\n' | sort)
+          [[ ${#binaries[@]} -gt 0 ]] || { echo 'no release binaries were produced' >&2; exit 1; }
+          for binary in "${binaries[@]}"; do
+            cp "target/release/$binary" "dist/bin/$binary"
+          done
+          printf '%s\n' "${binaries[@]}" > dist/RELEASE_BINARIES.txt
+          tar -C dist -czf "rust-workspace-${GITHUB_SHA}.tar.gz" bin RELEASE_BINARIES.txt
+          sha256sum "rust-workspace-${GITHUB_SHA}.tar.gz" > "rust-workspace-${GITHUB_SHA}.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-workspace-release-${{ github.sha }}
+          path: |
+            rust-workspace-${{ github.sha }}.tar.gz
+            rust-workspace-${{ github.sha }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-workspace-release-${{ github.sha }}
+          path: dist
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$INPUT_TAG"
+          fi
+          [[ "$tag" == rust-v* ]] || {
+            echo 'release tag must start with rust-v' >&2
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading rebuilt assets."
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" dist/rust-workspace-* --clobber

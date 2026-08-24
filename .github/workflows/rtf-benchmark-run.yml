@@ -12,7 +12,7 @@ on:
         description: Provider GPU name
         required: true
         type: choice
-        options: [t4, l4, a5000, a40, rtx3090, rtx4090]
+        options: [t4, l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
       model_id:
         description: Model repository ID
         required: true
@@ -264,7 +264,7 @@ jobs:
           echo "Using fixture repository: $RTF_FIXTURE_REPO_ID"
           echo "Using fixture revision: $RTF_FIXTURE_REVISION"
           case '${{ inputs.provider }}:${{ inputs.gpu }}' in
-            hf:t4|hf:l4|runpod:a5000|runpod:a40|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
+            hf:t4|hf:l4|runpod:a5000|runpod:a4000|runpod:a4500|runpod:a40|runpod:rtx2000-ada|runpod:rtx4000-ada|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
             *) echo 'provider/GPU is outside the Phase 1 RTF matrix' >&2; exit 2 ;;
           esac
           mkdir -p results/batches

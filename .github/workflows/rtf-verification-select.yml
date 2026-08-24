@@ -12,7 +12,7 @@ on:
         description: GPU target (must be compatible with service_id)
         required: true
         type: choice
-        options: [t4, l4, a5000, a40, rtx3090, rtx4090]
+        options: [t4, l4, a5000, a4000, a4500, a40, rtx2000-ada, rtx4000-ada, rtx3090, rtx4090]
       model_id:
         description: Model target
         required: true

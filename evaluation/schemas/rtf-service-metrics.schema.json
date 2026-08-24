@@ -27,7 +27,7 @@
     "rtf_scope": {"type": "string", "enum": ["model", "service"]},
     "provider": {"type": "string", "enum": ["cpu", "cuda", "directml", "coreml"]},
     "environment": {"type": "string", "enum": ["linux", "windows", "macos"]},
-    "service_id": {"type": "string", "enum": ["hf-inference-endpoint", "hf-jobs", "runpod-pod", "runpod-serverless"]},
+    "service_id": {"type": "string", "enum": ["hf-inference-endpoint", "hf-jobs", "runpod-pod", "runpod-serverless", "vast"]},
     "gpu": {"type": ["string", "null"]},
     "dtype": {"type": "string", "enum": ["float32", "float16", "bfloat16"]},
     "batch_size": {"type": "integer", "minimum": 1},

@@ -36,6 +36,10 @@
 28. [parent-external-dispatch-workflows-20260820.md](./parent-external-dispatch-workflows-20260820.md) — 親 `repository_dispatch` 向け workflow 実装ブランチの目的、#134/#154/#160 対応、実装 backlog
 29. [recursive-delivery-entry-parent-external-dispatch-20260820.md](./recursive-delivery-entry-parent-external-dispatch-20260820.md) — 上記ブランチの recursive delivery 着手入口
 30. [parent-repository-external-dispatch-config-handoff-20260820.md](./parent-repository-external-dispatch-config-handoff-20260820.md) — 公開正本 merge 後に親 repo で行う route config 更新 handoff
+31. [rust-workspace-release-action-20260824.md](./rust-workspace-release-action-20260824.md) — Rust workspace全体のrelease build、artifact、GitHub Release運用
+32. [rtf-ada-gpu-benchmark-20260824.md](./rtf-ada-gpu-benchmark-20260824.md) — RTX 2000 Ada / RTX 4000 AdaのRunPod benchmark適合性とGPU契約
+33. [vast-offer-inventory-action-20260824.md](./vast-offer-inventory-action-20260824.md) — Vastの既定条件、offer検索、ID・スペック・費用一覧Action
+34. [rtf-vast-benchmark-action-20260824.md](./rtf-vast-benchmark-action-20260824.md) — Vast offer IDからのRTF smoke benchmark、結果回収、`rtf-score`保存契約
 
 ## 現在の実装スタック
 
@@ -159,3 +163,5 @@ HF/RunPodの実行前cost guard、guarded/full-matrix、timeout、cleanup方針�
 ## 変更時の原則
 
 contract・routing・runtime policyを変更するときは、まずRust/source-controlled contractを変更し、次にPython compatibility/reference boundary、最後にdocsを合わせます。CIを通すためにlegacy parser、nullable identity、二重authorityを戻してはいけません。
+35. [rtf-cpu-benchmark-action-20260824.md](./rtf-cpu-benchmark-action-20260824.md) — HF Inference Endpoint CPU / RunPod CPUのRTF Benchmark契約
+36. [rtf-change-summary-20260824.md](./rtf-change-summary-20260824.md) — 今回のRTF provider、CPU、Vast、Rust、Actions変更と受入条件の総括

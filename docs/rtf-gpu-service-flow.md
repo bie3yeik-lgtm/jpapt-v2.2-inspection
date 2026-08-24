@@ -49,7 +49,7 @@ Actionsはserviceに応じて対応するsecretだけを使用し、tokenの値�
 `RTF Verification Select`を`Run workflow`から起動し、次を指定する。
 
 - `service_id`: `hf-inference-endpoint` / `runpod-pod`
-- `gpu`: T4 / L4 / A5000 / RTX 3090 / RTX 4090
+- `gpu`: T4 / L4 / A5000 / A4000 / A4500 / A40 / RTX 2000 Ada / RTX 4000 Ada / RTX 3090 / RTX 4090
 - `model_id`: ParakeetまたはKotoba Whisper
 - `dataset_id`: Common Voice / JSUT / ReazonSpeech
 - `decoder`: TDT / CTC / Whisper
@@ -59,11 +59,13 @@ Actionsはserviceに応じて対応するsecretだけを使用し、tokenの値�
 workflowはPhase 1 matrixとの互換性、さらにserviceに対応するsecretの認証を確認する。
 選択artifactは`rtf-verification-selection-<run_id>`である。
 
-Phase 1の対象GPU組み合わせは、参照表に従い次の6組に限定する。
+Phase 1の対象GPU組み合わせは、参照表に従いHF JobsのT4/L4と、RunPod PodのA5000/A4000/A4500/A40/
+RTX 2000 Ada/RTX 4000 Ada/L4/RTX 3090/RTX 4090を対象とする。Ada GPUはRunPod専用であり、
+HF Jobs flavorへは変換しない。
 
 ```text
 HF Inference Endpoint: T4, L4
-RunPod Pod:            A5000, L4, RTX 3090, RTX 4090
+RunPod Pod:            A5000, A4000, A4500, A40, L4, RTX 3090, RTX 4090
 ```
 
 今回のRTF測定ではA100/H100を対象外とする。Workflowの選択肢とwrapperの
