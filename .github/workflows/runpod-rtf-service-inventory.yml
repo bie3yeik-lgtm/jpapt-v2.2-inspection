@@ -1,0 +1,119 @@
+name: RunPod RTF service inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Inventory only or explicitly requested CUDA probe mode
+        required: true
+        default: inventory-only
+        type: choice
+        options: [inventory-only, probe-selected, probe-all]
+      gpu:
+        description: GPU to probe when mode is probe-selected
+        required: false
+        type: string
+      image:
+        description: Optional digest-pinned probe image; blank resolves the latest GHCR digest
+        required: false
+        type: string
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+      PROBE_MODE: ${{ inputs.mode || 'inventory-only' }}
+      PROBE_GPU: ${{ inputs.gpu }}
+      PROBE_IMAGE_INPUT: ${{ inputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install RunPod CLI
+        run: curl -fsSL https://cli.runpod.net | sudo bash
+
+      - name: Configure RunPod CLI
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+          runpodctl doctor --output json | jq -e '.healthy == true' >/dev/null
+
+      - name: Collect current GPU inventory
+        run: |
+          set -euo pipefail
+          runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json
+          jq -e 'type == "array"' runpod-gpu-inventory.json >/dev/null
+
+      - name: Check CUDA policy and current availability
+        run: |
+          set -euo pipefail
+          python scripts/ci/check-runpod-rtf-services.py \
+            --config .github/runpod-rtf-services.json \
+            --inventory runpod-gpu-inventory.json \
+            --output runpod-rtf-service-report.json | tee runpod-rtf-service-report.log
+          jq -r '.entries[] | "\(.gpu): selectable=\(.selectable) available=\(.available) secure=\(.secure_cloud) community=\(.community_cloud) cuda=\(.cuda_requirement)"' \
+            runpod-rtf-service-report.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve immutable probe image
+        if: env.PROBE_MODE != 'inventory-only'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="$PROBE_IMAGE_INPUT"
+          if [[ -z "$image" ]]; then
+            image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark")"
+          fi
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "probe image must be digest-pinned: $image" >&2
+            exit 2
+          }
+          echo "PROBE_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Probe selected or all currently available GPUs
+        if: env.PROBE_MODE != 'inventory-only'
+        run: |
+          set -euo pipefail
+          mkdir -p runpod-probes
+          min_cuda="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
+          probe_failed=0
+          if [[ "$PROBE_MODE" == probe-selected ]]; then
+            [[ -n "$PROBE_GPU" ]] || { echo 'gpu is required for probe-selected'; exit 2; }
+            gpu_json="$(jq -cer --arg gpu "$PROBE_GPU" '.entries[] | select(.gpu == $gpu)' .github/runpod-rtf-services.json)" || {
+              echo "GPU is not configured: $PROBE_GPU" >&2; exit 2;
+            }
+            gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
+            if ! bash scripts/ci/run-runpod-cuda-probe.sh --gpu "$PROBE_GPU" --gpu-id "$gpu_id" --image "$PROBE_IMAGE" --min-cuda-version "$min_cuda" --output "runpod-probes/$PROBE_GPU.json"; then probe_failed=1; fi
+          else
+            while IFS= read -r gpu_json; do
+              gpu="$(jq -er '.gpu' <<<"$gpu_json")"
+              gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
+              if ! bash scripts/ci/run-runpod-cuda-probe.sh --gpu "$gpu" --gpu-id "$gpu_id" --image "$PROBE_IMAGE" --min-cuda-version "$min_cuda" --output "runpod-probes/$gpu.json"; then probe_failed=1; fi
+            done < <(jq -c '.entries[]' .github/runpod-rtf-services.json)
+          fi
+          jq -s '{schema_version:1, image:env.PROBE_IMAGE, entries:., selectable:[.[] | select(.status == "PASS") | .gpu]}' runpod-probes/*.json > runpod-probe-report.json
+          jq -r '.entries[] | "\(.gpu): status=\(.status) cuda=\(.minimum_cuda_version) cleanup=\(.cleanup_status) failure=\(.failure_code // "-")"' runpod-probe-report.json | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$probe_failed" -eq 0 ]] || exit 1
+
+      - name: Upload inventory and selection report
+        uses: actions/upload-artifact@v7
+        with:
+          name: runpod-rtf-service-inventory-${{ github.run_id }}
+          path: |
+            runpod-gpu-inventory.json
+            runpod-rtf-service-report.json
+            runpod-rtf-service-report.log
+            .github/runpod-rtf-services.json
+            runpod-probes/
+            runpod-probe-report.json
+          if-no-files-found: error

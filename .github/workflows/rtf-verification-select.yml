@@ -31,13 +31,72 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   select:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install RunPod CLI for live selectable check
+        if: inputs.service_id == 'runpod-pod'
+        run: curl -fsSL https://cli.runpod.net | sudo bash
+
+      - name: Check RunPod selectable target
+        if: inputs.service_id == 'runpod-pod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+          GPU: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
+          mkdir -p "$HOME/.runpod"
+          touch "$HOME/.runpod/.runpod.yaml"
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+          runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json
+          python scripts/ci/check-runpod-rtf-services.py \
+            --config .github/runpod-rtf-services.json \
+            --inventory runpod-gpu-inventory.json \
+            --output runpod-rtf-service-report.json \
+            --require-gpu "$GPU"
+          jq -r '.entries[] | select(.gpu == env.GPU) | "RunPod selectable: \(.gpu) / CUDA \(.cuda_requirement) / available=\(.available)"' \
+            runpod-rtf-service-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve immutable probe image
+        if: inputs.service_id == 'runpod-pod'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark")"
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || exit 2
+          echo "RUNPOD_PROBE_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Prove selected RunPod CUDA capability
+        if: inputs.service_id == 'runpod-pod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+          GPU: ${{ inputs.gpu }}
+        run: |
+          set -euo pipefail
+          gpu_json="$(jq -cer --arg gpu "$GPU" '.entries[] | select(.gpu == $gpu)' .github/runpod-rtf-services.json)"
+          gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
+          min_cuda="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
+          bash scripts/ci/run-runpod-cuda-probe.sh --gpu "$GPU" --gpu-id "$gpu_id" --image "$RUNPOD_PROBE_IMAGE" --min-cuda-version "$min_cuda" --output runpod-cuda-probe.json
+          jq -r '"RunPod CUDA probe: status=\(.status) gpu=\(.gpu) cuda=\(.minimum_cuda_version) cleanup=\(.cleanup_status)"' runpod-cuda-probe.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish RunPod CUDA probe
+        if: always() && inputs.service_id == 'runpod-pod'
+        uses: actions/upload-artifact@v7
+        with:
+          name: runpod-cuda-probe-${{ github.run_id }}
+          path: |
+            runpod-gpu-inventory.json
+            runpod-rtf-service-report.json
+            runpod-cuda-probe.json
+          if-no-files-found: warn
 
       - name: Verify provider credential
         env:
