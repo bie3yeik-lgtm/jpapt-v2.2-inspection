@@ -222,8 +222,10 @@ jobs:
               raise SystemExit("RunPod must obtain SSH connection info")
           if 'runpodctl exec' in script:
               raise SystemExit("deprecated runpodctl exec must not be used")
-          if '--cloud-type SECURE' not in script:
-              raise SystemExit("RunPod benchmark Pods must explicitly use Secure Cloud")
+          if '--cloud-type "$RTF_RUNPOD_CLOUD_TYPE"' not in script:
+              raise SystemExit("RunPod benchmark Pods must pass the resolved cloud type")
+          if 'RTF_RUNPOD_CLOUD_TYPE=SECURE' not in script or 'RTF_RUNPOD_CLOUD_TYPE=COMMUNITY' not in script:
+              raise SystemExit("RunPod benchmark must resolve both Secure and Community capacity")
           if '--ssh' not in script:
               raise SystemExit("RunPod Pod creation must explicitly enable SSH")
           if '--ports 22/tcp --terminate-after "$terminate_after"' not in script:
