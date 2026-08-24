@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-hf-32666036040-b1",
+  "run_id": "rtf-hf-32675575062-b1",
   "service_id": "hf-jobs",
-  "status": "completed",
+  "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "6a8b60357c5c7dd37923664e",
-  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/e3073e2121c52abc00794c57010e2fad78b9c2ae/results/rtf-hf-32666036040-b1/metrics.json",
-  "result_sha256": "f1de24d60cbe1fa369c331894cbb234e7fcd1de9b0b04185ab3e5b59f34ee152",
-  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/e3073e2121c52abc00794c57010e2fad78b9c2ae/results/rtf-hf-32666036040-b1/metrics.json",
-  "metrics_path": "results/rtf-service/metrics.json",
-  "metrics_sha256": "f1de24d60cbe1fa369c331894cbb234e7fcd1de9b0b04185ab3e5b59f34ee152",
-  "error_code": null,
-  "error_message": null
+  "job_id": null,
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "BENCHMARK_SETUP_FAILED",
+  "error_message": "benchmark setup did not produce a result receipt for batch 1"
 }
