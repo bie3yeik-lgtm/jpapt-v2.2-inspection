@@ -69,7 +69,8 @@ fi
 : "${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES:=5}"
 : "${RTF_RUNPOD_LOG:=runpod-job.log}"
 : "${RTF_RUNPOD_CONTAINER_LOG_TAIL:=100}"
-: "${RTF_RUNPOD_MIN_CUDA_VERSION:=13.2}"
+: "${RTF_RUNPOD_MIN_CUDA_VERSION:=13.0}"
+: "${RTF_RUNPOD_CLOUD_TYPE:=auto}"
 : "${RTF_FIXTURE_FILENAME:=benchmark-v1.jsonl}"
 : "${RTF_FIXTURE_MANIFEST_SHA256:=}"
 : "${RTF_LOCAL_PROVIDER_DIAGNOSTICS:=}"
@@ -312,7 +313,7 @@ case "$PROVIDER" in
       echo 'RTF_RUNPOD_SSH_INFO_WAIT_MINUTES must be a positive integer' >&2
       exit 2
     }
-    [[ "$RTF_RUNPOD_MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || {
+    [[ -z "$RTF_RUNPOD_MIN_CUDA_VERSION" || "$RTF_RUNPOD_MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || {
       echo 'RTF_RUNPOD_MIN_CUDA_VERSION must be a CUDA major.minor version' >&2
       exit 2
     }
@@ -348,12 +349,33 @@ case "$PROVIDER" in
     # runpodctl is terminated before returning the Pod ID.
     pod_create_failed=1
     set +e
+    [[ "$RTF_RUNPOD_CLOUD_TYPE" == auto || "$RTF_RUNPOD_CLOUD_TYPE" == SECURE || "$RTF_RUNPOD_CLOUD_TYPE" == COMMUNITY ]] || {
+      echo 'RTF_RUNPOD_CLOUD_TYPE must be auto, SECURE, or COMMUNITY' >&2
+      exit 2
+    }
+    if [[ "$RTF_RUNPOD_CLOUD_TYPE" == auto ]]; then
+      gpu_inventory="$(runpodctl gpu list --output json 2>&1 || true)"
+      secure_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.secureCloud // .secure_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
+      community_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.communityCloud // .community_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
+      if [[ "$secure_available" == true ]]; then
+        RTF_RUNPOD_CLOUD_TYPE=SECURE
+      elif [[ "$community_available" == true ]]; then
+        RTF_RUNPOD_CLOUD_TYPE=COMMUNITY
+      else
+        echo "RUNPOD_GPU_NOT_AVAILABLE: inventory has no available SECURE or COMMUNITY capacity for $RUNPOD_GPU_ID" >&2
+        echo "$gpu_inventory" | jq . >&2 2>/dev/null || echo "$gpu_inventory" >&2
+        exit 1
+      fi
+    fi
+    echo "RunPod scheduling: gpu=$RUNPOD_GPU_ID cloud_type=$RTF_RUNPOD_CLOUD_TYPE min_cuda=${RTF_RUNPOD_MIN_CUDA_VERSION:-any}" >&2
     runpod_create_args=(
       pod create --name "${RTF_RUN_ID}" --image "$IMAGE"
-      --cloud-type SECURE --gpu-id "$RUNPOD_GPU_ID" --ssh
-      --min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION"
+      --cloud-type "$RTF_RUNPOD_CLOUD_TYPE" --gpu-id "$RUNPOD_GPU_ID" --ssh
       --ports 22/tcp --terminate-after "$terminate_after"
     )
+    if [[ -n "$RTF_RUNPOD_MIN_CUDA_VERSION" ]]; then
+      runpod_create_args+=(--min-cuda-version "$RTF_RUNPOD_MIN_CUDA_VERSION")
+    fi
     if [[ -n "${RUNPOD_REGISTRY_AUTH_ID:-}" ]]; then
       runpod_create_args+=(--registry-auth-id "$RUNPOD_REGISTRY_AUTH_ID")
     fi
@@ -405,10 +427,15 @@ case "$PROVIDER" in
       pod_create_failed=1
       printf '%s\n' "$pod_json" >&2
       failure_code="PROVIDER_RUNPOD_POD_CREATE_FAILED"
+      failure_message="RunPod Pod creation failed before remote execution"
       if [[ "$pod_create_timed_out" -eq 1 ]]; then
         failure_code="RUNPOD_POD_CREATE_TIMEOUT"
+        failure_message="RunPod Pod creation timed out before remote execution"
       elif grep -Eqi 'balance is too low|insufficient balance|add funds to your account' <<<"$pod_json"; then
         failure_code="RUNPOD_ACCOUNT_BALANCE_TOO_LOW"
+      elif grep -Eqi 'cuda|nvidia driver|driver version|unsupported cuda' <<<"$pod_json"; then
+        failure_code="RUNPOD_CUDA_REQUIREMENT_UNSATISFIED"
+        failure_message="RunPod could not schedule the Pod with the required CUDA ${RTF_RUNPOD_MIN_CUDA_VERSION} floor"
       elif grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then
         failure_code="RUNPOD_NO_INSTANCE_AVAILABLE"
       elif grep -Eqi 'DateTime cannot represent|invalid date-time-string' <<<"$pod_json"; then
@@ -422,7 +449,7 @@ case "$PROVIDER" in
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       jq -n \
         --arg run_id "$RTF_RUN_ID" --arg job_id "$pod_id" --arg error_code "$failure_code" \
-        --arg error_message "RunPod Pod creation failed before remote execution: $pod_json" \
+        --arg error_message "$failure_message: $pod_json" \
         --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
         --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
@@ -503,8 +530,14 @@ case "$PROVIDER" in
       if jq -e '(.desiredStatus == "EXITED") or (.desiredStatus == "TERMINATED")' <<<"${pod_state_json:-}" >/dev/null 2>&1; then
         failure_code="RUNPOD_POD_EXITED_BEFORE_READINESS"
       fi
+      if grep -Eqi 'cuda|nvidia driver|driver version|unsupported cuda' <<<"${pod_state_json:-} ${pod_list_state_json:-}"; then
+        failure_code="RUNPOD_CUDA_REQUIREMENT_UNSATISFIED"
+      fi
       mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
       error_message="RunPod Pod did not become SSH-ready; provider SSH info was unavailable after the bounded readiness grace"
+      if [[ "$failure_code" == RUNPOD_CUDA_REQUIREMENT_UNSATISFIED ]]; then
+        error_message="RunPod Pod did not become ready because CUDA/driver compatibility failed for the required CUDA ${RTF_RUNPOD_MIN_CUDA_VERSION} floor"
+      fi
       if [[ -n "${ssh_info_diagnostic:-}" ]]; then
         error_message="$error_message: $ssh_info_diagnostic"
       fi

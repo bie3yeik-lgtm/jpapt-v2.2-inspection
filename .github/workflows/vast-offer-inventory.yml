@@ -20,6 +20,11 @@ on:
         required: true
         default: "25"
         type: string
+      min_cuda_version:
+        description: Minimum host CUDA capability required by the Parakeet benchmark
+        required: true
+        default: "13.0"
+        type: string
 
 permissions:
   contents: read
@@ -34,6 +39,7 @@ jobs:
       PROFILE: ${{ inputs.profile }}
       PRICING_TYPE: ${{ inputs.pricing_type }}
       LIMIT: ${{ inputs.limit }}
+      MIN_CUDA_VERSION: ${{ inputs.min_cuda_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -43,6 +49,7 @@ jobs:
           set -euo pipefail
           [[ -n "$VAST_API_KEY" ]] || { echo 'VAST_API_KEY repository secret is required'; exit 1; }
           [[ "$LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo 'limit must be an integer from 1 to 999'; exit 2; }
+          [[ "$MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || { echo 'min_cuda_version must be major.minor'; exit 2; }
 
       - name: Install Vast CLI
         shell: bash
@@ -78,17 +85,17 @@ jobs:
           case "$PROFILE" in
             student)
               search_profile student 100 \
-                'gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true'
+                "gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true cuda_max_good>=${MIN_CUDA_VERSION}"
               ;;
             teacher)
               search_profile teacher 150 \
-                'gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1'
+                "gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1 cuda_max_good>=${MIN_CUDA_VERSION}"
               ;;
             all)
               search_profile student 100 \
-                'gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true'
+                "gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true cuda_max_good>=${MIN_CUDA_VERSION}"
               search_profile teacher 150 \
-                'gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1'
+                "gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1 cuda_max_good>=${MIN_CUDA_VERSION}"
               ;;
             *) echo "unsupported profile: $PROFILE" >&2; exit 2 ;;
           esac

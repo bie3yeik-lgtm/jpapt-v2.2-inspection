@@ -66,9 +66,11 @@ done
 : "${RTF_DATASET_TARGET_TOTAL_SEC:=5400}"
 : "${RTF_DATASET_MAX_DURATION_SEC:=600}"
 : "${RTF_CUDA_DIAGNOSTICS:=0}"
+: "${RTF_VAST_MIN_CUDA_VERSION:=13.0}"
 
 [[ "$RTF_BATCH_SIZE" =~ ^(1|8|32)$ ]] || { echo 'RTF_BATCH_SIZE must be 1, 8, or 32'; exit 2; }
 [[ "$RTF_VAST_DISK_GB" =~ ^[1-9][0-9]*$ ]] || { echo 'RTF_VAST_DISK_GB must be positive'; exit 2; }
+[[ "$RTF_VAST_MIN_CUDA_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || { echo 'RTF_VAST_MIN_CUDA_VERSION must be major.minor'; exit 2; }
 [[ "$RTF_VAST_PRICING_TYPE" == on-demand || "$RTF_VAST_PRICING_TYPE" == bid ]] || { echo 'unsupported Vast pricing type'; exit 2; }
 if [[ "$RTF_VAST_PRICING_TYPE" == bid ]]; then
   [[ "$RTF_VAST_BID_PRICE" =~ ^[0-9]+(\.[0-9]+)?$ ]] || {
@@ -101,6 +103,19 @@ destroy_instance() {
   fi
 }
 trap destroy_instance EXIT
+
+# Revalidate the inventory offer immediately before renting. Vast offer IDs
+# are snapshots and can become unavailable or lose CUDA compatibility after
+# the inventory workflow has completed.
+offer_check="$(vastai search offers \
+  --api-key "$VAST_API_KEY" --raw --no-default --type "$RTF_VAST_PRICING_TYPE" \
+  --limit 1 "id==${VAST_OFFER_ID} cuda_max_good>=${RTF_VAST_MIN_CUDA_VERSION} rentable=true" 2>&1 || true)"
+if ! jq -e 'if type == "array" then length > 0 elif (.offers? // .results?) then ((.offers // .results) | if type == "array" then length > 0 else true end) else false end' <<<"$offer_check" >/dev/null 2>&1; then
+  write_blocked_receipt VAST_CUDA_REQUIREMENT_UNSATISFIED "Vast offer ${VAST_OFFER_ID} does not satisfy CUDA ${RTF_VAST_MIN_CUDA_VERSION} or is no longer rentable; no instance was created: ${offer_check}"
+  printf '%s\n' "$offer_check" >&2
+  exit 1
+fi
+echo "Vast offer ${VAST_OFFER_ID} satisfies cuda_max_good>=${RTF_VAST_MIN_CUDA_VERSION}"
 
 ssh_run() {
   ssh -i "$ssh_key" -o BatchMode=yes -o StrictHostKeyChecking=no \
