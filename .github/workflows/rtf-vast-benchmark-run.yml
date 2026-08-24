@@ -1,0 +1,254 @@
+name: RTF Vast Benchmark Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      offer_id:
+        description: Vast offer ID from Vast Offer Inventory
+        required: true
+        type: string
+      gpu:
+        description: GPU label recorded in the offer inventory
+        required: true
+        type: string
+      pricing_type:
+        description: Vast rental mode; bid requires an explicit bid price
+        required: true
+        default: on-demand
+        type: choice
+        options: [on-demand, bid]
+      bid_price:
+        description: Bid price in USD/hour; required for bid mode
+        required: false
+        type: string
+      model_id:
+        description: Model repository ID
+        required: true
+        default: nvidia/parakeet-tdt_ctc-0.6b-ja
+        type: string
+      model_revision:
+        description: Optional immutable model revision; blank resolves current revision
+        required: false
+        type: string
+      dataset_revision:
+        description: Immutable Common Voice revision
+        required: true
+        default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+        type: string
+      cost_mode:
+        description: Guarded runs batch 1 only; full-matrix runs 1, 8, 32 sequentially
+        required: true
+        default: guarded
+        type: choice
+        options: [guarded, full-matrix]
+      cuda_diagnostics:
+        description: Enable synchronous CUDA diagnostics
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      receipts: ${{ steps.receipts.outputs.receipts }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve immutable image and model revisions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MODEL_ID: ${{ inputs.model_id }}
+        run: |
+          set -euo pipefail
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark"
+          image=""
+          for attempt in {1..20}; do
+            if image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$image_name" 2>/dev/null)"; then break; fi
+            [[ "$attempt" -lt 20 ]] || { echo 'GHCR digest was not available'; exit 1; }
+            sleep 15
+          done
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo 'resolved image must be an immutable GHCR digest reference'; exit 2;
+          }
+          [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required'; exit 1; }
+          model_revision="${{ inputs.model_revision }}"
+          if [[ -z "$model_revision" ]]; then
+            model_revision="$(curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer $HF_TOKEN" \
+              "https://huggingface.co/api/models/${MODEL_ID}" | jq -er '.sha')"
+          fi
+          [[ "$model_revision" =~ ^[0-9a-f]{40}$ ]] || { echo 'model revision must be a 40-char SHA'; exit 2; }
+          printf 'image=%s\nmodel_revision=%s\n' "$image" "$model_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Verify and pull immutable benchmark image
+        env:
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
+          timeout --signal=TERM 15m docker pull "$IMAGE" >/dev/null
+          docker image inspect "$IMAGE" | jq -e \
+            '.[0].Config.Entrypoint == ["/opt/rtf-benchmark/entrypoint.sh"] and .[0].Config.Cmd == ["sleep", "infinity"]' >/dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve and verify benchmark fixture
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          IMAGE: ${{ steps.resolve.outputs.image }}
+        run: |
+          set -euo pipefail
+          [[ -f rtf-scores/benchmark/benchmark-v1.fixture.json ]] || { echo 'RTF Resolver fixture pointer is missing'; exit 2; }
+          fixture_repo_id="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          manifest_sha256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          receipt_repo_id="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          receipt_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          receipt_image="$(jq -er '.image | split("@")[1]' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          [[ "$fixture_repo_id" == "$receipt_repo_id" && "$fixture_revision" == "$receipt_revision" ]] || {
+            echo 'fixture pointer and receipt identity mismatch'; exit 2;
+          }
+          [[ "$receipt_image" == "${IMAGE##*@}" ]] || {
+            echo 'fixture was not resolved for the selected immutable benchmark image'; exit 2;
+          }
+          {
+            echo "fixture_repo_id=$fixture_repo_id"
+            echo "fixture_revision=$fixture_revision"
+            echo "manifest_sha256=$manifest_sha256"
+            echo "receipt_image=$receipt_image"
+          } >> "$GITHUB_ENV"
+
+      - name: Validate Vast inputs and cost policy
+        env:
+          VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+          OFFER_ID: ${{ inputs.offer_id }}
+          PRICING_TYPE: ${{ inputs.pricing_type }}
+          BID_PRICE: ${{ inputs.bid_price }}
+        run: |
+          set -euo pipefail
+          [[ -n "$VAST_API_KEY" ]] || { echo 'VAST_API_KEY is required'; exit 1; }
+          [[ "$OFFER_ID" =~ ^[0-9]+$ ]] || { echo 'offer_id must be numeric'; exit 2; }
+          if [[ "$PRICING_TYPE" == bid ]]; then
+            [[ "$BID_PRICE" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo 'bid_price is required for bid mode'; exit 2; }
+          fi
+          cost_args=(--provider vast --gpu "${{ inputs.gpu }}" --batch-size 1 --repeat 3 --sample-count 50 --target-total-sec 5400 --max-duration-sec 600 --mode '${{ inputs.cost_mode }}')
+          [[ '${{ inputs.cost_mode }}' == full-matrix ]] && cost_args+=(--allow-expensive-matrix)
+          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- "${cost_args[@]}" | tee .ci-rtf-vast-cost-policy.json
+
+      - name: Run Vast batches sequentially
+        id: execute
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RTF_MODEL_ID: ${{ inputs.model_id }}
+          RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
+          RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
+          RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
+          RTF_FIXTURE_REPO_ID: ${{ env.fixture_repo_id }}
+          RTF_FIXTURE_REVISION: ${{ env.fixture_revision }}
+          RTF_FIXTURE_MANIFEST_SHA256: ${{ env.manifest_sha256 }}
+          RTF_IMAGE_DIGEST: ${{ steps.resolve.outputs.image }}
+          RTF_GPU: ${{ inputs.gpu }}
+          RTF_INSPECTION_PROFILE: smoke
+          RTF_REPEAT: 3
+          RTF_CUDA_DIAGNOSTICS: ${{ inputs.cuda_diagnostics && '1' || '0' }}
+          RTF_VAST_PRICING_TYPE: ${{ inputs.pricing_type }}
+          RTF_VAST_BID_PRICE: ${{ inputs.bid_price }}
+          RTF_VAST_DISK_GB: '100'
+        run: |
+          set -euo pipefail
+          mkdir -p results/batches
+          batch_sizes=(1)
+          [[ '${{ inputs.cost_mode }}' == full-matrix ]] && batch_sizes=(1 8 32)
+          successful_batches=0
+          previous_failure=0
+          for batch_size in "${batch_sizes[@]}"; do
+            run_id="rtf-vast-${{ github.run_id }}-b${batch_size}"
+            batch_dir="results/batches/batch-${batch_size}"
+            mkdir -p "$batch_dir"
+            if [[ "$previous_failure" -eq 1 && '${{ inputs.cost_mode }}' == guarded ]]; then
+              jq -n --arg run_id "$run_id" '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"COST_GUARD_SKIPPED",error_message:"skipped after an earlier failed Vast batch"}' > "$batch_dir/result-receipt.json"
+              continue
+            fi
+            export RTF_RUN_ID="$run_id" RTF_BATCH_SIZE="$batch_size"
+            export RTF_LOCAL_OUTPUT="$batch_dir/metrics.json"
+            export RTF_LOCAL_CONTENT="$batch_dir/content.json"
+            export RTF_LOCAL_RECEIPT="$batch_dir/result-receipt.json"
+            export RTF_VAST_LOG="$batch_dir/vast-job.log"
+            set +e
+            bash scripts/run-vast-benchmark.sh --image "${{ steps.resolve.outputs.image }}" --offer-id '${{ inputs.offer_id }}'
+            status=$?
+            set -e
+            [[ -s "$RTF_LOCAL_RECEIPT" ]] || jq -n --arg run_id "$run_id" '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"VAST_EXECUTION_FAILED",error_message:"Vast runner produced no receipt"}' > "$RTF_LOCAL_RECEIPT"
+            if [[ "$status" -eq 0 ]] && jq -e '.status == "completed"' "$RTF_LOCAL_RECEIPT" >/dev/null 2>&1; then
+              successful_batches=$((successful_batches + 1))
+            else
+              previous_failure=1
+              echo "Vast batch ${batch_size} failed; continuing according to batch policy" >&2
+            fi
+          done
+          [[ "$successful_batches" -gt 0 ]] || exit 1
+
+      - name: Collect receipts for Result Collection
+        id: receipts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          batch_sizes=(1)
+          [[ '${{ inputs.cost_mode }}' == full-matrix ]] && batch_sizes=(1 8 32)
+          receipts="$(for batch_size in "${batch_sizes[@]}"; do
+            path="results/batches/batch-${batch_size}/result-receipt.json"
+            [[ -s "$path" ]] || jq -n --arg run_id "rtf-vast-${{ github.run_id }}-b${batch_size}" '{schema_version:1,run_id:$run_id,status:"blocked",error_code:"VAST_RECEIPT_MISSING",error_message:"Vast batch did not produce a receipt"}' > "$path"
+            jq --arg batch_size "$batch_size" '. + {batch_size:($batch_size|tonumber)}' "$path"
+          done | jq -sc '.')"
+          echo "receipts=$receipts" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Vast benchmark raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rtf-vast-benchmark-${{ github.run_id }}
+          path: results/batches/
+          if-no-files-found: error
+
+  collect:
+    needs: benchmark
+    if: always() && needs.benchmark.outputs.receipts != ''
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        result: ${{ fromJSON(needs.benchmark.outputs.receipts) }}
+    uses: ./.github/workflows/rtf-service-result.yml
+    with:
+      run_id: ${{ matrix.result.run_id }}
+      service_id: vast
+      status: ${{ matrix.result.status }}
+      provider: cuda
+      environment: linux
+      inspection_profile: smoke
+      gpu: ${{ inputs.gpu }}
+      batch_size: ${{ matrix.result.batch_size }}
+      job_id: ${{ matrix.result.job_id || '' }}
+      result_uri: ${{ matrix.result.result_uri || '' }}
+      result_sha256: ${{ matrix.result.result_sha256 || '' }}
+      metrics_uri: ${{ matrix.result.metrics_uri || '' }}
+      metrics_sha256: ${{ matrix.result.metrics_sha256 || '' }}
+      error_code: ${{ matrix.result.error_code || '' }}
+      error_message: ${{ matrix.result.error_message || '' }}
+      score_root: rtf-score
+    secrets: inherit

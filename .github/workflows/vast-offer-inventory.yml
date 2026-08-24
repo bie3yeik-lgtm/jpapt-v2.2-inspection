@@ -1,0 +1,117 @@
+name: Vast Offer Inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Vast search profile from the AudioAttention advice
+        required: true
+        default: student
+        type: choice
+        options: [student, teacher, all]
+      pricing_type:
+        description: Vast pricing mode; bid is interruptible
+        required: true
+        default: bid
+        type: choice
+        options: [bid, on-demand]
+      limit:
+        description: Maximum offers per search
+        required: true
+        default: "25"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    name: Search Vast rentable offers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+      PROFILE: ${{ inputs.profile }}
+      PRICING_TYPE: ${{ inputs.pricing_type }}
+      LIMIT: ${{ inputs.limit }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate inputs and Vast credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$VAST_API_KEY" ]] || { echo 'VAST_API_KEY repository secret is required'; exit 1; }
+          [[ "$LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo 'limit must be an integer from 1 to 999'; exit 2; }
+
+      - name: Install Vast CLI
+        shell: bash
+        run: python -m pip install --disable-pip-version-check vastai
+
+      - name: Record Vast CLI version
+        shell: bash
+        run: vastai --version | tee vast-cli-version.txt
+
+      - name: Search default Vast offer profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vast-offers
+
+          search_profile() {
+            local profile="$1"
+            local storage_gb="$2"
+            local query="$3"
+            local output="vast-offers/${profile}-${PRICING_TYPE}.json"
+            echo "Searching profile=${profile} pricing=${PRICING_TYPE} storage_gb=${storage_gb}"
+            vastai search offers \
+              --api-key "$VAST_API_KEY" \
+              --raw \
+              --no-default \
+              --type "$PRICING_TYPE" \
+              --order dph_total \
+              --storage "$storage_gb" \
+              --limit "$LIMIT" \
+              "$query" > "$output"
+          }
+
+          case "$PROFILE" in
+            student)
+              search_profile student 100 \
+                'gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true'
+              ;;
+            teacher)
+              search_profile teacher 150 \
+                'gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1'
+              ;;
+            all)
+              search_profile student 100 \
+                'gpu_name in [RTX_4090,RTX_3090] num_gpus=1 reliability>0.98 verified=true rentable=true'
+              search_profile teacher 150 \
+                'gpu_ram>=48000 num_gpus=1 reliability>0.98 verified=true rentable=true direct_port_count>=1'
+              ;;
+            *) echo "unsupported profile: $PROFILE" >&2; exit 2 ;;
+          esac
+
+      - name: Normalize offer inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/vast/format-offers.py \
+            --input-dir vast-offers \
+            --output-json vast-offers/inventory.json \
+            --output-csv vast-offers/inventory.csv \
+            --output-markdown vast-offers/inventory.md \
+            --profile "$PROFILE" \
+            --pricing-type "$PRICING_TYPE" \
+            --limit "$LIMIT"
+          cat vast-offers/inventory.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Vast offer inventory
+        uses: actions/upload-artifact@v7
+        with:
+          name: vast-offers-${{ github.run_id }}
+          path: |
+            vast-cli-version.txt
+            vast-offers/
+          if-no-files-found: error

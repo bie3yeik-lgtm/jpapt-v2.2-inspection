@@ -94,7 +94,11 @@ fi
 if [[ "$PROVIDER" == runpod ]]; then
   case "$RTF_GPU" in
     a5000) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A5000}" ;;
+    a4000) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A4000}" ;;
+    a4500) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A4500}" ;;
     a40) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA A40}" ;;
+    rtx2000-ada) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX 2000 Ada Generation}" ;;
+    rtx4000-ada) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX 4000 Ada Generation}" ;;
     l4) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA L4}" ;;
     rtx3090) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA GeForce RTX 3090}" ;;
     rtx4090) RUNPOD_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA GeForce RTX 4090}" ;;
@@ -103,7 +107,7 @@ if [[ "$PROVIDER" == runpod ]]; then
 fi
 
 case "$PROVIDER:$RTF_GPU" in
-  hf:t4|hf:l4|runpod:a5000|runpod:a40|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
+  hf:t4|hf:l4|runpod:a5000|runpod:a4000|runpod:a4500|runpod:a40|runpod:rtx2000-ada|runpod:rtx4000-ada|runpod:l4|runpod:rtx3090|runpod:rtx4090) ;;
   *) echo "provider/GPU is outside the Phase 1 RTF matrix: $PROVIDER/$RTF_GPU" >&2; exit 2 ;;
 esac
 

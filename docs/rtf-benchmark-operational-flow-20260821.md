@@ -94,7 +94,7 @@ GitHub Actionsの`RTF Benchmark Run`は、providerとGPUを選び、同一image�
 | service | GPU |
 |---|---|
 | HF Jobs | T4、L4 |
-| RunPod Pod | A5000、L4、RTX 3090、RTX 4090 |
+| RunPod Pod | A5000、A4000、A4500、L4、RTX 3090、RTX 4090 |
 
 model、互換decoder、dataset、precisionの全有効組み合わせを対象にし、各provider/GPUで
 `batch=1/8/32`を順次実行する。repeatはrunner内で固定管理し、matrix軸へ重複させない。

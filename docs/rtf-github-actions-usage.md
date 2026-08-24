@@ -25,7 +25,7 @@ Workflow: **RTF Verification Select** (`rtf-verification-select.yml`)
 | Input | 選択肢 |
 |---|---|
 | `service_id` | `hf-inference-endpoint`, `hf-jobs`, `runpod-pod`, `runpod-serverless` |
-| `gpu` | `t4`, `l4`, `a5000`, `rtx3090`, `rtx4090` |
+| `gpu` | `t4`, `l4`, `a5000`, `a4000`, `a4500`, `a40`, `rtx2000-ada`, `rtx4000-ada`, `rtx3090`, `rtx4090` |
 | `model_id` | Parakeet TDT/CTC, Kotoba Whisper |
 | `dataset_id` | Common Voice 8, JSUT Basic5000, ReazonSpeech test |
 | `decoder` | `tdt`, `ctc`, `whisper` |

@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"type": "integer", "const": 1},
     "run_id": {"type": "string", "minLength": 1},
-    "service_id": {"type": "string", "enum": ["hf-inference-endpoint", "hf-jobs", "runpod-pod", "runpod-serverless"]},
+    "service_id": {"type": "string", "enum": ["hf-inference-endpoint", "hf-jobs", "runpod-pod", "runpod-serverless", "vast"]},
     "status": {"type": "string", "enum": ["completed", "failed", "blocked", "not_verified"]},
     "provider": {"type": "string", "enum": ["cpu", "cuda", "directml", "coreml"]},
     "environment": {"type": "string", "enum": ["linux", "windows", "macos"]},

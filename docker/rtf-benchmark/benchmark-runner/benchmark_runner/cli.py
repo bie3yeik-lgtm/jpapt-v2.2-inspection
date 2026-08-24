@@ -43,6 +43,13 @@ def read_nonnegative_float_env(name: str) -> float | None:
     return parsed
 
 
+def read_compute_price_per_hour() -> float | None:
+    """Read a provider price while keeping the legacy GPU variable compatible."""
+    return read_nonnegative_float_env("RTF_COMPUTE_PRICE_PER_HOUR") or read_nonnegative_float_env(
+        "RTF_GPU_PRICE_PER_HOUR"
+    )
+
+
 class GpuUtilizationSampler:
     """Sample NVIDIA utilization only while the timed inference is running."""
 
@@ -141,7 +148,7 @@ def parser() -> argparse.ArgumentParser:
         help="legacy compatibility input; sequential measurement count is --batch-size",
     )
     p.add_argument("--provider", choices=("cuda", "cpu"), default="cuda")
-    p.add_argument("--service-id", choices=("hf-jobs", "hf-inference-endpoint", "runpod-pod"), required=True)
+    p.add_argument("--service-id", choices=("hf-jobs", "hf-inference-endpoint", "runpod-pod", "vast"), required=True)
     p.add_argument("--gpu", required=True)
     p.add_argument("--profile", choices=("smoke", "pref", "probe"), required=True)
     p.add_argument("--fixture-repo-id", required=True)
@@ -248,7 +255,7 @@ def main() -> int:
         paths = [str(sample["audio_path"]) for sample in samples]
         references = [str(sample.get("text", "")) for sample in samples]
         durations = [float(sample["audio_duration_sec"]) for sample in samples]
-        gpu_price_per_hour = read_nonnegative_float_env("RTF_GPU_PRICE_PER_HOUR")
+        gpu_price_per_hour = read_compute_price_per_hour()
         queue_latency_sec = read_nonnegative_float_env("RTF_QUEUE_LATENCY_SEC")
         utilization_samples: list[float] = []
         memory_bandwidth_samples: list[float] = []
@@ -307,15 +314,15 @@ def main() -> int:
         audio_duration = sum(durations)
         processing_duration = max(elapsed, 1e-9)
         gpu_utilization_pct = median_metric(utilization_samples)
-        if args.service_id == "runpod-pod" and gpu_price_per_hour is None:
+        if args.service_id in {"runpod-pod", "vast"} and gpu_price_per_hour is None:
             raise ProviderMetricsError(
-                "RUNPOD_GPU_PRICE_UNAVAILABLE",
-                "RunPod did not provide RTF_GPU_PRICE_PER_HOUR",
+                "GPU_PRICE_UNAVAILABLE",
+                f"{args.service_id} did not provide RTF_GPU_PRICE_PER_HOUR",
             )
-        if args.service_id == "runpod-pod" and gpu_utilization_pct is None:
+        if args.service_id in {"runpod-pod", "vast"} and gpu_utilization_pct is None:
             raise ProviderMetricsError(
-                "RUNPOD_GPU_UTILIZATION_UNAVAILABLE",
-                "nvidia-smi returned no valid utilization sample during inference",
+                "GPU_UTILIZATION_UNAVAILABLE",
+                f"{args.service_id} returned no valid nvidia-smi utilization sample during inference",
             )
         rtf = processing_duration / audio_duration
         result = {

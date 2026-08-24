@@ -1,0 +1,212 @@
+name: RTF CPU Benchmark Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_id:
+        description: CPU benchmark service
+        required: true
+        type: choice
+        options: [hf-inference-endpoint, runpod-pod]
+      cpu_target:
+        description: HF endpoint instance label or RunPod CPU flavor label
+        required: true
+        type: choice
+        options: [intel-spr-x4, intel-spr-x8, cpu3c, cpu3g, cpu3m, cpu5c, cpu5g, cpu5m]
+      endpoint_url:
+        description: Existing CPU HF Inference Endpoint URL; required for hf-inference-endpoint
+        required: false
+        type: string
+      cpu_price_per_hour:
+        description: Optional known hourly CPU price used for cost_per_audio_hour
+        required: false
+        type: string
+      model_id:
+        description: Model repository ID
+        required: true
+        default: nvidia/parakeet-tdt_ctc-0.6b-ja
+        type: string
+      model_revision:
+        description: Optional immutable model commit; blank resolves the current commit
+        required: false
+        type: string
+      dataset_revision:
+        description: Immutable Common Voice revision
+        required: true
+        default: bf8819e8d9a5feb51b0c718686bd20ea67a3c729
+        type: string
+      cost_mode:
+        description: Guarded runs batch 1; full-matrix runs 1, 8, and 32 sequentially
+        required: true
+        default: guarded
+        type: choice
+        options: [guarded, full-matrix]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      receipts: ${{ steps.receipts.outputs.receipts }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve image, model, and fixture revisions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MODEL_ID: ${{ inputs.model_id }}
+        run: |
+          set -euo pipefail
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/parakeet-rtf-benchmark"
+          image="$(bash scripts/ci/resolve-ghcr-package-digest.sh "$image_name")"
+          [[ "$image" =~ ^ghcr\.io/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || exit 2
+          [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required'; exit 1; }
+          model_revision="$(curl --fail --silent --show-error -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/api/models/${MODEL_ID}" | jq -er '.sha')"
+          [[ "$model_revision" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "model_revision=$model_revision" >> "$GITHUB_OUTPUT"
+      - name: Validate CPU target and credentials
+        env:
+          SERVICE_ID: ${{ inputs.service_id }}
+          CPU_TARGET: ${{ inputs.cpu_target }}
+          ENDPOINT_URL: ${{ inputs.endpoint_url }}
+          HF_ENDPOINT_URL_SECRET: ${{ secrets.HF_INFERENCE_ENDPOINT_URL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ID" in
+            hf-inference-endpoint)
+              [[ -n "$HF_TOKEN" ]] || { echo 'HF_TOKEN is required'; exit 1; }
+              [[ -n "${ENDPOINT_URL:-$HF_ENDPOINT_URL_SECRET}" ]] || { echo 'endpoint_url input or HF_INFERENCE_ENDPOINT_URL secret is required'; exit 1; }
+              [[ "$CPU_TARGET" == intel-spr-* || "$CPU_TARGET" == intel-xeon-* ]] || { echo 'HF endpoint CPU target must be an HF CPU instance label'; exit 2; }
+              ;;
+            runpod-pod)
+              [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN is required'; exit 1; }
+              [[ "$CPU_TARGET" == cpu* ]] || { echo 'RunPod CPU target must be a cpu flavor label'; exit 2; }
+              ;;
+            *) exit 2 ;;
+          esac
+      - name: Pull and verify the digest-pinned CPU image
+        env:
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR:-github-actions[bot]}" --password-stdin >/dev/null
+          docker pull "$IMAGE" >/dev/null
+          docker image inspect "$IMAGE" | jq -e '.[0].Config.Entrypoint == ["/opt/rtf-benchmark/entrypoint.sh"] and .[0].Config.Cmd == ["sleep", "infinity"]' >/dev/null
+      - name: Install CPU provider tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --upgrade huggingface_hub jiwer
+          if [[ '${{ inputs.service_id }}' == runpod-pod ]]; then curl -fsSL https://cli.runpod.net | sudo bash; fi
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Configure RunPod CLI
+        if: inputs.service_id == 'runpod-pod'
+        env:
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.runpod"; touch "$HOME/.runpod/.runpod.yaml"
+          runpodctl config --apiKey="$RUNPOD_TOKEN"
+          timeout 90s runpodctl doctor --output json | jq -e '.healthy == true' >/dev/null
+      - name: Execute CPU batches sequentially
+        id: execute
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
+          HF_INFERENCE_ENDPOINT_URL_SECRET: ${{ secrets.HF_INFERENCE_ENDPOINT_URL }}
+          RTF_MODEL_ID: ${{ inputs.model_id }}
+          RTF_MODEL_REVISION: ${{ steps.resolve.outputs.model_revision }}
+          RTF_DATASET_ID: japanese-asr/ja_asr.common_voice_8_0
+          RTF_DATASET_REVISION: ${{ inputs.dataset_revision }}
+          RTF_CPU_FLAVOR: ${{ inputs.cpu_target }}
+          RTF_CPU_PRICE_PER_HOUR: ${{ inputs.cpu_price_per_hour }}
+          RTF_IMAGE: ${{ steps.resolve.outputs.image }}
+          RTF_SERVICE_ID: ${{ inputs.service_id }}
+          RTF_RESULT_REPO_ID: gawohok7/rtf-benchmark-fixtures
+          RTF_INSPECTION_PROFILE: smoke
+          RTF_COST_MODE: ${{ inputs.cost_mode }}
+        run: |
+          set -euo pipefail
+          fixture_repo_id="$(jq -er '.fixture_repo_id' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          fixture_revision="$(jq -er '.fixture_revision' rtf-scores/benchmark/benchmark-v1.fixture.json)"
+          manifest_sha256="$(jq -er '.manifest_sha256' rtf-scores/benchmark/benchmark-v1.receipt.json)"
+          mkdir -p results/batches cpu-fixture
+          if [[ "$RTF_SERVICE_ID" == hf-inference-endpoint ]]; then
+            docker run --rm -e HF_TOKEN -v "$PWD/cpu-fixture:/workspace" "$RTF_IMAGE" \
+              python -m benchmark_runner.load_fixture --repo-id "$fixture_repo_id" --revision "$fixture_revision" \
+              --filename benchmark-v1.jsonl --output-manifest /workspace/benchmark-v1.jsonl --audio-dir /workspace/benchmark-audio
+          fi
+          batch_sizes=(1); [[ "$RTF_COST_MODE" == full-matrix ]] && batch_sizes=(1 8 32)
+          for batch_size in "${batch_sizes[@]}"; do
+            run_id="rtf-cpu-${RTF_SERVICE_ID}-${{ github.run_id }}-b${batch_size}"
+            dir="results/batches/batch-${batch_size}"; mkdir -p "$dir"
+            export RTF_RUN_ID="$run_id" RTF_BATCH_SIZE="$batch_size" RTF_LOCAL_OUTPUT="$dir/metrics.json" RTF_LOCAL_RECEIPT="$dir/result-receipt.json" RTF_LOCAL_CONTENT="$dir/content.json"
+            if [[ "$RTF_SERVICE_ID" == hf-inference-endpoint ]]; then
+              endpoint_url="${{ inputs.endpoint_url }}"; [[ -n "$endpoint_url" ]] || endpoint_url="$HF_INFERENCE_ENDPOINT_URL_SECRET"
+              price_args=(); [[ -n "${RTF_CPU_PRICE_PER_HOUR:-}" ]] && price_args=(--price-per-hour "$RTF_CPU_PRICE_PER_HOUR")
+              python scripts/ci/run-hf-inference-endpoint-cpu.py --endpoint-url "$endpoint_url" --token "$HF_TOKEN" \
+                --manifest cpu-fixture/benchmark-v1.jsonl --output "$RTF_LOCAL_OUTPUT" --run-id "$run_id" \
+                --model-id "$RTF_MODEL_ID" --model-revision "$RTF_MODEL_REVISION" --dataset-id "$RTF_DATASET_ID" \
+                --dataset-revision "$RTF_DATASET_REVISION" --fixture-repo-id "$fixture_repo_id" --fixture-revision "$fixture_revision" \
+                --manifest-sha256 "$manifest_sha256" --image-digest "${RTF_IMAGE##*@}" --cpu-target "$RTF_CPU_FLAVOR" \
+                --batch-size "$batch_size" --job-id "${endpoint_url}" "${price_args[@]}" || true
+              if jq -e '.status == "completed"' "$RTF_LOCAL_OUTPUT" >/dev/null; then
+                python scripts/ci/publish-rtf-metrics.py --metrics "$RTF_LOCAL_OUTPUT" --repo-id "$RTF_RESULT_REPO_ID" \
+                  --path "results/${run_id}/metrics.json" --run-id "$run_id" --job-id "$endpoint_url" --output-receipt "$RTF_LOCAL_RECEIPT"
+              fi
+            else
+              export RTF_MODEL_ID RTF_MODEL_REVISION RTF_DATASET_ID RTF_DATASET_REVISION RTF_FIXTURE_REPO_ID="$fixture_repo_id" RTF_FIXTURE_REVISION="$fixture_revision" RTF_FIXTURE_MANIFEST_SHA256="$manifest_sha256" RTF_RESULT_REPO_ID RTF_RESULT_PATH="results/${run_id}/metrics.json" RTF_IMAGE_DIGEST="$RTF_IMAGE" RTF_CPU_FLAVOR RTF_INSPECTION_PROFILE
+              ./scripts/run-runpod-cpu-benchmark.sh --image "$RTF_IMAGE" || true
+            fi
+            [[ -s "$RTF_LOCAL_RECEIPT" ]] || jq -n --arg run_id "$run_id" '{schema_version:1,run_id:$run_id,status:"blocked",job_id:null,result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:"CPU_BENCHMARK_NO_RECEIPT",error_message:"CPU benchmark did not produce a receipt"}' > "$RTF_LOCAL_RECEIPT"
+          done
+      - name: Normalize CPU receipts
+        id: receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          batch_sizes=(1); [[ '${{ inputs.cost_mode }}' == full-matrix ]] && batch_sizes=(1 8 32)
+          receipts="$(for n in "${batch_sizes[@]}"; do jq --arg n "$n" '. + {batch_size:($n|tonumber)}' "results/batches/batch-${n}/result-receipt.json"; done | jq -sc '.')"
+          echo "receipts=$receipts" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rtf-cpu-benchmark-${{ github.run_id }}
+          path: results/batches/
+          if-no-files-found: ignore
+
+  collect:
+    needs: benchmark
+    if: always()
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        result: ${{ fromJSON(needs.benchmark.outputs.receipts) }}
+    uses: ./.github/workflows/rtf-service-result.yml
+    with:
+      run_id: ${{ matrix.result.run_id }}
+      service_id: ${{ inputs.service_id }}
+      status: ${{ matrix.result.status }}
+      provider: cpu
+      environment: linux
+      inspection_profile: smoke
+      gpu: ${{ inputs.cpu_target }}
+      batch_size: ${{ matrix.result.batch_size }}
+      job_id: ${{ matrix.result.job_id || '' }}
+      result_uri: ${{ matrix.result.result_uri || '' }}
+      result_sha256: ${{ matrix.result.result_sha256 || '' }}
+      metrics_uri: ${{ matrix.result.metrics_uri || '' }}
+      metrics_sha256: ${{ matrix.result.metrics_sha256 || '' }}
+      error_code: ${{ matrix.result.error_code || '' }}
+      error_message: ${{ matrix.result.error_message || '' }}
+    secrets: inherit
