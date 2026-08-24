@@ -12,7 +12,8 @@
     "batch_size": {"type": "integer", "minimum": 1}, "repeat": {"type": "integer", "minimum": 1}, "precision": {"type": "string", "enum": ["float32", "float16", "bfloat16"]}, "status": {"type": "string", "enum": ["completed", "failed", "blocked", "not_verified"]}, "provider_execution_proof": {"type": "boolean"},
     "audio_duration_sec": {"type": "number", "exclusiveMinimum": 0}, "processing_duration_sec": {"type": "number", "exclusiveMinimum": 0}, "rtf": {"type": "number", "exclusiveMinimum": 0}, "rtfx": {"type": "number", "exclusiveMinimum": 0}, "rtf_scope": {"type": "string", "enum": ["model", "service"]},
     "cer": {"type": ["number", "null"], "minimum": 0}, "wer": {"type": ["number", "null"], "minimum": 0}, "peak_vram_mb": {"type": ["number", "null"], "minimum": 0}, "gpu_utilization_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100}, "gpu_price_per_hour": {"type": ["number", "null"], "minimum": 0}, "cost_per_audio_hour": {"type": ["number", "null"], "minimum": 0},
-    "metrics_uri": {"type": "string", "minLength": 1}, "metrics_sha256": {"$ref": "#/$defs/sha256"}
+    "metrics_uri": {"type": "string", "minLength": 1}, "metrics_sha256": {"$ref": "#/$defs/sha256"},
+    "completed_at": {"type": ["string", "null"], "format": "date-time"}
   },
   "$defs": {"sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}}
 }
