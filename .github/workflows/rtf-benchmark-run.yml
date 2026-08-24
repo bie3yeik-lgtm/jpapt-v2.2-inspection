@@ -159,7 +159,11 @@ jobs:
           if [[ '${{ inputs.provider }}' == 'runpod' ]]; then
             curl -fsSL https://cli.runpod.net | sudo bash
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install latest released Rust CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUST_CLI_RELEASE_TAG: ${{ vars.RUST_CLI_RELEASE_TAG }}
+        run: scripts/ci/install-rust-cli.sh --bin-dir "$RUNNER_TEMP/rust-cli"
       - name: Configure RunPod CLI
         if: inputs.provider == 'runpod'
         env:
@@ -186,6 +190,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .ci
+          policy_url="${RTF_COST_POLICY_URL:-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/evaluation/manifests/rtf-cost-policy.json}"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$policy_url" -o .ci/rtf-cost-policy-definition.json
           cost_args=(
             --provider '${{ inputs.provider }}' --gpu '${{ inputs.gpu }}'
             --batch-size 1 --repeat 3 --sample-count 50
@@ -195,7 +201,7 @@ jobs:
           if [[ '${{ inputs.cost_mode }}' == full-matrix ]]; then
             cost_args+=(--allow-expensive-matrix)
           fi
-          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+          "$RUNNER_TEMP/rust-cli/asr-rtf-cost-policy" --policy .ci/rtf-cost-policy-definition.json \
             "${cost_args[@]}" | tee .ci/rtf-cost-policy.json
       - name: Run cost-guarded benchmark batch sizes sequentially
         id: execute

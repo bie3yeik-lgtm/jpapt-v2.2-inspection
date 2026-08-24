@@ -13,8 +13,6 @@ const IDENTITY_FIELDS: &[&str] = &[
     "dataset_manifest_sha256",
     "dataset_revision",
     "fixture_repo_id",
-    "fixture_revision",
-    "image_digest",
     "precision",
 ];
 
@@ -270,6 +268,26 @@ mod tests {
         assert_eq!(result.records[0]["run_id"], "run-new");
         assert_eq!(result.excluded.len(), 1);
         assert!(result.excluded[0].reason.contains("superseded"));
+    }
+
+    #[test]
+    fn accepts_same_manifest_across_fixture_and_image_revisions() {
+        let mut l4 = record("run-l4", Some(0.1), Some(0.1));
+        l4["service_id"] = json!("hf-jobs");
+        l4["gpu"] = json!("l4");
+        l4["fixture_revision"] = json!("c".repeat(40));
+        l4["image_digest"] = json!(format!("sha256:{}", "e".repeat(64)));
+        let mut t4 = record("run-t4", Some(0.2), Some(0.2));
+        t4["service_id"] = json!("hf-jobs");
+        t4["gpu"] = json!("t4");
+        t4["fixture_revision"] = json!("d".repeat(40));
+        t4["image_digest"] = json!(format!("sha256:{}", "f".repeat(64)));
+        let result = rank_rtf_records(
+            vec![("l4.json".to_owned(), l4), ("t4.json".to_owned(), t4)],
+            Some("phase1"),
+        )
+        .expect("same manifest should be rankable across provider image revisions");
+        assert_eq!(result.records.len(), 2);
     }
 
     #[test]
