@@ -19,6 +19,7 @@ HF Job / RunPod Pod 完了
 ```
 
 `scripts/run-benchmark.sh` がcompleted receiptを検知したとき、HFは`enrich_hf_job_metrics.py`、RunPodは`enrich_runpod_job_metrics.py`を実行する。metadataを取得できない場合はそれぞれ`HF_JOB_METADATA_UNAVAILABLE`または`RUNPOD_BILLING_METADATA_UNAVAILABLE`としてblockedにし、未検証のコストをrankingに流さない。
+RunPodではbilling historyがlive Pod IDを必要とするため、`enrich_runpod_job_metrics.py`はPod削除より前に実行する。metadata結合が完了するまでPodを保持し、成功後にログ停止と削除を行う。取得失敗時はEXIT cleanupでPodを削除し、receiptをblockedへ更新する。
 
 ## metrics の追加フィールド
 

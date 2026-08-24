@@ -794,13 +794,11 @@ case "$PROVIDER" in
     if [[ "$remote_status" -ne 0 && "$receipt_completed" != true ]]; then
       exit "$remote_status"
     fi
-    stop_runpod_container_logs
-    # Delete this Pod as soon as its metrics and receipt have been copied.
-    # The EXIT trap remains as a failure-path safety net.
-    delete_pod
     if [[ "$receipt_completed" == true ]]; then
       metadata_script="scripts/ci/enrich_runpod_job_metrics.py"
       [[ -f "$metadata_script" ]] || { echo "RunPod billing metadata collector is missing: $metadata_script" >&2; exit 2; }
+      # Billing history is keyed by the live Pod ID. Collect and bind it
+      # before deletion; the EXIT trap deletes the Pod if enrichment fails.
       if ! python "$metadata_script" --receipt "${RTF_LOCAL_RECEIPT:-result-receipt.json}"; then
         jq '.status = "blocked" | .error_code = "RUNPOD_BILLING_METADATA_UNAVAILABLE" | .error_message = "RunPod billing history could not be collected; metrics were not accepted for ranking"' \
           "${RTF_LOCAL_RECEIPT:-result-receipt.json}" > "${RTF_LOCAL_RECEIPT:-result-receipt.json}.tmp"
@@ -808,5 +806,9 @@ case "$PROVIDER" in
         exit 1
       fi
     fi
+    stop_runpod_container_logs
+    # Delete only after metrics, receipt, and RunPod billing metadata have
+    # been collected. The EXIT trap remains on the failure path as a safety net.
+    delete_pod
     ;;
 esac
