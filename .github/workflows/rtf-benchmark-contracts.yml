@@ -130,7 +130,7 @@ jobs:
           test -f docker/rtf-benchmark-smoke/Dockerfile
           bash -n scripts/ci/run-runpod-cuda-probe.sh
           bash -n scripts/ci/test-runpod-cuda-probe.sh
-          scripts/ci/test-runpod-cuda-probe.sh
+          bash scripts/ci/test-runpod-cuda-probe.sh
           grep -En 'runpod-rtf-services.json|check-runpod-rtf-services.py|RTF_RUNPOD_MIN_CUDA_VERSION' .github/workflows/rtf-benchmark-run.yml
           grep -REn 'content_probe|RTF_CONTENT_PROBE|provider content gate' docker/rtf-benchmark scripts/run-benchmark.sh
           grep -En 'snapshot_download|revision=args.model_revision|ASRModel.restore_from' docker/rtf-benchmark/benchmark-runner/benchmark_runner/cli.py

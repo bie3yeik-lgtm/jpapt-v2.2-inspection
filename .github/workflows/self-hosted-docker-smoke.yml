@@ -1,0 +1,55 @@
+name: Self-hosted Docker RTF Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-docker-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Validate RTF contracts in Docker on self-hosted runner
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify Docker daemon
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          platform="$(docker info --format '{{.OSType}}/{{.Architecture}}')"
+          echo "Docker platform: $platform"
+          [[ "$platform" == linux/amd64 || "$platform" == linux/x86_64 ]] || {
+            echo "self-hosted Docker smoke requires Linux amd64/x86_64, got $platform" >&2
+            exit 2
+          }
+
+      - name: Build self-hosted validation image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull=false \
+            --file docker/self-hosted-ci/Dockerfile \
+            --tag jpapt-self-hosted-docker-smoke:${GITHUB_SHA} \
+            .
+
+      - name: Run repository contract checks inside Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --label jpapt.workflow=self-hosted-docker-smoke \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            jpapt-self-hosted-docker-smoke:${GITHUB_SHA}
+
+      - name: Remove validation image
+        if: always()
+        shell: bash
+        run: |
+          docker image rm "jpapt-self-hosted-docker-smoke:${GITHUB_SHA}" || true
