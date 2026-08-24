@@ -61,6 +61,12 @@ jobs:
           printf '%s\n' "${binaries[@]}" > dist/RELEASE_BINARIES.txt
           tar -C dist -czf "rust-workspace-${GITHUB_SHA}.tar.gz" bin RELEASE_BINARIES.txt
           sha256sum "rust-workspace-${GITHUB_SHA}.tar.gz" > "rust-workspace-${GITHUB_SHA}.sha256"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg rustc "$(rustc --version)" \
+            --argjson binaries "$(jq -Rsc 'split("\n") | map(select(length > 0))' dist/RELEASE_BINARIES.txt)" \
+            '{schema_version:1,commit_sha:$commit,rustc:$rustc,binaries:$binaries}' \
+            > rust-workspace-release.json
 
       - uses: actions/upload-artifact@v7
         with:
@@ -68,6 +74,7 @@ jobs:
           path: |
             rust-workspace-${{ github.sha }}.tar.gz
             rust-workspace-${{ github.sha }}.sha256
+            rust-workspace-release.json
           if-no-files-found: error
 
   release:

@@ -331,8 +331,8 @@ jobs:
           workflow = Path(".github/workflows/benchmark-ranking.yml").read_text()
           ranker = Path("rust/crates/asr-contracts/src/bin/asr-rtf-rank.rs").read_text()
           module = Path("rust/crates/asr-contracts/src/rtf_rank.rs").read_text()
-          if 'cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank' not in workflow:
-              raise SystemExit("ranking workflow must call the Rust ranker")
+          if 'scripts/ci/install-rust-cli.sh' not in workflow or 'asr-rtf-rank' not in workflow:
+              raise SystemExit("ranking workflow must install and call the released Rust ranker")
           if '--phase "$rank_phase"' not in workflow:
               raise SystemExit("ranking workflow must bind inspection profiles to Rust phase")
           if 'lough' in workflow or 'precise' in workflow:
@@ -354,11 +354,11 @@ jobs:
       - name: Validate RTF cost guard contract
         run: |
           set -euo pipefail
-          guarded="$(cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+          guarded="$(cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- --policy evaluation/manifests/rtf-cost-policy.json \
             --provider hf --gpu t4 --batch-size 1 --repeat 3 --sample-count 50 \
             --target-total-sec 5400 --max-duration-sec 600 --mode guarded)"
           echo "$guarded" | jq -e '.early_stop_on_failure == true and .remote_timeout == "2h"' >/dev/null
-          if cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- \
+          if cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- --policy evaluation/manifests/rtf-cost-policy.json \
             --provider runpod --gpu a5000 --batch-size 8 --repeat 3 --sample-count 50 \
             --target-total-sec 5400 --max-duration-sec 600 --mode full-matrix; then
             echo 'full-matrix must require explicit approval' >&2

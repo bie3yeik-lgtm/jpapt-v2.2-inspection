@@ -101,7 +101,11 @@ jobs:
           docker image inspect "$IMAGE" | jq -e \
             '.[0].Config.Entrypoint == ["/opt/rtf-benchmark/entrypoint.sh"] and .[0].Config.Cmd == ["sleep", "infinity"]' >/dev/null
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install latest released Rust CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUST_CLI_RELEASE_TAG: ${{ vars.RUST_CLI_RELEASE_TAG }}
+        run: scripts/ci/install-rust-cli.sh --bin-dir "$RUNNER_TEMP/rust-cli"
 
       - name: Resolve and verify benchmark fixture
         env:
@@ -137,6 +141,7 @@ jobs:
           BID_PRICE: ${{ inputs.bid_price }}
         run: |
           set -euo pipefail
+          mkdir -p .ci
           [[ -n "$VAST_API_KEY" ]] || { echo 'VAST_API_KEY is required'; exit 1; }
           [[ "$OFFER_ID" =~ ^[0-9]+$ ]] || { echo 'offer_id must be numeric'; exit 2; }
           if [[ "$PRICING_TYPE" == bid ]]; then
@@ -144,7 +149,9 @@ jobs:
           fi
           cost_args=(--provider vast --gpu "${{ inputs.gpu }}" --batch-size 1 --repeat 3 --sample-count 50 --target-total-sec 5400 --max-duration-sec 600 --mode '${{ inputs.cost_mode }}')
           [[ '${{ inputs.cost_mode }}' == full-matrix ]] && cost_args+=(--allow-expensive-matrix)
-          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-cost-policy -- "${cost_args[@]}" | tee .ci-rtf-vast-cost-policy.json
+          policy_url="${RTF_COST_POLICY_URL:-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/evaluation/manifests/rtf-cost-policy.json}"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$policy_url" -o .ci-rtf-cost-policy-definition.json
+          "$RUNNER_TEMP/rust-cli/asr-rtf-cost-policy" --policy .ci-rtf-cost-policy-definition.json "${cost_args[@]}" | tee .ci-rtf-vast-cost-policy.json
 
       - name: Run Vast batches sequentially
         id: execute

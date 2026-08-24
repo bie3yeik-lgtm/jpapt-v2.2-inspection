@@ -112,7 +112,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install latest released Rust CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUST_CLI_RELEASE_TAG: ${{ vars.RUST_CLI_RELEASE_TAG }}
+        run: scripts/ci/install-rust-cli.sh --bin-dir "$RUNNER_TEMP/rust-cli"
 
       - name: Verify provider credential
         env:
@@ -221,7 +225,8 @@ jobs:
             > results/rtf-service/service-result.json
 
       - name: Validate service result envelope
-        run: cargo run --quiet --locked -p asr-contracts --bin asr-rtf-service -- validate results/rtf-service/service-result.json
+        run: |
+          "$RUNNER_TEMP/rust-cli/asr-rtf-service" validate results/rtf-service/service-result.json
 
       - name: Validate and build benchmark record
         if: inputs.status == 'completed'

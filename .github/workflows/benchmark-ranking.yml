@@ -20,7 +20,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install latest released Rust CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUST_CLI_RELEASE_TAG: ${{ vars.RUST_CLI_RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          scripts/ci/install-rust-cli.sh --bin-dir "$RUNNER_TEMP/rust-cli"
       - name: Generate deterministic ranking
         env:
           PHASE: ${{ inputs.phase }}
@@ -60,7 +66,7 @@ jobs:
           git fetch --no-tags origin main
           git checkout --no-track -B "$branch" origin/main
           mkdir -p rtf-scores
-          cargo run --quiet --locked -p asr-contracts --bin asr-rtf-rank -- \
+          "$RUNNER_TEMP/rust-cli/asr-rtf-rank" \
             rtf-scores/ranking.json --phase "$rank_phase" \
             --diagnostics rtf-scores/ranking-exclusions.json "${records[@]}"
           jq --argjson sidecar_exclusions "$metrics_exclusions" \

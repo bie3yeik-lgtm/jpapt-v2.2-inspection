@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "targets": [
+    { "provider": "hf", "gpus": ["t4", "l4"] },
+    { "provider": "runpod", "gpus": ["a5000", "a4000", "a4500", "a40", "rtx2000-ada", "rtx4000-ada", "l4", "rtx3090", "rtx4090"] },
+    { "provider": "vast", "gpus": ["*"] }
+  ],
+  "batch_sizes": [1, 8, 32],
+  "repeat": { "min": 1, "max": 3 },
+  "sample_count": { "min": 1, "max": 50 },
+  "target_total_sec": { "min": 1, "max": 5400 },
+  "max_duration_sec": { "min": 1, "max": 600 },
+  "modes": ["guarded", "full-matrix"],
+  "remote_timeout": "2h"
+}
