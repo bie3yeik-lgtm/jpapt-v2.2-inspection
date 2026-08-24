@@ -133,6 +133,9 @@ metricsだけを`benchmark-record.json`へ変換する。
 ## 8. Step 5: rankingを自動生成する
 
 `benchmark-ranking.yml`はprofile単位でrecordを収集し、Rust `asr-rtf-rank`へ渡す。
+同一provider/GPU/batchの再実行がある場合、Rust rankerは完全なcompleted recordの中から
+`completed_at`が最新のものだけを採用する。最新の試行がblockedでも、直近の完全なcompleted
+recordが存在すればそれを使用し、blocked試行によってランキングを空にしない。
 異なるprofile、manifest、image digest、provider identityを同じランキングへ混在させない。
 
 採用条件:

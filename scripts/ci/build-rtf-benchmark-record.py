@@ -53,6 +53,7 @@ def main() -> int:
         "gpu_utilization_percent": metrics["gpu_utilization_pct"],
         "gpu_price_per_hour": metrics["gpu_price_per_hour"],
         "cost_per_audio_hour": metrics["cost_per_audio_hour"],
+        "completed_at": metrics.get("completed_at"),
         "metrics_uri": service_result["metrics_uri"],
         "metrics_sha256": service_result["metrics_sha256"],
     }

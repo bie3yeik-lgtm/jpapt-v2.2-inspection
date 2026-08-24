@@ -36,22 +36,13 @@ pub fn rank_rtf_records(
     inputs: impl IntoIterator<Item = (String, Value)>,
     expected_phase: Option<&str>,
 ) -> Result<RtfRankOutput> {
-    let mut accepted = Vec::new();
+    let mut candidates = Vec::new();
     let mut excluded = Vec::new();
     let mut identity: Option<Value> = None;
     let mut seen = std::collections::BTreeSet::new();
 
     for (input, value) in inputs {
-        validate_rtf_benchmark_record(&value)
-            .map_err(|error| ContractError::validation(format!("{input}: {error}")))?;
         let run_id = value["run_id"].as_str().map(str::to_owned);
-        if let Some(phase) = expected_phase
-            && value["phase"].as_str() != Some(phase)
-        {
-            return Err(ContractError::validation(format!(
-                "{input}: phase does not match requested ranking phase {phase:?}"
-            )));
-        }
         if value["status"] != "completed" {
             excluded.push(RtfRankExclusion {
                 input,
@@ -59,6 +50,15 @@ pub fn rank_rtf_records(
                 reason: "status is not completed".to_owned(),
             });
             continue;
+        }
+        validate_rtf_benchmark_record(&value)
+            .map_err(|error| ContractError::validation(format!("{input}: {error}")))?;
+        if let Some(phase) = expected_phase
+            && value["phase"].as_str() != Some(phase)
+        {
+            return Err(ContractError::validation(format!(
+                "{input}: phase does not match requested ranking phase {phase:?}"
+            )));
         }
         if value["provider_execution_proof"] != true {
             excluded.push(RtfRankExclusion {
@@ -85,32 +85,62 @@ pub fn rank_rtf_records(
             continue;
         }
 
-        let identity_value = identity_value(&value)?;
+        candidates.push((input, value));
+    }
+
+    if candidates.is_empty() {
+        return Err(ContractError::validation(
+            "no accepted completed benchmark records are available for ranking",
+        ));
+    }
+    let mut latest_by_cell = std::collections::BTreeMap::<String, (String, Value)>::new();
+    for (input, value) in candidates {
+        let cell = format!(
+            "{}\u{1f}{}\u{1f}{}",
+            value["service_id"], value["gpu"], value["batch_size"]
+        );
+        let candidate_key = recency_key(&value, &input);
+        if let Some((previous_input, previous_value)) = latest_by_cell.get(&cell) {
+            if candidate_key <= recency_key(previous_value, previous_input) {
+                excluded.push(RtfRankExclusion {
+                    input,
+                    run_id: value["run_id"].as_str().map(str::to_owned),
+                    reason: "older completed record superseded by a newer complete record"
+                        .to_owned(),
+                });
+                continue;
+            }
+            excluded.push(RtfRankExclusion {
+                input: previous_input.clone(),
+                run_id: previous_value["run_id"].as_str().map(str::to_owned),
+                reason: "older completed record superseded by a newer complete record".to_owned(),
+            });
+        }
+        latest_by_cell.insert(cell, (input, value));
+    }
+    let mut accepted: Vec<Value> = latest_by_cell
+        .into_values()
+        .map(|(_, value)| value)
+        .collect();
+    for value in &accepted {
+        let identity_value = identity_value(value)?;
         if let Some(expected) = &identity
             && expected != &identity_value
         {
-            return Err(ContractError::validation(format!(
-                "{input}: accepted record identity does not match the ranking set"
-            )));
+            return Err(ContractError::validation(
+                "accepted record identity does not match the ranking set",
+            ));
         }
         identity.get_or_insert(identity_value);
-
         let duplicate_key = format!(
             "{}\u{1f}{}\u{1f}{}\u{1f}{}",
             value["run_id"], value["service_id"], value["gpu"], value["batch_size"]
         );
         if !seen.insert(duplicate_key) {
-            return Err(ContractError::validation(format!(
-                "{input}: duplicate accepted run/service/gpu/batch record"
-            )));
+            return Err(ContractError::validation(
+                "duplicate accepted run/service/gpu/batch record",
+            ));
         }
-        accepted.push(value);
-    }
-
-    if accepted.is_empty() {
-        return Err(ContractError::validation(
-            "no accepted completed benchmark records are available for ranking",
-        ));
     }
     accepted.sort_by(|left, right| {
         compare_number(left, right, "cost_per_audio_hour")
@@ -134,6 +164,17 @@ pub fn rank_rtf_records(
         records: accepted,
         excluded,
     })
+}
+
+fn recency_key(value: &Value, input: &str) -> (String, String) {
+    (
+        value["completed_at"]
+            .as_str()
+            .or_else(|| value["run_id"].as_str())
+            .unwrap_or_default()
+            .to_owned(),
+        input.to_owned(),
+    )
 }
 
 fn identity_value(value: &Value) -> Result<Value> {
@@ -201,5 +242,45 @@ mod tests {
         .expect("ranking should succeed");
         assert_eq!(result.records[0]["run_id"], "run-1");
         assert!(result.excluded.is_empty());
+    }
+
+    #[test]
+    fn selects_latest_complete_record_per_cell() {
+        let mut older = record("run-old", Some(0.2), Some(0.2));
+        older["completed_at"] = json!("2026-08-24T00:00:00Z");
+        let mut newer = record("run-new", Some(0.1), Some(0.1));
+        newer["completed_at"] = json!("2026-08-24T01:00:00Z");
+        let result = rank_rtf_records(
+            vec![
+                ("old.json".to_owned(), older),
+                ("new.json".to_owned(), newer),
+            ],
+            Some("phase1"),
+        )
+        .expect("latest complete record should be ranked");
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0]["run_id"], "run-new");
+        assert_eq!(result.excluded.len(), 1);
+        assert!(result.excluded[0].reason.contains("superseded"));
+    }
+
+    #[test]
+    fn ignores_newer_blocked_record_when_complete_record_exists() {
+        let complete = record("run-complete", Some(0.1), Some(0.1));
+        let blocked = json!({
+            "run_id": "run-blocked", "status": "blocked", "service_id": "hf-jobs",
+            "gpu": "t4", "batch_size": 1
+        });
+        let result = rank_rtf_records(
+            vec![
+                ("complete.json".to_owned(), complete),
+                ("blocked.json".to_owned(), blocked),
+            ],
+            Some("phase1"),
+        )
+        .expect("blocked latest attempt must not hide complete data");
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0]["run_id"], "run-complete");
+        assert_eq!(result.excluded[0].reason, "status is not completed");
     }
 }

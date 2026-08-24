@@ -11,6 +11,7 @@ import statistics
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jiwer
@@ -349,6 +350,7 @@ def main() -> int:
             "gpu_utilization_pct": gpu_utilization_pct,
             "memory_bandwidth_utilization_pct": median_metric(memory_bandwidth_samples),
             "queue_latency_sec": queue_latency_sec,
+            "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "gpu_price_per_hour": gpu_price_per_hour,
             "cost_per_audio_hour": gpu_price_per_hour * rtf if gpu_price_per_hour is not None else None,
         }
