@@ -98,7 +98,7 @@ fn accepts_vast_metrics_with_ranking_minimum_fields() {
         "batch_size": 32,
         "repeat": 32,
         "cer": 0.5555158304532635,
-        "peak_vram_bytes": 5657336320,
+        "peak_vram_bytes": 5657336320_u64,
         "gpu_utilization_pct": 77.578125,
         "memory_bandwidth_utilization_pct": 50.464962121212125,
         "queue_latency_sec": 59.0,
