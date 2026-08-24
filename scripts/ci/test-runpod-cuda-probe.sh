@@ -32,7 +32,12 @@ MOCK
 cat > "$mock_bin/ssh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' 'NVIDIA-SMI 580.00    Driver Version: 580.00    CUDA Version: 13.0' 'NVIDIA RTX A5000'
+if [[ "$*" == *"nvidia-smi --query-gpu=name --format=csv,noheader"* ]]; then
+  printf '%s\n' 'NVIDIA RTX A5000'
+else
+  # The table-form output may abbreviate the GPU name when the column is narrow.
+  printf '%s\n' 'NVIDIA-SMI 580.00    Driver Version: 580.00    CUDA Version: 13.0' 'NVIDIA RTX A5000...'
+fi
 MOCK
 chmod +x "$mock_bin/runpodctl" "$mock_bin/ssh"
 
