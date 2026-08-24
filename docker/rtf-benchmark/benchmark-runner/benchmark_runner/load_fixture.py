@@ -9,7 +9,8 @@ import os
 import time
 from pathlib import Path
 
-from huggingface_hub import HfHubHTTPError, hf_hub_download
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import HfHubHTTPError
 
 
 def _download(repo_id: str, revision: str, filename: str) -> Path:

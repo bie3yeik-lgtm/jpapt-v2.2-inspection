@@ -51,3 +51,10 @@ Runner: Hubからfixtureを1回取得・SHA検証
 - `Build and publish smoke fixture image`
 - Pod内でのHub `HEAD`アクセスが発生しないこと
 - `RTF_BUNDLED_FIXTURE_DIR`経路でcontent probeが完了すること
+
+## 追補: Actions run 32761735646
+
+このrunはRunPodの起動前、GHCRのbenchmark image build中に失敗した。`huggingface_hub==1.24.0`では
+`HfHubHTTPError`をトップレベルからimportできないため、fixture loaderとRunner側のmaterializerを
+`huggingface_hub.utils`からimportするよう修正した。したがって、このrunではPodの生存時間や429待機の
+動作までは到達していない。

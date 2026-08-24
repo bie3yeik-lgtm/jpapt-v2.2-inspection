@@ -11,7 +11,8 @@ import shutil
 import time
 from pathlib import Path
 
-from huggingface_hub import HfHubHTTPError, hf_hub_download
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import HfHubHTTPError
 
 
 def download(repo_id: str, revision: str, filename: str, cache_dir: Path) -> Path:
