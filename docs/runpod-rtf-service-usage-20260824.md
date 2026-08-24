@@ -35,7 +35,7 @@ artifact `runpod-rtf-service-inventory-<run_id>`には、raw inventory、結合�
 
 probeは、在庫とcloud typeの確認、一時Podの作成、SSH readiness（最大1時間）、`nvidia-smi`、GPU名、CUDA Version（13.0以上）、`/dev/nvidia0`の確認、Pod削除を順に行います。Podには`--min-cuda-version 13.0`と24時間の安全終了期限を指定し、作成後も30秒ごとにPodの存在と状態を確認します。
 
-RTF benchmark本体では、Podの作成後からmetrics・receiptの取得完了まで同じheartbeatを実行します。metrics出力が完了した場合、またはSSH、benchmark、APIの内部エラーが発生した場合は、終了処理でPodを削除します。作成・readiness・SSH情報取得・metrics取得に失敗した場合は、Actions logに終了コード、Pod ID、RunPod応答の要約を出力します。RunPod CLIの公式仕様には作成後の`--terminate-after`を延長する更新操作がないため、heartbeatはタイマーを延長するものではなく、長い安全期限と早期cleanupを組み合わせた監視です。
+RTF benchmark本体では、Podの作成後からmetrics・receiptの取得完了まで同じheartbeatを実行します。各heartbeatで`nvidia-smi`からGPU使用率、メモリ使用量、温度、電力を取得し、ECC/Xid等のGPUエラー情報も確認します。Pod消失・停止時には直前のGPU診断、コンテナログtail、Pod状態をActions logとprovider diagnosticsへ保存します。metrics出力が完了した場合、またはSSH、benchmark、APIの内部エラーが発生した場合は、終了処理でPodを削除します。作成・readiness・SSH情報取得・metrics取得に失敗した場合は、Actions logに終了コード、Pod ID、RunPod応答の要約を出力します。RunPod CLIの公式仕様には作成後の`--terminate-after`を延長する更新操作がないため、heartbeatはタイマーを延長するものではなく、長い安全期限と早期cleanupを組み合わせた監視です。
 
 実GPUを借りるため短時間の料金が発生します。失敗時はartifactの`pod_id`と`cleanup_status`を必ず確認してください。
 

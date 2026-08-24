@@ -286,13 +286,31 @@ case "$PROVIDER" in
           pod_watchdog_exists="$(jq -er --arg pod_id "$pod_id" '[.[] | select((.id // .podId // .pod_id) == $pod_id)] | length > 0' <<<"$pod_watchdog_list" 2>/dev/null || echo false)"
           pod_watchdog_status="$(jq -r '(.runtimeStatus // .runtime_status // .runtime.status // .desiredStatus // .desired_status // "") | ascii_downcase' <<<"$pod_watchdog_state" 2>/dev/null || true)"
           echo "RunPod heartbeat: pod_id=$pod_id exists=$pod_watchdog_exists status=${pod_watchdog_status:-unknown}" >&2
+          pod_watchdog_gpu_telemetry="$(runpod_ssh nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>&1 || true)"
+          pod_watchdog_gpu_error_diagnostic="$(runpod_ssh nvidia-smi -q -d ECC 2>&1 | grep -Ei 'error|xid|retired|volatile|aggregate' | head -n 40 || true)"
+          pod_watchdog_telemetry_summary="$(tr '\r\n' '  ' <<<"$pod_watchdog_gpu_telemetry" | cut -c1-1000)"
+          pod_watchdog_error_summary="$(tr '\r\n' '  ' <<<"$pod_watchdog_gpu_error_diagnostic" | cut -c1-1000)"
+          echo "RunPod GPU heartbeat: pod_id=$pod_id telemetry=${pod_watchdog_telemetry_summary:-unavailable}" >&2
+          [[ -n "$pod_watchdog_error_summary" ]] && echo "::warning::RunPod GPU diagnostic: pod_id=$pod_id errors=$pod_watchdog_error_summary" >&2
+          pod_watchdog_container_log_tail=""
           if [[ "$pod_watchdog_exists" == true && "$pod_watchdog_status" != exited && "$pod_watchdog_status" != terminated ]]; then
             consecutive_failures=0
           else
             consecutive_failures=$((consecutive_failures + 1))
           fi
           if (( consecutive_failures >= 3 )); then
-            printf '%s\n' "RUNPOD_POD_LOST: Pod disappeared or stopped during benchmark" > "$runpod_watchdog_failure_file"
+            pod_watchdog_container_log_tail="$(runpodctl pod logs "$pod_id" --source container --tail 200 2>&1 || true)"
+            pod_state_json="$pod_watchdog_state"
+            pod_list_state_json="$pod_watchdog_list"
+            ssh_info_json=""
+            ssh_info_diagnostic=""
+            write_runpod_diagnostics watchdog RUNPOD_POD_LOST "Pod disappeared or stopped during benchmark; last GPU telemetry and container log tail were collected"
+            {
+              printf '%s\n' "RUNPOD_POD_LOST: Pod disappeared or stopped during benchmark"
+              printf 'last_gpu_telemetry=%s\n' "$(tr '\r\n' '  ' <<<"$pod_watchdog_gpu_telemetry" | cut -c1-1000)"
+              printf 'last_gpu_error_diagnostic=%s\n' "$(tr '\r\n' '  ' <<<"$pod_watchdog_gpu_error_diagnostic" | cut -c1-1000)"
+              printf 'container_log_tail=%s\n' "$(tr '\r\n' '  ' <<<"$pod_watchdog_container_log_tail" | cut -c1-2000)"
+            } > "$runpod_watchdog_failure_file"
             exit 1
           fi
           sleep "$RTF_RUNPOD_HEARTBEAT_SECONDS"
@@ -318,8 +336,11 @@ case "$PROVIDER" in
         --arg image_digest "$RTF_IMAGE_DIGEST" --arg gpu "$RTF_GPU" \
         --arg pod_get "${pod_state_json:-}" --arg pod_list "${pod_list_state_json:-}" \
         --arg ssh_info "${ssh_info_json:-}" --arg ssh_diagnostic "${ssh_info_diagnostic:-}" \
+        --arg gpu_telemetry "${pod_watchdog_gpu_telemetry:-}" \
+        --arg gpu_error_diagnostic "${pod_watchdog_gpu_error_diagnostic:-}" \
+        --arg container_log_tail "${pod_watchdog_container_log_tail:-}" \
         --arg observed_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-        '{schema_version:($schema_version|tonumber),run_id:$run_id,pod_id:($pod_id|if length == 0 then null else . end),phase:$phase,error_code:($error_code|if length == 0 then null else . end),error_message:($error_message|if length == 0 then null else . end),image_digest:$image_digest,gpu:$gpu,observed_at:$observed_at,pod_get_raw:($pod_get|if length == 0 then null else . end),pod_list_raw:($pod_list|if length == 0 then null else . end),ssh_info_raw:($ssh_info|if length == 0 then null else . end),ssh_diagnostic:($ssh_diagnostic|if length == 0 then null else . end)}' \
+        '{schema_version:($schema_version|tonumber),run_id:$run_id,pod_id:($pod_id|if length == 0 then null else . end),phase:$phase,error_code:($error_code|if length == 0 then null else . end),error_message:($error_message|if length == 0 then null else . end),image_digest:$image_digest,gpu:$gpu,observed_at:$observed_at,pod_get_raw:($pod_get|if length == 0 then null else . end),pod_list_raw:($pod_list|if length == 0 then null else . end),ssh_info_raw:($ssh_info|if length == 0 then null else . end),ssh_diagnostic:($ssh_diagnostic|if length == 0 then null else . end),gpu_telemetry:($gpu_telemetry|if length == 0 then null else . end),gpu_error_diagnostic:($gpu_error_diagnostic|if length == 0 then null else . end),container_log_tail:($container_log_tail|if length == 0 then null else . end)}' \
         > "$RTF_LOCAL_PROVIDER_DIAGNOSTICS"
     }
     # GitHub cancellation can signal the shell while `pod create` is still
