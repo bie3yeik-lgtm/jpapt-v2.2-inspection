@@ -260,6 +260,18 @@ jobs:
           if "exec python benchmark.py" in script:
               raise SystemExit("RunPod must not bypass the image entrypoint")
           benchmark_workflow = Path(".github/workflows/rtf-benchmark-run.yml").read_text()
+          expected_run_name = "run-name: RTF benchmark / $" + "{{ inputs.provider }} / $" + "{{ inputs.gpu }}"
+          if expected_run_name not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must expose provider and GPU labels in the Actions run name")
+          if "options: [t4, hf-l4, runpod-l4," not in benchmark_workflow:
+              raise SystemExit("RTF Benchmark Run must distinguish HF L4 and RunPod L4 labels")
+          if 'runpod:runpod-l4) gpu=l4' not in benchmark_workflow:
+              raise SystemExit("RunPod L4 label must normalize to the canonical l4 GPU value")
+          verification_workflow = Path(".github/workflows/rtf-verification-select.yml").read_text()
+          if "options: [t4, hf-l4, runpod-l4," not in verification_workflow:
+              raise SystemExit("RTF Verification Select must distinguish HF L4 and RunPod L4 labels")
+          if 'runpod-pod:runpod-l4) gpu=l4' not in verification_workflow:
+              raise SystemExit("RTF Verification Select RunPod L4 label must normalize to l4")
           if "inputs.image" in benchmark_workflow or "description: Optional image override" in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must always resolve the latest GHCR image")
           if "inputs.batch_size" in benchmark_workflow or "description: Benchmark batch size" in benchmark_workflow:

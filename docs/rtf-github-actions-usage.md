@@ -25,7 +25,7 @@ Workflow: **RTF Verification Select** (`rtf-verification-select.yml`)
 | Input | 選択肢 |
 |---|---|
 | `service_id` | `hf-inference-endpoint`, `hf-jobs`, `runpod-pod`, `runpod-serverless` |
-| `gpu` | `t4`, `l4`, `a5000`, `a4000`, `a4500`, `a40`, `rtx2000-ada`, `rtx4000-ada`, `rtx3090`, `rtx4090` |
+| `gpu` | `t4`, `hf-l4`, `runpod-l4`, `a5000`, `a4000`, `a4500`, `a40`, `rtx2000-ada`, `rtx4000-ada`, `rtx3090`, `rtx4090` |
 | `model_id` | Parakeet TDT/CTC, Kotoba Whisper |
 | `dataset_id` | Common Voice 8, JSUT Basic5000, ReazonSpeech test |
 | `decoder` | `tdt`, `ctc`, `whisper` |
@@ -35,6 +35,9 @@ workflowは選択値をPhase 1 matrixと照合する。HF Jobsで存在しない
 無効な組合せは外部実行前に失敗する。成功時は
 選択内容から生成された`run_id`を持つ`rtf-verification-selection-<run_id>` artifactに
 `selection.json`が保存される。
+
+Actionsの選択ラベルでは、HF JobsのL4を`hf-l4`、RunPod PodのL4を`runpod-l4`と表示する。
+内部の契約値はどちらも`l4`だが、`service_id`と組み合わせて別GPU実行として記録する。
 
 ## 2. 実行結果を保存・検証する
 

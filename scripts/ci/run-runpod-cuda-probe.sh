@@ -108,7 +108,7 @@ if [[ "$pod_created" -ne 1 ]]; then
   tr '\r\n' '  ' <<<"$pod_json" | cut -c1-2000 >&2 || true
   failure_code=RUNPOD_POD_CREATE_FAILED; failure_message="probe Pod creation failed"
   if grep -Eqi 'cuda|nvidia driver|driver version|unsupported cuda' <<<"$pod_json"; then failure_code=RUNPOD_CUDA_REQUIREMENT_UNSATISFIED; fi
-  if grep -Eqi 'no instances available|insufficient capacity' <<<"$pod_json"; then failure_code=RUNPOD_NO_INSTANCE_AVAILABLE; fi
+  if grep -Eqi 'no longer any instances available|no instances available|insufficient capacity' <<<"$pod_json"; then failure_code=RUNPOD_NO_INSTANCE_AVAILABLE; fi
   exit 1
 fi
 ssh_command=""; readiness_deadline=$(( $(date +%s) + 3600 )); consecutive_missing=0
@@ -136,9 +136,12 @@ if [[ -z "$ssh_command" ]]; then
 fi
 ssh_command="${ssh_command/ssh /ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 }"
 probe_output="$(timeout 60s bash -c "$ssh_command 'nvidia-smi && test -e /dev/nvidia0'" 2>/dev/null || true)"
-if [[ -z "$probe_output" ]] || ! grep -F "$gpu_id" <<<"$probe_output" >/dev/null; then
+gpu_name_output="$(timeout 60s bash -c "$ssh_command 'nvidia-smi --query-gpu=name --format=csv,noheader'" 2>/dev/null || true)"
+gpu_name_output="$(sed -e 's/\r$//' -e 's/[[:space:]]\+$//' <<<"$gpu_name_output")"
+if [[ -z "$probe_output" ]] || [[ -z "$gpu_name_output" ]] || ! grep -Fx "$gpu_id" <<<"$gpu_name_output" >/dev/null; then
   echo "::error::RunPod CUDA probe nvidia-smi failed or reported an unexpected GPU: pod_id=$pod_id" >&2
   tr '\r\n' '  ' <<<"$probe_output" | cut -c1-2000 >&2 || true
+  echo "RunPod CUDA probe queried GPU name: $(tr '\r\n' ' ' <<<"$gpu_name_output" | cut -c1-500)" >&2
   failure_code=RUNPOD_NVIDIA_SMI_FAILED; failure_message="nvidia-smi did not report the requested GPU"; exit 1
 fi
 cuda_version="$(grep -Eo 'CUDA Version: [0-9]+\.[0-9]+' <<<"$probe_output" | awk '{print $3}' | head -n 1 || true)"
