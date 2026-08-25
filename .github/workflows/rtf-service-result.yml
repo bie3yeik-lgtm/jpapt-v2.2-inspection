@@ -167,6 +167,7 @@ jobs:
           METRICS_URI: ${{ inputs.metrics_uri }}
           ERROR_CODE: ${{ inputs.error_code }}
           ERROR_MESSAGE: ${{ inputs.error_message }}
+          SCORE_ROOT: ${{ inputs.score_root }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -euo pipefail

@@ -169,6 +169,15 @@ jobs:
           print("RTF image loader safety policy: present")
           '
           CONTAINER_SCRIPT
+      - name: Restore provider package cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pip
+          key: rtf-benchmark-pip-${{ runner.os }}-${{ hashFiles('docker/rtf-benchmark/requirements.lock') }}
+          restore-keys: |
+            rtf-benchmark-pip-${{ runner.os }}-
+      - name: Install Hugging Face hub client
+        run: python -m pip install --disable-pip-version-check --upgrade huggingface_hub
       - uses: docker/setup-buildx-action@v3
       - name: Build and publish smoke fixture image
         if: inputs.provider == 'runpod'
@@ -211,16 +220,8 @@ jobs:
           image="$image_name@$digest"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "Smoke fixture image: $image"
-      - name: Restore provider package cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/pip
-          key: rtf-benchmark-pip-${{ runner.os }}-${{ hashFiles('docker/rtf-benchmark/requirements.lock') }}
-          restore-keys: |
-            rtf-benchmark-pip-${{ runner.os }}-
       - name: Install provider CLIs
         run: |
-          python -m pip install --disable-pip-version-check --upgrade huggingface_hub
           if [[ '${{ inputs.provider }}' == 'runpod' ]]; then
             curl -fsSL https://cli.runpod.net | sudo bash
           fi
