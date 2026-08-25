@@ -63,5 +63,8 @@ done < "$ENV_FILE"
 if [[ -z "${RUNPOD_TOKEN:-}" && -n "${RUNPOD_API:-}" ]]; then
   export RUNPOD_TOKEN="$RUNPOD_API"
 fi
+if [[ -n "${RUNPOD_TOKEN:-}" ]]; then
+  export RUNPOD_API_KEY="$RUNPOD_TOKEN"
+fi
 
 exec "$@"

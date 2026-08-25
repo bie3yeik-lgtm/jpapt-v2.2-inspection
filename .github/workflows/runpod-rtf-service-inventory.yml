@@ -42,11 +42,7 @@ jobs:
       - name: Configure RunPod CLI
         run: |
           set -euo pipefail
-          [[ -n "$RUNPOD_TOKEN" ]] || { echo 'RUNPOD_TOKEN secret is required'; exit 1; }
-          mkdir -p "$HOME/.runpod"
-          touch "$HOME/.runpod/.runpod.yaml"
-          runpodctl config --apiKey="$RUNPOD_TOKEN"
-          runpodctl doctor --output json | jq -e '.healthy == true' >/dev/null
+          bash scripts/ci/configure-runpod-cli.sh --doctor
 
       - name: Collect current GPU inventory
         run: |

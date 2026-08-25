@@ -33,6 +33,7 @@ done
 command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 1; }
 [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
+export RUNPOD_API_KEY="$RUNPOD_TOKEN"
 
 mkdir -p "$(dirname "$output")"
 run_id="rtf-cuda-probe-${gpu}-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID:-local}"
