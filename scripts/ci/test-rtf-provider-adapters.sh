@@ -275,6 +275,10 @@ assert_result_files() {
   pass "$expected_job mock content and receipt collection"
 }
 
+export_runpod_mock_credentials() {
+  export RUNPOD_TOKEN=local-mock-token
+}
+
 mock_case() {
   local provider="$1" fake_root case_dir run_id
   fake_root="$(mktemp -d)"
@@ -297,6 +301,7 @@ mock_case() {
   if [[ "$provider" == hf ]]; then
     export RTF_GPU=t4
   else
+    export_runpod_mock_credentials
     export RTF_GPU=a5000
     # Exercise the current runpodctl list response, which reports
     # runtimeStatus rather than the pod-get runtime object.
@@ -423,6 +428,7 @@ fi
 EOF
   chmod +x "$fake_root/bin/date"
   export PATH="$fake_root/bin:$PATH"
+  export_runpod_mock_credentials
   export RTF_FAKE_RUNPOD_HANG=1
   export RTF_RUN_ID="local-runpod-create-timeout-test" RTF_GPU=a5000 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
   export RTF_MODEL_ID="nvidia/parakeet-tdt_ctc-0.6b-ja" RTF_MODEL_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -466,6 +472,7 @@ fi
 EOF
   chmod +x "$fake_root/bin/date"
   export PATH="$fake_root/bin:$PATH"
+  export_runpod_mock_credentials
   export RTF_FAKE_RUNPOD_LIST_READY=1 RTF_FAKE_RUNPOD_SSH_INFO_FAILURE=1
   export RTF_RUN_ID="local-runpod-ssh-info-test" RTF_GPU=a5000 RTF_BATCH_SIZE=1 RTF_INSPECTION_PROFILE=smoke
   export RTF_MODEL_ID="nvidia/parakeet-tdt_ctc-0.6b-ja" RTF_MODEL_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
