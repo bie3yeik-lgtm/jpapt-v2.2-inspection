@@ -329,6 +329,8 @@ jobs:
               raise SystemExit("RunPod billing metadata must support configurable retry attempts")
           if 'RTF_RUNPOD_BILLING_RETRY_SECONDS' not in billing_script:
               raise SystemExit("RunPod billing metadata must support configurable retry interval")
+          if 'RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS' not in billing_script:
+              raise SystemExit("RunPod billing metadata must support configurable max wait window")
           if 'delete_pod\n    ;;' not in script:
               raise SystemExit("RunPod must delete the Pod after result and billing metadata collection")
           if 'runpodctl pod delete "$pod_id"' not in script:

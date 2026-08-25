@@ -7,7 +7,8 @@ cd "$ROOT"
 grep -F 'RTF_RUNPOD_BILLING_ATTEMPTS' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
 grep -F 'RTF_RUNPOD_BILLING_RETRY_SECONDS' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
 grep -F 'RUNPOD_API_KEY' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
-grep -F 'RunPod billing history empty for Pod' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
+grep -F 'RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
+grep -F 'OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS' scripts/ci/enrich_runpod_job_metrics.py >/dev/null
 
 mise exec -- uv run python -m py_compile scripts/ci/enrich_runpod_job_metrics.py
 mise exec -- uv run python -m pytest -q python/tests/unit/test_enrich_runpod_job_metrics.py

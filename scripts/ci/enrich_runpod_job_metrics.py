@@ -18,8 +18,27 @@ from typing import Any, Callable
 from huggingface_hub import HfApi, hf_hub_url
 
 RUNPOD_BILLING_URL = "https://rest.runpod.io/v1/billing/pods"
-DEFAULT_BILLING_ATTEMPTS = 40
+# RTX 2000 Ada full-matrix smoke (Actions run 32871433137):
+# batch 1->8->32 wall clock ~46m through batch-32 receipt; batch-32 pod ~31m.
+# RunPod bills on ~5m cycles; wait through the observed full-matrix duration,
+# one billing cycle, and additional headroom before fail-closed.
+OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS = 46 * 60
+RUNPOD_BILLING_CYCLE_SECONDS = 5 * 60
+BILLING_RETRY_MARGIN_SECONDS = 20 * 60
 DEFAULT_BILLING_RETRY_SECONDS = 15.0
+
+
+def default_billing_max_wait_seconds() -> float:
+    return float(
+        OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS
+        + RUNPOD_BILLING_CYCLE_SECONDS
+        + BILLING_RETRY_MARGIN_SECONDS
+    )
+
+
+DEFAULT_BILLING_ATTEMPTS = math.ceil(
+    default_billing_max_wait_seconds() / DEFAULT_BILLING_RETRY_SECONDS
+)
 
 
 def _positive_number(value: Any, name: str) -> float:
@@ -44,12 +63,16 @@ def _positive_float(value: str, name: str) -> float:
 
 
 def billing_retry_config() -> tuple[int, float]:
-    attempts = DEFAULT_BILLING_ATTEMPTS
     retry_seconds = DEFAULT_BILLING_RETRY_SECONDS
-    if raw_attempts := os.environ.get("RTF_RUNPOD_BILLING_ATTEMPTS"):
-        attempts = _positive_int(raw_attempts, "RTF_RUNPOD_BILLING_ATTEMPTS")
     if raw_retry_seconds := os.environ.get("RTF_RUNPOD_BILLING_RETRY_SECONDS"):
         retry_seconds = _positive_float(raw_retry_seconds, "RTF_RUNPOD_BILLING_RETRY_SECONDS")
+    if raw_max_wait := os.environ.get("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS"):
+        max_wait_seconds = _positive_float(raw_max_wait, "RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS")
+        attempts = math.ceil(max_wait_seconds / retry_seconds)
+    elif raw_attempts := os.environ.get("RTF_RUNPOD_BILLING_ATTEMPTS"):
+        attempts = _positive_int(raw_attempts, "RTF_RUNPOD_BILLING_ATTEMPTS")
+    else:
+        attempts = DEFAULT_BILLING_ATTEMPTS
     return attempts, retry_seconds
 
 
@@ -90,6 +113,12 @@ def fetch_billing_history(
     query = urllib.parse.urlencode({"podId": pod_id, "grouping": "podId", "bucketSize": "hour"})
     url = f"{RUNPOD_BILLING_URL}?{query}"
     emit = log or (lambda message: print(message, file=sys.stderr, flush=True))
+    max_wait_seconds = attempts * retry_seconds
+    emit(
+        f"RunPod billing history lookup for Pod {pod_id}: "
+        f"attempts={attempts}, retry_seconds={retry_seconds}, "
+        f"max_wait_seconds={max_wait_seconds:.0f}"
+    )
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:

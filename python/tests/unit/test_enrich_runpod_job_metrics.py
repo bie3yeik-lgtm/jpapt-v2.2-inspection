@@ -17,7 +17,16 @@ SPEC.loader.exec_module(enrich)
 def test_billing_retry_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RTF_RUNPOD_BILLING_ATTEMPTS", raising=False)
     monkeypatch.delenv("RTF_RUNPOD_BILLING_RETRY_SECONDS", raising=False)
-    assert enrich.billing_retry_config() == (40, 15.0)
+    monkeypatch.delenv("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS", raising=False)
+    assert enrich.default_billing_max_wait_seconds() == pytest.approx(71 * 60)
+    assert enrich.DEFAULT_BILLING_ATTEMPTS == 284
+    assert enrich.billing_retry_config() == (284, 15.0)
+
+
+def test_billing_retry_config_from_max_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS", "300")
+    monkeypatch.setenv("RTF_RUNPOD_BILLING_RETRY_SECONDS", "10")
+    assert enrich.billing_retry_config() == (30, 10.0)
 
 
 def test_billing_retry_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
