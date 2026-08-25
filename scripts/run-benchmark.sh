@@ -202,6 +202,8 @@ case "$PROVIDER" in
     ;;
   runpod)
     command -v runpodctl >/dev/null || { echo "runpodctl is required" >&2; exit 1; }
+    [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
+    export RUNPOD_API_KEY="$RUNPOD_TOKEN"
     if [[ "$RTF_RUNPOD_REQUIRE_REGISTRY_AUTH" == 1 && -z "${RUNPOD_REGISTRY_AUTH_ID:-}" ]]; then
       echo 'RUNPOD_REGISTRY_AUTH_ID is required for the private GHCR image' >&2
       exit 2
@@ -429,9 +431,21 @@ case "$PROVIDER" in
       exit 2
     }
     if [[ "$RTF_RUNPOD_CLOUD_TYPE" == auto ]]; then
-      gpu_inventory="$(runpodctl gpu list --output json 2>&1 || true)"
-      secure_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.secureCloud // .secure_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
-      community_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.communityCloud // .community_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
+      gpu_inventory=""
+      inventory_attempts=3
+      inventory_retry_seconds=20
+      for inventory_attempt in $(seq 1 "$inventory_attempts"); do
+        gpu_inventory="$(runpodctl gpu list --include-unavailable --output json 2>&1 || true)"
+        secure_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.secureCloud // .secure_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
+        community_available="$(jq -er --arg gpu "$RUNPOD_GPU_ID" '[.[] | select((.gpuId // .gpu_id) == $gpu and .available == true and (.communityCloud // .community_cloud) == true)] | length > 0' <<<"$gpu_inventory" 2>/dev/null || echo false)"
+        if [[ "$secure_available" == true || "$community_available" == true ]]; then
+          break
+        fi
+        if [[ "$inventory_attempt" -lt "$inventory_attempts" ]]; then
+          echo "RunPod auto cloud inventory retry: attempt=$inventory_attempt/$inventory_attempts gpu=$RUNPOD_GPU_ID secure=$secure_available community=$community_available" >&2
+          sleep $((inventory_retry_seconds * inventory_attempt))
+        fi
+      done
       if [[ "$secure_available" == true ]]; then
         RTF_RUNPOD_CLOUD_TYPE=SECURE
       elif [[ "$community_available" == true ]]; then
