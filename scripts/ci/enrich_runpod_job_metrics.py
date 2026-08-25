@@ -158,14 +158,53 @@ def fetch_billing_history(
     raise RuntimeError(f"RunPod billing history has no record for Pod {pod_id}")
 
 
-def build_billing_metadata(pod_id: str, records: list[dict[str, Any]]) -> dict[str, Any]:
+def _gpu_type_ids_from_records(records: list[dict[str, Any]]) -> set[str]:
+    return {item.get("gpuTypeId") for item in records if item.get("gpuTypeId")}
+
+
+def fetch_gpu_type_id_from_billing(
+    pod_id: str,
+    token: str,
+    *,
+    request_json: Callable[[str, str], Any] = _request_json,
+) -> str:
+    # grouping=podId records omit gpuTypeId per RunPod API docs; query by gpuTypeId instead.
+    query = urllib.parse.urlencode({"podId": pod_id, "grouping": "gpuTypeId", "bucketSize": "hour"})
+    url = f"{RUNPOD_BILLING_URL}?{query}"
+    payload = request_json(url, token)
+    if not isinstance(payload, list):
+        raise ValueError("RunPod billing gpuType lookup response is not a list")
+    gpu_types = _gpu_type_ids_from_records(payload)
+    if len(gpu_types) != 1:
+        raise ValueError("RunPod billing history has no unique gpuTypeId")
+    return next(iter(gpu_types))
+
+
+def resolve_gpu_type_id(
+    pod_id: str,
+    records: list[dict[str, Any]],
+    token: str,
+    *,
+    request_json: Callable[[str, str], Any] = _request_json,
+) -> str:
+    gpu_types = _gpu_type_ids_from_records(records)
+    if len(gpu_types) == 1:
+        return next(iter(gpu_types))
+    if gpu_types:
+        raise ValueError("RunPod billing history has no unique gpuTypeId")
+    return fetch_gpu_type_id_from_billing(pod_id, token, request_json=request_json)
+
+
+def build_billing_metadata(
+    pod_id: str,
+    records: list[dict[str, Any]],
+    *,
+    gpu_type_id: str,
+) -> dict[str, Any]:
     amount = sum(_positive_number(item.get("amount"), "billing amount") for item in records)
     billed_ms = sum(int(item.get("timeBilledMs", 0)) for item in records)
     if billed_ms <= 0:
         raise ValueError("RunPod billing history has no positive timeBilledMs")
-    gpu_types = {item.get("gpuTypeId") for item in records if item.get("gpuTypeId")}
-    if len(gpu_types) != 1:
-        raise ValueError("RunPod billing history has no unique gpuTypeId")
     billed_seconds = billed_ms // 1000
     if billed_seconds <= 0:
         raise ValueError("RunPod billing history duration is below one second")
@@ -173,7 +212,7 @@ def build_billing_metadata(pod_id: str, records: list[dict[str, Any]]) -> dict[s
         "provider": "runpod-pod",
         "job_id": pod_id,
         "url": f"https://console.runpod.io/pods/{pod_id}",
-        "gpu_type_id": next(iter(gpu_types)),
+        "gpu_type_id": gpu_type_id,
         "billing_duration_sec": billed_ms / 1000.0,
         "billed_seconds": billed_seconds,
         "job_cost_usd": amount,
@@ -213,7 +252,8 @@ def main() -> int:
         attempts=attempts,
         retry_seconds=retry_seconds,
     )
-    metadata = build_billing_metadata(pod_id, records)
+    gpu_type_id = resolve_gpu_type_id(pod_id, records, runpod_token)
+    metadata = build_billing_metadata(pod_id, records, gpu_type_id=gpu_type_id)
     original = _download_metrics(metrics_uri, hf_token)
     if hashlib.sha256(original).hexdigest() != receipt.get("metrics_sha256"):
         raise SystemExit("source RunPod metrics SHA-256 does not match receipt")

@@ -106,18 +106,63 @@ def test_build_billing_metadata() -> None:
                 "podId": "pod-1",
                 "amount": 0.10,
                 "timeBilledMs": 60_000,
-                "gpuTypeId": "NVIDIA RTX 2000 Ada Generation",
             },
             {
                 "podId": "pod-1",
                 "amount": 0.05,
                 "timeBilledMs": 30_000,
-                "gpuTypeId": "NVIDIA RTX 2000 Ada Generation",
             },
         ],
+        gpu_type_id="NVIDIA RTX 2000 Ada Generation",
     )
     assert metadata["job_id"] == "pod-1"
+    assert metadata["gpu_type_id"] == "NVIDIA RTX 2000 Ada Generation"
     assert metadata["job_cost_usd"] == pytest.approx(0.15)
     assert metadata["billing_duration_sec"] == pytest.approx(90.0)
     assert metadata["billed_seconds"] == 90
     assert metadata["cost_basis"] == "runpod_billing_history"
+
+
+def test_resolve_gpu_type_id_from_pod_grouped_records() -> None:
+    records = [
+        {"podId": "pod-1", "amount": 0.10, "timeBilledMs": 60_000},
+    ]
+    assert (
+        enrich.resolve_gpu_type_id(
+            "pod-1",
+            records,
+            "token",
+            request_json=lambda _url, _token: [
+                {"gpuTypeId": "NVIDIA RTX 4000 Ada Generation", "amount": 0.10, "timeBilledMs": 60_000}
+            ],
+        )
+        == "NVIDIA RTX 4000 Ada Generation"
+    )
+
+
+def test_resolve_gpu_type_id_prefers_inline_records() -> None:
+    records = [
+        {
+            "podId": "pod-1",
+            "amount": 0.10,
+            "timeBilledMs": 60_000,
+            "gpuTypeId": "NVIDIA RTX 2000 Ada Generation",
+        },
+    ]
+
+    def fail_request(_url: str, _token: str) -> list[dict[str, object]]:
+        raise AssertionError("supplementary billing lookup must not run when gpuTypeId is present")
+
+    assert (
+        enrich.resolve_gpu_type_id("pod-1", records, "token", request_json=fail_request)
+        == "NVIDIA RTX 2000 Ada Generation"
+    )
+
+
+def test_resolve_gpu_type_id_rejects_conflicting_values() -> None:
+    records = [
+        {"podId": "pod-1", "gpuTypeId": "NVIDIA RTX 2000 Ada Generation", "timeBilledMs": 60_000, "amount": 0.1},
+        {"podId": "pod-1", "gpuTypeId": "NVIDIA RTX 4000 Ada Generation", "timeBilledMs": 30_000, "amount": 0.05},
+    ]
+    with pytest.raises(ValueError, match="no unique gpuTypeId"):
+        enrich.resolve_gpu_type_id("pod-1", records, "token", request_json=lambda _url, _token: [])
