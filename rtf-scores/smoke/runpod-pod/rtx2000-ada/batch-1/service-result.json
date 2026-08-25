@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32868434508-b1",
+  "run_id": "rtf-runpod-32871433137-b1",
   "service_id": "runpod-pod",
   "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": null,
-  "result_uri": null,
-  "result_sha256": null,
-  "metrics_uri": null,
-  "metrics_path": null,
-  "metrics_sha256": null,
-  "error_code": "BENCHMARK_SETUP_FAILED",
-  "error_message": "benchmark setup did not produce a result receipt for batch 1"
+  "job_id": "4paztkdpj5r8uz",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/875e98efded5ae84917b0c9cb7ee3f8c69ff80bc/results/rtf-runpod-32871433137-b1/metrics.json",
+  "result_sha256": "1aed5abf6ed45a3ddd70c9bfc29d42cd419008def0987e8851ea1e9b93a3146c",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/875e98efded5ae84917b0c9cb7ee3f8c69ff80bc/results/rtf-runpod-32871433137-b1/metrics.json",
+  "metrics_path": "results/rtf-service/metrics.json",
+  "metrics_sha256": "1aed5abf6ed45a3ddd70c9bfc29d42cd419008def0987e8851ea1e9b93a3146c",
+  "error_code": "RUNPOD_BILLING_METADATA_UNAVAILABLE",
+  "error_message": "RunPod billing history could not be collected; metrics were not accepted for ranking"
 }
