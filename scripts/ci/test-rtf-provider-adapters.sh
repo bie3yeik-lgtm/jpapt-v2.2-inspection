@@ -143,6 +143,9 @@ PY
   grep -F "inputs.cost_mode }}' == full-matrix" .github/workflows/rtf-benchmark-run.yml >/dev/null
   grep -F 'receipts="$(for batch_size in "${batch_sizes[@]}"' .github/workflows/rtf-benchmark-run.yml >/dev/null
   ! grep -F 'receipts="$(for batch_size in 1 8 32' .github/workflows/rtf-benchmark-run.yml >/dev/null
+  grep -F 'run-runpod-execution-preflight.sh' scripts/run-benchmark.sh >/dev/null
+  grep -F 'abort_runpod_preflight' scripts/run-benchmark.sh >/dev/null
+  bash -n scripts/ci/run-runpod-execution-preflight.sh
   grep -F 'RUNPOD_API' scripts/run-benchmark.sh scripts/ci/rtf-local-preflight.sh >/dev/null
   grep -F 'HF_TOKEN|RUNPOD_TOKEN|RUNPOD_API|RUNPOD_REGISTRY_AUTH_ID|HF_FLAVOR|RUNPOD_GPU_ID|RTF_*' scripts/ci/rtf-local-env.sh >/dev/null
   grep -F 'unset GITHUB_PAT_TOKEN GITHUB_CLASSIC_TOKEN GITHUB_TOKEN GH_TOKEN CR_PAT' scripts/ci/rtf-local-env.sh >/dev/null
@@ -190,9 +193,9 @@ set -euo pipefail
     printf '%s\n' '{"id":"runpod-mock-pod"}' ;;
   pod:get)
     if [[ "${RTF_FAKE_RUNPOD_NOT_READY:-0}" == 1 || "${RTF_FAKE_RUNPOD_GET_NOT_READY:-0}" == 1 ]]; then
-      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null,"costPerHr":"0.5"}' ;
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":null,"costPerHr":"0.5","gpu":{"id":"NVIDIA RTX A5000"}}' ;
     else
-      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{},"costPerHr":"0.5"}' ;
+      printf '%s\n' '{"id":"runpod-mock-pod","desiredStatus":"RUNNING","runtime":{},"costPerHr":"0.5","gpu":{"id":"NVIDIA RTX A5000"}}' ;
     fi ;;
   pod:delete) : ;;
   pod:list)
@@ -233,6 +236,14 @@ if [[ "${RTF_FAKE_RUNPOD_REQUIRE_CI_OPTIONS:-0}" == 1 ]]; then
   [[ " $* " == *'UserKnownHostsFile=/dev/null'* ]] || exit 99
 fi
 case " $* " in
+  *' nvidia-smi && test -e /dev/nvidia0 '*)
+    printf '%s\n' 'CUDA Version: 13.0' ;;
+  *' nvidia-smi --query-gpu=name --format=csv,noheader '*)
+    printf '%s\n' 'NVIDIA RTX A5000' ;;
+  *' test -x /opt/rtf-benchmark/entrypoint.sh '*|*'test -x /opt/rtf-benchmark/entrypoint.sh'*) : ;;
+  *' test -d /output && test -w /output '*|*'test -d /output && test -w /output'*) : ;;
+  *' df -h /output '*)
+    printf '%s\n' 'tmpfs 100G 1G 99G 1% /output' ;;
   *' tee /run/rtf-benchmark.env '*)
     cat > "${RTF_FAKE_SSH_ENV_FILE:?RTF_FAKE_SSH_ENV_FILE is required}" ;;
   *' chmod 600 /run/rtf-benchmark.env '*) : ;;
@@ -308,6 +319,7 @@ mock_case() {
     export RTF_FAKE_RUNPOD_LIST_READY=1
     export RTF_FAKE_RUNPOD_GET_NOT_READY=1
     export RTF_FAKE_RUNPOD_SSH_NOT_READY=0
+    export RTF_RUNPOD_PREFLIGHT_SKIP_BILLING_PROBE=1
   fi
   export RTF_BATCH_SIZE=1
   export RTF_PRECISION=float16

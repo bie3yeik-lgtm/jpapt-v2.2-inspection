@@ -195,6 +195,19 @@ def resolve_gpu_type_id(
     return fetch_gpu_type_id_from_billing(pod_id, token, request_json=request_json)
 
 
+def probe_billing_api(
+    token: str,
+    *,
+    request_json: Callable[[str, str], Any] = _request_json,
+) -> None:
+    """Verify RunPod billing API accepts the token before benchmark execution."""
+    query = urllib.parse.urlencode({"grouping": "gpuTypeId", "bucketSize": "hour"})
+    url = f"{RUNPOD_BILLING_URL}?{query}"
+    payload = request_json(url, token)
+    if not isinstance(payload, list):
+        raise ValueError("RunPod billing probe response is not a list")
+
+
 def build_billing_metadata(
     pod_id: str,
     records: list[dict[str, Any]],

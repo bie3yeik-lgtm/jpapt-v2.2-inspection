@@ -335,6 +335,17 @@ jobs:
               raise SystemExit("RunPod billing metadata must support configurable max wait window")
           if 'RTF_COST_MODE' not in billing_script:
               raise SystemExit("RunPod billing metadata must select retry budget from RTF_COST_MODE")
+          if 'probe_billing_api' not in billing_script:
+              raise SystemExit("RunPod billing metadata must expose a billing API preflight probe")
+          preflight_script = Path("scripts/ci/run-runpod-execution-preflight.sh").read_text()
+          if '--phase runner' not in preflight_script or '--phase remote' not in preflight_script:
+              raise SystemExit("RunPod execution preflight must support runner and remote phases")
+          if 'run-runpod-execution-preflight.sh --phase runner' not in script:
+              raise SystemExit("RunPod benchmark must run runner preflight before Pod create")
+          if 'run-runpod-execution-preflight.sh' not in script or '--phase remote' not in script:
+              raise SystemExit("RunPod benchmark must run remote preflight before benchmark execution")
+          if 'abort_runpod_preflight' not in script:
+              raise SystemExit("RunPod benchmark must destroy Pods when execution preflight fails")
           if 'delete_pod\n    ;;' not in script:
               raise SystemExit("RunPod must delete the Pod after result and billing metadata collection")
           if 'runpodctl pod delete "$pod_id"' not in script:

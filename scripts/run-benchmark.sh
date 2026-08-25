@@ -330,6 +330,41 @@ case "$PROVIDER" in
       wait "$runpod_watchdog_pid" 2>/dev/null || true
       runpod_watchdog_pid=""
     }
+    write_runpod_blocked_receipt() {
+      local failure_code="$1"
+      local error_message="$2"
+      local job_id="${3:-}"
+      mkdir -p "$(dirname "${RTF_LOCAL_RECEIPT:-result-receipt.json}")"
+      jq -n \
+        --arg run_id "$RTF_RUN_ID" --arg job_id "$job_id" --arg error_code "$failure_code" \
+        --arg error_message "$error_message" \
+        --arg model_id "$RTF_MODEL_ID" --arg model_revision "$RTF_MODEL_REVISION" \
+        --arg dataset_id "$RTF_DATASET_ID" --arg dataset_revision "$RTF_DATASET_REVISION" \
+        --arg image_digest "$RTF_IMAGE_DIGEST" --arg fixture_repo_id "$RTF_FIXTURE_REPO_ID" \
+        --arg fixture_revision "$RTF_FIXTURE_REVISION" --arg manifest_sha256 "$RTF_FIXTURE_MANIFEST_SHA256" \
+        --arg gpu "$RTF_GPU" --arg profile "$RTF_INSPECTION_PROFILE" --arg batch_size "$RTF_BATCH_SIZE" \
+        '{schema_version:1,run_id:$run_id,status:"blocked",job_id:($job_id | if length == 0 then null else . end),result_uri:null,result_sha256:null,metrics_uri:null,metrics_sha256:null,error_code:$error_code,error_message:$error_message,model_id:$model_id,model_revision:$model_revision,dataset_id:$dataset_id,dataset_revision:$dataset_revision,image_digest:$image_digest,fixture_repo_id:$fixture_repo_id,fixture_revision:$fixture_revision,manifest_sha256:$manifest_sha256,provider:"cuda",environment:"linux",service_id:"runpod-pod",gpu:$gpu,inspection_profile:$profile,batch_size:($batch_size|tonumber)}' \
+        > "${RTF_LOCAL_RECEIPT:-result-receipt.json}"
+    }
+    abort_runpod_preflight() {
+      local phase="$1"
+      local preflight_output="$2"
+      local failure_code failure_message
+      failure_code="$(grep '^RUNPOD_PREFLIGHT_FAILURE_CODE=' <<<"$preflight_output" | tail -n1 | cut -d= -f2-)"
+      failure_message="$(grep '^RUNPOD_PREFLIGHT_FAILURE_MESSAGE=' <<<"$preflight_output" | tail -n1 | cut -d= -f2-)"
+      failure_code="${failure_code:-RUNPOD_EXECUTION_PREFLIGHT_FAILED}"
+      failure_message="${failure_message:-RunPod execution preflight failed}"
+      echo "::error::$failure_message" >&2
+      write_runpod_diagnostics "execution_preflight_${phase}" "$failure_code" "$failure_message"
+      write_runpod_blocked_receipt "$failure_code" "$failure_message" "${pod_id:-}"
+      if [[ "$phase" == remote && -n "$pod_id" ]]; then
+        stop_runpod_pod_watchdog || true
+        stop_runpod_container_logs || true
+        delete_pod || true
+        pod_create_failed=0
+      fi
+      exit 1
+    }
     write_runpod_diagnostics() {
       local phase="$1"
       local error_code="${2:-}"
@@ -408,6 +443,16 @@ case "$PROVIDER" in
       exit 2
     }
     echo "RunPod pod create timeout: ${RTF_RUNPOD_CREATE_TIMEOUT_MINUTES}m; readiness timeout: $runpod_wait_timeout; SSH info grace: ${RTF_RUNPOD_SSH_INFO_WAIT_MINUTES}m; termination deadline: $terminate_after" >&2
+    echo "::group::RunPod runner preflight"
+    set +e
+    runner_preflight_output="$(bash scripts/ci/run-runpod-execution-preflight.sh --phase runner 2>&1)"
+    runner_preflight_status=$?
+    set -e
+    printf '%s\n' "$runner_preflight_output" >&2
+    echo '::endgroup::'
+    if (( runner_preflight_status != 0 )); then
+      abort_runpod_preflight runner "$runner_preflight_output"
+    fi
     # Do not put HF_TOKEN or benchmark configuration into RunPod Pod
     # metadata. Provider-side env handling has varied across runpodctl
     # versions, and Pod metadata is visible to provider control-plane reads.
@@ -707,6 +752,22 @@ case "$PROVIDER" in
       printf -v remote_command '%q ' "$@"
       eval "$ssh_command $remote_command"
     }
+    echo "::group::RunPod remote preflight"
+    set +e
+    remote_preflight_output="$(bash scripts/ci/run-runpod-execution-preflight.sh \
+      --phase remote \
+      --pod-id "$pod_id" \
+      --gpu-id "$RUNPOD_GPU_ID" \
+      --min-cuda-version "${RTF_RUNPOD_MIN_CUDA_VERSION:-}" \
+      --ssh-command "$ssh_command" \
+      --pod-state-json "$pod_state_json" 2>&1)"
+    remote_preflight_status=$?
+    set -e
+    printf '%s\n' "$remote_preflight_output" >&2
+    echo '::endgroup::'
+    if (( remote_preflight_status != 0 )); then
+      abort_runpod_preflight remote "$remote_preflight_output"
+    fi
     write_runpod_environment() {
       local key value
       for key in \
