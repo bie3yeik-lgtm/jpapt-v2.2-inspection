@@ -324,6 +324,11 @@ jobs:
               raise SystemExit("RunPod must collect billing metadata for completed receipts")
           if runpod_tail.index('metadata_script="scripts/ci/enrich_runpod_job_metrics.py"') > runpod_tail.index('stop_runpod_container_logs'):
               raise SystemExit("RunPod billing metadata must be collected before stopping logs and deleting the Pod")
+          billing_script = Path("scripts/ci/enrich_runpod_job_metrics.py").read_text()
+          if 'RTF_RUNPOD_BILLING_ATTEMPTS' not in billing_script:
+              raise SystemExit("RunPod billing metadata must support configurable retry attempts")
+          if 'RTF_RUNPOD_BILLING_RETRY_SECONDS' not in billing_script:
+              raise SystemExit("RunPod billing metadata must support configurable retry interval")
           if 'delete_pod\n    ;;' not in script:
               raise SystemExit("RunPod must delete the Pod after result and billing metadata collection")
           if 'runpodctl pod delete "$pod_id"' not in script:

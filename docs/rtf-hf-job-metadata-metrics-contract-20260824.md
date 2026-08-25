@@ -46,7 +46,7 @@ HF Jobs は分単位の課金であるため、`billed_minutes = ceil(total_secs
 3. 更新後 receipt の `metrics_uri`, `result_uri`, `metrics_sha256`, `result_sha256`, `result_revision` は新 revision を指す。
 4. `provider_job` の flavor と Job ID は API 応答由来であり、環境変数や固定値で補完しない。
 5. HF pricing APIが未知の単位を返した場合はfail-closedとする。
-6. RunPod billing historyに対象Podの明細がない場合はfail-closedとする。
+6. RunPod billing historyに対象Podの明細がない場合はfail-closedとする。RunPod公式ドキュメントでは課金処理が5分周期であるため、`enrich_runpod_job_metrics.py`は eventual consistency を前提にリトライする。既定は40回×15秒（最大約10分）で、`RTF_RUNPOD_BILLING_ATTEMPTS`と`RTF_RUNPOD_BILLING_RETRY_SECONDS`で上書きできる。
 7. completed以外のreceiptはmetadata結合対象にしない。
 
 ## 既存結果への適用
