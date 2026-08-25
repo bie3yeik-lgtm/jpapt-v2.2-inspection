@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32688452370-b8",
+  "run_id": "rtf-runpod-32910517055-b8",
   "service_id": "runpod-pod",
   "status": "blocked",
   "provider": "cuda",
@@ -11,6 +11,6 @@
   "metrics_uri": null,
   "metrics_path": null,
   "metrics_sha256": null,
-  "error_code": "RUNPOD_NO_INSTANCE_AVAILABLE",
-  "error_message": "RunPod Pod creation failed before remote execution: {\"error\":\"failed to create pod: graphql error: There are no longer any instances available with the requested specifications. Please refresh and try again.\",\"code\":\"graphql_error\"}"
+  "error_code": "RUNPOD_PREFLIGHT_BILLING_SCRIPT_INVALID",
+  "error_message": "RunPod billing metadata collector failed py_compile"
 }
