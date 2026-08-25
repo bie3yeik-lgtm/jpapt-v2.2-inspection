@@ -85,6 +85,15 @@ def test_fetch_billing_history_retries_until_record_appears() -> None:
     assert records[0]["podId"] == "pod-1"
 
 
+def test_filter_pod_records_accepts_scoped_rows_without_pod_id() -> None:
+    records = enrich._filter_pod_records(
+        [{"amount": 0.10, "timeBilledMs": 60_000}],
+        "pod-1",
+    )
+    assert len(records) == 1
+    assert records[0]["amount"] == 0.10
+
+
 def test_fetch_billing_history_raises_after_exhausted_attempts() -> None:
     with pytest.raises(RuntimeError, match="no record for Pod pod-missing"):
         enrich.fetch_billing_history(
@@ -121,6 +130,19 @@ def test_build_billing_metadata() -> None:
     assert metadata["billing_duration_sec"] == pytest.approx(90.0)
     assert metadata["billed_seconds"] == 90
     assert metadata["cost_basis"] == "runpod_billing_history"
+
+
+def test_build_billing_metadata_allows_zero_amount_buckets() -> None:
+    metadata = enrich.build_billing_metadata(
+        "pod-1",
+        [
+            {"podId": "pod-1", "amount": 0.0, "timeBilledMs": 60_000},
+            {"podId": "pod-1", "amount": 0.05, "timeBilledMs": 30_000},
+        ],
+        gpu_type_id="NVIDIA RTX 2000 Ada Generation",
+    )
+    assert metadata["job_cost_usd"] == pytest.approx(0.05)
+    assert metadata["billing_duration_sec"] == pytest.approx(90.0)
 
 
 def test_resolve_gpu_type_id_from_pod_grouped_records() -> None:
@@ -166,3 +188,32 @@ def test_resolve_gpu_type_id_rejects_conflicting_values() -> None:
     ]
     with pytest.raises(ValueError, match="no unique gpuTypeId"):
         enrich.resolve_gpu_type_id("pod-1", records, "token", request_json=lambda _url, _token: [])
+
+
+def test_resolve_gpu_type_id_falls_back_to_pod_api() -> None:
+    records = [{"podId": "pod-1", "amount": 0.10, "timeBilledMs": 60_000}]
+    calls: list[str] = []
+
+    def fake_request(url: str, _token: str) -> list[dict[str, object]] | dict[str, object]:
+        calls.append(url)
+        if "/billing/pods" in url:
+            return []
+        if "/pods" in url:
+            return [{"id": "pod-1", "gpu": {"id": "NVIDIA RTX 4000 Ada Generation"}}]
+        raise AssertionError(f"unexpected url: {url}")
+
+    assert (
+        enrich.resolve_gpu_type_id("pod-1", records, "token", request_json=fake_request)
+        == "NVIDIA RTX 4000 Ada Generation"
+    )
+    assert any("/billing/pods" in url for url in calls)
+    assert any("/pods?" in url for url in calls)
+
+
+def test_fetch_gpu_type_id_from_pod_uses_machine_gpu_type_id() -> None:
+    gpu_type_id = enrich.fetch_gpu_type_id_from_pod(
+        "pod-1",
+        "token",
+        request_json=lambda _url, _token: [{"machine": {"gpuTypeId": "NVIDIA L4"}}],
+    )
+    assert gpu_type_id == "NVIDIA L4"
