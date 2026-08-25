@@ -1,6 +1,6 @@
 ## RTF service result
 
-- run_id: `rtf-runpod-32871433137-b32`
+- run_id: `rtf-runpod-32884034050-b32`
 - service: `runpod-pod`
 - status: `blocked`
 - provider: `cuda`
