@@ -114,7 +114,7 @@ jobs:
           RUNPOD_TOKEN: ${{ secrets.RUNPOD_TOKEN }}
         run: |
           set -euo pipefail
-          bash scripts/ci/configure-runpod-cli.sh --doctor
+          source scripts/ci/configure-runpod-cli.sh --doctor
       - name: Execute CPU batches sequentially
         id: execute
         env:

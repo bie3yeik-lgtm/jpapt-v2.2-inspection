@@ -42,7 +42,7 @@ jobs:
       - name: Configure RunPod CLI
         run: |
           set -euo pipefail
-          bash scripts/ci/configure-runpod-cli.sh --doctor
+          source scripts/ci/configure-runpod-cli.sh --doctor
 
       - name: Collect current GPU inventory
         run: |

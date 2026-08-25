@@ -9,8 +9,10 @@ usage() {
   cat >&2 <<'EOF'
 usage: configure-runpod-cli.sh [--doctor] [--doctor-timeout SECONDS]
 
-Exports RUNPOD_API_KEY from RUNPOD_TOKEN for runpodctl. With --doctor, runs
-runpodctl doctor --output json and requires healthy=true.
+Exports RUNPOD_API_KEY from RUNPOD_TOKEN for runpodctl. Source this script in
+the current shell (`. scripts/ci/configure-runpod-cli.sh`) so later runpodctl
+calls in the same step inherit the key. With --doctor, runs runpodctl doctor
+--output json and requires healthy=true.
 EOF
   exit 2
 }
@@ -34,6 +36,13 @@ command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
 
 export RUNPOD_API_KEY="$RUNPOD_TOKEN"
+if [[ -n "${GITHUB_ENV:-}" && -w "$GITHUB_ENV" ]]; then
+  {
+    echo 'RUNPOD_API_KEY<<EOF'
+    printf '%s\n' "$RUNPOD_TOKEN"
+    echo 'EOF'
+  } >> "$GITHUB_ENV"
+fi
 
 extract_runpodctl_json() {
   local raw="$1"
