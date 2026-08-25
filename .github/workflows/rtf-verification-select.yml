@@ -67,7 +67,7 @@ jobs:
           GPU: ${{ steps.gpu.outputs.gpu }}
         run: |
           set -euo pipefail
-          bash scripts/ci/configure-runpod-cli.sh
+          source scripts/ci/configure-runpod-cli.sh
           runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json
           python scripts/ci/check-runpod-rtf-services.py \
             --config .github/runpod-rtf-services.json \

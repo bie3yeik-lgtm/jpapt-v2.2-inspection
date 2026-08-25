@@ -237,7 +237,7 @@ jobs:
           RTF_GPU: ${{ steps.gpu.outputs.gpu }}
         run: |
           set -euo pipefail
-          bash scripts/ci/configure-runpod-cli.sh --doctor
+          source scripts/ci/configure-runpod-cli.sh --doctor
           mkdir -p .ci
           runpodctl gpu list --include-unavailable --output json > .ci/runpod-gpu-inventory.json
           python scripts/ci/check-runpod-rtf-services.py \

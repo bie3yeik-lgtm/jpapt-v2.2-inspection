@@ -51,7 +51,7 @@ if [[ "$RTF_IMAGE_DIGEST" == *@* ]]; then RTF_IMAGE_DIGEST="${RTF_IMAGE_DIGEST##
 : "${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS:=30}"
 : "${RTF_RUNPOD_LOG:=runpod-cpu-job.log}"
 
-bash "$(dirname "${BASH_SOURCE[0]}")/ci/configure-runpod-cli.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/ci/configure-runpod-cli.sh"
 name="$RTF_RUN_ID"
 pod_id=""
 cleanup() { [[ -n "$pod_id" ]] && runpodctl pod delete "$pod_id" >/dev/null 2>&1 || true; }

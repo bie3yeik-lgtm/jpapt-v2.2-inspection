@@ -33,11 +33,24 @@ if bash scripts/ci/configure-runpod-cli.sh 2>/dev/null; then
 fi
 
 grep -F 'export RUNPOD_API_KEY="$RUNPOD_TOKEN"' scripts/ci/configure-runpod-cli.sh >/dev/null
+grep -F 'RUNPOD_API_KEY<<EOF' scripts/ci/configure-runpod-cli.sh >/dev/null
 
 export RUNPOD_TOKEN=test-token
-bash scripts/ci/configure-runpod-cli.sh --doctor >/dev/null
+source scripts/ci/configure-runpod-cli.sh --doctor >/dev/null
+[[ "${RUNPOD_API_KEY:-}" == test-token ]] || {
+  echo "source did not persist RUNPOD_API_KEY: ${RUNPOD_API_KEY:-<unset>}" >&2
+  exit 1
+}
+
+github_env="$test_dir/github_env"
+touch "$github_env"
+export GITHUB_ENV="$github_env"
+unset RUNPOD_API_KEY
+source scripts/ci/configure-runpod-cli.sh >/dev/null
+grep -F 'RUNPOD_API_KEY<<EOF' "$github_env" >/dev/null
+grep -Fx 'test-token' "$github_env" >/dev/null
 
 export MOCK_DOCTOR_MIXED_OUTPUT=1
-bash scripts/ci/configure-runpod-cli.sh --doctor 2>/dev/null | jq -e '.healthy == true' >/dev/null
+source scripts/ci/configure-runpod-cli.sh --doctor 2>/dev/null | jq -e '.healthy == true' >/dev/null
 
 echo 'configure-runpod-cli tests passed'

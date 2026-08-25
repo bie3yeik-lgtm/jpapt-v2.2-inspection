@@ -369,10 +369,17 @@ jobs:
               raise SystemExit("RTF worker count must be fixed in the image policy, not passed dynamically")
           if 'scripts/ci/configure-runpod-cli.sh' not in benchmark_workflow:
               raise SystemExit("RunPod CLI configuration must use configure-runpod-cli.sh")
+          if 'source scripts/ci/configure-runpod-cli.sh' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must source configure-runpod-cli.sh in the current shell")
+          if 'bash scripts/ci/configure-runpod-cli.sh' in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must not run configure-runpod-cli.sh in a subshell")
           if 'configure-runpod-cli.sh --doctor' not in benchmark_workflow:
               raise SystemExit("RunPod CLI configuration must run doctor validation")
-          if '.healthy == true' not in Path("scripts/ci/configure-runpod-cli.sh").read_text():
+          configure_script = Path("scripts/ci/configure-runpod-cli.sh").read_text()
+          if '.healthy == true' not in configure_script:
               raise SystemExit("RunPod CLI configuration must require a healthy doctor result")
+          if 'RUNPOD_API_KEY<<EOF' not in configure_script:
+              raise SystemExit("RunPod CLI configuration must persist RUNPOD_API_KEY to GITHUB_ENV")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
           if "Cleanup RunPod Pods after benchmark" not in benchmark_workflow:
