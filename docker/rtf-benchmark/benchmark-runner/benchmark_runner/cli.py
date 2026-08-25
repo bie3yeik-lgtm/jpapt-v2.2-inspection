@@ -17,6 +17,7 @@ from pathlib import Path
 import jiwer
 
 from benchmark_runner.transcribe_compat import transcribe
+from benchmark_runner import pytorch_profiler
 
 
 class ProviderMetricsError(RuntimeError):
@@ -309,6 +310,23 @@ def main() -> int:
             elapsed = median_metric(timings)
         if elapsed is None:
             raise RuntimeError("benchmark produced no timing measurements")
+        if pytorch_profiler.pytorch_profiler_enabled():
+            profile_paths = paths[:1]
+            pytorch_profiler.run_post_benchmark_profiler(
+                torch_module=torch,
+                device=device,
+                transcribe=transcribe,
+                model_loader=lambda: load_model(
+                    ASRModel,
+                    snapshot_download,
+                    torch,
+                    model_id=args.model_id,
+                    model_revision=args.model_revision,
+                    device=device,
+                    token=os.environ.get("HF_TOKEN"),
+                ),
+                audio_paths=profile_paths,
+            )
         release_inference_temporaries(torch, device)
         reference_text = " ".join(references).strip()
         audio_duration = sum(durations)

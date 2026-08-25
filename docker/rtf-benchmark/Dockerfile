@@ -18,6 +18,9 @@ LABEL io.jpapt.runner.version="${RUNNER_VERSION}"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 HF_HOME=/workspace/.cache/huggingface TORCH_HOME=/workspace/.cache/torch
+# Optional model-level profiling (separate from timed RTF). Artifacts land under
+# /output/profiler when RTF_PYTORCH_PROFILER=1 is set at runtime.
+ENV RTF_PYTORCH_PROFILER_OUTPUT_DIR=/output/profiler
 WORKDIR /workspace
 
 RUN apt-get update \
@@ -32,7 +35,9 @@ RUN chmod +x /opt/rtf-benchmark/entrypoint.sh \
     && find /opt/rtf-benchmark/benchmark-runner -type f -name '*.py' -print0 \
       | xargs -0 -r python -m py_compile \
     && PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
-      python -c 'import benchmark_runner; import benchmark_runner.load_fixture'
+      python -c 'import benchmark_runner; import benchmark_runner.load_fixture; import benchmark_runner.pytorch_profiler' \
+    && PYTHONPATH=/opt/rtf-benchmark/benchmark-runner \
+      python -m benchmark_runner.pytorch_profiler --smoke-test
 
 ENV PYTHONPATH=/opt/rtf-benchmark/benchmark-runner
 ENTRYPOINT ["/opt/rtf-benchmark/entrypoint.sh"]
