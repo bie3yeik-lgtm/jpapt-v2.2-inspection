@@ -8,15 +8,45 @@ import hashlib
 import json
 import math
 import os
+import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from huggingface_hub import HfApi, hf_hub_url
 
 RUNPOD_BILLING_URL = "https://rest.runpod.io/v1/billing/pods"
+# RTX 2000 Ada smoke (Actions run 32871433137):
+# - guarded batch 1 pod runtime ~3m
+# - full-matrix batch 1->8->32 wall clock ~46m; batch-32 pod ~31m
+# RunPod bills on ~5m cycles. Defaults are selected from RTF_COST_MODE.
+OBSERVED_RTX2000_ADA_GUARDED_BATCH_SECONDS = 3 * 60
+OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS = 46 * 60
+RUNPOD_BILLING_CYCLE_SECONDS = 5 * 60
+GUARDED_BILLING_RETRY_MARGIN_SECONDS = 10 * 60
+FULL_MATRIX_BILLING_RETRY_MARGIN_SECONDS = 20 * 60
+DEFAULT_BILLING_RETRY_SECONDS = 15.0
+
+
+def default_billing_max_wait_seconds(*, cost_mode: str | None = None) -> float:
+    mode = cost_mode if cost_mode is not None else os.environ.get("RTF_COST_MODE", "guarded")
+    if mode == "full-matrix":
+        return float(
+            OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS
+            + RUNPOD_BILLING_CYCLE_SECONDS
+            + FULL_MATRIX_BILLING_RETRY_MARGIN_SECONDS
+        )
+    return float(
+        OBSERVED_RTX2000_ADA_GUARDED_BATCH_SECONDS
+        + RUNPOD_BILLING_CYCLE_SECONDS
+        + GUARDED_BILLING_RETRY_MARGIN_SECONDS
+    )
+
+
+def default_billing_attempts(retry_seconds: float = DEFAULT_BILLING_RETRY_SECONDS) -> int:
+    return math.ceil(default_billing_max_wait_seconds() / retry_seconds)
 
 
 def _positive_number(value: Any, name: str) -> float:
@@ -26,32 +56,103 @@ def _positive_number(value: Any, name: str) -> float:
     return number
 
 
+def _positive_int(value: str, name: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return number
+
+
+def _positive_float(value: str, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return number
+
+
+def billing_retry_config() -> tuple[int, float]:
+    retry_seconds = DEFAULT_BILLING_RETRY_SECONDS
+    if raw_retry_seconds := os.environ.get("RTF_RUNPOD_BILLING_RETRY_SECONDS"):
+        retry_seconds = _positive_float(raw_retry_seconds, "RTF_RUNPOD_BILLING_RETRY_SECONDS")
+    if raw_max_wait := os.environ.get("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS"):
+        max_wait_seconds = _positive_float(raw_max_wait, "RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS")
+        attempts = math.ceil(max_wait_seconds / retry_seconds)
+    elif raw_attempts := os.environ.get("RTF_RUNPOD_BILLING_ATTEMPTS"):
+        attempts = _positive_int(raw_attempts, "RTF_RUNPOD_BILLING_ATTEMPTS")
+    else:
+        attempts = default_billing_attempts(retry_seconds)
+    return attempts, retry_seconds
+
+
+def resolve_runpod_token() -> str:
+    for key in ("RUNPOD_TOKEN", "RUNPOD_API_KEY", "RUNPOD_API"):
+        value = os.environ.get(key)
+        if value:
+            return value
+    raise SystemExit("RUNPOD_TOKEN is required for RunPod billing metadata collection")
+
+
 def _request_json(url: str, token: str) -> Any:
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read())
 
 
-def fetch_billing_history(pod_id: str, token: str, *, attempts: int = 6) -> list[dict[str, Any]]:
+def _filter_pod_records(payload: Any, pod_id: str) -> list[dict[str, Any]]:
+    if not isinstance(payload, list):
+        raise ValueError("RunPod billing response is not a list")
+    return [
+        item
+        for item in payload
+        if isinstance(item, dict) and item.get("podId") == pod_id
+    ]
+
+
+def fetch_billing_history(
+    pod_id: str,
+    token: str,
+    *,
+    attempts: int | None = None,
+    retry_seconds: float = DEFAULT_BILLING_RETRY_SECONDS,
+    request_json: Callable[[str, str], Any] = _request_json,
+    sleep: Callable[[float], None] = time.sleep,
+    log: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
+    if attempts is None:
+        attempts, retry_seconds = billing_retry_config()
     query = urllib.parse.urlencode({"podId": pod_id, "grouping": "podId", "bucketSize": "hour"})
     url = f"{RUNPOD_BILLING_URL}?{query}"
+    emit = log or (lambda message: print(message, file=sys.stderr, flush=True))
+    cost_mode = os.environ.get("RTF_COST_MODE", "guarded")
+    max_wait_seconds = attempts * retry_seconds
+    emit(
+        f"RunPod billing history lookup for Pod {pod_id}: "
+        f"cost_mode={cost_mode}, attempts={attempts}, retry_seconds={retry_seconds}, "
+        f"max_wait_seconds={max_wait_seconds:.0f}"
+    )
     last_error: Exception | None = None
-    for attempt in range(attempts):
+    for attempt in range(1, attempts + 1):
         try:
-            payload = _request_json(url, token)
-            if not isinstance(payload, list):
-                raise ValueError("RunPod billing response is not a list")
-            records = [
-                item
-                for item in payload
-                if isinstance(item, dict) and item.get("podId") == pod_id
-            ]
+            records = _filter_pod_records(request_json(url, token), pod_id)
             if records:
+                if attempt > 1:
+                    emit(
+                        f"RunPod billing history available for Pod {pod_id} "
+                        f"after attempt {attempt}/{attempts}"
+                    )
                 return records
+            emit(
+                f"RunPod billing history empty for Pod {pod_id}; "
+                f"attempt {attempt}/{attempts}"
+            )
         except Exception as error:  # noqa: BLE001 - retry provider eventual consistency
             last_error = error
-        if attempt + 1 < attempts:
-            time.sleep(10)
+            emit(
+                f"RunPod billing history request failed for Pod {pod_id}; "
+                f"attempt {attempt}/{attempts}: {error}"
+            )
+        if attempt < attempts:
+            sleep(retry_seconds)
     if last_error is not None:
         raise RuntimeError(f"RunPod billing history unavailable: {last_error}") from last_error
     raise RuntimeError(f"RunPod billing history has no record for Pod {pod_id}")
@@ -90,10 +191,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
-    runpod_token = os.environ.get("RUNPOD_TOKEN") or os.environ.get("RUNPOD_API")
+    runpod_token = resolve_runpod_token()
     hf_token = os.environ.get("HF_TOKEN")
-    if not runpod_token:
-        raise SystemExit("RUNPOD_TOKEN is required for RunPod billing metadata collection")
     if not hf_token:
         raise SystemExit("HF_TOKEN is required to update the HF Dataset metrics result")
 
@@ -107,7 +206,13 @@ def main() -> int:
     if not all(isinstance(value, str) and value for value in (pod_id, metrics_uri, repo_id, path_in_repo)):
         raise SystemExit("completed RunPod receipt is missing Pod, metrics, or result repository identity")
 
-    records = fetch_billing_history(pod_id, runpod_token)
+    attempts, retry_seconds = billing_retry_config()
+    records = fetch_billing_history(
+        pod_id,
+        runpod_token,
+        attempts=attempts,
+        retry_seconds=retry_seconds,
+    )
     metadata = build_billing_metadata(pod_id, records)
     original = _download_metrics(metrics_uri, hf_token)
     if hashlib.sha256(original).hexdigest() != receipt.get("metrics_sha256"):

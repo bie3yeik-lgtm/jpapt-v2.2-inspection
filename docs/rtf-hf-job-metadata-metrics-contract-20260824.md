@@ -46,7 +46,7 @@ HF Jobs は分単位の課金であるため、`billed_minutes = ceil(total_secs
 3. 更新後 receipt の `metrics_uri`, `result_uri`, `metrics_sha256`, `result_sha256`, `result_revision` は新 revision を指す。
 4. `provider_job` の flavor と Job ID は API 応答由来であり、環境変数や固定値で補完しない。
 5. HF pricing APIが未知の単位を返した場合はfail-closedとする。
-6. RunPod billing historyに対象Podの明細がない場合はfail-closedとする。
+6. RunPod billing historyに対象Podの明細がない場合はfail-closedとする。RunPod公式ドキュメントでは課金処理が5分周期であるため、`enrich_runpod_job_metrics.py`は eventual consistency を前提にリトライする。`RTF_COST_MODE=full-matrix` のときのみ、RTX 2000 Ada full-matrix smoke（Actions run 32871433137）の batch 1→8→32 wall clock 約46分 + 5分課金周期 + 20分余裕 = 約71分（284回×15秒）を既定とする。`guarded` は batch 1 単体の約3分 + 5分課金周期 + 10分余裕 = 約18分（72回×15秒）を既定とする。`RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS`、`RTF_RUNPOD_BILLING_ATTEMPTS`、`RTF_RUNPOD_BILLING_RETRY_SECONDS`で上書きできる。GitHub Actions では `RTF_COST_MODE=${{ inputs.cost_mode }}` を benchmark step へ渡す。
 7. completed以外のreceiptはmetadata結合対象にしない。
 
 ## 既存結果への適用
