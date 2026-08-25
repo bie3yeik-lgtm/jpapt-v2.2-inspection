@@ -297,6 +297,7 @@ jobs:
           RTF_DATASET_TARGET_TOTAL_SEC: 5400
           RTF_DATASET_MAX_DURATION_SEC: 600
           RTF_FIXTURE_FILENAME: benchmark-v1.jsonl
+          RTF_COST_MODE: ${{ inputs.cost_mode }}
           RTF_FIXTURE_MANIFEST_SHA256: ''
           RTF_HF_429_WAIT_SECONDS: '300'
           RTF_HF_429_MAX_ATTEMPTS: '3'

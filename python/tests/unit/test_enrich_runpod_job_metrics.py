@@ -14,12 +14,23 @@ sys.modules["enrich_runpod_job_metrics"] = enrich
 SPEC.loader.exec_module(enrich)
 
 
-def test_billing_retry_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_billing_retry_config_guarded_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RTF_RUNPOD_BILLING_ATTEMPTS", raising=False)
     monkeypatch.delenv("RTF_RUNPOD_BILLING_RETRY_SECONDS", raising=False)
     monkeypatch.delenv("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS", raising=False)
+    monkeypatch.setenv("RTF_COST_MODE", "guarded")
+    assert enrich.default_billing_max_wait_seconds() == pytest.approx(18 * 60)
+    assert enrich.default_billing_attempts() == 72
+    assert enrich.billing_retry_config() == (72, 15.0)
+
+
+def test_billing_retry_config_full_matrix_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RTF_RUNPOD_BILLING_ATTEMPTS", raising=False)
+    monkeypatch.delenv("RTF_RUNPOD_BILLING_RETRY_SECONDS", raising=False)
+    monkeypatch.delenv("RTF_RUNPOD_BILLING_MAX_WAIT_SECONDS", raising=False)
+    monkeypatch.setenv("RTF_COST_MODE", "full-matrix")
     assert enrich.default_billing_max_wait_seconds() == pytest.approx(71 * 60)
-    assert enrich.DEFAULT_BILLING_ATTEMPTS == 284
+    assert enrich.default_billing_attempts() == 284
     assert enrich.billing_retry_config() == (284, 15.0)
 
 

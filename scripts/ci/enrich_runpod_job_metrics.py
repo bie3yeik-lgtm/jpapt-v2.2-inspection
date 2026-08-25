@@ -18,27 +18,35 @@ from typing import Any, Callable
 from huggingface_hub import HfApi, hf_hub_url
 
 RUNPOD_BILLING_URL = "https://rest.runpod.io/v1/billing/pods"
-# RTX 2000 Ada full-matrix smoke (Actions run 32871433137):
-# batch 1->8->32 wall clock ~46m through batch-32 receipt; batch-32 pod ~31m.
-# RunPod bills on ~5m cycles; wait through the observed full-matrix duration,
-# one billing cycle, and additional headroom before fail-closed.
+# RTX 2000 Ada smoke (Actions run 32871433137):
+# - guarded batch 1 pod runtime ~3m
+# - full-matrix batch 1->8->32 wall clock ~46m; batch-32 pod ~31m
+# RunPod bills on ~5m cycles. Defaults are selected from RTF_COST_MODE.
+OBSERVED_RTX2000_ADA_GUARDED_BATCH_SECONDS = 3 * 60
 OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS = 46 * 60
 RUNPOD_BILLING_CYCLE_SECONDS = 5 * 60
-BILLING_RETRY_MARGIN_SECONDS = 20 * 60
+GUARDED_BILLING_RETRY_MARGIN_SECONDS = 10 * 60
+FULL_MATRIX_BILLING_RETRY_MARGIN_SECONDS = 20 * 60
 DEFAULT_BILLING_RETRY_SECONDS = 15.0
 
 
-def default_billing_max_wait_seconds() -> float:
+def default_billing_max_wait_seconds(*, cost_mode: str | None = None) -> float:
+    mode = cost_mode if cost_mode is not None else os.environ.get("RTF_COST_MODE", "guarded")
+    if mode == "full-matrix":
+        return float(
+            OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS
+            + RUNPOD_BILLING_CYCLE_SECONDS
+            + FULL_MATRIX_BILLING_RETRY_MARGIN_SECONDS
+        )
     return float(
-        OBSERVED_RTX2000_ADA_FULL_MATRIX_SECONDS
+        OBSERVED_RTX2000_ADA_GUARDED_BATCH_SECONDS
         + RUNPOD_BILLING_CYCLE_SECONDS
-        + BILLING_RETRY_MARGIN_SECONDS
+        + GUARDED_BILLING_RETRY_MARGIN_SECONDS
     )
 
 
-DEFAULT_BILLING_ATTEMPTS = math.ceil(
-    default_billing_max_wait_seconds() / DEFAULT_BILLING_RETRY_SECONDS
-)
+def default_billing_attempts(retry_seconds: float = DEFAULT_BILLING_RETRY_SECONDS) -> int:
+    return math.ceil(default_billing_max_wait_seconds() / retry_seconds)
 
 
 def _positive_number(value: Any, name: str) -> float:
@@ -72,7 +80,7 @@ def billing_retry_config() -> tuple[int, float]:
     elif raw_attempts := os.environ.get("RTF_RUNPOD_BILLING_ATTEMPTS"):
         attempts = _positive_int(raw_attempts, "RTF_RUNPOD_BILLING_ATTEMPTS")
     else:
-        attempts = DEFAULT_BILLING_ATTEMPTS
+        attempts = default_billing_attempts(retry_seconds)
     return attempts, retry_seconds
 
 
@@ -104,19 +112,22 @@ def fetch_billing_history(
     pod_id: str,
     token: str,
     *,
-    attempts: int = DEFAULT_BILLING_ATTEMPTS,
+    attempts: int | None = None,
     retry_seconds: float = DEFAULT_BILLING_RETRY_SECONDS,
     request_json: Callable[[str, str], Any] = _request_json,
     sleep: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
+    if attempts is None:
+        attempts, retry_seconds = billing_retry_config()
     query = urllib.parse.urlencode({"podId": pod_id, "grouping": "podId", "bucketSize": "hour"})
     url = f"{RUNPOD_BILLING_URL}?{query}"
     emit = log or (lambda message: print(message, file=sys.stderr, flush=True))
+    cost_mode = os.environ.get("RTF_COST_MODE", "guarded")
     max_wait_seconds = attempts * retry_seconds
     emit(
         f"RunPod billing history lookup for Pod {pod_id}: "
-        f"attempts={attempts}, retry_seconds={retry_seconds}, "
+        f"cost_mode={cost_mode}, attempts={attempts}, retry_seconds={retry_seconds}, "
         f"max_wait_seconds={max_wait_seconds:.0f}"
     )
     last_error: Exception | None = None
