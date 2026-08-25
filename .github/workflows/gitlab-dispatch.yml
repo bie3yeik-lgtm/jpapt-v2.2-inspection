@@ -1,0 +1,56 @@
+name: GitLab Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source GitLab repository"
+        required: true
+        type: string
+
+      source_sha:
+        description: "GitLab commit SHA"
+        required: true
+        type: string
+
+      mode:
+        description: "Validation mode"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - parity
+          - probe
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Show dispatch context
+        run: |
+          echo "GitLab repo: ${{ inputs.source_repo }}"
+          echo "GitLab SHA:  ${{ inputs.source_sha }}"
+          echo "Mode:        ${{ inputs.mode }}"
+
+      - name: Run validation
+        run: |
+          case "${{ inputs.mode }}" in
+            smoke)
+              echo "Run smoke validation"
+              ;;
+            parity)
+              echo "Run parity validation"
+              ;;
+            probe)
+              echo "Run probe validation"
+              ;;
+            *)
+              echo "Unknown mode"
+              exit 1
+              ;;
+          esac
