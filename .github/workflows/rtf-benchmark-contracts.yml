@@ -222,6 +222,12 @@ jobs:
               raise SystemExit("RunPod must obtain SSH connection info")
           if 'runpodctl exec' in script:
               raise SystemExit("deprecated runpodctl exec must not be used")
+          if 'export RUNPOD_API_KEY="$RUNPOD_TOKEN"' not in script:
+              raise SystemExit("RunPod benchmark must bridge RUNPOD_TOKEN to RUNPOD_API_KEY")
+          if 'runpodctl gpu list --include-unavailable --output json' not in script:
+              raise SystemExit("RunPod auto cloud selection must include unavailable GPU inventory")
+          if 'RunPod auto cloud inventory retry' not in script:
+              raise SystemExit("RunPod auto cloud selection must retry transient inventory gaps")
           if '--cloud-type "$RTF_RUNPOD_CLOUD_TYPE"' not in script:
               raise SystemExit("RunPod benchmark Pods must pass the resolved cloud type")
           if 'RTF_RUNPOD_CLOUD_TYPE=SECURE' not in script or 'RTF_RUNPOD_CLOUD_TYPE=COMMUNITY' not in script:
@@ -361,11 +367,11 @@ jobs:
               raise SystemExit("RTF Benchmark Run must verify the published keepalive CMD")
           if "RTF_NUM_WORKERS" in benchmark_workflow or "RTF_NUM_WORKERS" in script:
               raise SystemExit("RTF worker count must be fixed in the image policy, not passed dynamically")
-          if 'touch "$HOME/.runpod/.runpod.yaml"' not in benchmark_workflow:
-              raise SystemExit("RunPod CLI configuration must initialize its config file")
-          if 'runpodctl doctor --output json' not in benchmark_workflow:
+          if 'scripts/ci/configure-runpod-cli.sh' not in benchmark_workflow:
+              raise SystemExit("RunPod CLI configuration must use configure-runpod-cli.sh")
+          if 'configure-runpod-cli.sh --doctor' not in benchmark_workflow:
               raise SystemExit("RunPod CLI configuration must run doctor validation")
-          if '.healthy == true' not in benchmark_workflow:
+          if '.healthy == true' not in Path("scripts/ci/configure-runpod-cli.sh").read_text():
               raise SystemExit("RunPod CLI configuration must require a healthy doctor result")
           if "benchmark setup did not produce a result receipt" not in benchmark_workflow:
               raise SystemExit("RTF Benchmark Run must normalize setup failures per batch")
