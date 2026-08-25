@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "rtf-runpod-32884846228-b8",
+  "service_id": "runpod-pod",
+  "status": "blocked",
+  "provider": "cuda",
+  "environment": "linux",
+  "job_id": "8oq2cx0a0jetk1",
+  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/5374d23db64e5f92ab24a71a98992dbc206f935d/results/rtf-runpod-32884846228-b8/metrics.json",
+  "result_sha256": "3d47f2a8a36d095689dcafaf44f4e94d7b81f85443bc49452c8dfde49cea5476",
+  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/5374d23db64e5f92ab24a71a98992dbc206f935d/results/rtf-runpod-32884846228-b8/metrics.json",
+  "metrics_path": "results/rtf-service/metrics.json",
+  "metrics_sha256": "3d47f2a8a36d095689dcafaf44f4e94d7b81f85443bc49452c8dfde49cea5476",
+  "error_code": "RUNPOD_BILLING_METADATA_UNAVAILABLE",
+  "error_message": "RunPod billing history could not be collected; metrics were not accepted for ranking"
+}
