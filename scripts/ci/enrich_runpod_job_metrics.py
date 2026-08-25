@@ -18,6 +18,7 @@ from typing import Any, Callable
 from huggingface_hub import HfApi, hf_hub_url
 
 RUNPOD_BILLING_URL = "https://rest.runpod.io/v1/billing/pods"
+RUNPOD_PODS_URL = "https://rest.runpod.io/v1/pods"
 # RTX 2000 Ada smoke (Actions run 32871433137):
 # - guarded batch 1 pod runtime ~3m
 # - full-matrix batch 1->8->32 wall clock ~46m; batch-32 pod ~31m
@@ -53,6 +54,13 @@ def _positive_number(value: Any, name: str) -> float:
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise ValueError(f"{name} must be finite and positive")
+    return number
+
+
+def _non_negative_number(value: Any, name: str) -> float:
+    number = float(value if value is not None else 0)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(f"{name} must be finite and non-negative")
     return number
 
 
@@ -101,11 +109,14 @@ def _request_json(url: str, token: str) -> Any:
 def _filter_pod_records(payload: Any, pod_id: str) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise ValueError("RunPod billing response is not a list")
-    return [
-        item
-        for item in payload
-        if isinstance(item, dict) and item.get("podId") == pod_id
-    ]
+    records = [item for item in payload if isinstance(item, dict)]
+    matched = [item for item in records if item.get("podId") == pod_id]
+    if matched:
+        return matched
+    # When the query already scopes by podId, grouped rows may omit podId.
+    if records and all(not item.get("podId") for item in records):
+        return records
+    return []
 
 
 def fetch_billing_history(
@@ -180,6 +191,44 @@ def fetch_gpu_type_id_from_billing(
     return next(iter(gpu_types))
 
 
+def _extract_gpu_type_id_from_pod(payload: Any) -> str | None:
+    pod: dict[str, Any] | None
+    if isinstance(payload, list):
+        pod = payload[0] if payload and isinstance(payload[0], dict) else None
+    elif isinstance(payload, dict):
+        pod = payload
+    else:
+        pod = None
+    if pod is None:
+        return None
+    gpu = pod.get("gpu")
+    if isinstance(gpu, dict):
+        gpu_id = gpu.get("id")
+        if isinstance(gpu_id, str) and gpu_id:
+            return gpu_id
+    machine = pod.get("machine")
+    if isinstance(machine, dict):
+        gpu_type_id = machine.get("gpuTypeId")
+        if isinstance(gpu_type_id, str) and gpu_type_id:
+            return gpu_type_id
+    return None
+
+
+def fetch_gpu_type_id_from_pod(
+    pod_id: str,
+    token: str,
+    *,
+    request_json: Callable[[str, str], Any] = _request_json,
+) -> str:
+    query = urllib.parse.urlencode({"id": pod_id, "includeMachine": "true"})
+    url = f"{RUNPOD_PODS_URL}?{query}"
+    payload = request_json(url, token)
+    gpu_type_id = _extract_gpu_type_id_from_pod(payload)
+    if not gpu_type_id:
+        raise ValueError("RunPod Pod metadata has no gpu type id")
+    return gpu_type_id
+
+
 def resolve_gpu_type_id(
     pod_id: str,
     records: list[dict[str, Any]],
@@ -192,7 +241,10 @@ def resolve_gpu_type_id(
         return next(iter(gpu_types))
     if gpu_types:
         raise ValueError("RunPod billing history has no unique gpuTypeId")
-    return fetch_gpu_type_id_from_billing(pod_id, token, request_json=request_json)
+    try:
+        return fetch_gpu_type_id_from_billing(pod_id, token, request_json=request_json)
+    except ValueError:
+        return fetch_gpu_type_id_from_pod(pod_id, token, request_json=request_json)
 
 
 def build_billing_metadata(
@@ -201,7 +253,9 @@ def build_billing_metadata(
     *,
     gpu_type_id: str,
 ) -> dict[str, Any]:
-    amount = sum(_positive_number(item.get("amount"), "billing amount") for item in records)
+    amount = sum(_non_negative_number(item.get("amount"), "billing amount") for item in records)
+    if amount <= 0:
+        raise ValueError("RunPod billing history has no positive amount")
     billed_ms = sum(int(item.get("timeBilledMs", 0)) for item in records)
     if billed_ms <= 0:
         raise ValueError("RunPod billing history has no positive timeBilledMs")

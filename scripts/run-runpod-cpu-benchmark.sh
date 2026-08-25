@@ -77,7 +77,7 @@ done
 ssh_command="${ssh_command/ssh /ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=${RTF_RUNPOD_SSH_CONNECT_TIMEOUT_SECONDS} }"
 run_ssh() { local command; printf -v command '%q ' "$@"; eval "$ssh_command $command"; }
 
-price="$(runpodctl pod get "$pod_id" --output json | jq -er '(.costPerHr // .cost_per_hr // .adjustedCostPerHr) | tonumber | select(isfinite and . >= 0)' 2>/dev/null || true)"
+price="$(runpodctl pod get "$pod_id" --output json | jq -er '(.adjustedCostPerHr // .adjusted_cost_per_hr // .costPerHr // .cost_per_hr) | if type == "number" then . elif type == "string" then tonumber else error end | select(isfinite and . >= 0)' 2>/dev/null || true)"
 [[ -n "$price" ]] || price=""
 write_env() {
   for key in RTF_RUN_ID RTF_MANIFEST RTF_OUTPUT RTF_CONTENT_OUTPUT RTF_MODEL_ID RTF_MODEL_REVISION RTF_DATASET_ID RTF_DATASET_REVISION RTF_FIXTURE_REPO_ID RTF_FIXTURE_REVISION RTF_RESULT_REPO_ID RTF_RESULT_PATH RTF_IMAGE_DIGEST RTF_INSPECTION_PROFILE RTF_PROFILE_ID RTF_CPU_FLAVOR RTF_BATCH_SIZE RTF_PRECISION RTF_REPEAT RTF_DECODER RTF_FIXTURE_FILENAME RTF_FIXTURE_MANIFEST_SHA256 RTF_DATASET_CONFIGURATION RTF_DATASET_SPLIT RTF_DATASET_SEED RTF_DATASET_COUNT_MIN RTF_DATASET_COUNT_MAX RTF_DATASET_TARGET_TOTAL_SEC RTF_DATASET_MAX_DURATION_SEC; do printf '%s=%q\n' "$key" "${!key:-}"; done
