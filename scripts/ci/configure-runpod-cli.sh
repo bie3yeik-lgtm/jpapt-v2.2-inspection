@@ -35,10 +35,28 @@ command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 
 export RUNPOD_API_KEY="$RUNPOD_TOKEN"
 
+extract_runpodctl_json() {
+  local raw="$1"
+  local json=""
+  json="$(printf '%s\n' "$raw" | awk '/^\{/ { capture=1 } capture { print }')"
+  [[ -n "$json" ]] || return 1
+  jq -e . <<<"$json" >/dev/null || return 1
+  printf '%s' "$json"
+}
+
 if [[ "$run_doctor" -eq 1 ]]; then
-  doctor_json="$(timeout --signal=TERM "${doctor_timeout}s" runpodctl doctor --output json)" || {
+  doctor_raw="$(timeout --signal=TERM "${doctor_timeout}s" runpodctl doctor --output json 2>&1)" || {
     echo "RUNPOD_CLI_DOCTOR_TIMEOUT_OR_FAILURE: RunPod CLI doctor did not complete within ${doctor_timeout} seconds" >&2
     exit 124
+  }
+  while IFS= read -r line; do
+    [[ "$line" == \{* ]] && break
+    [[ -n "$line" ]] && echo "$line" >&2
+  done <<<"$doctor_raw"
+  doctor_json="$(extract_runpodctl_json "$doctor_raw")" || {
+    echo 'RunPod CLI doctor did not emit parseable JSON' >&2
+    printf '%s\n' "$doctor_raw" >&2
+    exit 1
   }
   echo "$doctor_json" | jq .
   jq -e '.healthy == true' <<<"$doctor_json" >/dev/null || {

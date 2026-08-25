@@ -11,7 +11,11 @@ set -euo pipefail
 case "$*" in
   *doctor*)
     [[ -n "${RUNPOD_API_KEY:-}" ]] || { echo 'missing RUNPOD_API_KEY' >&2; exit 1; }
-    printf '%s\n' '{"healthy":true,"checks":[{"name":"api_key","status":"pass"}]}'
+    if [[ "${MOCK_DOCTOR_MIXED_OUTPUT:-0}" == 1 ]]; then
+      printf '%s\n' 'generating ssh key...' 'adding ssh key to runpod...' '{"healthy":true,"checks":[{"name":"api_key","status":"pass"}]}'
+    else
+      printf '%s\n' '{"healthy":true,"checks":[{"name":"api_key","status":"pass"}]}'
+    fi
     ;;
   *)
     echo "unsupported mock runpodctl invocation: $*" >&2
@@ -32,5 +36,8 @@ grep -F 'export RUNPOD_API_KEY="$RUNPOD_TOKEN"' scripts/ci/configure-runpod-cli.
 
 export RUNPOD_TOKEN=test-token
 bash scripts/ci/configure-runpod-cli.sh --doctor >/dev/null
+
+export MOCK_DOCTOR_MIXED_OUTPUT=1
+bash scripts/ci/configure-runpod-cli.sh --doctor 2>/dev/null | jq -e '.healthy == true' >/dev/null
 
 echo 'configure-runpod-cli tests passed'
