@@ -76,7 +76,8 @@ jobs:
             --config .github/runpod-rtf-services.json \
             --inventory runpod-gpu-inventory.json \
             --output runpod-rtf-service-report.json \
-            --require-gpu "$GPU"
+            --require-gpu "$GPU" \
+            --refresh-command 'runpodctl gpu list --include-unavailable --output json > runpod-gpu-inventory.json'
           jq -r '.entries[] | select(.gpu == env.GPU) | "RunPod selectable: \(.gpu) / CUDA \(.cuda_requirement) / available=\(.available)"' \
             runpod-rtf-service-report.json >> "$GITHUB_STEP_SUMMARY"
 

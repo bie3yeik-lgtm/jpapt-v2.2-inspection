@@ -3,6 +3,7 @@ set -euo pipefail
 
 usage() { echo "usage: $0 --gpu NAME --gpu-id ID --image IMAGE --min-cuda-version VERSION --output PATH [--cloud-type auto|SECURE|COMMUNITY] [--terminate-after-hours HOURS] [--heartbeat-seconds SECONDS] [--create-attempts N] [--create-retry-backoff-seconds SECONDS]" >&2; exit 2; }
 gpu=""; gpu_id=""; image=""; min_cuda_version=""; output=""; cloud_type=auto; terminate_after_hours=24; heartbeat_seconds=30; create_attempts=3; create_retry_backoff_seconds=20
+inventory_attempts=3; inventory_retry_seconds=20
 while (($#)); do
   case "$1" in
     --gpu) gpu="${2:?missing --gpu value}"; shift 2;;
@@ -15,6 +16,8 @@ while (($#)); do
     --heartbeat-seconds) heartbeat_seconds="${2:?missing --heartbeat-seconds value}"; shift 2;;
     --create-attempts) create_attempts="${2:?missing --create-attempts value}"; shift 2;;
     --create-retry-backoff-seconds) create_retry_backoff_seconds="${2:?missing --create-retry-backoff-seconds value}"; shift 2;;
+    --inventory-attempts) inventory_attempts="${2:?missing --inventory-attempts value}"; shift 2;;
+    --inventory-retry-seconds) inventory_retry_seconds="${2:?missing --inventory-retry-seconds value}"; shift 2;;
     *) usage;;
   esac
 done
@@ -25,6 +28,8 @@ done
 [[ "$heartbeat_seconds" =~ ^[1-9][0-9]*$ ]] || { echo 'heartbeat-seconds must be positive' >&2; exit 2; }
 [[ "$create_attempts" =~ ^[1-9][0-9]*$ && "$create_attempts" -le 5 ]] || { echo 'create-attempts must be 1..5' >&2; exit 2; }
 [[ "$create_retry_backoff_seconds" =~ ^[1-9][0-9]*$ && "$create_retry_backoff_seconds" -le 300 ]] || { echo 'create-retry-backoff-seconds must be 1..300' >&2; exit 2; }
+[[ "$inventory_attempts" =~ ^[1-9][0-9]*$ && "$inventory_attempts" -le 5 ]] || { echo 'inventory-attempts must be 1..5' >&2; exit 2; }
+[[ "$inventory_retry_seconds" =~ ^[1-9][0-9]*$ && "$inventory_retry_seconds" -le 300 ]] || { echo 'inventory-retry-seconds must be 1..300' >&2; exit 2; }
 command -v runpodctl >/dev/null || { echo 'runpodctl is required' >&2; exit 1; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 1; }
 [[ -n "${RUNPOD_TOKEN:-}" ]] || { echo 'RUNPOD_TOKEN is required' >&2; exit 1; }
@@ -50,9 +55,30 @@ cleanup() {
 trap cleanup EXIT
 trap 'failure_code=RUNPOD_PROBE_INTERRUPTED; failure_message="probe interrupted"; exit 143' INT TERM HUP
 
-inventory="$(runpodctl gpu list --include-unavailable --output json 2>&1)" || { probe_status=BLOCKED; failure_code=RUNPOD_EXTERNAL_API_FAILED; failure_message="RunPod GPU inventory failed"; write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; exit 1; }
-match="$(jq -c --arg gpu_id "$gpu_id" '[.[] | select((.gpuId // .gpu_id) == $gpu_id)] | first // empty' <<<"$inventory")"
-if [[ -z "$match" ]] || [[ "$(jq -r '.available // false' <<<"$match")" != true ]]; then failure_code=RUNPOD_GPU_NOT_AVAILABLE; failure_message="GPU is not currently available: $gpu_id"; write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; exit 1; fi
+inventory=""; match=""
+for inventory_attempt in $(seq 1 "$inventory_attempts"); do
+  inventory="$(runpodctl gpu list --include-unavailable --output json 2>&1)" || {
+    probe_status=BLOCKED
+    failure_code=RUNPOD_EXTERNAL_API_FAILED
+    failure_message="RunPod GPU inventory failed"
+    write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    exit 1
+  }
+  match="$(jq -c --arg gpu_id "$gpu_id" '[.[] | select((.gpuId // .gpu_id) == $gpu_id)] | first // empty' <<<"$inventory")"
+  if [[ -n "$match" && "$(jq -r '.available // false' <<<"$match")" == true ]]; then
+    break
+  fi
+  if [[ "$inventory_attempt" -lt "$inventory_attempts" ]]; then
+    echo "RunPod CUDA probe inventory retry: attempt=$inventory_attempt/$inventory_attempts gpu_id=$gpu_id match=$(tr '\r\n' ' ' <<<"${match:-<none>}" | cut -c1-1000)" >&2
+    sleep $((inventory_retry_seconds * inventory_attempt))
+  fi
+done
+if [[ -z "$match" ]] || [[ "$(jq -r '.available // false' <<<"$match")" != true ]]; then
+  failure_code=RUNPOD_GPU_NOT_AVAILABLE
+  failure_message="GPU is not currently available: $gpu_id"
+  write_report "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  exit 1
+fi
 if [[ "$cloud_type" == auto ]]; then
   if [[ "$(jq -r '.secureCloud // .secure_cloud // false' <<<"$match")" == true ]]; then cloud_type_observed=SECURE
   elif [[ "$(jq -r '.communityCloud // .community_cloud // false' <<<"$match")" == true ]]; then cloud_type_observed=COMMUNITY

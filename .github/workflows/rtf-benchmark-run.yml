@@ -259,7 +259,8 @@ jobs:
             --config .github/runpod-rtf-services.json \
             --inventory .ci/runpod-gpu-inventory.json \
             --output .ci/runpod-rtf-service-report.json \
-            --require-gpu "$RTF_GPU"
+            --require-gpu "$RTF_GPU" \
+            --refresh-command 'runpodctl gpu list --include-unavailable --output json > .ci/runpod-gpu-inventory.json'
           gpu_json="$(jq -cer --arg gpu "$RTF_GPU" '.entries[] | select(.gpu == $gpu)' .github/runpod-rtf-services.json)"
           gpu_id="$(jq -er '.gpu_id' <<<"$gpu_json")"
           min_cuda="$(jq -er '.minimum_cuda_version' .github/runpod-rtf-services.json)"
