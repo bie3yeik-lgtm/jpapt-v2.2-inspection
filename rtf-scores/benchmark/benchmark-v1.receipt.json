@@ -2,13 +2,13 @@
   "audio_contract": "float32-mono-16000hz-finite-c-contiguous-wav",
   "dataset_id": "japanese-asr/ja_asr.common_voice_8_0",
   "dataset_revision": "bf8819e8d9a5feb51b0c718686bd20ea67a3c729",
-  "image": "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:1b1b76bb4cb7bf762e4e26866b2199f966e0678f3f9bf8222d568ae5bd5df106",
+  "image": "ghcr.io/bie3yeik-lgtm/parakeet-rtf-benchmark@sha256:a9d5eebe87c78ad96e68b6df60400172376dd0e3e397ca733ce4fc7541063ded",
   "inspection_profile": "smoke",
   "manifest_sha256": "0b4db78f1f110c898b5857628a51493cad77ab90af778e8ba61bd42128651522",
-  "run_id": "rtf-resolver-32870145527",
+  "run_id": "rtf-resolver-32879663110",
   "sample_count": 21,
   "schema_version": 1,
   "total_audio_duration_sec": 5402.784,
   "fixture_repo_id": "gawohok7/rtf-benchmark-fixtures",
-  "fixture_revision": "b975aa0ea2e7d98ad0347e959bf1dc206df3815c"
+  "fixture_revision": "39237a0275f79b6982596e6187ebf71629b91284"
 }
