@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "run_id": "rtf-runpod-32884034050-b1",
+  "run_id": "rtf-runpod-32913837479-b1",
   "service_id": "runpod-pod",
   "status": "blocked",
   "provider": "cuda",
   "environment": "linux",
-  "job_id": "sf892acxlab6k6",
-  "result_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/5a8b1a4d10d01dea28d48276d0a264de41db2278/results/rtf-runpod-32884034050-b1/metrics.json",
-  "result_sha256": "d1c76ad197d37edd4968d9338dd91ce51f7e485840cb998b85f541cd88c39d4b",
-  "metrics_uri": "https://huggingface.co/datasets/gawohok7/rtf-benchmark-fixtures/resolve/5a8b1a4d10d01dea28d48276d0a264de41db2278/results/rtf-runpod-32884034050-b1/metrics.json",
-  "metrics_path": "results/rtf-service/metrics.json",
-  "metrics_sha256": "d1c76ad197d37edd4968d9338dd91ce51f7e485840cb998b85f541cd88c39d4b",
-  "error_code": "RUNPOD_BILLING_METADATA_UNAVAILABLE",
-  "error_message": "RunPod billing history could not be collected; metrics were not accepted for ranking"
+  "job_id": null,
+  "result_uri": null,
+  "result_sha256": null,
+  "metrics_uri": null,
+  "metrics_path": null,
+  "metrics_sha256": null,
+  "error_code": "RUNPOD_PREFLIGHT_BILLING_SCRIPT_INVALID",
+  "error_message": "RunPod billing metadata collector failed py_compile"
 }
